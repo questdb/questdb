@@ -29,7 +29,7 @@
 //! that way: a frame per folder, through the encoder the conversion uses. The `_pm` decode, which
 //! the readers of a table use, must report those rows exactly, and each conversion to a type with
 //! a NULL must read NULL there and the stored value, 0 included, everywhere else. The footer
-//! decoder, which serves CONVERT TO NATIVE, takes the leading column top of the file metadata.
+//! decoder, which serves CONVERT TO NATIVE, must report them the same way.
 
 use crate::allocator::TestAllocatorState;
 use crate::parquet::error::ParquetResult;
@@ -590,33 +590,12 @@ fn pm_decode_reads_column_tops_of_later_folders() -> ParquetResult<()> {
     Ok(())
 }
 
-/// The rows the footer decoder reads for `rows` of `source` decoded as `target`, where the file
-/// metadata records no column top: the decoder takes no column-top rows from the definition levels
-/// (see `ParquetDecoder::decode_row_group`), so a definition-level-0 row reads as the page decode
-/// writes it - the NULL of a type a BYTE or SHORT decodes straight to, see
-/// decode_to_a_type_with_a_null_reads_definition_levels_itself(), and 0 or false otherwise.
-fn footer_rows(
-    source: ColumnTypeTag,
-    target: ColumnType,
-    rows: &[Option<i64>],
-) -> Vec<Option<i64>> {
-    let is_decoded_as_target = matches!(source, ColumnTypeTag::Byte | ColumnTypeTag::Short)
-        && matches!(
-            target.tag(),
-            ColumnTypeTag::Int | ColumnTypeTag::Long | ColumnTypeTag::Timestamp
-        );
-    rows.iter()
-        .map(|&row| row.or(if is_decoded_as_target { None } else { Some(0) }))
-        .collect()
-}
-
 #[test]
-fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> ParquetResult<()> {
-    // The footer decoder serves CONVERT TO NATIVE, which keeps only the leading column top: a
-    // native column holds no later one. It takes that top from the QuestDB metadata, where the
-    // PartitionUpdater ends a top as a native O3 merge does, over rows whose NULLs it can leave in
-    // the row groups it keeps. FOLDERS records no top: the later tops read as stored rows. With a
-    // leading top of 2 recorded, as the frame writer records it, the rows of that top read NULL.
+fn footer_decode_reads_column_tops_of_later_folders() -> ParquetResult<()> {
+    // The footer decoder serves CONVERT TO NATIVE, which must keep the rows the `_pm` decode reads:
+    // a later top reads NULL in a type with a NULL, which a native column holds anywhere. It reads
+    // the tops from the definition levels, as the `_pm` decode does, and the leading top of 2 that
+    // the metadata of the second file records adds no row to them.
     let rows = model(&FOLDERS);
     const LEADING: [Folder; 2] = [folder(2, &[5, 0]), folder(1, &[7])];
     let leading_rows = model(&LEADING);
@@ -646,14 +625,8 @@ fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> Parquet
                 )?;
                 assert_eq!(decoded, rows.len(), "{context}");
                 let chunk = &bufs.column_bufs[0];
-                assert!(chunk.top_rows().is_empty(), "{context}");
-                assert_rows(
-                    &context,
-                    chunk,
-                    source,
-                    target,
-                    &footer_rows(source, target, &rows),
-                );
+                assert_eq!(chunk.top_rows(), &FOLDERS_TOP_ROWS, "{context}");
+                assert_rows(&context, chunk, source, target, &rows);
 
                 let mut ctx = leading_file.decode_context();
                 let mut bufs = RowGroupBuffers::new(tas.allocator());
@@ -667,11 +640,8 @@ fn footer_decode_takes_leading_column_top_of_the_file_metadata_only() -> Parquet
                 )?;
                 let chunk = &bufs.column_bufs[0];
                 let context = format!("{context}, leading top");
-                assert_eq!(chunk.top_rows(), &[[0, 2]], "{context}");
-                let mut expected = footer_rows(source, target, &leading_rows);
-                expected[0] = None;
-                expected[1] = None;
-                assert_rows(&context, chunk, source, target, &expected);
+                assert_eq!(chunk.top_rows(), &[[0, 2], [4, 5]], "{context}");
+                assert_rows(&context, chunk, source, target, &leading_rows);
             }
         }
     }
@@ -1318,8 +1288,7 @@ fn footer_filtered_decode_takes_column_top_of_a_source_with_a_null() -> ParquetR
 #[test]
 fn decode_records_top_rows_of_rle_booleans() -> ParquetResult<()> {
     // QuestDB writes BOOLEAN pages Plain; another writer may write them RLE. Rows T T 1 0 T 1. The
-    // _pm decode records the column tops from the definition levels; the footer decoder takes the
-    // column top of the QuestDB metadata, 0 rows, so its rows of a top read false.
+    // _pm decode and the footer decoder record the column tops from the definition levels.
     use parquet::basic::{Encoding, Repetition as P1Repetition, Type as P1Type};
     use parquet::file::properties::{WriterProperties, WriterVersion};
     use parquet::file::writer::SerializedFileWriter;
@@ -1419,13 +1388,13 @@ fn decode_records_top_rows_of_rle_booleans() -> ParquetResult<()> {
         let mut bufs = RowGroupBuffers::new(tas.allocator());
         decoder.decode_row_group(&mut ctx, &mut bufs, &[(0, target)], 0, 0, 6)?;
         let chunk = &bufs.column_bufs[0];
-        assert!(chunk.top_rows().is_empty(), "footer {target:?}");
+        assert_eq!(chunk.top_rows(), &[[0, 2], [4, 5]], "footer {target:?}");
         assert_rows(
             &format!("footer {target:?}"),
             chunk,
             ColumnTypeTag::Boolean,
             target,
-            &footer_rows(ColumnTypeTag::Boolean, target, &rows),
+            &rows,
         );
     }
     Ok(())
