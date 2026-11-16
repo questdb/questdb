@@ -42,9 +42,11 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -130,7 +132,7 @@ public class TableVisibilityTest extends AbstractCairoTest {
             Assert.assertNull(engine.getTableTokenIfExists(missingNameOf("secret_t")));
             try (SqlExecutionContext hidingContext = new SqlExecutionContextImpl(engine, 1).with(new HidingSecurityContext() {
                 @Override
-                public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+                public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
                     throw CairoException.authorization().put("select denied");
                 }
             })) {
