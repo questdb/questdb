@@ -72,9 +72,11 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * scan. {@link #build} runs once per execution, when the cursor is first asked for a row: every
  * stage builds, a large one in rounds of the join's build sequence, one at a time, and the small
  * ones on the owner, or at once, in one round of that sequence with one task per stage; then each
- * binds its SYMBOL key translation and hands every slot its probe of the build. The owner dispatches
- * the probe tasks after the build returns, and the first task that the frame sequence publishes is
- * what publishes the builds and the slots' probes to the workers.
+ * hands every slot its probe of the build. Once the probe scan has cut its frames, each stage binds
+ * its SYMBOL key translation for as many probe rows as the execution reads first, see
+ * {@link #bindSymbolKeyTranslation}. The owner dispatches the probe tasks after that, and the first
+ * task that the frame sequence publishes is what publishes the builds, the slots' probes and the
+ * translation to the workers.
  * <p>
  * The first join of a swap candidate, see {@link AsyncHashJoinSpec#isSwapCandidate()}, has two runtime
  * stages: the one that hashes its right input, and the one that hashes its left input, which an
@@ -638,6 +640,22 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * Binds every stage's SYMBOL key translation for a probe of {@code probeRowCount} rows: the
+     * probe's frame rows, which bound the keys of the first stage and of every later stage alike,
+     * since a later stage reads its keys off the left input, whose rows a swapped execution's probe
+     * outnumbers; or fewer, under a LIMIT. A stage whose probe reads fewer rows than one per 256
+     * keys of its probe dictionary translates through each slot's own cache rather than a shared
+     * one; see {@link HashJoinBuildStage#bindSymbolKeyTranslation}. The cursor calls it once per
+     * execution, once the probe scan has cut its frames and before the payload copy and the first
+     * probe task; on failure the cursor closes, whose clear() releases what the stages opened.
+     */
+    void bindSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        for (int k = 0, n = executionStages.size(); k < n; k++) {
+            executionStages.getQuick(k).bindSymbolKeyTranslation(probeRowCount, circuitBreaker);
+        }
+    }
+
+    /**
      * Builds every stage and binds every slot to the builds. The cursor calls it once per execution,
      * on first demand for a row, on the thread that then dispatches the probes and before it
      * dispatches any; nothing here runs when the cursor merely opens. Returns false when the build of
@@ -661,7 +679,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * that the build ran over its rows, if it ran them, and the whole residual otherwise. Then the
      * execution's steppers learn which stages walk their matches, those up to the last one whose
      * pairs run a filter, before {@link #getProbeFrameRowCap()}, {@link #indexChainLengths} and the
-     * tasks read it.
+     * tasks read it. The SYMBOL key translation waits for the probe's frames, whose rows it is
+     * opened for; see {@link #bindSymbolKeyTranslation}.
      *
      * @param buildRounds the task-only sequence that runs the rounds of the builds
      */
@@ -730,7 +749,6 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             if (stageSpec.hasPairFilter(isApplied)) {
                 lastFilteredStage = k;
             }
-            stage.bindSymbolKeyTranslation(circuitBreaker);
             stage.bindProbes();
             // Swapped, a later stage's keys read the left input's columns off the first stage's
             // payload reader, which the first stage bound to each slot before.

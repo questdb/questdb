@@ -139,6 +139,14 @@ import java.util.concurrent.locks.LockSupport;
  *       matches per probe row, where each meets one, which cuts the probe's frames to their
  *       smallest. Run them with {@code pageFrameMinRows} and {@code pageFrameMaxRows} at the
  *       server's defaults, 100,000 and 1,000,000.
+ *       {@code SYMBOL_10M_*} join on a SYMBOL key a table whose SYMBOL column holds 10,000,000 texts,
+ *       one per row over January and February 2024, and 3,000 more rows in the first hour of March,
+ *       with dimensions of 1,000 and 50,000 of its texts: {@code SYMBOL_10M_INTERVAL_D1K} and
+ *       {@code SYMBOL_10M_INTERVAL_D50K} the March hour, {@code SYMBOL_10M_LIMIT_10} the first ten
+ *       rows that match, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
+ *       table's first 39,062 and 39,063 rows, one key each, either side of the 256 texts per probe row
+ *       below which the join translates the key through each worker's own cache rather than a cache
+ *       that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
@@ -196,14 +204,16 @@ public class ParallelHashJoinBenchmark {
     private static final long COUNT_PAGE_ROWS = 1_001;
     // The fact rows that the FANOUT_*_ALL, FANOUT_50_* and FANOUT_MISESTIMATE shapes join.
     private static final long FAN_OUT_PROBE_ROWS = 3_000_000;
-    private static final String DATA_VERSION = "v4";
+    private static final String DATA_VERSION = "v5";
     private static final int LIMIT_PROBE_EXECUTIONS = 20;
     private static final String OPERATOR_NODE = "Hash Join workers:";
     private static final String POOL_NAME = "hashjoinbench";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
-    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny"};
+    // The SYMBOL_10M_* shapes' join over the table of 10,000,000 SYMBOL texts.
+    private static final String SYMBOL_10M_JOIN = "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d1k d ON f.sym = d.sym";
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k"};
 
     @Param({"10000000"})
     public long factRows;
@@ -258,7 +268,9 @@ public class ParallelHashJoinBenchmark {
             "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE",
             "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY",
             "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
-            "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE"
+            "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE",
+            "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10",
+            "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL"
     })
     public String shape;
 
@@ -464,7 +476,34 @@ public class ParallelHashJoinBenchmark {
                 "timestamp_sequence(0, 8_640_000) ts FROM long_sequence(250_000)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute("CREATE TABLE dtiny AS (SELECT ((x - 1) * 16)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(8, 16, 0)::VARCHAR s, " +
                 "timestamp_sequence(0, 8_640_000_000) ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        createSymbolTables(engine, ctx);
         engine.execute("CREATE TABLE ready (x INT)", ctx);
+    }
+
+    /**
+     * The tables of the SYMBOL_10M_* shapes: fsym, whose SYMBOL column holds 10,000,000 texts, k1 to
+     * k10000000, one per row every half second from 2024-01-01, and 3,000 more rows over the first hour
+     * of 2024-03-01 with k1 to k1000; d1k and d50k, with the texts k1 to k1000 and k1 to k50000.
+     */
+    private static void createSymbolTables(CairoEngine engine, SqlExecutionContextImpl ctx) throws SqlException {
+        engine.execute("CREATE TABLE fsym (sym SYMBOL CAPACITY 16777216 NOCACHE, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 500_000) FROM long_sequence(10_000_000)", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || ((x - 1) % 1_000 + 1), x, timestamp_sequence('2024-03-01', 1_200_000) FROM long_sequence(3_000)", ctx);
+        engine.execute("CREATE TABLE d1k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(1_000))", ctx);
+        engine.execute("CREATE TABLE d50k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(50_000))", ctx);
+    }
+
+    /**
+     * The predicate of the SYMBOL_10M_* shapes: the March hour, or fsym's first 39,062 or 39,063 rows,
+     * whose timestamps step by half a second: ceil(10,000,000 / 256) = 39,063.
+     */
+    private static String symbol10mPredicate(String shape) {
+        return switch (shape) {
+            case "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K" -> " WHERE f.ts IN '2024-03-01T00'";
+            case "SYMBOL_10M_BOUNDARY_BELOW" -> " WHERE f.ts < '2024-01-01T05:25:31.000000Z'";
+            case "SYMBOL_10M_BOUNDARY_AT" -> " WHERE f.ts < '2024-01-01T05:25:31.500000Z'";
+            default -> "";
+        };
     }
 
     private long[] findWorkerThreads() {
@@ -583,8 +622,8 @@ public class ParallelHashJoinBenchmark {
         if ((isOperator && !"PARQUET_VAR_RESIDUAL".equals(shape)) != planText.contains(OPERATOR_NODE)) {
             throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + planText);
         }
-        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_") || shape.startsWith("COUNT_TINY_PROBE"))
-                && !planText.contains("Interval forward scan")) {
+        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_") || shape.startsWith("COUNT_TINY_PROBE")
+                || !symbol10mPredicate(shape).isEmpty()) && !planText.contains("Interval forward scan")) {
             throw new IllegalStateException("the probe is not an interval scan: shape=" + shape + '\n' + planText);
         }
         final RecordMetadata metadata = factory.getMetadata();
@@ -789,6 +828,11 @@ public class ParallelHashJoinBenchmark {
             // Each fact row meets one row of dhot, whose builds lead the join to expect about 2,000.
             case "FANOUT_MISESTIMATE" -> "SELECT f.id, f.v, h.w FROM fact f JOIN dhot h ON f.k1 = h.k WHERE h.w + f.v >= 0 AND f.ts < "
                     + probeBound(FAN_OUT_PROBE_ROWS);
+            // A SYMBOL key over a dictionary of 10,000,000 texts, see createSymbolTables().
+            case "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL" ->
+                    SYMBOL_10M_JOIN + symbol10mPredicate(shape);
+            case "SYMBOL_10M_INTERVAL_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
+            case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

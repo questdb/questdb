@@ -75,12 +75,13 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #build(SqlExecutionCircuitBreaker)} runs once per execution, when the cursor is first
  * asked for a result: the stage walks the build scan's page frames, filters each one and keeps the
  * key and the row id of every row that passes, on the owner or in rounds of the frame sequence's
- * tasks; see {@link HashJoinBuildStage}. build() then has the stage bind the SYMBOL key
- * translation and give every slot its probe of the frozen build, which each slot's joined record
- * reads. The owner dispatches the probe tasks after build() returns, and the first task that
- * UnorderedPageFrameSequence publishes is what publishes the frozen build, its flags and the
- * slots' probes to the reducers. clear() requires all reducers to have finished and output
- * consumers to be done.
+ * tasks; see {@link HashJoinBuildStage}. build() then has the stage give every slot its probe of
+ * the frozen build, which each slot's joined record reads. Once the probe scan has cut its frames,
+ * the stage binds the SYMBOL key translation for the probe's rows, see
+ * {@link #bindSymbolKeyTranslation(long, SqlExecutionCircuitBreaker)}. The owner dispatches the
+ * probe tasks after that, and the first task that UnorderedPageFrameSequence publishes is what
+ * publishes the frozen build, its flags, the slots' probes and the translation to the reducers.
+ * clear() requires all reducers to have finished and output consumers to be done.
  * <p>
  * A query that only counts the joined pairs of an INNER join reads nothing of a pair, so a build
  * that repeats a key need not hand its rows out one by one: build() has the stage replace each
@@ -369,6 +370,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         return stage.isSymbolKeyCacheFilledFromBuild(key);
     }
 
+    /**
+     * True when the open cursor's execution translates the key-th SYMBOL key pair through each
+     * slot's own cache; see {@link HashJoinBuildStage#isSymbolKeySlotCached(int)}.
+     */
+    @TestOnly
+    public boolean isSymbolKeySlotCached(int key) {
+        return stage.isSymbolKeySlotCached(key);
+    }
+
     @Override
     @TestOnly
     public PerWorkerLocks getPerWorkerLocks() {
@@ -513,15 +523,28 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * Binds the SYMBOL key translation for a probe of {@code probeRowCount} rows, the probe's frame
+     * rows, every one of which the reducers read: a probe of fewer rows than one per 256 keys of
+     * the probe dictionary translates through each slot's own cache rather than a shared one; see
+     * {@link HashJoinBuildStage#bindSymbolKeyTranslation}. The cursor calls it once per execution
+     * that probes, once the probe scan has cut its frames and before the payload copy and the
+     * first probe task. On failure the caller closes the cursor, whose clear() releases what the
+     * stage opened.
+     */
+    void bindSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        stage.bindSymbolKeyTranslation(probeRowCount, circuitBreaker);
+    }
+
+    /**
      * Builds the open cursor's hash table and binds every slot to it. The cursor calls it once per
      * execution, on first demand for a result, on the thread that then dispatches the probes and
      * before it dispatches any; nothing here runs when the cursor merely opens.
      * <p>
      * The stage builds, on the owner or in rounds of the frame sequence's tasks; see
-     * {@link HashJoinBuildStage#build}. The count pass of a query that only counts the joined pairs,
-     * the SYMBOL key translation and the slots' probes follow, all of which need the frozen build.
-     * On failure the caller closes the cursor, whose clear() closes the build, the filters and the
-     * frames.
+     * {@link HashJoinBuildStage#build}. The count pass of a query that only counts the joined pairs
+     * and the slots' probes follow, both of which need the frozen build; the SYMBOL key translation
+     * waits for the probe's frames, see {@link #bindSymbolKeyTranslation}. On failure the caller
+     * closes the cursor, whose clear() closes the build, the filters and the frames.
      */
     void build(SqlExecutionCircuitBreaker circuitBreaker) {
         stage.build(circuitBreaker, frameSequence);
@@ -536,7 +559,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 isCountedByKey = true;
             }
         }
-        stage.bindSymbolKeyTranslation(circuitBreaker);
         stage.bindProbes();
         for (int i = 0; i < slots.size(); i++) {
             Slot slot = slots.getQuick(i);

@@ -1,0 +1,100 @@
+# name: test/sql/hash_join_symbol_key.test
+# description: INNER and LEFT joins on a SYMBOL key, whose probe reads few rows of a large dictionary
+# group: [join]
+#
+# The runner starts QuestDB with cairo.sql.parallel.hash.join.enabled=true, so these joins run on
+# the parallel hash join, and the GROUP BY on the fused GROUP BY over a hash join;
+# HashJoinSymbolKeySqllogicTest checks that the runner's server plans them so. The events table's
+# SYMBOL column holds 1,002 texts: the 1,000 of a day that the table drops, whose texts stay in the
+# dictionary, and two of its three rows. A probe of events reads fewer rows than one per 256 texts,
+# so each worker translates the SYMBOL key through a cache of its own rather than through one that
+# the dictionary sizes. The padding of the dictionary is QuestDB-specific. The queries above the
+# "QuestDB-specific" line follow DuckDB and PostgreSQL semantics, which join equal texts, and return
+# their expected rows; the SYMBOL columns are VARCHAR columns there. Below that line, QuestDB
+# deliberately differs:
+# - its hash joins match a NULL key with a NULL key; DuckDB's and PostgreSQL's never match NULL keys;
+# - it returns a join's rows in the order of the input it streams without ORDER BY; DuckDB and
+#   PostgreSQL leave that order undefined.
+
+statement ok
+CREATE TABLE events (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+# QuestDB-specific: 1,000 texts of a day that the table then drops, which leaves them in its dictionary.
+statement ok
+INSERT INTO events SELECT 'pad' || x, x::INT, '2023-12-31'::TIMESTAMP + x FROM long_sequence(1000)
+
+statement ok
+ALTER TABLE events DROP PARTITION LIST '2023-12-31'
+
+statement ok
+INSERT INTO events VALUES
+('a', 1, '2024-01-01T00:00:00.000000Z'),
+('b', 2, '2024-01-01T01:00:00.000000Z'),
+(NULL, 3, '2024-01-01T02:00:00.000000Z')
+
+statement ok
+CREATE TABLE dims (sym SYMBOL, w INT)
+
+statement ok
+INSERT INTO dims VALUES ('c', 30), ('b', 20), (NULL, 40)
+
+# The dropped day's rows are gone, and its texts match nothing.
+query I nosort
+SELECT count(*) FROM events
+----
+3
+
+# INNER: 'b' matches by its text.
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e JOIN dims d ON e.sym = d.sym WHERE e.sym IS NOT NULL ORDER BY e.v
+----
+2 b 20
+
+# LEFT: 'a' finds no row.
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e LEFT JOIN dims d ON e.sym = d.sym WHERE e.sym IS NOT NULL ORDER BY e.v
+----
+1 a NULL
+2 b 20
+
+# The same under a LIMIT.
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e LEFT JOIN dims d ON e.sym = d.sym WHERE e.sym IS NOT NULL ORDER BY e.v LIMIT 1
+----
+1 a NULL
+
+# A GROUP BY over the join.
+query II nosort
+SELECT d.w, count(*) FROM events e JOIN dims d ON e.sym = d.sym WHERE e.sym IS NOT NULL GROUP BY d.w ORDER BY d.w
+----
+20 1
+
+# QuestDB-specific
+# ---------------------------------------------------------------------------------------------
+
+# NULL matches NULL: events' third row meets dims' NULL row.
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e JOIN dims d ON e.sym = d.sym ORDER BY e.v
+----
+2 b 20
+3 NULL 40
+
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e LEFT JOIN dims d ON e.sym = d.sym ORDER BY e.v
+----
+1 a NULL
+2 b 20
+3 NULL 40
+
+# Without ORDER BY, the rows come in events' order, and a LIMIT of 2 reads two of its rows first.
+query ITI nosort
+SELECT e.v, e.sym, d.w FROM events e LEFT JOIN dims d ON e.sym = d.sym LIMIT 2
+----
+1 a NULL
+2 b 20
+
+query II nosort
+SELECT d.w, count(*) FROM events e JOIN dims d ON e.sym = d.sym GROUP BY d.w ORDER BY d.w
+----
+20 1
+40 1

@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectIntIntPagedMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.QuietCloseable;
@@ -43,7 +44,7 @@ import org.jetbrains.annotations.TestOnly;
  * probe key the frame never reads costs nothing. A probe that reads many distinct keys against a
  * small build dictionary would then look up far more texts than the build holds, so in that case
  * the cache opens filled from the build side instead; see
- * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, MemoryTracker, SqlExecutionCircuitBreaker)}.
+ * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
  * <p>
  * The cache is a dense, tracked native array indexed by probe symbol key and sized by the probe
  * dictionary. Every worker shares one cache, because an entry is a function of the two
@@ -54,8 +55,16 @@ import org.jetbrains.annotations.TestOnly;
  * cache's contents visible to it. Any failure in {@link #of} releases the cache; {@link #close}
  * releases it and leaves the instance reusable.
  * <p>
+ * Opening the shared cache costs work and memory that grow with the probe dictionary, whatever
+ * the probe reads, so it opens only for a probe that reads at least one row per 256 probe keys.
+ * For a probe of fewer rows, the translator allocates nothing, and each {@link View} translates
+ * through a lazy cache of its own instead, as the ordinary join's SymbolTranslatingRecord does:
+ * it opens on the view's first miss, keeps each probe key it resolves, and stops allocating once
+ * it holds {@code cairo.sql.join.symbol.translation.cache.capacity} entries. A view's cache is
+ * the view's slot's alone, which one thread uses at a time, and charges the translator's tracker.
+ * <p>
  * The dictionaries are not shared. Each worker translates through its own {@link View}, which
- * holds that worker's pair of symbol tables and reads the shared cache.
+ * holds that worker's pair of symbol tables and reads the shared cache, or its own.
  */
 public final class SymbolKeyTranslator implements QuietCloseable {
     // Clearing checks the breaker once per MiB, as the build's buffers do.
@@ -78,14 +87,23 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     // Fills from the build only when that takes at most an eighth of the lookups that resolving
     // every probe key would.
     private static final int FILL_FROM_BUILD_MIN_PROBE_RATIO = 8;
+    // The shared cache opens only for a probe that reads at least one row per this many probe keys.
+    // Clearing an entry took 0.09 to 1.4 ns, the latter on fresh pages of a large array, and a lookup
+    // 40 to 420 ns, so at this bound the clear costs about one lookup per probe row, and below it the
+    // views make at most one lookup per probe row instead.
+    private static final int SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW = 256;
     // Translated keys are nonnegative, VALUE_IS_NULL or VALUE_NOT_FOUND, never -1.
     private static final int UNRESOLVED = -1;
     private long cacheAddress;
     private int cacheKeyCount;
     private long cacheSize;
     private boolean isFilledFromBuild;
+    // True when the probe reads too few rows for the shared cache, so each view caches on its own.
+    private boolean isSlotCached;
     @Nullable
     private MemoryTracker memoryTracker;
+    // The entries past which a view's own cache stops allocating.
+    private int slotCacheCapacity;
 
     /**
      * Returns true when the cache may fill from the build through this probe dictionary, which
@@ -119,6 +137,8 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         cacheSize = 0;
         cacheKeyCount = 0;
         isFilledFromBuild = false;
+        isSlotCached = false;
+        slotCacheCapacity = 0;
         memoryTracker = null;
     }
 
@@ -133,6 +153,15 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     @TestOnly
     public boolean isFilledFromBuild() {
         return isFilledFromBuild;
+    }
+
+    /**
+     * True when the open translator left the probe to the views' own caches and opened no shared
+     * cache; false once it is closed.
+     */
+    @TestOnly
+    public boolean isSlotCached() {
+        return isSlotCached;
     }
 
     /**
@@ -160,24 +189,42 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     }
 
     /**
-     * Allocates the cache for the probe dictionary's current key count, which the owner's probe
-     * table reports. When the caller found the probe dictionary eligible, see
-     * {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at most 32,768
+     * Opens the translation for a probe of {@code probeRowCount} rows over the probe dictionary's
+     * current key count, which the owner's probe table reports. A probe of fewer rows than one per
+     * 256 probe keys leaves the translation to the views' own caches, each of which stops
+     * allocating at {@code slotCacheCapacity} entries: the translator allocates nothing, looks no
+     * text up and checks no breaker.
+     * <p>
+     * Otherwise it allocates the shared cache. When the caller found the probe dictionary eligible,
+     * see {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at most 32,768
      * keys and the probe dictionary at least eight times as many, the cache opens filled from the
      * build: every entry reads VALUE_NOT_FOUND, then each build key looks its text up in the probe
      * dictionary and writes itself at the probe key it finds. An eligible probe dictionary holds
      * each text once, and keyOf() and valueOf() match texts exactly, so each entry then holds the
      * build key that resolving its probe key lazily would have returned. Otherwise the cache opens
      * unresolved, as {@link #of(int, MemoryTracker, SqlExecutionCircuitBreaker)} opens it.
+     *
+     * @param probeRowCount     the most probe rows whose keys the execution may translate first, or
+     *                          {@code Long.MAX_VALUE} when the caller cannot tell
+     * @param slotCacheCapacity the entries past which a view's own cache stops allocating
      */
     public void of(
             StaticSymbolTable probeKeyTable,
             StaticSymbolTable buildKeyTable,
             boolean isProbeDictionaryEligible,
+            long probeRowCount,
+            int slotCacheCapacity,
             @Nullable MemoryTracker memoryTracker,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final int probeKeyCount = probeKeyTable.getSymbolCount();
+        if (!isSharedCacheInProbeReach(probeKeyCount, probeRowCount)) {
+            close();
+            this.memoryTracker = memoryTracker;
+            this.slotCacheCapacity = slotCacheCapacity;
+            isSlotCached = true;
+            return;
+        }
         final int buildKeyCount = buildKeyTable.getSymbolCount();
         if (!isProbeDictionaryEligible || !isFillableFromBuild(probeKeyCount, buildKeyCount)) {
             of(probeKeyCount, memoryTracker, circuitBreaker);
@@ -231,31 +278,63 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 && (long) buildKeyCount * FILL_FROM_BUILD_MIN_PROBE_RATIO <= probeKeyCount;
     }
 
+    // True when the probe reads at least ceil(probeKeyCount / 256) rows, which a dictionary without
+    // keys always does. The key count is an int, so the long sum cannot overflow.
+    private static boolean isSharedCacheInProbeReach(int probeKeyCount, long probeRowCount) {
+        return probeRowCount >= ((long) probeKeyCount + SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW - 1) / SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW;
+    }
+
     /**
-     * One worker's translation path: its own two symbol tables over the shared cache. A view is
-     * valid while the cache stays open and both tables stay open, which is one execution; the
-     * object itself survives {@link #close()} and rebinds for the next execution.
+     * One worker's translation path: its own two symbol tables over the shared cache, or over a
+     * cache of its own when the translator opened none. A view is valid while the translator stays
+     * open and both tables stay open, which is one execution; the object itself survives
+     * {@link #close()} and rebinds for the next execution.
      */
     public static final class View implements QuietCloseable {
+        // The view's own cache starts as the ordinary join's SymbolTranslatingRecord's do: a page
+        // table of 32 slots and a hash map of 16 entries, 256 bytes each.
+        private static final int SLOT_CACHE_INITIAL_HASH_CAPACITY = 16;
+        private static final int SLOT_CACHE_INITIAL_PAGE_TABLE_CAPACITY = 32;
+        private static final double SLOT_CACHE_LOAD_FACTOR = 0.5;
+        // Closed, and holding no memory, until the first miss of a view without a shared cache. A
+        // probe key is never VALUE_IS_NULL there, which translate() answers first.
+        private final DirectIntIntPagedMap slotCache = new DirectIntIntPagedMap(
+                SLOT_CACHE_INITIAL_PAGE_TABLE_CAPACITY,
+                SLOT_CACHE_INITIAL_HASH_CAPACITY,
+                SLOT_CACHE_LOAD_FACTOR,
+                SymbolTable.VALUE_IS_NULL,
+                UNRESOLVED,
+                MemoryTag.NATIVE_JOIN_MAP
+        );
         private StaticSymbolTable buildKeyTable;
         private long cacheAddress;
         private int cacheKeyCount;
+        private boolean isSlotCached;
         private SymbolTable probeKeyTable;
+        private int slotCacheCapacity;
 
         /**
          * Both tables are borrowed views of this execution's sources; the caller keeps them alive.
+         * The view's own cache starts empty, under the translator's tracker: a key that a previous
+         * binding cached may stand for another text in these tables.
          */
         public void of(SymbolKeyTranslator translator, SymbolTable probeKeyTable, StaticSymbolTable buildKeyTable) {
             this.cacheAddress = translator.cacheAddress;
             this.cacheKeyCount = translator.cacheKeyCount;
+            this.isSlotCached = translator.isSlotCached;
+            this.slotCacheCapacity = translator.slotCacheCapacity;
             this.probeKeyTable = probeKeyTable;
             this.buildKeyTable = buildKeyTable;
+            slotCache.close();
+            slotCache.setMemoryTracker(translator.memoryTracker);
         }
 
         @Override
         public void close() {
+            slotCache.close();
             cacheAddress = 0;
             cacheKeyCount = 0;
+            isSlotCached = false;
             probeKeyTable = null;
             buildKeyTable = null;
         }
@@ -269,9 +348,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 return SymbolTable.VALUE_IS_NULL;
             }
             if (probeKey < 0 || probeKey >= cacheKeyCount) {
-                // The probe dictionary grew past the cache. Resolve the key like
-                // SymbolTranslatingRecord does for the ordinary join, without caching.
-                return buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                return translateOutsideCache(probeKey);
             }
             final long address = cacheAddress + (long) probeKey * Integer.BYTES;
             int buildKey = Unsafe.getInt(address);
@@ -280,6 +357,28 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 Unsafe.putInt(address, buildKey);
             }
             return buildKey;
+        }
+
+        // A key outside the shared cache: any key of a view without one, which goes through the view's
+        // own cache as SymbolTranslatingRecord's keys do, and, past the cap, stays only where its page
+        // exists; or a key past the dictionary that the shared cache covers, which a concurrent writer
+        // added, or a negative one, which resolves without caching.
+        private int translateOutsideCache(int probeKey) {
+            if (isSlotCached && probeKey > -1) {
+                final int cachedBuildKey = slotCache.get(probeKey);
+                if (cachedBuildKey != UNRESOLVED) {
+                    return cachedBuildKey;
+                }
+                final int buildKey = buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                if (slotCache.size() < slotCacheCapacity) {
+                    slotCache.reopen();
+                    slotCache.put(probeKey, buildKey);
+                } else {
+                    slotCache.putIfPageExists(probeKey, buildKey);
+                }
+                return buildKey;
+            }
+            return buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
         }
     }
 }

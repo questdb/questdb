@@ -444,6 +444,62 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     // setObject() of a LocalDateTime sends the TIMESTAMP type, so the analysis sees typed bind
     // variables and compiles both orientations of the INNER join.
     @Test
+    public void testNamedStatementRebindsIntervalsThatSwitchSymbolKeyTranslation() throws Exception {
+        assertMemoryLeak(() -> {
+            // gs.sym holds 300,000 texts, so the fused GROUP BY translates its key through one shared
+            // cache when the probe reads at least ceil(300,000 / 256) = 1,172 rows, and through each
+            // worker's own cache otherwise: the March partition's 1,000 rows translate through the
+            // workers' caches, and every row through the shared cache.
+            execute("CREATE TABLE gs (sym SYMBOL CAPACITY 524288, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO gs SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(300_000)");
+            execute("INSERT INTO gs SELECT 'k' || ((x - 1) % 900 + 1), x, timestamp_sequence('2024-03-01', 1_000_000) FROM long_sequence(1_000)");
+            execute("CREATE TABLE gd AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(1_000))");
+            final String sql = "SELECT gd.w % 10 g, count(*) n, sum(gs.v) v FROM gs JOIN gd ON gs.sym = gd.sym WHERE gs.ts >= ?::TIMESTAMP AND gs.ts < ?::TIMESTAMP ORDER BY g";
+            final String[][] intervals = {
+                    {"2024-03-01T00:00:00.000000Z", "2024-03-02T00:00:00.000000Z"},
+                    {"2024-01-01T00:00:00.000000Z", "2024-03-02T00:00:00.000000Z"},
+                    {"2024-03-01T00:00:00.000000Z", "2024-03-02T00:00:00.000000Z"},
+            };
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (boolean isFused : new boolean[]{false, true}) {
+                final StringSink rows = isFused ? actual : expected;
+                withServer(isFused, false, WorkerPoolMode.LEGACY, port -> {
+                    final StringSink resultSink = new StringSink();
+                    for (boolean isBinary : new boolean[]{true, false}) {
+                        // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it
+                        // again on every later execution.
+                        try (
+                                Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                                PreparedStatement statement = connection.prepareStatement(sql)
+                        ) {
+                            for (int pass = 0; pass < 2; pass++) {
+                                for (String[] interval : intervals) {
+                                    statement.setString(1, interval[0]);
+                                    statement.setString(2, interval[1]);
+                                    try (ResultSet resultSet = statement.executeQuery()) {
+                                        resultSink.clear();
+                                        printToSink(resultSink, resultSet, null);
+                                    }
+                                    rows.put(interval[0]).put('\n').put(resultSink);
+                                }
+                            }
+                            final String plan = explain(connection, sql, (ps, values) -> {
+                                ps.setString(1, values[0]);
+                                ps.setString(2, values[1]);
+                            }, intervals[0]);
+                            assertFused(plan, isFused);
+                            assertContains(plan, "symbolKeyJoin: true");
+                        }
+                    }
+                });
+            }
+            Assert.assertTrue(expected.length() > 0);
+            TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    @Test
     public void testNamedStatementRebindsTypedTimestamps() throws Exception {
         assertNamedStatement(SQL, PGHashJoinGroupByTest::bindTyped, EXPECTED, true, true);
     }

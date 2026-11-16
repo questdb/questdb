@@ -81,7 +81,15 @@ import java.util.concurrent.TimeUnit;
  *       {@code BUILD_REGEX} (a regex over a 400 to 600 character VARCHAR, which the JIT does not
  *       compile, filters a 250,000-row build over 25 daily partitions) and {@code BUILD_LIKE_TINY} (a
  *       LIKE filters a build of 500 rows over 50 daily partitions, ten rows each, for a probe of the
- *       fact table's first 10 seconds, an interval scan of about 2,800 rows).</li>
+ *       fact table's first 10 seconds, an interval scan of about 2,800 rows). {@code SYMBOL_10M_*} join
+ *       on a SYMBOL key fsym, whose SYMBOL column holds 10,000,000 texts, one per row every half second
+ *       from 2024-01-01, and 3,000 more rows over the first hour of 2024-03-01, with a dimension of
+ *       1,000 of its texts: {@code SYMBOL_10M_INTERVAL_D1K} reads the March hour,
+ *       {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} fsym's first 39,062 and
+ *       39,063 rows, one key each, either side of the 256 texts per probe row below which the probe
+ *       translates the key through each worker's own cache rather than a cache that the dictionary
+ *       sizes, and {@code SYMBOL_10M_FULL} every row.</li>
+ *   <li>{@code fused}: false compiles the query with the fused GROUP BY off, the plan it replaces.</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -104,12 +112,16 @@ import java.util.concurrent.TimeUnit;
         "--enable-native-access=ALL-UNNAMED"
 })
 public class HashJoinGroupByBenchmark {
-    private static final String DATA_VERSION = "v2";
+    private static final String DATA_VERSION = "v3";
     private static final String FUSED_NODE = "Hash Join Group By";
-    private static final String[] TABLES = {"ready", "fact", "d1", "d2", "d3", "dsym", "dreg", "dtiny"};
+    private static final String SYMBOL_10M_GROUP_BY = "SELECT d.v % 10 k, count() c FROM fsym f JOIN d1k d ON f.sym = d.sym";
+    private static final String[] TABLES = {"ready", "fact", "d1", "d2", "d3", "dsym", "dreg", "dtiny", "fsym", "d1k"};
 
     @Param({"10000000"})
     public long factRows;
+
+    @Param({"true"})
+    public boolean fused;
 
     @Param({"5000000"})
     public long largeDimRows;
@@ -117,7 +129,8 @@ public class HashJoinGroupByBenchmark {
     @Param({"250000"})
     public int pageFrameMaxRows;
 
-    @Param({"INT_SMALL", "INT_LARGE", "LEFT", "PROBE_FILTER", "SYMBOL", "STAGED", "COUNT", "BUILD_REGEX", "BUILD_LIKE_TINY"})
+    @Param({"INT_SMALL", "INT_LARGE", "LEFT", "PROBE_FILTER", "SYMBOL", "STAGED", "COUNT", "BUILD_REGEX", "BUILD_LIKE_TINY",
+            "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL"})
     public String shape;
 
     @Param({"8"})
@@ -215,6 +228,10 @@ public class HashJoinGroupByBenchmark {
                 "timestamp_sequence(0, 8_640_000) ts FROM long_sequence(250_000)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
         engine.execute("CREATE TABLE dtiny AS (SELECT ((x - 1) * 16)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(8, 16, 0)::VARCHAR s, " +
                 "timestamp_sequence(0, 8_640_000_000) ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("CREATE TABLE fsym (sym SYMBOL CAPACITY 16777216 NOCACHE, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 500_000) FROM long_sequence(10_000_000)", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || ((x - 1) % 1_000 + 1), x, timestamp_sequence('2024-03-01', 1_200_000) FROM long_sequence(3_000)", ctx);
+        engine.execute("CREATE TABLE d1k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(1_000))", ctx);
         engine.execute("CREATE TABLE ready (x INT)", ctx);
     }
 
@@ -266,12 +283,13 @@ public class HashJoinGroupByBenchmark {
         ctx.setParallelHashJoinGroupByEnabled(true);
         createTables(root);
 
+        ctx.setParallelHashJoinGroupByEnabled(fused);
         factory = engine.select(sql(), ctx);
         final TextPlanSink planSink = new TextPlanSink();
         planSink.of(factory, ctx);
         final String text = planSink.getSink().toString();
-        if (!text.contains(FUSED_NODE)) {
-            throw new IllegalStateException("routing drift: shape=" + shape + '\n' + text);
+        if (fused != text.contains(FUSED_NODE)) {
+            throw new IllegalStateException("routing drift: shape=" + shape + " fused=" + fused + '\n' + text);
         }
         final RecordMetadata metadata = factory.getMetadata();
         types = new int[metadata.getColumnCount()];
@@ -293,6 +311,11 @@ public class HashJoinGroupByBenchmark {
             // A LEFT join builds the filtered dimension whatever the probe's interval holds.
             case "BUILD_LIKE_TINY" -> "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f LEFT JOIN (SELECT * FROM dtiny WHERE s LIKE '%B%') d ON f.k1 = d.k " +
                     "WHERE f.ts IN '1970-01-01T00:00:00;10s' GROUP BY f.sym";
+            // fsym's timestamps step by half a second, so ceil(10,000,000 / 256) = 39,063 rows end at 05:25:31.5.
+            case "SYMBOL_10M_INTERVAL_D1K" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts IN '2024-03-01T00' GROUP BY k";
+            case "SYMBOL_10M_BOUNDARY_BELOW" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.000000Z' GROUP BY k";
+            case "SYMBOL_10M_BOUNDARY_AT" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.500000Z' GROUP BY k";
+            case "SYMBOL_10M_FULL" -> SYMBOL_10M_GROUP_BY + " GROUP BY k";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }

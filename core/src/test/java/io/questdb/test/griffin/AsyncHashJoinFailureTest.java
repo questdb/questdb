@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
@@ -724,14 +725,21 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 256);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0");
-        assertMemoryLimitInEachPhase(true);
+        assertMemoryLimitInEachPhase(true, false);
     }
 
     @Test
     public void testMemoryLimitInEachPhaseOnOwner() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
-        assertMemoryLimitInEachPhase(false);
+        assertMemoryLimitInEachPhase(false, false);
+    }
+
+    @Test
+    public void testMemoryLimitInEachPhaseWithSlotCaches() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, Long.MAX_VALUE);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "0");
+        assertMemoryLimitInEachPhase(false, true);
     }
 
     private static void assertCancelled(RecordCursorFactory factory, SqlExecutionCircuitBreaker breaker, String label) throws SqlException {
@@ -873,7 +881,8 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
     }
 
-    // The probe's SYMBOL dictionary holds 5_001 texts, which the translator's cache is sized for.
+    // The probe's SYMBOL dictionary holds 5_001 texts, which the translator's shared cache is sized for:
+    // the probe reads more than one row per 256 of them.
     // The build holds 600 rows of the text 'hot' and 100 of 'warm', and t holds one row of each in
     // every frame of 64 rows, at positions 40 and 10. A task that reaches the cap of 64 tuples on
     // the frame's warm row leaves the frame to a continuation, whose first chunk ends on its hot row
@@ -893,6 +902,27 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                     FROM long_sequence(2_000)
                 )
                 """);
+    }
+
+    // t of createLimitTables() as its first 200 rows, whose texts lie 300 keys apart in a dictionary
+    // of 60,000 texts, the others of a day that t dropped: each probe key is the only one of its page
+    // of 256 keys, so the slots' caches keep them in their hash maps, which grow as they meet keys,
+    // the owner's continuations among them.
+    private static void createSparseLimitTable() throws Exception {
+        execute("DROP TABLE t");
+        execute("CREATE TABLE t (v LONG, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t SELECT CASE WHEN x % 300 = 0 THEN x / 300 ELSE x END,
+                    CASE WHEN x % 300 <> 0 THEN 'pad' || x WHEN x / 300 % 64 = 41 THEN 'hot'
+                        WHEN x / 300 % 64 = 11 THEN 'warm' ELSE 'k' || (x / 300) END,
+                    CASE WHEN x % 300 = 0 THEN '2024-01-01'::TIMESTAMP + (x / 300 - 1) * 1_000_000 ELSE '2023-12-31'::TIMESTAMP + x END
+                FROM long_sequence(60_000)
+                """);
+        execute("ALTER TABLE t DROP PARTITION LIST '2023-12-31'");
+        try (TableReader reader = getReader("t")) {
+            Assert.assertEquals(200, reader.size());
+            Assert.assertTrue(reader.getSymbolMapReader(1).getSymbolCount() > 256 * 200);
+        }
     }
 
     private static void createFileTables() throws Exception {
@@ -987,11 +1017,18 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         return phase;
     }
 
-    private void assertMemoryLimitInEachPhase(boolean isInRounds) throws Exception {
+    // Sweeps the per-query memory limit over a LEFT join of t until the join fits, and counts the
+    // phase that each breach landed in. With isSlotCached, t holds 200 rows over a dictionary of about
+    // 60,000 texts, fewer than one row per 256 texts, so the slots translate t's keys through caches of
+    // their own, which grow as the owner joins.
+    private void assertMemoryLimitInEachPhase(boolean isInRounds, boolean isSlotCached) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
         assertMemoryLeak(() -> {
             createLimitTables();
+            if (isSlotCached) {
+                createSparseLimitTable();
+            }
             sqlExecutionContext.changePageFrameSizes(64, 64);
             // A translated SYMBOL key, a residual that makes the operator walk every pair on the
             // workers, and a payload of fixed-size columns, which the build copies.
@@ -1013,6 +1050,8 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                 int copy = 0;
                 int probe = 0;
                 int continuation = 0;
+                // The breaches in a slot's own translation cache, in whichever phase.
+                int slotCache = 0;
                 for (long limit = step; ; limit += step) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1022,10 +1061,14 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                         Assert.assertTrue(stage.isPayloadCopied());
                         Assert.assertEquals(isInRounds, stage.isBuiltInRounds());
                         Assert.assertTrue(join.getAtom().getContinuationCount() > 0);
+                        Assert.assertEquals(isSlotCached, stage.isSymbolKeySlotCached(0));
                         break;
                     } catch (CairoException e) {
                         Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
                         TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        if (isThrownIn(e, "io.questdb.griffin.engine.join.SymbolKeyTranslator$View", "translateOutsideCache")) {
+                            slotCache++;
+                        }
                         switch (phase(e)) {
                             case "build" -> build++;
                             case "translator" -> translator++;
@@ -1042,9 +1085,17 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                     Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                 }
-                final String counts = "build " + build + ", translator " + translator + ", copy " + copy + ", probe " + probe + ", continuation " + continuation;
+                final String counts = "build " + build + ", translator " + translator + ", copy " + copy + ", probe " + probe
+                        + ", continuation " + continuation + ", slot cache " + slotCache;
                 Assert.assertTrue(counts, build > 0);
-                Assert.assertTrue(counts, translator > 0);
+                // The bind of the slots' translation allocates nothing; their caches grow as they join.
+                if (isSlotCached) {
+                    Assert.assertEquals(counts, 0, translator);
+                    Assert.assertTrue(counts, slotCache > 0);
+                } else {
+                    Assert.assertTrue(counts, translator > 0);
+                    Assert.assertEquals(counts, 0, slotCache);
+                }
                 Assert.assertTrue(counts, copy > 0);
                 Assert.assertTrue(counts, probe > 0);
                 Assert.assertTrue(counts, continuation > 0);

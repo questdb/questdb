@@ -131,6 +131,32 @@ public class PGAsyncHashJoinTest extends BasePGTest {
     }
 
     @Test
+    public void testNamedStatementsWithLimitsThatSwitchSymbolKeyTranslation() throws Exception {
+        assertMemoryLeak(() -> {
+            // fs.sym holds 300,000 texts, so the join translates its key through one shared cache when it
+            // reads at least ceil(300,000 / 256) = 1,172 probe rows first, and through each worker's own
+            // cache otherwise. A LIMIT of 1,171 or 10 reads fewer, a LIMIT of 1,172 or of the March
+            // partition's 1,000 rows not, so each execution of a statement may switch.
+            execute("CREATE TABLE fs (sym SYMBOL CAPACITY 524288, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO fs SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(300_000)");
+            execute("INSERT INTO fs SELECT 'k' || ((x - 1) % 900 + 1), x, timestamp_sequence('2024-03-01', 1_000_000) FROM long_sequence(1_000)");
+            execute("CREATE TABLE ds AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(1_000))");
+            final String[] queries = {
+                    "SELECT fs.ts, fs.sym, ds.w FROM fs JOIN ds ON fs.sym = ds.sym LIMIT ?",
+                    "SELECT fs.ts, fs.sym, ds.w FROM fs LEFT JOIN ds ON fs.sym = ds.sym WHERE fs.ts IN '2024-03-01' LIMIT ?",
+            };
+            final long[][] limits = {{1_171, 1_172, 1_171}, {10, 1_000_000, 10}};
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            withServer(false, WorkerPoolMode.LEGACY, port -> readLimits(port, queries, limits, expected, false));
+            withServer(true, WorkerPoolMode.LEGACY, port -> readLimits(port, queries, limits, actual, true));
+            // Each execution of the first statement returns its LIMIT's rows, twice per transfer format.
+            Assert.assertTrue(countLines(expected) > 2 * 2 * (1_171 + 1_172 + 1_171));
+            TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    @Test
     public void testWalkingJoinReadSevenRowsAtATime() throws Exception {
         assertMemoryLeak(() -> {
             // f8 holds 96 probe rows, twelve frames of eight rows, and each meets the three rows of its
@@ -223,6 +249,44 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                     }
                     final String plan = explain(connection, sql, BINDS[0]);
                     Assert.assertEquals(plan, isParallel, plan.contains("Hash Join workers:"));
+                }
+            }
+        }
+    }
+
+    // Executes each query's named statement with each of its LIMITs, twice over, in binary and text
+    // transfer, and appends the rows to the sink.
+    private void readLimits(int port, String[] queries, long[][] limits, StringSink sink, boolean isParallel) throws Exception {
+        final StringSink rows = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            for (int q = 0; q < queries.length; q++) {
+                // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again
+                // on every later execution.
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                        PreparedStatement statement = connection.prepareStatement(queries[q])
+                ) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        for (long limit : limits[q]) {
+                            statement.setLong(1, limit);
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                rows.clear();
+                                printToSink(rows, resultSet, null);
+                            }
+                            sink.put(queries[q]).put(' ').put(limit).put('\n').put(rows);
+                        }
+                    }
+                    try (PreparedStatement explain = connection.prepareStatement("EXPLAIN " + queries[q])) {
+                        explain.setLong(1, limits[q][0]);
+                        try (ResultSet resultSet = explain.executeQuery()) {
+                            final StringBuilder plan = new StringBuilder();
+                            while (resultSet.next()) {
+                                plan.append(resultSet.getString(1)).append('\n');
+                            }
+                            Assert.assertEquals(plan.toString(), isParallel, plan.indexOf("Hash Join workers:") > -1);
+                            Assert.assertTrue(plan.toString(), plan.indexOf("symbolKeyJoin: true") > -1);
+                        }
+                    }
                 }
             }
         }

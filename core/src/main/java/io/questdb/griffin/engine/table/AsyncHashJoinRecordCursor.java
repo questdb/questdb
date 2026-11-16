@@ -342,6 +342,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 for (int i = 0, n = frameSequence.getFrameCount(); i < n; i++) {
                     probeRows += frameSequence.getFrameRowCount(i);
                 }
+                // The frames' rows, or the LIMIT's when fewer, bound the keys that the execution
+                // translates first.
+                atom.bindSymbolKeyTranslation(Math.min(probeRows, limitRows), circuitBreaker);
                 atom.maybeCopyPayload(probeRows, circuitBreaker, buildRounds);
                 final HashJoinTupleRing ring = atom.getRing();
                 ring.of(frameSequence, true);

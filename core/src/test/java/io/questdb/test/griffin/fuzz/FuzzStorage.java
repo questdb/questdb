@@ -31,25 +31,36 @@ import io.questdb.std.ObjList;
  * shadow does not share: the shadow is always a partitioned WAL table that holds every column from
  * its first row, so the diff-shadow oracle compares each shape below with the plain one.
  *
- * @param isWal            false for a {@code BYPASS WAL} table
- * @param isPartitioned    false for a {@code PARTITION BY NONE} table, which is never a WAL one
- * @param lateColumns      the columns that the table gains through {@code ALTER TABLE ADD COLUMN}
- *                         after its first {@code firstChunkRows} rows, which are column tops of
- *                         them; empty when it has every column from the start
- * @param firstChunkRows   the rows written before the late columns exist and the dropped column goes
- * @param droppedColumnPos the position among the CREATE TABLE columns of a column that the table
- *                         drops after its first rows, or -1 for none
+ * @param isWal                      false for a {@code BYPASS WAL} table
+ * @param isPartitioned              false for a {@code PARTITION BY NONE} table, which is never a WAL
+ *                                   one
+ * @param lateColumns                the columns that the table gains through
+ *                                   {@code ALTER TABLE ADD COLUMN} after its first
+ *                                   {@code firstChunkRows} rows, which are column tops of them;
+ *                                   empty when it has every column from the start
+ * @param firstChunkRows             the rows written before the late columns exist and the dropped
+ *                                   column goes
+ * @param droppedColumnPos           the position among the CREATE TABLE columns of a column that the
+ *                                   table drops after its first rows, or -1 for none
+ * @param isJoinKeyDictionaryPadded  true when the {@code sym} column's dictionary also holds the
+ *                                   {@link #PADDING_TEXT_COUNT} texts of a day that the partitioned
+ *                                   table dropped, far more than one per row of the table
  */
 public record FuzzStorage(
         boolean isWal,
         boolean isPartitioned,
         ObjList<String> lateColumns,
         int firstChunkRows,
-        int droppedColumnPos
+        int droppedColumnPos,
+        boolean isJoinKeyDictionaryPadded
 ) {
     // The name of the column that a table with droppedColumnPos > -1 creates, then drops.
     public static final String DROPPED_COLUMN = "zdrop";
-    public static final FuzzStorage PLAIN = new FuzzStorage(true, true, new ObjList<>(), 0, -1);
+    // The texts that pad the sym dictionary of a table with isJoinKeyDictionaryPadded: a probe of
+    // the table's rows, fewer than PADDING_TEXT_COUNT / 256, translates SYMBOL join keys through the
+    // join workers' own caches rather than a cache that the dictionary sizes.
+    public static final int PADDING_TEXT_COUNT = 60_000;
+    public static final FuzzStorage PLAIN = new FuzzStorage(true, true, new ObjList<>(), 0, -1, false);
 
     public String describe() {
         final StringBuilder sb = new StringBuilder();
@@ -66,6 +77,9 @@ public record FuzzStorage(
         }
         if (droppedColumnPos > -1) {
             sb.append(" dropped ").append(DROPPED_COLUMN).append('@').append(droppedColumnPos);
+        }
+        if (isJoinKeyDictionaryPadded) {
+            sb.append(" padded sym dictionary");
         }
         return sb.toString();
     }

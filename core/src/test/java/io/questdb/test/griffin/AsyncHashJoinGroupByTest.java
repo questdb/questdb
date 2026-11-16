@@ -568,12 +568,14 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     CountDownLatch acquired = new CountDownLatch(1);
                     f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                     AtomicLong buildBytes = new AtomicLong(-1);
-                    // The first read builds and then copies. The build is frozen and charged when
-                    // the owner reaches the probe's frames; the copy, which follows, is not.
+                    // The first read builds, translates and then copies. The build is frozen and
+                    // charged when the owner reaches the probe's frames; the SYMBOL key translation,
+                    // which waits for the probe's row count, and the copy follow. The limit admits the
+                    // translation, so that the breach stays the copy's.
                     hook.onProbeFrames = () -> {
                         Assert.assertNotNull(f.factory.getAtom().getFrozenBuild());
                         buildBytes.set(tracker.getUsed());
-                        tracker.setLimit(tracker.getUsed());
+                        tracker.setLimit(tracker.getUsed() + translationBytes());
                     };
                     try (RecordCursor cursor = f.getRawCursor()) {
                         // Opening the cursor builds nothing and charges nothing.
@@ -644,11 +646,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     CountDownLatch acquired = new CountDownLatch(1);
                     f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                     AtomicLong buildBytes = new AtomicLong(-1);
-                    // The limit tightens to what the frozen build charged, so the breach is a reducer's.
+                    // The limit tightens to what the frozen build charged and the SYMBOL key
+                    // translation that follows charges, so the breach is a reducer's.
                     hook.onProbeFrames = () -> {
                         Assert.assertNotNull(f.factory.getAtom().getFrozenBuild());
                         buildBytes.set(tracker.getUsed());
-                        tracker.setLimit(tracker.getUsed());
+                        tracker.setLimit(tracker.getUsed() + translationBytes());
                     };
                     try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
                         cursor.hasNext();
@@ -677,12 +680,79 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSlotModeBindChargesNothingAndReducerBreachReleases() throws Exception {
+        // INT and LONG keys translate nothing.
+        useSymbolKey();
+        assertMemoryLeak(() -> {
+            createTables();
+            // 2,000 more texts in r's dictionary, of a month that r then drops: r's 5 rows read fewer
+            // than ceil(2,003 / 256) = 8 rows, so the slots translate through caches of their own.
+            execute("INSERT INTO r SELECT ('pad' || x)::symbol, timestamp_sequence('2019-06-01', 1_000_000), 1.0, 2.0 FROM long_sequence(2_000)");
+            execute("ALTER TABLE r DROP PARTITION LIST '2019-06'");
+            try (TableReader reader = getReader("r")) {
+                Assert.assertEquals(2_003, reader.getSymbolMapReader(0).getSymbolCount());
+                Assert.assertEquals(5, reader.size());
+            }
+            // Row ids, so that the breach is a reducer's rather than the payload copy's.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+            String sql = AGGREGATES + OUTER;
+            Hook hook = new Hook();
+            hook.isProbeInstrumented = true;
+            try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook);
+                 LimitedMemoryTracker tracker = new LimitedMemoryTracker(100_000_000)) {
+                MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    CountDownLatch acquired = new CountDownLatch(1);
+                    f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
+                    AtomicLong buildBytes = new AtomicLong(-1);
+                    // The owner reaches the probe's frames before it binds the translation, which the
+                    // limit, tightened to what the frozen build charged, then admits: it charges nothing.
+                    hook.onProbeFrames = () -> {
+                        Assert.assertNotNull(f.factory.getAtom().getFrozenBuild());
+                        Assert.assertFalse(f.factory.getAtom().isSymbolKeySlotCached(0));
+                        Assert.assertFalse(f.factory.getAtom().isSymbolKeyCacheFilledFromBuild(0));
+                        buildBytes.set(tracker.getUsed());
+                        tracker.setLimit(tracker.getUsed());
+                    };
+                    try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
+                        cursor.hasNext();
+                        Assert.fail();
+                    } catch (CairoException expected) {
+                        Assert.assertTrue(expected.isOutOfMemory());
+                        TestUtils.assertContains(expected.getFlyweightMessage(), "query memory limit exceeded");
+                        Assert.assertFalse(isThrownFrom(expected, "HashJoinBuildStage", "bindSymbolKeyTranslation"));
+                    } finally {
+                        hook.onProbeFrames = null;
+                    }
+                    Assert.assertTrue("build must be charged before probe", buildBytes.get() > 0);
+                    // A worker took a slot, so the breach came after the dispatch, past the bind.
+                    Assert.assertEquals(0, acquired.getCount());
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, f.factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    tracker.setLimit(100_000_000);
+                    try (RecordCursor cursor = f.getRawCursor()) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertTrue(f.factory.getAtom().isSymbolKeySlotCached(0));
+                        Assert.assertEquals(0, f.factory.getAtom().getBuildingStage().getSymbolKeyCacheSizeInBytes(0));
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(previous);
+                }
+                f.assertResults(sql);
+            }
+        });
+    }
+
+    @Test
     public void testTranslationCacheAndBuildMemoryLimitsCloseBuildCursorAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             // The build is small and the probe dictionary is large, which separates the two
             // allocations: the build runs first, and the translation cache follows it once the
-            // probe frame cursor is open and its dictionary size is known.
+            // probe's frames are cut, whose rows the cache is opened for. The probe reads its
+            // 200,005 rows, more than one per 256 of its texts, so the cache is the shared one.
             execute("insert into p select " + key("x::int") + ", 'ES', 1.0 from long_sequence(1_000)");
             execute("insert into r select " + key("x::int") + ", timestamp_sequence('2021-03-01', 1_000_000), 1.0, 2.0 from long_sequence(200_000)");
             // The probe holds 200,000 distinct keys, so SYMBOL keys translate through a cache
@@ -870,16 +940,20 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)
             ) {
                 BuildCheckBreaker counting = new BuildCheckBreaker(previousBreaker, Long.MAX_VALUE);
-                // The owner reaches the probe's frames once the build is frozen and the cache is
-                // cleared, so the checks counted there are the ones up to the end of the build.
+                // The owner reaches the probe's frames once the build is frozen, so the checks
+                // counted there are the ones up to the end of the build. The cache is cleared after
+                // them, since the translation waits for the probe's row count.
                 AtomicLong buildChecks = new AtomicLong(-1);
                 hook.onProbeFrames = () -> buildChecks.set(counting.checks);
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
                 sqlExecutionContext.setMemoryTracker(tracker);
+                final long executionChecks;
                 try (RecordCursor cursor = f.getRawCursor()) {
                     // Opening the cursor reads no build frame; the first read builds.
                     Assert.assertEquals(0, hook.buildReads);
                     Assert.assertTrue(cursor.hasNext());
+                    // The first read builds, translates, probes and merges.
+                    executionChecks = counting.checks;
                     // The build spans several frames of 65,536 rows.
                     Assert.assertTrue("build frames: " + hook.buildReads, hook.buildReads > 3);
                 } finally {
@@ -888,19 +962,21 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     sqlExecutionContext.setMemoryTracker(previousTracker);
                 }
                 // Checks follow the build cursor's frames, the build phases and MiB of build
-                // memory and cleared cache, not the rows or the translated keys.
+                // memory, not the rows.
                 Assert.assertTrue("build checks must not scale with " + keyCount + " keys: " + buildChecks.get(),
                         buildChecks.get() > 0 && buildChecks.get() < 128);
                 int cacheCancellations = 0;
                 int buildCancellations = 0;
-                for (long failAt = 1; failAt <= buildChecks.get(); failAt++) {
+                // Cancel at each check of the execution in turn: the build's, then those after the
+                // owner reached the probe's frames, the translation's among them.
+                for (long failAt = 1; failAt <= executionChecks; failAt++) {
                     BuildCheckBreaker breaker = new BuildCheckBreaker(previousBreaker, failAt);
                     ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                     sqlExecutionContext.setMemoryTracker(tracker);
                     final int probeWalks = hook.probeWalks.get();
                     try (RecordCursor cursor = f.getRawCursor()) {
                         cursor.hasNext();
-                        Assert.fail("expected cancellation during build at " + failAt);
+                        Assert.fail("expected cancellation at check " + failAt);
                     } catch (CairoException ex) {
                         Assert.assertTrue(ex.isCancellation());
                         boolean isInTranslator = false;
@@ -912,6 +988,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         }
                         if (isInTranslator) {
                             cacheCancellations++;
+                            // The translation waits for the probe's frames, which the owner reached.
+                            Assert.assertTrue("translator check " + failAt + " of " + buildChecks.get(), failAt > buildChecks.get());
                         } else if (isInBuildLoop) {
                             buildCancellations++;
                         }
@@ -919,8 +997,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         ((SqlExecutionContextImpl) sqlExecutionContext).with(previousBreaker);
                         sqlExecutionContext.setMemoryTracker(previousTracker);
                     }
-                    // The cancellation landed before the owner reached the probe's frames.
-                    Assert.assertEquals(probeWalks, hook.probeWalks.get());
+                    // A cancellation up to the build's last check landed before the owner reached the
+                    // probe's frames, and any later one after.
+                    Assert.assertEquals(failAt <= buildChecks.get() ? probeWalks : probeWalks + 1, hook.probeWalks.get());
                     // The cache clears after the build, so its cancellations are not row ones.
                     Assert.assertEquals(hook.buildOpens, hook.buildCloses);
                     Assert.assertEquals(0, tracker.getUsed());
@@ -1252,7 +1331,8 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     hook.isProbeInstrumented = true;
                     try (Fixture f = new Fixture(sql, "r", ints(0, 1, 2, 3), "p", ints(0, 1, 2), null, hook)) {
                         // The owner reaches the probe's frames once the rounds have frozen the build,
-                        // which tells a failure of the build from one of the copy or the probe.
+                        // which tells a failure of the build from one of the translation, the copy or
+                        // the probe.
                         AtomicBoolean isBuilt = new AtomicBoolean();
                         hook.onProbeFrames = () -> {
                             isBuilt.set(true);
@@ -2116,11 +2196,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                         f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                         AtomicLong buildBytes = new AtomicLong(-1);
                         // The first read builds. The limit tightens to what the frozen build charged
-                        // when the owner reaches the probe's frames, so the breach is a reducer's.
+                        // when the owner reaches the probe's frames, and the SYMBOL key translation that
+                        // follows charges, so the breach is a reducer's.
                         hook.onProbeFrames = () -> {
                             Assert.assertNotNull(f.factory.getAtom().getFrozenBuild());
                             buildBytes.set(tracker.getUsed());
-                            tracker.setLimit(tracker.getUsed());
+                            tracker.setLimit(tracker.getUsed() + translationBytes());
                         };
                         try (RecordCursor cursor = f.getRawCursor(); Reducers reducers = new Reducers()) {
                             cursor.hasNext();
@@ -2422,6 +2503,12 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
 
     private String keyType() {
         return isSymbolKey ? "symbol" : isLongKey ? "long" : "int";
+    }
+
+    // The bytes of the shared SYMBOL key cache over createTables()' r, whose 5 rows hold 3 key texts,
+    // at least one row per 256 texts: four bytes per text. INT and LONG keys translate nothing.
+    private long translationBytes() {
+        return isSymbolKey ? 3 * Integer.BYTES : 0;
     }
 
     private static IntList ints(int... values) {

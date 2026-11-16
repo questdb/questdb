@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -38,7 +40,9 @@ import org.junit.Test;
  * Pins the storage shapes that {@link FuzzTableFactory} gives the fuzzer's primary tables (see
  * {@link FuzzStorage}): over the seeds below, the factory makes non-WAL and non-partitioned tables,
  * tables with column tops, in join keys among other columns, in STRING and VARCHAR columns of native
- * partitions and in Parquet partitions, and tables that dropped a column. Every such table holds the rows of its shadow, a plain partitioned WAL table
+ * partitions and in Parquet partitions, tables that dropped a column, and tables whose sym dictionary
+ * holds far more texts than their rows, whose SYMBOL key a join that probes them translates through
+ * the workers' own caches. Every such table holds the rows of its shadow, a plain partitioned WAL table
  * with every column from its first row, and the parallel hash join over them, as probe and as build,
  * with the build's payload read at its rows and from a copy, returns the ordinary plan's rows, in
  * order, and the rows of the same join over the shadows.
@@ -58,9 +62,10 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
             int nonWalProbes = 0;
             int droppedColumns = 0;
             int nativeVarSizeColumnTopPayloads = 0;
+            int paddedSymbolKeyProbes = 0;
             int seed = 0;
             while (seed < MAX_SEEDS && (columnTopKeys == 0 || parquetColumnTopPayloads == 0 || nonPartitionedBuilds == 0
-                    || nonWalProbes == 0 || droppedColumns == 0 || nativeVarSizeColumnTopPayloads == 0)) {
+                    || nonWalProbes == 0 || droppedColumns == 0 || nativeVarSizeColumnTopPayloads == 0 || paddedSymbolKeyProbes == 0)) {
                 seed++;
                 final Rnd rnd = new Rnd(0x5707, seed);
                 final FuzzConfig config = new FuzzConfig(rnd);
@@ -106,12 +111,16 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
                         if (probe.getStorage().hasDroppedColumn() || build.getStorage().hasDroppedColumn()) {
                             droppedColumns++;
                         }
+                        if (probe.getStorage().isJoinKeyDictionaryPadded()) {
+                            assertSlotCachedProbe(probe, build);
+                            paddedSymbolKeyProbes++;
+                        }
                     }
                 }
             }
             final String counts = "seeds " + seed + ", column top keys " + columnTopKeys + ", Parquet column top payloads " + parquetColumnTopPayloads
                     + ", non-partitioned builds " + nonPartitionedBuilds + ", non-WAL probes " + nonWalProbes + ", dropped columns " + droppedColumns
-                    + ", native var-size column top payloads " + nativeVarSizeColumnTopPayloads;
+                    + ", native var-size column top payloads " + nativeVarSizeColumnTopPayloads + ", padded SYMBOL key probes " + paddedSymbolKeyProbes;
             LOG.info().$("fuzz storage coverage: ").$(counts).$();
             Assert.assertTrue(counts, columnTopKeys > 0);
             Assert.assertTrue(counts, parquetColumnTopPayloads > 0);
@@ -119,6 +128,7 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
             Assert.assertTrue(counts, nonWalProbes > 0);
             Assert.assertTrue(counts, droppedColumns > 0);
             Assert.assertTrue(counts, nativeVarSizeColumnTopPayloads > 0);
+            Assert.assertTrue(counts, paddedSymbolKeyProbes > 0);
         });
     }
 
@@ -162,6 +172,29 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
         ParallelHashJoinTestUtils.assertParallelHashJoin(sql, sqlExecutionContext);
         final String shadowSql = select + probe.getShadow().getName() + " p" + join + build.getShadow().getName() + " b ON p." + key + " = b." + key;
         TestUtils.assertEquals(sql, ParallelHashJoinTestUtils.ordinary(shadowSql, sqlExecutionContext), ParallelHashJoinTestUtils.ordinary(sql, sqlExecutionContext));
+    }
+
+    // A LEFT join on sym that probes a table of a padded dictionary, whose rows are far fewer than one
+    // per 256 of its texts: the join translates the key through the slots' own caches, and returns the
+    // ordinary plan's rows.
+    private static void assertSlotCachedProbe(FuzzTable probe, FuzzTable build) throws Exception {
+        final String sql = "SELECT * FROM " + probe.getName() + " p LEFT JOIN " + build.getName() + " b ON p.sym = b.sym";
+        final String expected = ParallelHashJoinTestUtils.ordinary(sql, sqlExecutionContext);
+        final boolean wasEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+        sqlExecutionContext.setParallelHashJoinEnabled(true);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = ParallelHashJoinTestUtils.find(factory);
+            Assert.assertNotNull(sql, join);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+                Assert.assertTrue(sql, join.getAtom().getStage(0).isSymbolKeySlotCached(0));
+            }
+            TestUtils.assertEquals(sql, expected, ParallelHashJoinTestUtils.result(factory, sqlExecutionContext));
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(wasEnabled);
+        }
     }
 
     // The table has the storage shape that the factory reports, and its shadow's rows.

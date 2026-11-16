@@ -113,6 +113,9 @@ public final class FuzzTableFactory {
     private static final double LATE_JOIN_KEY_CHANCE = 0.5;
     private static final double NON_PARTITIONED_CHANCE = 0.2;
     private static final double NON_WAL_CHANCE = 0.2;
+    // The day before the run's start whose rows pad a primary's sym dictionary, see pickStorage().
+    private static final String PADDING_DAY = "2023-12-01";
+    private static final double PADDED_JOIN_KEY_DICTIONARY_CHANCE = 0.2;
     private static final long STORAGE_SEED_SALT = 0x5707_a6e5_c01d_70f5L;
     private static final String TS_COLUMN = "ts";
     private static final String VARCHAR_JOIN_KEY_COLUMN = "vk";
@@ -175,6 +178,15 @@ public final class FuzzTableFactory {
             executor.execute(buildInsertDml(primaryName, primaryColumns, rows, 0));
         }
         drainWal.run();
+        if (storage.isJoinKeyDictionaryPadded()) {
+            // Rows of distinct sym texts in a day before the run's start, which the table drops: their
+            // texts stay in the dictionary, and the shadow, which copies the table's rows, lacks them.
+            executor.execute("INSERT INTO " + primaryName + " (" + JOIN_KEY_COLUMN + ", " + TS_COLUMN + ") SELECT 'pad' || x, '"
+                    + PADDING_DAY + "'::TIMESTAMP + x FROM long_sequence(" + FuzzStorage.PADDING_TEXT_COUNT + ")");
+            drainWal.run();
+            executor.execute("ALTER TABLE " + primaryName + " DROP PARTITION LIST '" + PADDING_DAY + "'");
+            drainWal.run();
+        }
 
         // Composite-partition backdate, primary only and before the shadow copy
         // (see the class javadoc) -- both siblings still end up with identical rows.
@@ -267,6 +279,12 @@ public final class FuzzTableFactory {
         return false;
     }
 
+    // Drawn last, so that a seed keeps the shapes it drew before this one existed. Only a partitioned
+    // table can drop the day of its padding rows.
+    private static boolean isJoinKeyDictionaryPadded(Rnd storageRnd, boolean isPartitioned) {
+        return storageRnd.nextDouble() < PADDED_JOIN_KEY_DICTIONARY_CHANCE && isPartitioned;
+    }
+
     /**
      * Draws the primary's storage shape (see {@link FuzzStorage}) from a generator seeded off the
      * run's one, which this draws nothing from, so that a seed replays the same queries whatever
@@ -276,7 +294,11 @@ public final class FuzzTableFactory {
      *   {@link #NON_PARTITIONED_CHANCE};</li>
      *   <li>a table with column tops, {@link #COLUMN_TOP_CHANCE}: some of its columns, the join keys
      *   more often, come after its first rows;</li>
-     *   <li>a table that drops a column after its first rows, {@link #DROPPED_COLUMN_CHANCE}.</li>
+     *   <li>a table that drops a column after its first rows, {@link #DROPPED_COLUMN_CHANCE};</li>
+     *   <li>a partitioned table whose {@code sym} dictionary holds 60,000 more texts, of a day that it
+     *   dropped, {@link #PADDED_JOIN_KEY_DICTIONARY_CHANCE}: a join that probes it reads fewer than
+     *   one row per 256 of the texts, and translates its SYMBOL key through the workers' own caches,
+     *   which its plain shadow's join does not.</li>
      * </ul>
      * A late column is neither indexed, nor covered by an index, on either table, so both tables
      * create their indexes up front. Nor is it a SHORT or a temporal column: the vectorized GROUP BY
@@ -316,12 +338,12 @@ public final class FuzzTableFactory {
         }
         final boolean hasDroppedColumn = storageRnd.nextDouble() < DROPPED_COLUMN_CHANCE;
         if (lateColumns.size() == 0 && !hasDroppedColumn) {
-            return new FuzzStorage(isWal, isPartitioned, lateColumns, 0, -1);
+            return new FuzzStorage(isWal, isPartitioned, lateColumns, 0, -1, isJoinKeyDictionaryPadded(storageRnd, isPartitioned));
         }
         // A quarter to three quarters of the rows come first.
         final int firstChunkRows = rows / 4 + storageRnd.nextInt(rows / 2);
         final int droppedColumnPos = hasDroppedColumn ? storageRnd.nextInt(columns.size() - lateColumns.size()) : -1;
-        return new FuzzStorage(isWal, isPartitioned, lateColumns, firstChunkRows, droppedColumnPos);
+        return new FuzzStorage(isWal, isPartitioned, lateColumns, firstChunkRows, droppedColumnPos, isJoinKeyDictionaryPadded(storageRnd, isPartitioned));
     }
 
     /**
