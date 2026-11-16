@@ -286,11 +286,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         if (tas != null) {
-            // close cursor in case it is open
-            cursor = Misc.free(cursor);
-            queryCancellation.clear();
-            queryMemoryTracker = null;
-            queryExecutionResources = null;
+            // Close the cursor in case it is open, and end the execution owner before the factory goes
+            // back to the shared cache. Ending the owner releases the execution's resources, which
+            // include state of the factory's functions, and another connection can take the factory
+            // from the cache as soon as it is there. A connection that closes with an open cursor
+            // gets here with its owner still running.
+            try {
+                closeSuspendedCursor();
+            } catch (Throwable th) {
+                // close() frees the factory, which tas holds too
+                LOG.error().$("could not end SQL execution, not caching its plan [error=").$(th).I$();
+                return;
+            }
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
