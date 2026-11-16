@@ -12122,6 +12122,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int streamKeyIndex = executionContext.isStreamGroupByEnabled()
                     && sharedOuterProjectionFunctions == null
                     && isStreamGroupByFillSupported(model, keyTypes.getColumnCount(), outerProjectionMetadata)
+                    && !isLongTopKOrderBy(model, outerProjectionMetadata, projectionFunctionFlags, executionContext)
                     ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
                     : -1;
             final Function streamKey = streamKeyIndex >= 0
@@ -15362,6 +15363,45 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return masterIndex != masterMetadata.getTimestampIndex() || slaveIndex != slaveMetadata.getTimestampIndex();
         }
         return listColumnFilterA.size() > 0 && listColumnFilterB.size() > 0;
+    }
+
+    private boolean isLongTopKOrderBy(IQueryModel model, RecordMetadata metadata, IntList projectionFunctionFlags, SqlExecutionContext executionContext) throws SqlException {
+        final IQueryModel orderByModel = lastSeenOrderByModel;
+        if (orderByModel == null || orderByModel.getOrderBy().size() != 1 || orderByModel.getLimitLo() == null
+                || orderByModel.getLimitHi() != null || model.getUnionModel() != null || model.getWhereClause() != null
+                || hasNonNoneFill(model)) {
+            return false;
+        }
+        ExpressionNode column = orderByModel.getOrderBy().getQuick(0);
+        for (IQueryModel current = orderByModel; current != model; current = current.getNestedModel()) {
+            final IQueryModel nested = current.getNestedModel();
+            final int selectModelType = current.getSelectModelType();
+            if (nested == null || nested.getLimitLo() != null || nested.getUnionModel() != null
+                    || (selectModelType != IQueryModel.SELECT_MODEL_CHOOSE && selectModelType != IQueryModel.SELECT_MODEL_VIRTUAL)
+                    || column.type != LITERAL) {
+                return false;
+            }
+            column = current.getAliasToColumnMap().get(column.token).getAst();
+        }
+        if (column.type != LITERAL) {
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndex(column.token);
+        final int columnType = metadata.getColumnType(columnIndex);
+        final boolean isAggregate = projectionFunctionFlags.getQuick(columnIndex) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY;
+        if (columnType != ColumnType.LONG && !(ColumnType.isTimestamp(columnType) && isAggregate)) {
+            return false;
+        }
+        final Function loFunc = getLoFunction(orderByModel, executionContext);
+        try {
+            if (!loFunc.isConstant()) {
+                return false;
+            }
+            final long lo = loFunc.getLong(null);
+            return lo > 0 && lo <= Integer.MAX_VALUE;
+        } finally {
+            Misc.free(loFunc);
+        }
     }
 
     /**

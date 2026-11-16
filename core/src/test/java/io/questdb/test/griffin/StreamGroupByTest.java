@@ -1531,6 +1531,80 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongTopKKeepsHashGroupBy() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            final String minutes = "SELECT ts, sym, sum(v) s, max(ts) m FROM trades SAMPLE BY 1m";
+            for (String sql : new String[]{
+                    minutes + " ORDER BY s DESC LIMIT 5",
+                    minutes + " ORDER BY s LIMIT 1",
+                    minutes + " ORDER BY m DESC LIMIT 3",
+                    "SELECT * FROM (" + minutes + ") ORDER BY s DESC LIMIT 5",
+                    "SELECT ts, s FROM (" + minutes + ") ORDER BY s DESC LIMIT 5",
+                    "SELECT ts, s, s + 1 x FROM (" + minutes + ") ORDER BY s DESC LIMIT 5",
+                    "SELECT ts FROM (" + minutes + ") ORDER BY s DESC LIMIT 5",
+                    "SELECT * FROM (SELECT * FROM (" + minutes + ")) ORDER BY s DESC LIMIT 5",
+                    "SELECT x.ts, x.s total FROM (" + minutes + ") x ORDER BY total DESC LIMIT 5",
+                    "SELECT timestamp_floor('1m', ts) b, sym, sum(v) s FROM trades ORDER BY s DESC LIMIT 5",
+                    "SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY s DESC LIMIT 3",
+            }) {
+                final String plan = compileAndRead(compiler, context, "EXPLAIN " + sql);
+                TestUtils.assertContains(plan, "Long Top K");
+                Assert.assertFalse(sql + '\n' + plan, plan.contains("Stream Group By"));
+            }
+        });
+    }
+
+    @Test
+    public void testOtherOrderByLimitShapesKeepStreamGroupBy() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            context.getBindVariableService().clear();
+            context.getBindVariableService().setLong(0, 3);
+            final String minutes = "SELECT ts, sym, sum(v) s, avg(v) a, max(ts) m FROM trades SAMPLE BY 1m";
+            for (String sql : new String[]{
+                    "SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC LIMIT 3",
+                    minutes + " ORDER BY m DESC",
+                    minutes + " ORDER BY s DESC LIMIT $1",
+                    minutes + " ORDER BY s DESC LIMIT 1, 3",
+                    minutes + " ORDER BY s DESC LIMIT -3",
+                    minutes + " ORDER BY s DESC LIMIT 0",
+                    minutes + " ORDER BY m DESC LIMIT 3_000_000_000",
+                    minutes + " ORDER BY s DESC, m LIMIT 3",
+                    minutes + " ORDER BY a DESC LIMIT 3",
+                    "SELECT ts, s + 1 x FROM (" + minutes + ") ORDER BY x DESC LIMIT 3",
+                    "SELECT * FROM (" + minutes + ") WHERE s > 0 ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM ((" + minutes + ") UNION ALL (" + minutes + ")) ORDER BY s DESC LIMIT 3",
+                    minutes + " UNION ALL " + minutes + " ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM (" + minutes + ") ORDER BY s + 0 DESC LIMIT 3",
+                    "SELECT ts, max(s) mx FROM (" + minutes + ") SAMPLE BY 1h ORDER BY mx DESC LIMIT 3",
+                    "SELECT a.ts, a.s FROM (" + minutes + ") a JOIN trades b ON (ts) ORDER BY a.s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT a.ts, a.s FROM (" + minutes + ") a JOIN trades b ON (ts)) ORDER BY s DESC LIMIT 3",
+                    "SELECT b.ts, b.s FROM trades a JOIN (" + minutes + ") b ON (ts) ORDER BY b.s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT * FROM (" + minutes + ") LIMIT 100) ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT timestamp_floor('1m', ts) b, sym, sum(v) s FROM trades LIMIT 100) ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT * FROM (" + minutes + ") UNION ALL SELECT * FROM (" + minutes + ")) ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT ts, s, sum(s) OVER () total FROM (" + minutes + ")) ORDER BY s DESC LIMIT 3",
+                    "SELECT * FROM (SELECT ts, s + 1 x FROM (SELECT ts, s, sym FROM (" + minutes + "))) ORDER BY x DESC LIMIT 3",
+                    "SELECT * FROM (" + minutes + ") LATEST ON ts PARTITION BY sym ORDER BY s DESC LIMIT 1",
+                    "SELECT ts, sym, sum(v) s FROM trades SAMPLE BY 1m FILL(NULL) ORDER BY s DESC LIMIT 3",
+            }) {
+                context.setStreamGroupByEnabled(false);
+                final String expected = compileAndRead(compiler, context, sql);
+                context.setStreamGroupByEnabled(true);
+                TestUtils.assertContains(compileAndRead(compiler, context, "EXPLAIN " + sql), "Stream Group By");
+                Assert.assertEquals(sql, expected, compileAndRead(compiler, context, sql));
+            }
+            TestUtils.assertContains(compileAndRead(compiler, context, "EXPLAIN SELECT timestamp_floor('1m', ts) b, sym, sum(v) s FROM trades LIMIT 3"), "Stream Group By");
+            final String scalar = "SELECT ts, v FROM trades WHERE ts >= (SELECT max(ts) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1s)) ORDER BY v DESC LIMIT 3";
+            context.setStreamGroupByEnabled(false);
+            final String expected = compileAndRead(compiler, context, scalar);
+            context.setStreamGroupByEnabled(true);
+            Assert.assertEquals(expected, compileAndRead(compiler, context, scalar));
+        });
+    }
+
+    @Test
     public void testWrappedCopiesIgnoreSortAndJoinBudgets() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1024);
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1024);
@@ -1931,14 +2005,14 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining("Encode sort\n  keys: [s]")
                     .returns(ascending);
-            assertQuery("SELECT ts, sum(v) s FROM t SAMPLE BY 1s ORDER BY s DESC LIMIT 2").withEngine(engine).withContext(context)
+            assertQuery("SELECT ts, sum(v::DOUBLE) s FROM t SAMPLE BY 1s ORDER BY s DESC LIMIT 2").withEngine(engine).withContext(context)
                     .noLeakCheck()
                     .expectSize()
                     .withPlanContaining("Encode sort lo: 2")
                     .returns("""
                             ts\ts
-                            2024-01-01T00:00:00.000000Z\t3
-                            2024-01-01T00:00:02.000000Z\t2
+                            2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-01T00:00:02.000000Z\t2.0
                             """);
             setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
             assertQuery("SELECT ts, sum(v) s FROM t SAMPLE BY 1s ORDER BY s").withEngine(engine).withContext(context)
