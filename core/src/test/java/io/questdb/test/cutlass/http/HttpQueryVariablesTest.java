@@ -299,6 +299,22 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testExportRecompilesStaleQueryWithVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
+            final String reference = "SELECT v FROM t WHERE v > 1";
+            final String sql = "SELECT v FROM t WHERE v > @min";
+            // the select cache keeps the compiled query
+            assertSameExport(reference, sql, "@min := 1", null);
+            // The new column makes the cached query stale: opening its cursor fails, and /exp
+            // compiles the query again, with the variables.
+            engine.execute("ALTER TABLE t ADD COLUMN extra INT", sqlExecutionContext);
+            assertSameExport(reference, sql, "@min := 1", null);
+        }));
+    }
+
+    @Test
     public void testExportErrorInVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             final Utf8StringSink sink = new Utf8StringSink();

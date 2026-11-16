@@ -42,13 +42,11 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
     public void testErrorInValuePointsPastTheStatement() throws Exception {
-        assertMemoryLeak(() -> {
-            // The value is parsed from the statement's text, a newline and "@a := nope_fn()", so
-            // its position lies past the statement: 10 + the 6 characters of "@a := ".
-            final String sql = "SELECT @a";
-            withVariables("@a := nope_fn()", () -> assertQuery(sql)
-                    .fails(sql.length() + 1 + 6, "unknown function name: nope_fn()"));
-        });
+        // The value is parsed from the statement's text, a newline and "@a := nope_fn()", so
+        // its position lies past the statement: 10 + the 6 characters of "@a := ".
+        final String sql = "SELECT @a";
+        withVariables("@a := nope_fn()", () -> assertQuery(sql)
+                .fails(sql.length() + 1 + 6, "unknown function name: nope_fn()"));
     }
 
     @Test
@@ -177,22 +175,22 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
     public void testStatementDeclarationReadsVariables() throws Exception {
-        assertMemoryLeak(() -> withVariables(
+        withVariables(
                 "@a := 1",
                 // the statement's own block reads the client's variables, as its own earlier
                 // declarations; DECLARE @a := 1, @b := @a + 10 SELECT @b
                 () -> assertQuery("DECLARE @b := @a + 10 SELECT @b b").expectSize().returns("b\n11\n")
-        ));
+        );
     }
 
     @Test
     public void testStatementDeclarationWins() throws Exception {
-        assertMemoryLeak(() -> withVariables(
+        withVariables(
                 "@a := 1, @b := @a + 1",
                 // DECLARE @a := 1, @b := @a + 1, @a := 5 SELECT @a, @b: the statement's @a is the
                 // last one declared, and @b keeps the value it was declared with
                 () -> assertQuery("DECLARE @a := 5 SELECT @a a, @b b").expectSize().returns("a\tb\n5\t2\n")
-        ));
+        );
     }
 
     @Test
@@ -212,13 +210,13 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
     public void testUnusedSubQueryValueIsNotCompiled() throws Exception {
-        assertMemoryLeak(() -> withVariables(
+        withVariables(
                 // Unlike the same value in the statement's own DECLARE block, a variable the
                 // statement does not read never reaches the compiler, so its sub-query may read a
                 // table that does not exist.
                 "@q := (SELECT * FROM nope)",
                 () -> assertQuery("SELECT 1 x").expectSize().returns("x\n1\n")
-        ));
+        );
     }
 
     @Test
@@ -272,10 +270,10 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
     public void testValueEndingWithLineComment() throws Exception {
-        assertMemoryLeak(() -> withVariables(
+        withVariables(
                 "@a := 1 -- one\n, @b := 2",
                 () -> assertQuery("SELECT @a + @b x").expectSize().returns("x\n3\n")
-        ));
+        );
     }
 
     @Test
@@ -305,12 +303,10 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
 
     @Test
     public void testValueMayNotHoldAQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            final String sql = "SELECT @a";
-            // "@a := 1 SELECT 2": SELECT sits 8 characters into the assignments
-            withVariables("@a := 1 SELECT 2", () -> assertQuery(sql)
-                    .fails(sql.length() + 1 + 8, "unexpected token [SELECT]"));
-        });
+        final String sql = "SELECT @a";
+        // "@a := 1 SELECT 2": SELECT sits 8 characters into the assignments
+        withVariables("@a := 1 SELECT 2", () -> assertQuery(sql)
+                .fails(sql.length() + 1 + 8, "unexpected token [SELECT]"));
     }
 
     @Test

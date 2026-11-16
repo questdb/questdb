@@ -71,10 +71,22 @@ public class SelectCacheKeyTest {
         Assert.assertNotEquals(keyA, keyB);
         Assert.assertNotEquals(keyC, keyD);
         Assert.assertNotEquals(keyA, keyC);
-        // no key without variables, scoped or not, starts with the NUL and 'V' that start one with them
+        // Variables that end with what follows them in another key: only the variables' length
+        // tells these apart. Unscoped, "@a := 1-" + "-" + "c" against "@a := 1" + "-" + "-c";
+        // scoped, "@a := 11:s" + "1:s" + "c" against "@a := 1" + "1:s" + "1:sc".
+        Assert.assertNotEquals(
+                SelectCacheKey.of(null, "c", "@a := 1-", sink).toString(),
+                SelectCacheKey.of(null, "-c", "@a := 1", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("s", "c", "@a := 11:s", sink).toString(),
+                SelectCacheKey.of("s", "1:sc", "@a := 1", sink).toString()
+        );
+        // a key with variables starts with a NUL and a 'V'; a scoped key without them starts with
+        // a NUL and the scope's length, even when the scope starts with a 'V'
         Assert.assertEquals('\u0000', keyA.charAt(0));
         Assert.assertEquals('V', keyA.charAt(1));
-        Assert.assertNotEquals('V', SelectCacheKey.of("Vx", "c", sink).charAt(1));
+        Assert.assertEquals("\u00002:Vxc", SelectCacheKey.of("Vx", "c", sink).toString());
     }
 
     @Test
