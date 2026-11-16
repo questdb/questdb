@@ -48,6 +48,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -2125,8 +2126,22 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     @Test
     public void testSubQueryKeptWholeReleasesItsMemory() throws Exception {
         assertMemoryLeak(() -> {
+            createTables();
             execute("CREATE TABLE w_chain (ts TIMESTAMP, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
+            // The pooled compilers, of which CREATE VIEW takes one for each compile, first optimise a join with a
+            // filter that reads both of its sides. The analysis of the filter takes sets from the pool the propagation
+            // in kept-whole mode takes its sets from too.
+            final ObjList<SqlCompiler> compilers = new ObjList<>();
+            try {
+                for (int i = 0; i < 30; i++) {
+                    final SqlCompiler compiler = engine.getSqlCompiler();
+                    compilers.add(compiler);
+                    compiler.generateExecutionModel("SELECT * FROM x JOIN y ON (k) WHERE x.a > y.c AND x.b < y.d", sqlExecutionContext);
+                }
+            } finally {
+                Misc.freeObjList(compilers);
+            }
             // The second compile of the SELECT keeps the sub-query whole, and fills maps and sets of outputs that grow
             // with the columns. The compilers live on in the pool once the statement ends, and keep none of them.
             final ObjList<WeakReference<Object>> references = new ObjList<>();
@@ -2618,6 +2633,123 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // A principal that may read ts records the view, which lends ts to the reads that set @f.
             assertReads(false, viewSqls[0], "{v_cols=[], x=[k, ts]}", "DECLARE @f := true SELECT * FROM v");
             assertReads(false, viewSqls[1], "{v_cols=[], x=[a, k, ts], y=[c, ts]}", "DECLARE @f := true SELECT * FROM v");
+        });
+    }
+
+    @Test
+    public void testViewCreatorNeedsNoSelectOnViewsOfViewItReads() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
+            execute("CREATE VIEW v_outer AS (SELECT k, a FROM v_cols)");
+            drainWalAndViewQueues();
+            // A read of v_outer reads x on the authority of v_outer, the view the read names, which lends the read the
+            // columns v_cols lends to v_outer: the read needs no SELECT on v_cols. Neither does the principal that
+            // records a view that reads v_outer, also when the plan of its SELECT scans nothing.
+            final String viewSql = "DECLARE OVERRIDABLE @f := false SELECT k, a FROM v_outer WHERE @f";
+            try (SqlExecutionContext context = denyViewSelectContext("v_cols")) {
+                assertQuery("SELECT * FROM v_outer")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ta
+                                k1\t1
+                                k1\t3
+                                """);
+                execute("CREATE VIEW v AS (" + viewSql + ")", context);
+                execute("ALTER VIEW v AS (" + viewSql + ")", context);
+                execute("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+            }
+            // every view the SELECT expands is a dependency of the view, and x the table the reads of the view read
+            Assert.assertEquals("{v_cols=[], v_outer=[], x=[a, k]}", dependenciesOf("v"));
+            // the reads that set @f read x through v, whose principal may read v_outer
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("DECLARE @f := true SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ta
+                                k1\t1
+                                k1\t3
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testViewCreatorNeedsSelectOnTableOfPlanThatReadsNoColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
+            drainWalAndViewQueues();
+            // The scan of x counts its rows, and reads no column of it. The filter is false by default, so the plan of
+            // the SELECT scans nothing as the statement opens it, while a read that sets @f counts the rows of x. The
+            // statement checks that the principal that records the view may read x, as the open of the scan does.
+            final String viewSql = "DECLARE OVERRIDABLE @f := false SELECT count() n FROM x WHERE @f";
+            final String accessDenied = "permission denied [table=x]";
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new TableDenyingSecurityContext("x"), bindVariableService, null, -1, null)) {
+                execute("CREATE VIEW v AS (SELECT c FROM y)", context);
+                drainWalAndViewQueues();
+                TestUtils.assertContains(denialOf("CREATE VIEW v_empty AS (" + viewSql + ")", context), accessDenied);
+                Assert.assertNull(engine.getTableTokenIfExists("v_empty"));
+                TestUtils.assertContains(denialOf("ALTER VIEW v AS (" + viewSql + ")", context), accessDenied);
+                TestUtils.assertContains(denialOf("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context), accessDenied);
+                Assert.assertEquals("{y=[c]}", dependenciesOf("v"));
+                // A scan of x through v_cols reads x on the authority of v_cols, and needs no permission on x.
+                execute("CREATE VIEW v_lent AS (DECLARE OVERRIDABLE @f := false SELECT count() n FROM v_cols WHERE @f)", context);
+                assertQuery("DECLARE @f := true SELECT * FROM v_lent")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("n\n2\n");
+                execute("DROP VIEW v");
+                execute("DROP VIEW v_lent");
+                drainWalAndViewQueues();
+            }
+            // A principal that may read x records the view, whose reads that set @f count the rows of x.
+            assertReads(false, viewSql, "{x=[]}", "DECLARE @f := true SELECT * FROM v");
+        });
+    }
+
+    @Test
+    public void testViewCreatorNeedsSelectOnViewOfPlanThatScansNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
+            drainWalAndViewQueues();
+            // The filter is false by default, so the plan of the SELECT scans nothing as the statement opens it, while
+            // a read that sets @f reads x through v_cols, which lends the read its columns. The statement checks that
+            // the principal that records the view may read v_cols, as the open of a scan through v_cols does.
+            final String[] viewSqls = {
+                    "DECLARE OVERRIDABLE @f := false SELECT k, a FROM v_cols WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false SELECT k, count() n FROM v_cols WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false SELECT count() n FROM v_cols WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false WITH c AS (SELECT k, a FROM v_cols) SELECT * FROM c WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false SELECT s.k, t.a FROM v_cols s JOIN v_cols t ON (k) WHERE @f",
+                    "DECLARE OVERRIDABLE @f := false SELECT x.k, c.a FROM x JOIN v_cols c ON (k) WHERE @f"
+            };
+            final String accessDenied = "permission denied [view=v_cols]";
+            try (SqlExecutionContext context = denyViewSelectContext("v_cols")) {
+                execute("CREATE VIEW v AS (SELECT k FROM x)", context);
+                drainWalAndViewQueues();
+                for (String viewSql : viewSqls) {
+                    TestUtils.assertContains(denialOf("CREATE VIEW v_empty AS (" + viewSql + ")", context), accessDenied);
+                    Assert.assertNull(engine.getTableTokenIfExists("v_empty"));
+                    TestUtils.assertContains(denialOf("ALTER VIEW v AS (" + viewSql + ")", context), accessDenied);
+                    TestUtils.assertContains(denialOf("CREATE OR REPLACE VIEW v AS (" + viewSql + ")", context), accessDenied);
+                    Assert.assertEquals("{x=[k]}", dependenciesOf("v"));
+                }
+                execute("DROP VIEW v");
+                drainWalAndViewQueues();
+            }
+            // A principal that may read v_cols records the view, which lends the columns of v_cols to the reads that
+            // set @f.
+            assertReads(false, viewSqls[0], "{v_cols=[], x=[a, k]}", "DECLARE @f := true SELECT * FROM v");
+            assertReads(false, viewSqls[4], "{v_cols=[], x=[a, k]}", "DECLARE @f := true SELECT * FROM v");
         });
     }
 
@@ -3552,6 +3684,27 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         @Override
         public String toString() {
             return scannedColumns.toString();
+        }
+    }
+
+    // Grants everything but reads of the table of the name, of any of its columns.
+    private static final class TableDenyingSecurityContext extends AllowAllSecurityContext {
+        private final String tableName;
+
+        private TableDenyingSecurityContext(String tableName) {
+            this.tableName = tableName;
+        }
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            authorizeSelectOnAnyColumn(tableToken);
+        }
+
+        @Override
+        public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+            if (tableName.equals(tableToken.getTableName())) {
+                throw CairoException.authorization().put("permission denied [table=").put(tableName).put(']');
+            }
         }
     }
 

@@ -206,7 +206,7 @@ public class SqlOptimiser implements Mutable {
     // thread that ran the compile and assert on deltas.
     private static long keptWholeOriginAddCount;
     // Test-only observability for the release of the memory of the propagation of the columns of a query in
-    // kept-whole mode: when set, receives each map and set of outputs the propagation takes from its pools, see
+    // kept-whole mode: when set, receives each map and set the propagation takes from its pools, see
     // releaseKeptWholeMemory().
     private static volatile Consumer<Object> keptWholePoolListener;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
@@ -271,6 +271,9 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<IntHashSet> keptWholeReaderOrigins = new ObjList<>();
     // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
     private final ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
+    // the sets the propagation in kept-whole mode fills, see nextKeptWholeSet(): a pool of its own, of which no other
+    // code keeps a set, so that releaseKeptWholeMemory() frees them
+    private final ObjectPool<IntHashSet> keptWholeSetPool = new ObjectPool<>(IntHashSet::new, 16);
     // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
     private final IntHashSet keptWholeWithheldJoins = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
@@ -389,12 +392,12 @@ public class SqlOptimiser implements Mutable {
     // the outputs of the view the projection column emitKeptWholeProjection() emits serves, null otherwise
     private IntHashSet keptWholeEmittedOrigins;
     // the outputs of the view whose columns need a join model, see collectWithholdingOutputs(), a set of
-    // intHashSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
     private IntHashSet keptWholeNeededBy;
     // the number of outputs of the view while the columns of a query propagate in kept-whole mode
     private int keptWholeOutputCount;
     // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs(), a set of
-    // intHashSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
     private IntHashSet keptWholeServedBy;
     // the entries the propagation in kept-whole mode has added to its sets, see takeKeptWholeWork()
     private long keptWholeWork;
@@ -545,8 +548,8 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Sets the listener that receives each map and set of outputs the propagation of the columns of a query in
-     * kept-whole mode takes from its pools, see {@link #setSubQueryKeptWhole(boolean)}, or clears it with null.
+     * Sets the listener that receives each map and set the propagation of the columns of a query in kept-whole mode
+     * takes from its pools, see {@link #setSubQueryKeptWhole(boolean)}, or clears it with null.
      * Tests hold the objects weakly to check that no compiler keeps them once the propagation has ended.
      *
      * @param listener the listener, called on the thread that compiles the query, or null
@@ -577,6 +580,7 @@ public class SqlOptimiser implements Mutable {
         endKeptWholePropagation();
         keptWholeOriginMapPool.clear();
         keptWholeOriginsPool.clear();
+        keptWholeSetPool.clear();
         pivotInValueRecorder = null;
         pivotInValueSource = null;
         nullingAnchorByExecPos.clear();
@@ -2105,7 +2109,7 @@ public class SqlOptimiser implements Mutable {
             return;
         }
         if (readerOrigins == null) {
-            readerOrigins = intHashSetPool.next();
+            readerOrigins = nextKeptWholeSet();
             readerOrigins.addAll(ownOrigins);
             keptWholeReaderOrigins.setQuick(reader, readerOrigins);
         }
@@ -5191,7 +5195,7 @@ public class SqlOptimiser implements Mutable {
                 isKeptWholeDryRun = true;
                 try {
                     for (int i = 0; i < columnCount; i++) {
-                        keptWholeColumnJoins.add(intHashSetPool.next());
+                        keptWholeColumnJoins.add(nextKeptWholeSet());
                         emitColumnLiteralsTopDown(columns.getQuick(i), nested);
                     }
                 } finally {
@@ -5203,7 +5207,7 @@ public class SqlOptimiser implements Mutable {
                 }
                 for (int j = 0; j < joinCount; j++) {
                     if (SqlUtil.isProjectionFedSubQuery(nested, j)) {
-                        final IntHashSet outputs = intHashSetPool.next();
+                        final IntHashSet outputs = nextKeptWholeSet();
                         collectWithholdingOutputs(j, columnCount, outputs);
                         if (outputs.size() > 0) {
                             keptWholeWithheldJoins.add(j);
@@ -7450,7 +7454,7 @@ public class SqlOptimiser implements Mutable {
         if (isGroupingKey(model, column)) {
             return null;
         }
-        final IntHashSet origins = intHashSetPool.next();
+        final IntHashSet origins = nextKeptWholeSet();
         origins.add(index);
         return origins;
     }
@@ -8452,6 +8456,11 @@ public class SqlOptimiser implements Mutable {
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column, boolean includeIntoWildcard) {
         return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, includeIntoWildcard, 0);
+    }
+
+    // A set of keptWholeSetPool for the propagation in kept-whole mode to fill.
+    private IntHashSet nextKeptWholeSet() {
+        return notifyKeptWholePoolListener(keptWholeSetPool.next());
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -9917,7 +9926,7 @@ public class SqlOptimiser implements Mutable {
             return known;
         }
         keptWholeReachedReaders.setQuick(index, REACHED_NESTED_READERS_PENDING);
-        final IntHashSet reached = intHashSetPool.next();
+        final IntHashSet reached = nextKeptWholeSet();
         if (addReachedNestedReaders(columns.getQuick(index).getAst(), model, nested, columns, reached)) {
             reached.add(index);
         }
@@ -10061,7 +10070,7 @@ public class SqlOptimiser implements Mutable {
                         if (!takeKeptWholeWork(outputs.size())) {
                             break;
                         }
-                        keptOutputs = intHashSetPool.next();
+                        keptOutputs = nextKeptWholeSet();
                         keptOutputs.addAll(outputs);
                     }
                     keptOutputs.remove(output);
@@ -10086,7 +10095,7 @@ public class SqlOptimiser implements Mutable {
         for (int i = 0; i < columnCount; i++) {
             final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
             if (keptWholeFilteredJoins.getQuick(i) == joinIndex && origins != null) {
-                final IntHashSet filteredOutputs = intHashSetPool.next();
+                final IntHashSet filteredOutputs = nextKeptWholeSet();
                 for (int k = 0, n = origins.size(); k < n; k++) {
                     final int output = origins.get(k);
                     if (outputs.contains(output)) {
@@ -10295,14 +10304,14 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // The propagation in kept-whole mode takes the sets it fills from pools, which keep the capacity of their objects
-    // for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead, as the next
-    // statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(), which runs first,
-    // drops every other reference the optimiser holds to those objects, so they go with the pools.
+    // The propagation in kept-whole mode takes the sets it fills from pools of its own, which keep the capacity of
+    // their objects for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead,
+    // as the next statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(), which
+    // runs first, drops every other reference the optimiser holds to those objects, so they go with the pools.
     private void releaseKeptWholeMemory() {
-        intHashSetPool.resetCapacity();
         keptWholeOriginMapPool.resetCapacity();
         keptWholeOriginsPool.resetCapacity();
+        keptWholeSetPool.resetCapacity();
     }
 
     /**
@@ -16251,8 +16260,8 @@ public class SqlOptimiser implements Mutable {
         keptWholeWork = 0;
         // The sets grow with the outputs of the view. Taken from the pool, they go with the rest of the memory of the
         // propagation once it ends, see releaseKeptWholeMemory().
-        keptWholeNeededBy = notifyKeptWholePoolListener(intHashSetPool.next());
-        keptWholeServedBy = notifyKeptWholePoolListener(intHashSetPool.next());
+        keptWholeNeededBy = nextKeptWholeSet();
+        keptWholeServedBy = nextKeptWholeSet();
         final IQueryModel view = skipNoneTypeModels(root.getNestedModel());
         assert view != null : "a read of a view counts the rows of a SELECT";
         keptWholeOutputCount = view.getColumns().size();

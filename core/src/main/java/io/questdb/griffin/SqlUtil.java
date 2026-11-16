@@ -2746,9 +2746,10 @@ public class SqlUtil {
     // Collects the columns the scan of a table model reads: its top-down columns, which
     // SqlCodeGenerator.buildQueryMetadata() reads, and the timestamp it adds when the plan requires one.
     // Records the scan in wildcardSources for collectKeptWildcardReferences(), and the table it scans for the
-    // compiles of the same SELECT that have to see the same table, see ViewCompileRecord. Also records the columns
-    // the scan reads that no view lends to the SELECT, those of a table the SELECT reads itself included, which the
-    // principal that records the view has to be allowed to read, see ViewWildcardSources.authorizeOwnReads().
+    // compiles of the same SELECT that have to see the same table, see ViewCompileRecord. Also records the view the
+    // scan reads its table through, and the columns the scan reads that no view lends to the SELECT, those of a table
+    // the SELECT reads itself included, which the principal that records the view has to be allowed to read, see
+    // ViewWildcardSources.authorizeOwnReads().
     private static void collectTableScanColumns(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
@@ -2771,6 +2772,13 @@ public class SqlUtil {
         final LowerCaseCharSequenceHashSet innerColumns = innerViewColumns(model, tableToken.getTableName());
         final boolean isOtherReadLent = isOtherReadLent(model);
         final boolean isReadThroughView = isReadThroughView(model);
+        if (isReadThroughView) {
+            // the scan reads the columns the view lends on the authority of the view, which the principal needs
+            // SELECT on, see AbstractPartitionFrameCursorFactory.authorizeSelect()
+            wildcardSources.addOwnReadView(model.getViewNameExpr().tableFunctionView.definition());
+        } else {
+            wildcardSources.directReadTables.add(tableToken.getTableName());
+        }
         final boolean isUnlentColumnDropped = !wildcardSources.isRecordingCompile && isReadThroughView;
         final LowerCaseCharSequenceHashSet ownReads = wildcardSources.ownReadsOf(tableToken);
         final StringSink sink = wildcardSources.otherReadColumnName;
@@ -3475,6 +3483,8 @@ public class SqlUtil {
      * most once without.
      */
     public static final class ViewWildcardSources implements Mutable {
+        // the tables the scans of the last walk read directly, through no view of the SELECT, see authorizeOwnReads()
+        private final LowerCaseCharSequenceHashSet directReadTables = new LowerCaseCharSequenceHashSet();
         // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
         private final ObjList<IQueryModel> holderStack = new ObjList<>();
         private final ObjList<IQueryModel> holders = new ObjList<>();
@@ -3485,6 +3495,9 @@ public class SqlUtil {
         // names of the columns, sorted, that it authorizes.
         private final ObjList<CharSequence> ownReadColumnNames = new ObjList<>();
         private final LowerCaseCharSequenceObjHashMap<TableToken> ownReadTables = new LowerCaseCharSequenceObjHashMap<>();
+        // the views the scans of the last walk read their tables through, by name, see authorizeOwnReads()
+        private final LowerCaseCharSequenceObjHashMap<ViewDefinition> ownReadViews = new LowerCaseCharSequenceObjHashMap<>();
+        // the columns of each table, see ownReadColumnNames
         private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> ownReads = new LowerCaseCharSequenceObjHashMap<>();
         // the models the current search of isReachable() has visited
         private final ObjHashSet<IQueryModel> reachedModels = new ObjHashSet<>();
@@ -3547,17 +3560,24 @@ public class SqlUtil {
         }
 
         /**
-         * Checks that the principal may read the columns the scans the last walk of an optimised SELECT found read
-         * and no view lends to the SELECT, those of the tables the SELECT reads itself included: the view lends them
-         * to its readers, see {@link SqlUtil#collectTableColumnReads}. Opening a plan checks the columns it scans,
-         * but nothing opens the plan of the reads planned otherwise, see
-         * {@link SqlCompiler#collectOtherReadDependencies}, and the plan of the view's own SELECT scans nothing when it
-         * folds to an empty table, as it does when a filter is false by default, while a read that overrides the
-         * filter scans those columns. It checks the tables the scans read, not the ones their names resolve to now.
+         * Checks that the principal may read what the scans the last walk of an optimised SELECT found read: the
+         * views the scans read their tables through, which lend the scans the columns they lend, and the columns no
+         * view lends to the SELECT, those of the tables the SELECT reads itself included, or any column of such a
+         * table when the scans read none of it, as a scan that counts the rows does. The view lends all of them to its
+         * readers, see {@link SqlUtil#collectTableColumnReads}. Opening a plan checks the same, see
+         * {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}, but nothing opens the plan of the reads
+         * planned otherwise, see {@link SqlCompiler#collectOtherReadDependencies}, and the plan of the view's own
+         * SELECT scans nothing when it folds to an empty table, as it does when a filter is false by default, while a
+         * read that overrides the filter scans those columns. It checks the tables the scans read, not the ones their
+         * names resolve to now, and the views as the SELECT expanded them.
          *
          * @param securityContext the context of the principal that records the view
          */
         void authorizeOwnReads(SecurityContext securityContext) {
+            final ObjList<CharSequence> viewNames = ownReadViews.keys();
+            for (int i = 0, n = viewNames.size(); i < n; i++) {
+                securityContext.authorizeSelect(ownReadViews.get(viewNames.getQuick(i)));
+            }
             final ObjList<CharSequence> tableNames = ownReads.keys();
             for (int i = 0, n = tableNames.size(); i < n; i++) {
                 final CharSequence tableName = tableNames.getQuick(i);
@@ -3572,6 +3592,9 @@ public class SqlUtil {
                 if (ownReadColumnNames.size() > 0) {
                     ownReadColumnNames.sort(Chars::compare);
                     securityContext.authorizeSelect(ownReadTables.get(tableName), ownReadColumnNames);
+                } else if (directReadTables.contains(tableName)) {
+                    // a scan of the table that reads no column of it, as one that counts the rows does
+                    securityContext.authorizeSelectOnAnyColumn(ownReadTables.get(tableName));
                 }
             }
         }
@@ -3589,6 +3612,15 @@ public class SqlUtil {
                 holders.add(holderStack.getQuick(i));
                 sources.add(source);
                 tableNames.add(name);
+            }
+        }
+
+        // Records the view a scan reads its table through, see authorizeOwnReads().
+        private void addOwnReadView(ViewDefinition viewDefinition) {
+            final CharSequence viewName = viewDefinition.getViewToken().getTableName();
+            final int index = ownReadViews.keyIndex(viewName);
+            if (index > -1) {
+                ownReadViews.putAt(index, viewName, viewDefinition);
             }
         }
 
@@ -3610,8 +3642,10 @@ public class SqlUtil {
         // Forgets what the walks of an optimised SELECT recorded, and keeps the tables the walk of the parsed
         // SELECT recorded.
         private void clearReads() {
+            directReadTables.clear();
             ownReadColumnNames.clear();
             ownReadTables.clear();
+            ownReadViews.clear();
             ownReads.clear();
             reachedModels.clear();
             rootReachableModels.clear();

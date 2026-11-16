@@ -177,6 +177,17 @@ class AbstractViewTest extends AbstractCairoTest {
         );
     }
 
+    // A principal that may read everything but the view of the name, which it is denied SELECT on.
+    static SqlExecutionContext denyViewSelectContext(String viewName) {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                new DenyViewSelectSecurityContext(viewName),
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
     @NotNull
     static String getView1DefinitionSql() {
         final ViewDefinition viewDefinition = getViewDefinition(VIEW1);
@@ -288,6 +299,21 @@ class AbstractViewTest extends AbstractCairoTest {
                 e.put(columnNames.getQuick(i));
             }
             throw e.put(']');
+        }
+    }
+
+    private static final class DenyViewSelectSecurityContext extends AllowAllSecurityContext {
+        private final String viewName;
+
+        private DenyViewSelectSecurityContext(String viewName) {
+            this.viewName = viewName;
+        }
+
+        @Override
+        public void authorizeSelect(ViewDefinition viewDefinition) {
+            if (viewDefinition.getViewToken().getTableName().equals(viewName)) {
+                throw CairoException.authorization().put("permission denied [view=").put(viewName).put(']');
+            }
         }
     }
 }

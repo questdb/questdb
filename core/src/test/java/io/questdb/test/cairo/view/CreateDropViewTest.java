@@ -334,18 +334,10 @@ public class CreateDropViewTest extends AbstractViewTest {
     public void testCreateViewDeniedAtOpenFreesItsPlans() throws Exception {
         assertMemoryLeak(() -> {
             createOrderedViewBase();
-            // Only the open of the plan of the SELECT checks SELECT on ordered_x, after CREATE VIEW compiled the
-            // SELECT as a query of its own for the metadata of the view.
+            // SELECT on ordered_x is revoked as the plan of the SELECT opens, after CREATE VIEW compiled the SELECT as
+            // a query of its own for the metadata of the view.
             final String sql = "CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")";
-            try (
-                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(
-                            new DenyViewSelectSecurityContext("ordered_x"),
-                            bindVariableService,
-                            null,
-                            -1,
-                            null
-                    )
-            ) {
+            try (SqlExecutionContext context = contextOf(new RevokingSecurityContext("ordered_x"))) {
                 assertExceptionNoLeakCheck(sql, "CREATE VIEW ".length(), "permission denied [view=ordered_x]", context);
             }
             assertNull(engine.getTableTokenIfExists("v"));
@@ -436,7 +428,7 @@ public class CreateDropViewTest extends AbstractViewTest {
             // The open of the plan of the SELECT finds x changed, after CREATE VIEW compiled the SELECT as a query of
             // its own for the metadata of the view. CREATE VIEW compiles both again.
             final AlteringSecurityContext securityContext = new AlteringSecurityContext(1);
-            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+            try (SqlExecutionContext context = contextOf(securityContext)) {
                 execute("CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")", context);
             }
             assertEquals(1, securityContext.changeCount);
@@ -452,7 +444,7 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createOrderedViewBase();
             final AlteringSecurityContext securityContext = new AlteringSecurityContext(1);
-            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+            try (SqlExecutionContext context = contextOf(securityContext)) {
                 assertExceptionNoLeakCheck(
                         "CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")",
                         0,
@@ -540,6 +532,19 @@ public class CreateDropViewTest extends AbstractViewTest {
         }
     }
 
+    // The context of the principal the security context authorizes, which the security context consults.
+    private static SqlExecutionContext contextOf(OpeningSecurityContext securityContext) {
+        final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(
+                securityContext,
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+        securityContext.executionContext = context;
+        return context;
+    }
+
     // x, and ordered_x, which orders the rows of x by a column other than its designated timestamp
     private static void createOrderedViewBase() throws SqlException {
         execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -616,9 +621,9 @@ public class CreateDropViewTest extends AbstractViewTest {
                         """);
     }
 
-    // Grants everything, and adds a column to x as the open of a plan checks SELECT on a view, the first changeLimit
-    // times, as an ALTER TABLE between the compile of the plan and its open would.
-    private static final class AlteringSecurityContext extends AllowAllSecurityContext {
+    // Adds a column to x as the plan of the SELECT of CREATE VIEW opens, the first changeLimit times, as an ALTER TABLE
+    // between the compile of the plan and its open would.
+    private static final class AlteringSecurityContext extends OpeningSecurityContext {
         private final int changeLimit;
         private int changeCount;
 
@@ -627,7 +632,7 @@ public class CreateDropViewTest extends AbstractViewTest {
         }
 
         @Override
-        public void authorizeSelect(ViewDefinition viewDefinition) {
+        void onOpen(ViewDefinition viewDefinition) {
             if (changeCount < changeLimit) {
                 changeCount++;
                 try {
@@ -639,16 +644,32 @@ public class CreateDropViewTest extends AbstractViewTest {
         }
     }
 
-    // Grants everything but SELECT on the view of the name.
-    private static final class DenyViewSelectSecurityContext extends AllowAllSecurityContext {
+    // Grants everything, and runs onOpen() as the plan of the SELECT of CREATE VIEW checks SELECT on a view as it
+    // opens. CREATE VIEW opens the plan as a metadata probe, which its compiles of the SELECT are not, see contextOf().
+    private static abstract class OpeningSecurityContext extends AllowAllSecurityContext {
+        private SqlExecutionContext executionContext;
+
+        @Override
+        public void authorizeSelect(ViewDefinition viewDefinition) {
+            if (executionContext.isMetadataProbe()) {
+                onOpen(viewDefinition);
+            }
+        }
+
+        abstract void onOpen(ViewDefinition viewDefinition);
+    }
+
+    // Denies SELECT on the view of the name as the plan of the SELECT of CREATE VIEW opens, after the compile of the
+    // SELECT checked it, as a REVOKE between the compile and the open would.
+    private static final class RevokingSecurityContext extends OpeningSecurityContext {
         private final String viewName;
 
-        private DenyViewSelectSecurityContext(String viewName) {
+        private RevokingSecurityContext(String viewName) {
             this.viewName = viewName;
         }
 
         @Override
-        public void authorizeSelect(ViewDefinition viewDefinition) {
+        void onOpen(ViewDefinition viewDefinition) {
             if (viewDefinition.getViewToken().getTableName().equals(viewName)) {
                 throw CairoException.authorization().put("permission denied [view=").put(viewName).put(']');
             }
