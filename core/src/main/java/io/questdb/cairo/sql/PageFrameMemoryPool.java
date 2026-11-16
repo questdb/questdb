@@ -43,6 +43,8 @@ import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongGroupSort;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -100,6 +102,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
     private static final int SHELL_POOL_CAP = 256;
+    // Tie groups of an inexact frame up to this size are always searched row by row.
+    private static final int TIE_GROUP_SCAN_ROWS = 16;
     // O(1) frameIndex lookup. LRU order is tracked separately via the
     // intrusive lruHead/lruTail doubly linked list through DecodedFrameBuffers.
     private final IntObjHashMap<DecodedFrameBuffers> byFrameIndex;
@@ -2161,7 +2165,15 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // Exact row count of the decoded frame (PageFrameMemory#getRowCount): the declared
         // span for an exact frame, otherwise what the decoder reported. -1 until decoded.
         private long rowCount = -1;
+        // First row of the large tie group the last lookup of an inexact frame scanned row by row, or -1.
+        private int scannedTieGroupLo = -1;
         private int slotCount;
+        // (sourceRowRef, frame row) pairs of the tie group [sortedTieGroupLo, sortedTieGroupHi), sorted. An inexact
+        // frame keeps a replacing row in the slot of the row it replaced, so a tie group is not ordered by its refs:
+        // a second lookup in a row into one large tie group sorts it, and later lookups in it binary search.
+        private LongList sortedTieGroup;
+        private int sortedTieGroupHi = -1;
+        private int sortedTieGroupLo = -1;
         private long sourceBaseRowHi = -1;
         private long sourceBaseRowLo = Long.MAX_VALUE;
         private boolean sourceBaseRowsPrepared;
@@ -2243,6 +2255,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             sourceRowRefsRowCount = 0;
             sourceRowTimestampsAddress = 0;
             sourceRowsKnown = false;
+            scannedTieGroupLo = -1;
+            sortedTieGroup = null;
+            sortedTieGroupHi = -1;
+            sortedTieGroupLo = -1;
             // releaseDecodedFrameBuffers() parks closed shells without unlinking first; drop the
             // LRU links so a pooled shell cannot retain its former neighbours.
             prev = null;
@@ -2327,6 +2343,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             if (!addressCache.isFrameRowCountExact(frameIndex)) {
                 // Dedup on read keeps a replacing row where the row it replaced was, so the tie
                 // group of a frame that resolved duplicates need not follow source row refs.
+                if (lo - timestampLo > TIE_GROUP_SCAN_ROWS) {
+                    if (sortedTieGroupLo == timestampLo) {
+                        return findInSortedTieGroup(sourceRowRef, timestampLo);
+                    }
+                    // A second lookup into one large tie group, as a multi-key index scan makes, sorts it.
+                    if (scannedTieGroupLo == timestampLo) {
+                        sortTieGroup(timestampLo, lo);
+                        return findInSortedTieGroup(sourceRowRef, timestampLo);
+                    }
+                    scannedTieGroupLo = timestampLo;
+                }
                 for (int row = timestampLo; row < lo; row++) {
                     if (Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES) == sourceRowRef) {
                         return row;
@@ -2355,6 +2382,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
         @Override
         public int findNext(long timestamp, long sourceRowRef, int after) {
+            if (after >= sortedTieGroupLo && after < sortedTieGroupHi
+                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) sortedTieGroupLo * Long.BYTES) == timestamp) {
+                return findInSortedTieGroup(sourceRowRef, after + 1);
+            }
             for (int row = after + 1; row < sourceRowRefsRowCount
                     && Unsafe.getLong(sourceRowTimestampsAddress + (long) row * Long.BYTES) == timestamp; row++) {
                 if (Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES) == sourceRowRef) {
@@ -2566,6 +2597,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             sourceRowRefsRowCount = 0;
             sourceRowTimestampsAddress = 0;
             sourceRowsKnown = false;
+            scannedTieGroupLo = -1;
+            sortedTieGroupHi = -1;
+            sortedTieGroupLo = -1;
         }
 
         // Resolves the frame's dense row count after a custom decode of [rowLo, rowHi).
@@ -2624,6 +2658,24 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         .put(']');
             }
             return addressCache.getFrameSize(frameIndex);
+        }
+
+        // The first frame row at or after rowLo that sourceRowRef supplies in the sorted tie group, or -1.
+        private int findInSortedTieGroup(long sourceRowRef, int rowLo) {
+            int lo = 0;
+            int hi = sortedTieGroup.size() >>> 1;
+            while (lo < hi) {
+                final int mid = (lo + hi) >>> 1;
+                final long midSourceRowRef = sortedTieGroup.getQuick(2 * mid);
+                if (midSourceRowRef < sourceRowRef || (midSourceRowRef == sourceRowRef && sortedTieGroup.getQuick(2 * mid + 1) < rowLo)) {
+                    lo = mid + 1;
+                } else {
+                    hi = mid;
+                }
+            }
+            return lo < sortedTieGroup.size() >>> 1 && sortedTieGroup.getQuick(2 * lo) == sourceRowRef
+                    ? (int) sortedTieGroup.getQuick(2 * lo + 1)
+                    : -1;
         }
 
         private boolean hasSourceRows() {
@@ -2786,6 +2838,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             columnTopRows.set(base, rowGroupBuffers.getChunkTopRowsPtr(slot));
             columnTopRows.set(base + 1, rowGroupBuffers.getChunkTopRowCount(slot));
             columnTopRows.set(base + 2, frameRowLo);
+        }
+
+        private void sortTieGroup(int groupLo, int groupHi) {
+            if (sortedTieGroup == null) {
+                sortedTieGroup = new LongList(2 * (groupHi - groupLo));
+            }
+            sortedTieGroup.clear();
+            for (int row = groupLo; row < groupHi; row++) {
+                sortedTieGroup.add(Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES), row);
+            }
+            LongGroupSort.quickSort(2, sortedTieGroup, 0, groupHi - groupLo);
+            sortedTieGroupLo = groupLo;
+            sortedTieGroupHi = groupHi;
         }
     }
 

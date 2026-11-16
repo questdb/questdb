@@ -915,10 +915,18 @@ public class TableReader implements Closeable, SymbolTableSource {
      * Binds the delta partition states, exactly as counting their logical rows does.
      */
     public boolean hasInexactRowCount() {
+        return hasInexactRowCount(0, partitionCount);
+    }
+
+    /**
+     * {@link #hasInexactRowCount()} over partitions {@code [partitionLo, partitionHi)} only. Binds only the delta
+     * partition states of that range, so a cursor confined to some partitions pays no catalog open for the others.
+     */
+    public boolean hasInexactRowCount(int partitionLo, int partitionHi) {
         if (!hasAnyDelta()) {
             return false;
         }
-        for (int i = 0; i < partitionCount; i++) {
+        for (int i = partitionLo; i < partitionHi; i++) {
             if (txFile.getPartitionHasDelta(i)) {
                 final long state = getOrOpenPartitionState(i);
                 if (state != 0 && partitionFrameStateFactory.hasInexactRowCount(state)) {
@@ -957,6 +965,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     @TestOnly
     public boolean isParquetMetaReaderOpen() {
         return parquetMetaReader.isOpen();
+    }
+
+    @TestOnly
+    public boolean isPartitionFrameStateOpen(int partitionIndex) {
+        return getOpenPartitionState(partitionIndex) != 0;
     }
 
     @Override

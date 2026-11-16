@@ -136,6 +136,41 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         return timestampIndex;
     }
 
+    /**
+     * Checks only the partitions an interval reaches, the (interval, partition) pairs
+     * {@link #getFrameCountUpperBound()} counts, so a Delta partition outside every interval
+     * opens no partition state.
+     */
+    @Override
+    public boolean hasInexactRowCount() {
+        if (!reader.hasAnyDelta() || initialIntervalsLo >= initialIntervalsHi || initialPartitionLo >= initialPartitionHi) {
+            return false;
+        }
+        if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            return reader.hasInexactRowCount(initialPartitionLo, initialPartitionHi);
+        }
+        final long minTimestamp = reader.getMinTimestamp();
+        final long maxTimestamp = reader.getMaxTimestamp();
+        // Intervals ascend, so their partition ranges never move back: each partition is checked once.
+        int checkedHi = initialPartitionLo;
+        for (int i = initialIntervalsLo; i < initialIntervalsHi; i++) {
+            final long intervalLo = Math.max(intervals.getQuick(2 * i), minTimestamp);
+            final long intervalHi = Math.min(intervals.getQuick(2 * i + 1), maxTimestamp);
+            if (intervalLo > intervalHi) {
+                continue;
+            }
+            final int partitionLo = Math.max(reader.getPartitionIndexByTimestamp(intervalLo), checkedHi);
+            final int partitionHi = Math.min(reader.getPartitionIndexByTimestamp(intervalHi) + 1, initialPartitionHi);
+            if (partitionLo < partitionHi) {
+                if (reader.hasInexactRowCount(partitionLo, partitionHi)) {
+                    return true;
+                }
+                checkedHi = partitionHi;
+            }
+        }
+        return false;
+    }
+
     @Override
     public boolean hasIntervalFilter() {
         return true;
@@ -179,7 +214,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     @Override
     public boolean supportsSizeCalculation() {
         // Metadata-only sizes over-count a snapshot whose frames may drop duplicates on decode.
-        return !reader.hasInexactRowCount();
+        return !hasInexactRowCount();
     }
 
     @Override

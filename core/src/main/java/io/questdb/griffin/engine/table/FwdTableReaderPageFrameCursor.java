@@ -178,7 +178,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
     @Override
     public boolean hasInexactFrames() {
-        return reader.hasInexactRowCount();
+        return partitionFrameCursor.hasInexactRowCount();
     }
 
     @Override
