@@ -44,6 +44,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
@@ -56,12 +60,14 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,6 +81,12 @@ import java.util.concurrent.locks.ReentrantLock;
  * invalidations and backlog updates at random, while an ingest thread inserts into the base tables, and free-running
  * refresh workers, a WAL apply worker, the timer job and the WAL purge job run on their own threads. The view is
  * IMMEDIATE, and each round picks microsecond or nanosecond timestamps.
+ * <p>
+ * A round picks at random whether the statement threads run their statements that take no lock of this test as fiber
+ * tasks on one fiber runtime, which fewer carrier threads drain than there are statement threads: a statement that
+ * held its carrier while it waits for the view latch, the view's WAL or a new definition would stall the others, and a
+ * parked statement resumes on any carrier. Such a round first parks a RESUME on the view latch, which it holds until
+ * the runtime's drain returns with the RESUME unfinished.
  * <p>
  * Every statement must return within its timeout with success or one of the errors this test lists, see
  * {@link #ALLOWED_ERRORS}. Once the threads stop and the queues drain, no view latch is held, no RESUME is in
@@ -142,19 +154,12 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentViewAndBaseOperations() throws Exception {
-        final int rounds = Integer.getInteger("questdb.fuzz.matview.concurrent.rounds", 1);
-        final int statements = Integer.getInteger("questdb.fuzz.matview.concurrent.statements", -1);
-        // short WAL segments, so that the WAL purges find closed segments, and a short backlog update period, so that
-        // the timer job updates the invalid view's backlog during the run
-        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 8);
-        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10ms");
-        assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
-            for (int round = 0; round < rounds; round++) {
-                LOG.info().$("fuzz: round ").$(round).$();
-                runRound(rnd, statements > 0 ? statements : 30 + rnd.nextInt(30));
-            }
-        });
+        assertRounds(false);
+    }
+
+    @Test
+    public void testConcurrentViewAndBaseOperationsOnFibers() throws Exception {
+        assertRounds(true);
     }
 
     private static void appendDay(StringSink sink, int day) {
@@ -181,6 +186,16 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         }
     }
 
+    private static void closeRuntime(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HANG_BOUND_MILLIS);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(8);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
+    }
+
     private static void countError(CharSequence message, ConcurrentHashMap<String, AtomicInteger> errorCounts, ConcurrentHashMap<String, String> unexpectedErrors) {
         final String text = message.toString();
         errorCounts.computeIfAbsent(text, k -> new AtomicInteger()).incrementAndGet();
@@ -194,6 +209,17 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         for (int i = 0; i < 4; i++) {
             drainWalAndMatViewQueues();
         }
+    }
+
+    // Runs the statement on the calling thread, or as a fiber task on the round's runtime, which the carriers drain.
+    private static void executeStatement(CharSequence sql, SqlExecutionContextImpl context, @Nullable FiberRuntime runtime) throws SqlException {
+        if (runtime == null) {
+            engine.execute(sql, context);
+            return;
+        }
+        final StatementTask task = new StatementTask(sql, context);
+        Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+        task.awaitAndRethrow();
     }
 
     private static void insertRows(String tableName, Rnd rnd, int rowCount, SqlExecutionContextImpl context) throws SqlException {
@@ -278,6 +304,22 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         return engine.getMatViewStateStore().getViewState(engine.verifyTableName(viewName));
     }
 
+    private void assertRounds(boolean isFiberForced) throws Exception {
+        final int rounds = Integer.getInteger("questdb.fuzz.matview.concurrent.rounds", 1);
+        final int statements = Integer.getInteger("questdb.fuzz.matview.concurrent.statements", -1);
+        // short WAL segments, so that the WAL purges find closed segments, and a short backlog update period, so that
+        // the timer job updates the invalid view's backlog during the run
+        setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 8);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "10ms");
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int round = 0; round < rounds; round++) {
+                LOG.info().$("fuzz: round ").$(round).$();
+                runRound(rnd, statements > 0 ? statements : 30 + rnd.nextInt(30), isFiberForced);
+            }
+        });
+    }
+
     // Moves the view back to its first SQL and base table, makes it valid and backfills it with a RANGE over the base's
     // days, then asserts it against the twin, which FULL rebuilds from the base.
     private void assertViewMatchesTwin(Rnd rnd, SqlExecutionContextImpl context) throws Exception {
@@ -320,6 +362,43 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         seedDays(tableName, rnd, context);
     }
 
+    // Parks a RESUME of the invalidated view on the view latch, which the test holds, before any carrier starts: the
+    // drain on the test thread returns while RESUME waits. Once the test frees the latch, RESUME completes.
+    private void parkFirstResume(FiberRuntime runtime) throws Exception {
+        final TableToken viewToken = engine.verifyTableName("mv");
+        engine.getMatViewStateStore().enqueueInvalidate(viewToken, "fuzz invalidation");
+        drainAll();
+        final MatViewState state = viewState("mv");
+        Assert.assertTrue(state.isInvalid());
+        Assert.assertTrue(state.tryLock());
+        boolean isLatchHeld = true;
+        try (
+                SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1);
+                NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker()
+        ) {
+            context.with(circuitBreaker);
+            circuitBreaker.resetTimer();
+            final StatementTask task = new StatementTask("REFRESH MATERIALIZED VIEW mv RESUME", context);
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+            final int parkedCount = task.isDone() ? 0 : 1;
+            isLatchHeld = false;
+            MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+            final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(HANG_BOUND_MILLIS);
+            while (!task.isDone() && System.nanoTime() < deadline) {
+                runtime.drain(1);
+                Os.pause();
+            }
+            Assert.assertEquals("the round's first RESUME did not park", 1, parkedCount);
+            task.awaitAndRethrow();
+            Assert.assertFalse(state.isInvalid());
+        } finally {
+            if (isLatchHeld) {
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+            }
+        }
+    }
+
     // The base's qty column as the view's SQL reads it: present, named qty, of type LONG.
     private void repairBase(Rnd rnd, SqlExecutionContextImpl context) throws SqlException {
         if (engine.getTableTokenIfExists("base") == null) {
@@ -342,7 +421,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         drainAll();
     }
 
-    private void runRound(Rnd rnd, int statementCount) throws Exception {
+    private void runRound(Rnd rnd, int statementCount, boolean isFiberForced) throws Exception {
         timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         LOG.info().$("fuzz: timestamp type ").$(timestampType).$();
         // The record copier the refreshes write rows with: picked by the schema's size (0), or forced to the
@@ -366,14 +445,25 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             final ObjList<Thread> clients = new ObjList<>();
             final int refreshWorkerCount = 1 + rnd.nextInt(3);
             final int statementThreadCount = 2 + rnd.nextInt(2);
+            final boolean isFiberRound = rnd.nextBoolean() || isFiberForced;
+            final int carrierCount = isFiberRound ? 1 + rnd.nextInt(statementThreadCount - 1) : 0;
+            LOG.info().$("fuzz: statement threads ").$(statementThreadCount).$(", fiber carriers ").$(carrierCount).$();
+            final FiberRuntime runtime = isFiberRound ? new FiberRuntime(statementThreadCount + 1) : null;
             final CyclicBarrier startBarrier = new CyclicBarrier(statementThreadCount + 1);
             try {
+                if (runtime != null) {
+                    Assert.assertTrue(carrierCount < statementThreadCount);
+                    parkFirstResume(runtime);
+                    for (int i = 0; i < carrierCount; i++) {
+                        workers.add(startCarrier(i, runtime, isStopped, workerErrors));
+                    }
+                }
                 for (int i = 0; i < refreshWorkerCount; i++) {
                     workers.add(startRefreshWorker(i, isStopped, workerErrors, rnd.nextLong(), rnd.nextLong()));
                 }
                 workers.add(startApplyWorker(isStopped, workerErrors, rnd.nextLong(), rnd.nextLong()));
                 for (int i = 0; i < statementThreadCount; i++) {
-                    clients.add(startStatementThread(i, statementCount, startBarrier, errorCounts, unexpectedErrors, rnd.nextLong(), rnd.nextLong()));
+                    clients.add(startStatementThread(i, statementCount, startBarrier, errorCounts, unexpectedErrors, runtime, rnd.nextLong(), rnd.nextLong()));
                 }
                 clients.add(startIngestThread(statementCount, startBarrier, errorCounts, unexpectedErrors, rnd.nextLong(), rnd.nextLong()));
                 for (int i = 0, n = clients.size(); i < n; i++) {
@@ -388,6 +478,9 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 }
                 for (int i = 0, n = workers.size(); i < n; i++) {
                     workers.getQuick(i).join();
+                }
+                if (runtime != null) {
+                    closeRuntime(runtime);
                 }
             }
 
@@ -420,7 +513,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     }
 
     // Runs one statement or action, weighted towards the statements that take or wait for the view latch.
-    private void runStatement(Rnd rnd, SqlExecutionContextImpl context, StringSink sql) throws SqlException {
+    private void runStatement(Rnd rnd, SqlExecutionContextImpl context, StringSink sql, @Nullable FiberRuntime runtime) throws SqlException {
         sql.clear();
         switch (rnd.nextInt(28)) {
             case 0, 1, 2 -> sql.put("REFRESH MATERIALIZED VIEW mv RESUME");
@@ -596,7 +689,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             }
         }
         LOG.info().$("fuzz: ").$(sql).$();
-        engine.execute(sql, context);
+        executeStatement(sql, context, runtime);
     }
 
     private Thread startApplyWorker(AtomicBoolean isStopped, AtomicInteger workerErrors, long seed0, long seed1) {
@@ -624,6 +717,27 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
             }
         }, "wal-apply-worker");
+        th.start();
+        return th;
+    }
+
+    private Thread startCarrier(int carrierId, FiberRuntime runtime, AtomicBoolean isStopped, AtomicInteger workerErrors) {
+        final Thread th = new Thread(() -> {
+            runtime.initializeCarrier();
+            try {
+                while (!isStopped.get()) {
+                    if (runtime.drain(8) == 0) {
+                        Os.pause();
+                    }
+                }
+            } catch (Throwable th1) {
+                LOG.error().$("fiber carrier failed: ").$(th1).$();
+                workerErrors.incrementAndGet();
+            } finally {
+                Path.clearThreadLocals();
+                Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+            }
+        }, "fiber-carrier-" + carrierId);
         th.start();
         return th;
     }
@@ -687,6 +801,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             CyclicBarrier startBarrier,
             ConcurrentHashMap<String, AtomicInteger> errorCounts,
             ConcurrentHashMap<String, String> unexpectedErrors,
+            @Nullable FiberRuntime runtime,
             long seed0,
             long seed1
     ) {
@@ -702,7 +817,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 for (int i = 0; i < statementCount; i++) {
                     circuitBreaker.resetTimer();
                     try {
-                        runStatement(rnd, context, sql);
+                        runStatement(rnd, context, sql, runtime);
                     } catch (SqlException | CairoException e) {
                         countError(e.getFlyweightMessage(), errorCounts, unexpectedErrors);
                     }
@@ -718,5 +833,49 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         }, "statement-" + threadId);
         th.start();
         return th;
+    }
+
+    // A statement that a statement thread runs on the round's fiber runtime; the thread waits for its outcome.
+    private static final class StatementTask extends FiberTask {
+        private final SqlExecutionContextImpl context;
+        private final CountDownLatch doneLatch = new CountDownLatch(1);
+        private final String sql;
+        private volatile Throwable error;
+
+        private StatementTask(CharSequence sql, SqlExecutionContextImpl context) {
+            this.context = context;
+            this.sql = sql.toString();
+        }
+
+        @Override
+        protected boolean runStep() {
+            try {
+                engine.execute(sql, context);
+            } catch (Throwable th) {
+                error = th;
+            } finally {
+                doneLatch.countDown();
+            }
+            return true;
+        }
+
+        private void awaitAndRethrow() throws SqlException {
+            try {
+                Assert.assertTrue("fiber statement did not finish: " + sql, doneLatch.await(HANG_BOUND_MILLIS, TimeUnit.MILLISECONDS));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+            final Throwable th = error;
+            if (th instanceof SqlException e) {
+                throw e;
+            }
+            if (th instanceof CairoException e) {
+                throw e;
+            }
+            if (th != null) {
+                throw new AssertionError("fiber statement failed: " + sql, th);
+            }
+        }
     }
 }

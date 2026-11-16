@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.Os;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -142,7 +141,7 @@ public final class MatViewAlter {
             }
             viewState.runDefinitionWaitSeamForTesting();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            Os.sleep(1);
+            MatViewResume.pauseWait(engine);
         }
     }
 

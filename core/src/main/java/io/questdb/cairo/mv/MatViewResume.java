@@ -37,8 +37,11 @@ import io.questdb.griffin.MatViewSqlValidator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -132,7 +135,7 @@ public final class MatViewResume {
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
         final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
         while (true) {
-            awaitViewWal(viewState, viewSeqTracker, circuitBreaker, viewToken, viewNamePosition);
+            awaitViewWal(engine, viewState, viewSeqTracker, circuitBreaker, viewToken, viewNamePosition);
             viewState.runResumeWalAppliedSeamForTesting();
             if (viewState.isPendingFullRefresh()) {
                 throw fullRefreshPending(viewToken, viewNamePosition);
@@ -146,6 +149,7 @@ public final class MatViewResume {
     }
 
     private static void awaitViewWal(
+            CairoEngine engine,
             MatViewState viewState,
             SeqTxnTracker viewSeqTracker,
             SqlExecutionCircuitBreaker circuitBreaker,
@@ -166,7 +170,7 @@ public final class MatViewResume {
             }
             viewState.runResumeWalWaitSeamForTesting();
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            Os.sleep(1);
+            pauseWait(engine);
         }
     }
 
@@ -301,7 +305,8 @@ public final class MatViewResume {
     // latch holder that commits takes that read lock at the commit fence on its own thread, which waits while a role
     // switch, such as a demote, waits for the write lock, and the role switch waits for the statement's read hold. So
     // the statement stops waiting with "retry later" as soon as a role switch waits for its read hold: neither the
-    // role switch nor the fenced commits queued behind it wait for the statement's timeout.
+    // role switch nor the fenced commits queued behind it wait for the statement's timeout. Under that read hold the
+    // statement sleeps between its polls, since its fiber must not park there, see pauseWait().
     static void lockView(
             CairoEngine engine,
             MatViewState viewState,
@@ -325,6 +330,39 @@ public final class MatViewResume {
                 }
                 throw e;
             }
+            pauseWait(engine);
+        }
+    }
+
+    // Returns false when the fiber cannot park; throws when its runtime or the engine's timers shut down.
+    private static boolean parkOnTimer(CairoEngine engine, Fiber fiber) {
+        final long token = fiber.tryBeginWaitBuild(1);
+        if (token == Fiber.TOKEN_REFUSED) {
+            throw serverClosing();
+        }
+        final FiberWaitCoordinator coordinator = fiber.getWaitCoordinator();
+        try {
+            if (!coordinator.armTimer(token, engine.getTimerShards(), engine.getConfiguration().getMillisecondClock(), 1)) {
+                throw serverClosing();
+            }
+            final int reason = fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
+            if (reason == FiberWaitCoordinator.REASON_SHUTDOWN) {
+                throw serverClosing();
+            }
+            return reason != FiberWaitCoordinator.REASON_NONE;
+        } finally {
+            coordinator.teardownWait(token);
+        }
+    }
+
+    // Pauses a wait loop of RESUME, ALTER ... WITH BASE or REFRESH for about a millisecond; the loop then checks its
+    // condition and the statement's circuit breaker again. A statement that runs on a mounted fiber, as pg-wire, HTTP
+    // and QWP run one, parks the fiber on a timer, which leaves the network worker to other connections. Off a fiber,
+    // and on a fiber that holds the role-switch read lock (pg-wire's PGPipelineEntry.executeFenced() runs a
+    // re-executed prepared statement so), where a fiber must not park, or when the fiber cannot park, it sleeps.
+    static void pauseWait(CairoEngine engine) {
+        final Fiber fiber = SqlExecutionSuspension.currentFiber();
+        if (fiber == null || !parkOnTimer(engine, fiber)) {
             Os.sleep(1);
         }
     }
@@ -518,6 +556,12 @@ public final class MatViewResume {
             }
         }
         return true;
+    }
+
+    // A parked statement aborts when the server shuts its fiber runtime or the engine's timers down, as PerWorkerLocks
+    // does, so that the shutdown does not wait for the statement. Every wait comes before the statement's writes.
+    private static CairoException serverClosing() {
+        return CairoException.nonCritical().put("query aborted, server is closing").setInterruption(true);
     }
 
     // Brings the view's backlog up to the base table's applied transaction under the latch, see MatViewBacklog. A
