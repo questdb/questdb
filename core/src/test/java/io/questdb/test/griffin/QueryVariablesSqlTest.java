@@ -29,6 +29,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -218,6 +219,42 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 "@q := (SELECT * FROM nope)",
                 () -> assertQuery("SELECT 1 x").expectSize().returns("x\n1\n")
         ));
+    }
+
+    @Test
+    public void testRedefineViewIgnoresVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
+            // the statement compiles. The view keeps the body as text, which no reader parses with
+            // the variables, so the body fails as it does without them.
+            execute("CREATE VIEW v AS (SELECT 1 x)");
+            final String[] statements = {
+                    "ALTER VIEW v AS (SELECT @a x)",
+                    "ALTER VIEW v AS SELECT @a x",
+                    "CREATE OR REPLACE VIEW v AS (SELECT @a x)",
+            };
+            for (String sql : statements) {
+                final int position;
+                final String message;
+                try {
+                    execute(sql);
+                    throw new AssertionError("expected an error for " + sql);
+                } catch (SqlException e) {
+                    position = e.getPosition();
+                    message = e.getFlyweightMessage().toString();
+                }
+                Assert.assertEquals("Invalid column: @a", message);
+                withVariables("@a := 1", () -> assertExceptionNoLeakCheck(sql, position, message));
+            }
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
+            // a body that declares the variable itself still reads the client's value when it lets
+            // callers override it
+            withVariables("@a := 2", () -> execute("ALTER VIEW v AS (DECLARE OVERRIDABLE @a := 1 SELECT @a x)"));
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
+            withVariables("@a := 2", () -> assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n2\n"));
+        });
     }
 
     @Test

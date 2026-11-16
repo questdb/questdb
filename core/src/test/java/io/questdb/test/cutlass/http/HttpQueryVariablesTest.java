@@ -106,6 +106,33 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testRedefineViewIgnoresVariables() throws Exception {
+        // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
+        // the statement compiles. The body is stored as text, without the variables, so it fails
+        // as it does without the parameter, and the view keeps its definition.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE VIEW vw AS (SELECT 1 v)", sqlExecutionContext);
+            final String variables = "@a := 1";
+            final String[] statements = {
+                    "ALTER VIEW vw AS (SELECT @a v)",
+                    "ALTER VIEW vw AS SELECT @a v",
+                    "CREATE OR REPLACE VIEW vw AS (SELECT @a v)",
+            };
+            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
+                for (String sql : statements) {
+                    final String response = assertSameResponse(url, sql, variables);
+                    TestUtils.assertContains(response, "\"error\":\"Invalid column: @a\"");
+                }
+            }
+            assertGet(
+                    "{\"query\":\"SELECT * FROM vw\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    "SELECT * FROM vw",
+                    null
+            );
+        }));
+    }
+
+    @Test
     public void testErrorWithoutPosition() throws Exception {
         // an error in another parameter carries no position, with the variables as without
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
@@ -388,12 +415,18 @@ public class HttpQueryVariablesTest extends AbstractTest {
 
     // the statement answers with the variables as it does without them
     private static void assertSameResponse(String sql, String variables) {
+        assertSameResponse("/query", sql, variables);
+    }
+
+    // returns the response, the same with the variables as without them
+    private static String assertSameResponse(String url, String sql, String variables) {
         final Utf8StringSink without = new Utf8StringSink();
-        final String statusWithout = testHttpClient.get(sql, null, without);
+        final String statusWithout = testHttpClient.get(url, sql, null, null, without);
         final Utf8StringSink with = new Utf8StringSink();
-        final String statusWith = testHttpClient.get(sql, variables, with);
+        final String statusWith = testHttpClient.get(url, sql, variables, null, with);
         Assert.assertEquals(statusWithout, statusWith);
         TestUtils.assertEquals(without.toString(), with.toString());
+        return with.toString();
     }
 
     private static class VariablesHttpClient extends TestHttpClient {

@@ -8148,7 +8148,10 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence variables = executionContext.getQueryVariables();
-        if (variables == null || variables.length() == 0) {
+        // ALTER VIEW and CREATE OR REPLACE VIEW compile the new body while the statement compiles.
+        // The view keeps the body as text, which no reader parses with the client's variables, so
+        // the body compiles without them, as CREATE VIEW's does.
+        if (variables == null || variables.length() == 0 || executionContext.isViewCompile()) {
             return null;
         }
         queryVariablesSource.clear();
