@@ -209,13 +209,63 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUnusedSubQueryValueIsNotCompiled() throws Exception {
+    public void testSubQueryValueReadInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (sym SYMBOL, v INT)");
+            execute("INSERT INTO s VALUES ('a', 1), ('b', 2), ('c', 3)");
+            execute("CREATE TABLE r (v INT)");
+            execute("CREATE TABLE r2 (sym SYMBOL)");
+            execute("CREATE VIEW vw AS (DECLARE OVERRIDABLE @m := (SELECT min(v) FROM s) SELECT v FROM s WHERE v = @m)");
+            drainWalAndViewQueues();
+            final String variables = "@q := (SELECT sym FROM s WHERE v > 1), @m := (SELECT max(v) FROM s)";
+            // The first read of a sub-query value in an expression takes the sub-query the
+            // declaration parsed, later reads parse copies. Each statement returns what it
+            // returns with the assignments as a DECLARE block that opens it.
+            // statement, result, whether its cursor supports random access
+            final Object[][] cases = {
+                    {"SELECT sym, v FROM s WHERE sym IN @q", "sym\tv\nb\t2\nc\t3\n", true},
+                    {"SELECT v FROM s WHERE v = @m", "v\n3\n", true},
+                    {"SELECT v FROM s WHERE v = @m UNION ALL SELECT v FROM s WHERE v = @m", "v\n3\n3\n", false},
+                    {"SELECT * FROM (SELECT v FROM s WHERE v = @m)", "v\n3\n", true},
+                    {"WITH c AS (SELECT sym FROM s WHERE sym IN @q) SELECT * FROM c", "sym\nb\nc\n", true},
+                    {"SELECT sym FROM s WHERE sym IN @q AND v < @m", "sym\nb\n", true},
+                    // the caller's value for the view's OVERRIDABLE variable
+                    {"SELECT * FROM vw", "v\n3\n", true},
+            };
+            for (Object[] c : cases) {
+                final String sql = (String) c[0];
+                final String result = (String) c[1];
+                final boolean isRandomAccess = (boolean) c[2];
+                assertSubQueryValueResult("DECLARE " + variables + ' ' + sql, result, isRandomAccess);
+                withVariables(variables, () -> assertSubQueryValueResult(sql, result, isRandomAccess));
+            }
+
+            final StringSink expected = new StringSink();
+            printSql("EXPLAIN DECLARE " + variables + " SELECT sym, v FROM s WHERE sym IN @q", expected);
+            final StringSink actual = new StringSink();
+            withVariables(variables, () -> printSql("EXPLAIN SELECT sym, v FROM s WHERE sym IN @q", actual));
+            TestUtils.assertEquals(expected, actual);
+
+            withVariables(variables, () -> {
+                execute("INSERT INTO r SELECT v FROM s WHERE v = @m");
+                execute("WITH c AS (SELECT sym FROM s WHERE sym IN @q) INSERT INTO r2 SELECT sym FROM c");
+            });
+            drainWalQueue();
+            assertQuery("SELECT * FROM r").noLeakCheck().expectSize().returns("v\n3\n");
+            assertQuery("SELECT * FROM r2").noLeakCheck().expectSize().returns("sym\nb\nc\n");
+        });
+    }
+
+    @Test
+    public void testUnusedSubQueryValueIsCompiled() throws Exception {
+        // As in a DECLARE block that opens the statement, a sub-query in a value compiles even
+        // when the statement does not read its variable. nope sits 29 characters into
+        // "DECLARE @q := (SELECT * FROM nope) SELECT 1 x", and 21 into the assignments.
+        assertQuery("DECLARE @q := (SELECT * FROM nope) SELECT 1 x").fails(29, "table does not exist [table=nope]");
+        final String sql = "SELECT 1 x";
         withVariables(
-                // Unlike the same value in the statement's own DECLARE block, a variable the
-                // statement does not read never reaches the compiler, so its sub-query may read a
-                // table that does not exist.
                 "@q := (SELECT * FROM nope)",
-                () -> assertQuery("SELECT 1 x").expectSize().returns("x\n1\n")
+                () -> assertQuery(sql).fails(sql.length() + 1 + 21, "table does not exist [table=nope]")
         );
     }
 
@@ -345,6 +395,14 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             code.run();
         } finally {
             context.setQueryVariables(null);
+        }
+    }
+
+    private void assertSubQueryValueResult(String sql, String result, boolean isRandomAccess) throws Exception {
+        if (isRandomAccess) {
+            assertQuery(sql).noLeakCheck().returns(result);
+        } else {
+            assertQuery(sql).noLeakCheck().noRandomAccess().returns(result);
         }
     }
 

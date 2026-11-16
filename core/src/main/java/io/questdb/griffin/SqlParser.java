@@ -314,8 +314,9 @@ public class SqlParser {
     // The context-less parser path is always an ordinary/internal parse and therefore retains FILTER.
     private ExpiryReadPolicy rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
     private boolean pivotMode = false;
-    // the declarations parsed from the client's variables, see parseQueryVariables(), or null
-    private LowerCaseCharSequenceObjHashMap<ExpressionNode> queryVariableDecls;
+    // The model parseQueryVariables() parsed the client's variables into, or null: the root of
+    // the statement that reads them, which parseDml0() takes. Null once taken.
+    private IQueryModel queryVariablesModel;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
     // The length of the text the statement came in, for its parse budget, see checkParseBudget().
@@ -6091,7 +6092,16 @@ public class SqlParser {
             boolean isTopLevel
     ) throws SqlException {
         CharSequence tok;
-        IQueryModel model = queryModelPool.next();
+        final IQueryModel model;
+        if (isTopLevel && queryVariablesModel != null && decls == queryVariablesModel.getDecls()) {
+            // The root of the statement that reads the client's variables is the model they were
+            // parsed into, as if a DECLARE block opened the statement: the model holds what that
+            // parse left in it, the sub-queries of the values among it, see parseQueryVariables().
+            model = queryVariablesModel;
+            queryVariablesModel = null;
+        } else {
+            model = queryModelPool.next();
+        }
         model.setModelPosition(modelPosition);
 
         if (parentWithClauses != null) {
@@ -6104,14 +6114,9 @@ public class SqlParser {
 
         tok = tok(lexer, "'select', 'with', 'declare' or table name expected");
 
-        if (isTopLevel && decls != null && decls == queryVariableDecls) {
-            // The client's variables are in scope in the statement's own DECLARE block, as the
-            // block's earlier declarations are, and a declaration of the same name replaces one,
-            // so the statement's own value wins, as copyDeclsFrom() below has it.
-            model.copyDeclsFrom(decls, false);
-        }
-
         // [declare]
+        // Over the client's variables, the statement's own block reads them as its earlier
+        // declarations, and a declaration of the same name replaces one.
         if (isDeclareKeyword(tok)) {
             parseDeclare(lexer, model, sqlParserCallback, isTopLevel);
             tok = tok(lexer, "'select', 'with', or table name expected");
@@ -6122,7 +6127,10 @@ public class SqlParser {
         //   - true: external declares override the query's own declares
         //   - false: query's own declares take precedence over the external ones
         // Currently set to true at view boundaries only, allowing callers to parameterize views.
-        model.copyDeclsFrom(decls, overrideDeclare);
+        // The client's variables are already the root's own.
+        if (decls != model.getDecls()) {
+            model.copyDeclsFrom(decls, overrideDeclare);
+        }
 
         // [with]
         if (isWithKeyword(tok)) {
@@ -8147,6 +8155,7 @@ public class SqlParser {
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
+        queryVariablesModel = null;
         final CharSequence variables = executionContext.getQueryVariables();
         // ALTER VIEW and CREATE OR REPLACE VIEW compile the new body while the statement compiles.
         // The view keeps the body as text, which no reader parses with the client's variables, so
@@ -8173,6 +8182,10 @@ public class SqlParser {
         queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
         recordStatementTextLength(queryVariablesLexer);
 
+        // The model becomes the root of the statement that reads the variables, see parseDml0(),
+        // so it keeps everything this parse leaves in it, as the root keeps what the DECLARE block
+        // that opens a statement leaves: the sub-queries of the values among it, which the
+        // optimiser reaches through the root. A statement that reads no variables never takes it.
         final IQueryModel model = queryModelPool.next();
         // a sub-query in a value resolves table names against tables only, as one in a DECLARE
         // block that opens a statement does
@@ -8200,7 +8213,7 @@ public class SqlParser {
                 throw SqlException.$(decls.get(keys.getQuick(i)).lhs.position, "variables cannot be OVERRIDABLE");
             }
         }
-        queryVariableDecls = decls;
+        queryVariablesModel = model;
         return decls;
     }
 
@@ -8992,7 +9005,7 @@ public class SqlParser {
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
         // only parse0() and parseExplain() pass declarations here: the client's variables
-        assert decls == null || decls == queryVariableDecls;
+        assert decls == null || (queryVariablesModel != null && decls == queryVariablesModel.getDecls());
         if (decls != null && isUpdateAfterWith(lexer)) {
             // The WAL applies an UPDATE by parsing its text again, without the client's
             // variables, so neither the UPDATE nor its CTEs read them, see parse0().
@@ -10430,7 +10443,7 @@ public class SqlParser {
         explainModelPool.clear();
         idleViewLexers.clear();
         viewLexers.clear();
-        queryVariableDecls = null;
+        queryVariablesModel = null;
         digit = 1;
         traversalAlgo.clear();
         tempCharSequenceSet.clear();
