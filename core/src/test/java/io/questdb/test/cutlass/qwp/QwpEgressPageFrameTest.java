@@ -414,6 +414,51 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         assertBackwardScanMatchesRecordCursor(500, true, SMALL_PAGE_FRAME_ENV);
     }
 
+    /**
+     * A backward scan reverses BYTE, SHORT and CHAR columns eight bytes at a
+     * time and copies the rows below the last full word one by one. Batches of
+     * 1 to 17 rows cut the frames into slices of every length from 1 to 17, so
+     * every remainder of a word comes up for each type, in both directions.
+     * Neighboring rows differ in every byte of each value, so a value or a byte
+     * in the wrong lane shows.
+     */
+    @Test
+    public void testBackwardScanCopiesNarrowColumnsInSlicesOfEveryLength() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
+                // rows x = 1..600, 10s apart: two hourly partitions of 360 and 240
+                // rows, in frames of at most 128 rows
+                final int rowCount = 600;
+                serverMain.execute("CREATE TABLE bwd_narrow(ts TIMESTAMP, b BYTE, sh SHORT, c CHAR, bo BOOLEAN) "
+                        + "TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                serverMain.execute("INSERT INTO bwd_narrow SELECT ((x - 1) * 10_000_000)::TIMESTAMP, (x * 37 + 11)::BYTE, "
+                        + "(x * 7_919 + 13)::SHORT, (x * 4_099 + 7)::CHAR, x % 3 = 0 FROM long_sequence(" + rowCount + ")");
+                serverMain.awaitTable("bwd_narrow");
+                // the casts keep the low bits of the value, as Java's do
+                final ObjList<String> ascending = new ObjList<>(rowCount);
+                for (int x = 1; x <= rowCount; x++) {
+                    ascending.add((x - 1) * 10_000_000L + "|" + (byte) (x * 37 + 11) + "|" + (short) (x * 7_919 + 13) + "|"
+                            + (int) (char) (x * 4_099 + 7) + "|" + (x % 3 == 0) + "|");
+                }
+                final ObjList<String> descending = new ObjList<>(rowCount);
+                for (int i = rowCount - 1; i > -1; i--) {
+                    descending.add(ascending.getQuick(i));
+                }
+                for (int batchRows = 1; batchRows <= 17; batchRows++) {
+                    try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=" + batchRows + ";"
+                    )) {
+                        client.connect();
+                        assertRows("descending, " + batchRows + "-row batches", descending,
+                                collectRows(client, "SELECT * FROM bwd_narrow ORDER BY ts DESC"));
+                        assertRows("ascending, " + batchRows + "-row batches", ascending,
+                                collectRows(client, "SELECT * FROM bwd_narrow"));
+                    }
+                }
+            }
+        });
+    }
+
     @Test
     public void testBackwardScanEmptyAndSingleRowTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {

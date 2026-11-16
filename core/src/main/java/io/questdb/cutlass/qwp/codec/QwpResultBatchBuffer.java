@@ -154,8 +154,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * A frame stores its rows in ascending order. With {@code isDescending} this
      * appends them last to first, from {@code hi - 1} down to {@code lo}: a
      * backward scan hands out its frames last first, and streams each one's rows
-     * last first too. The columnar copies then read each column with a negative
-     * stride.
+     * last first too. The columnar copies then take the {@code Reversed} bulk
+     * appends of {@link QwpColumnScratch}, which read each column's rows from
+     * the top down.
      * <p>
      * The parquet-format fallback iterates rows through {@code record} /
      * {@link #appendRow}, preserving correctness without the columnar speedup.
@@ -183,10 +184,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
             return;
         }
-        // The columnar copies start at the first row to append and step one row
-        // per value: forward from lo, or backward from hi - 1.
-        final long firstRow = isDescending ? hi - 1 : lo;
-        final long rowStep = isDescending ? -1 : 1;
         final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
         final byte[] wts = wireTypesArr;
@@ -216,8 +213,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnLong8WithSentinelReversed(base + lo * 8L, rows);
                     } else {
-                        scratch.appendColumnLong8WithSentinel(base + firstRow * 8L, rows, rowStep * 8L);
+                        scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows);
                     }
                     break;
                 }
@@ -225,8 +224,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnDouble8Reversed(base + lo * 8L, rows);
                     } else {
-                        scratch.appendColumnDouble8(base + firstRow * 8L, rows, rowStep * 8L);
+                        scratch.appendColumnDouble8(base + lo * 8L, rows);
                     }
                     break;
                 }
@@ -234,8 +235,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnInt4WithSentinelReversed(base + lo * 4L, rows, Numbers.INT_NULL);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + firstRow * 4L, rows, rowStep * 4L, Numbers.INT_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL);
                     }
                     break;
                 }
@@ -244,8 +247,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnInt4WithSentinelReversed(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     } else {
-                        scratch.appendColumnInt4WithSentinel(base + firstRow * 4L, rows, rowStep * 4L, Numbers.IPv4_NULL);
+                        scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL);
                     }
                     break;
                 }
@@ -253,8 +258,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnFloat4Reversed(base + lo * 4L, rows);
                     } else {
-                        scratch.appendColumnFloat4(base + firstRow * 4L, rows, rowStep * 4L);
+                        scratch.appendColumnFloat4(base + lo * 4L, rows);
                     }
                     break;
                 }
@@ -268,8 +275,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // zero values rather than driving fillNulls (which would
                         // set bits in the null bitmap that the client rejects).
                         scratch.appendColumnFixedZero(rows, 2);
+                    } else if (isDescending) {
+                        scratch.appendColumnFixedNoNullReversed(base + lo * 2L, rows, 2);
                     } else {
-                        scratch.appendColumnFixedNoNull(base + firstRow * 2L, rows, 2, rowStep * 2L);
+                        scratch.appendColumnFixedNoNull(base + lo * 2L, rows, 2);
                     }
                     break;
                 }
@@ -279,8 +288,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // Wire spec sec 11.5: BYTE cannot carry NULL. See the
                         // SHORT / CHAR case above for the column-top rationale.
                         scratch.appendColumnFixedZero(rows, 1);
+                    } else if (isDescending) {
+                        scratch.appendColumnFixedNoNullReversed(base + lo, rows, 1);
                     } else {
-                        scratch.appendColumnFixedNoNull(base + firstRow, rows, 1, rowStep);
+                        scratch.appendColumnFixedNoNull(base + lo, rows, 1);
                     }
                     break;
                 }
@@ -291,8 +302,10 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                         // column-top fill is n bit-packed false values; the
                         // null bitmap stays clear.
                         scratch.appendColumnBooleanZero(rows);
+                    } else if (isDescending) {
+                        scratch.appendColumnBooleanReversed(base + lo, rows);
                     } else {
-                        scratch.appendColumnBoolean(base + firstRow, rows, rowStep);
+                        scratch.appendColumnBoolean(base + lo, rows);
                     }
                     break;
                 }
@@ -302,7 +315,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     if (base == 0) {
                         fillNulls(scratch, rows);
                     } else if (st != null) {
-                        scratch.appendColumnSymbolKeys(base + firstRow * 4L, rows, rowStep * 4L, st, connDict);
+                        if (isDescending) {
+                            scratch.appendColumnSymbolKeysReversed(base + lo * 4L, rows, st, connDict);
+                        } else {
+                            scratch.appendColumnSymbolKeys(base + lo * 4L, rows, st, connDict);
+                        }
                     } else {
                         // No per-column symbol table (synthetic records): per-row fallback
                         // through record.getSymA + bytes-keyed dedup in the conn dict.
