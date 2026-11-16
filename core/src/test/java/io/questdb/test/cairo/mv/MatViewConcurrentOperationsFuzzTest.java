@@ -82,11 +82,13 @@ import java.util.concurrent.locks.ReentrantLock;
  * refresh workers, a WAL apply worker, the timer job and the WAL purge job run on their own threads. The view is
  * IMMEDIATE, and each round picks microsecond or nanosecond timestamps.
  * <p>
- * A round picks at random whether the statement threads run their statements that take no lock of this test as fiber
- * tasks on one fiber runtime, which fewer carrier threads drain than there are statement threads: a statement that
- * held its carrier while it waits for the view latch, the view's WAL or a new definition would stall the others, and a
- * parked statement resumes on any carrier. Such a round first parks a RESUME on the view latch, which it holds until
- * the runtime's drain returns with the RESUME unfinished.
+ * {@link #testConcurrentViewAndBaseOperations()} runs every statement on its statement thread, so the statement threads
+ * race in parallel, and a waiting statement sleeps on its thread. In
+ * {@link #testConcurrentViewAndBaseOperationsOnFibers()} the statement threads run their statements that take no lock
+ * of this test as fiber tasks on one fiber runtime, which fewer carrier threads drain than there are statement threads:
+ * a statement that held its carrier while it waits for the view latch, the view's WAL or a new definition would stall
+ * the others, and a parked statement resumes on any carrier. Each of its rounds first parks a RESUME on the view latch,
+ * which it holds until the runtime's drain returns with the RESUME unfinished.
  * <p>
  * Every statement must return within its timeout with success or one of the errors this test lists, see
  * {@link #ALLOWED_ERRORS}. Once the threads stop and the queues drain, no view latch is held, no RESUME is in
@@ -304,7 +306,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         return engine.getMatViewStateStore().getViewState(engine.verifyTableName(viewName));
     }
 
-    private void assertRounds(boolean isFiberForced) throws Exception {
+    private void assertRounds(boolean isFiberRound) throws Exception {
         final int rounds = Integer.getInteger("questdb.fuzz.matview.concurrent.rounds", 1);
         final int statements = Integer.getInteger("questdb.fuzz.matview.concurrent.statements", -1);
         // short WAL segments, so that the WAL purges find closed segments, and a short backlog update period, so that
@@ -315,7 +317,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: round ").$(round).$();
-                runRound(rnd, statements > 0 ? statements : 30 + rnd.nextInt(30), isFiberForced);
+                runRound(rnd, statements > 0 ? statements : 30 + rnd.nextInt(30), isFiberRound);
             }
         });
     }
@@ -421,7 +423,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         drainAll();
     }
 
-    private void runRound(Rnd rnd, int statementCount, boolean isFiberForced) throws Exception {
+    private void runRound(Rnd rnd, int statementCount, boolean isFiberRound) throws Exception {
         timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         LOG.info().$("fuzz: timestamp type ").$(timestampType).$();
         // The record copier the refreshes write rows with: picked by the schema's size (0), or forced to the
@@ -445,7 +447,6 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             final ObjList<Thread> clients = new ObjList<>();
             final int refreshWorkerCount = 1 + rnd.nextInt(3);
             final int statementThreadCount = 2 + rnd.nextInt(2);
-            final boolean isFiberRound = rnd.nextBoolean() || isFiberForced;
             final int carrierCount = isFiberRound ? 1 + rnd.nextInt(statementThreadCount - 1) : 0;
             LOG.info().$("fuzz: statement threads ").$(statementThreadCount).$(", fiber carriers ").$(carrierCount).$();
             final FiberRuntime runtime = isFiberRound ? new FiberRuntime(statementThreadCount + 1) : null;
