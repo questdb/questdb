@@ -195,9 +195,9 @@ public class DistinctTest extends AbstractCairoTest {
             final String pushedPlan = """
                     VirtualRecord
                       functions: [-1,e1,e4]
-                        Encode sort lo: 2
+                        Long Top K lo: 2
                           keys: [e1 desc]
-                            Stream Group By
+                            GroupBy vectorized: false
                               keys: [e1,e4]
                                 long_sequence count: 3
                     """;
@@ -247,9 +247,9 @@ public class DistinctTest extends AbstractCairoTest {
             final String pushedPlan2 = """
                     VirtualRecord
                       functions: [-1,x,e4]
-                        Encode sort lo: 2
+                        Long Top K lo: 2
                           keys: [x desc]
-                            Stream Group By
+                            GroupBy vectorized: false
                               keys: [x,e4]
                                 long_sequence count: 3
                     """;
