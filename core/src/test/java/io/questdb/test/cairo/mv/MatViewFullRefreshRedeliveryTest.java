@@ -206,6 +206,82 @@ public class MatViewFullRefreshRedeliveryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshOfValidViewInterruptedByShutdownRebuildsAfterRestart() throws Exception {
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 10);
+        assertMemoryLeak(() -> {
+            // The base rows are 'a' prices 1..1440, ten minutes apart from 2024-01-01, so each of the 240 hours holds
+            // six of them and its last price is 6 * (hour + 1).
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW v AS (SELECT sym, last(price) AS price, ts FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            execute("INSERT INTO base SELECT 'a', x::DOUBLE, timestamp_sequence('2024-01-01', 600_000_000L) FROM long_sequence(1_440)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid");
+
+            // REFRESH FULL of the valid view truncates it, resets its state to a rebuild from scratch, and rebuilds it
+            // in commits of about ten rows. The engine starts closing at the second commit after the reset, so the
+            // rebuild stops with part of the view committed, and the view's WAL applies none of it.
+            execute("REFRESH MATERIALIZED VIEW v FULL");
+            final AtomicBoolean isRebuildStarted = new AtomicBoolean();
+            final AtomicInteger commitsAfterReset = new AtomicInteger();
+            CairoEngine.setRoleSwitchMintObserver(() -> {
+                if (isRebuildStarted.get() && commitsAfterReset.incrementAndGet() == 2) {
+                    IS_CLOSING.set(true);
+                }
+            });
+            // The finally block clears the closing flag on every exit path, so that a failure here does not
+            // leave a closing engine for the other tests in this class.
+            boolean isClosingObserved;
+            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
+                refreshJob.setOnHoldingLockForTesting(() -> isRebuildStarted.set(true));
+                refreshJob.run();
+            } finally {
+                CairoEngine.setRoleSwitchMintObserver(null);
+                isClosingObserved = IS_CLOSING.getAndSet(false);
+            }
+            Assert.assertTrue("the engine starts closing during the rebuild", isClosingObserved);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                // The load takes the state of the reset, which the rebuild's commits follow in the view's WAL: valid,
+                // with no refresh position, so the view's next refresh rebuilds it.
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(restarted.verifyTableName("v"));
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(-1, state.getLastRefreshBaseTxn());
+                drainWalAndMatViewQueues(restarted);
+                drainWalAndMatViewQueues(restarted);
+
+                assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'v'")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\trefresh_base_table_txn\tbase_table_txn
+                                valid\t1\t1
+                                """);
+                // 240 hourly rows; the last prices 6, 12, ..., 1440 sum to 6 * (240 * 241 / 2).
+                assertQuery("SELECT count() AS cnt, sum(price) AS total, min(ts) AS lo, max(ts) AS hi FROM v")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                cnt\ttotal\tlo\thi
+                                240\t173520.0\t2024-01-01T00:00:00.000000Z\t2024-01-10T23:00:00.000000Z
+                                """);
+                restarted.releaseInactive();
+            }
+        });
+    }
+
+    @Test
     public void testFullRefreshOutOfRetriesCompletesWithSecondWorker() throws Exception {
         // With no retries, one plan made stale by DDL on the joined table exhausts the full refresh's
         // retry budget after it has truncated the view.

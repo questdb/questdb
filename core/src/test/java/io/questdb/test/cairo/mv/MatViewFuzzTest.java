@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -836,7 +837,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // base replacements, view ADD and DROP COLUMN, view DROP PARTITION, ALTER MATERIALIZED VIEW ... AS, with SQL
         // that maps by name or copies by position, SET and
         // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, forced invalidations, backlog updates, WAL
-        // purges and restarts of the view states, among
+        // purges, which delete the txn-log parts below the applied ones in a round that keeps the transaction logs in
+        // parts, and restarts of the view states, among
         // them restarts right after a base replacement followed by FULL or RESUME, and reloads of a base day with
         // TRUNCATE, ATTACH PARTITION and UPDATE in one WAL apply run, whose range task the refresh job takes before the
         // apply job moves the base's SeqTxnTracker. The WAL apply and the refresh job run at random points in between.
@@ -847,7 +849,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // day without a base partition while the range of an UPDATE or ATTACH waits in the view's cache. Oracle: a
         // twin view with every column the view's SQL can produce, and the period of a period view, created and fully
         // refreshed at each check, which the view must match outside the base days the fuzzer removed and the view
-        // days it dropped, see MatViewFuzzOracle.
+        // days it dropped, see MatViewFuzzOracle; and at each restart, the view state that the writers committed to the
+        // view's WAL, see restartOperationsFuzzViewStates().
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
@@ -1537,19 +1540,33 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         return opsViewState("mv").hasPendingFullRefreshOwnerForTesting();
     }
 
-    // Whether the operation wrote a transaction to the view's WAL that carries no view state: view column DDL, view
-    // DROP PARTITION, and SET or DROP EXPIRE.
-    private static boolean isOperationsFuzzStatelessViewTxn(MatViewFuzzOpGenerator.Op op) {
-        return switch (op.kind) {
-            case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE, VIEW_DROP_EXPIRE -> true;
-            case VIEW_ADD_COLUMN, VIEW_DROP_COLUMN, VIEW_SET_EXPIRE -> !op.isRefused;
-            default -> false;
-        };
+    // Whether a restart would load the view's state past every transaction with a WAL event left in the view's
+    // transaction log, view column changes only, into a txn-log part that the WAL purge deleted. The load fails there
+    // and leaves the view the default state, a known bug (N11) whose fix removes this steering.
+    private static boolean isOperationsFuzzRestartIntoPurgedPart(TableToken viewToken) {
+        if (!isOperationsFuzzTxnLogPartPurged(viewToken)) {
+            return false;
+        }
+        final long partSize = engine.getConfiguration().getDefaultSeqPartTxnCount();
+        final long newestPart = (engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn() - 1) / partSize;
+        long oldestPart = 1;
+        while (oldestPart < newestPart && !MatViewTxnLogParts.exists(engine, viewToken, oldestPart)) {
+            oldestPart++;
+        }
+        try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(viewToken, oldestPart * partSize)) {
+            while (cursor.hasNext()) {
+                if (cursor.getWalId() > 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
-    // Whether the view's WAL has applied its transactions up to the given one.
-    private static boolean isOperationsFuzzViewWalApplied(long viewTxn) {
-        return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("mv")).getWriterTxn() >= viewTxn;
+    // Whether the WAL purge deleted the oldest parts of the view's transaction log, as it deletes the parts below the
+    // one of the view's applied seqTxn.
+    private static boolean isOperationsFuzzTxnLogPartPurged(TableToken viewToken) {
+        return engine.getConfiguration().getDefaultSeqPartTxnCount() > 0 && !MatViewTxnLogParts.exists(engine, viewToken, 0);
     }
 
     // Turns a detached partition of the base into one that ATTACH PARTITION takes, and returns whether it detached.
@@ -1646,12 +1663,53 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         insertOperationsFuzzRows(op, oracle);
     }
 
-    // A restart of the view states: the store reloads them from disk, and loses the tasks it has not run.
+    // A restart of the view states: the store reloads them from disk, and loses the tasks it has not run. Unless a
+    // task the restart loses would have changed it, the view keeps the state its writers committed to the view's WAL,
+    // which the restart oracle compares: the validity and reason, the refresh position, the base table id and, when a
+    // view state event persisted it, the backlog-lost marker.
     private static void restartOperationsFuzzViewStates(MatViewFuzzOracle oracle) {
-        LOG.info().$("fuzz: restarting view states").$();
+        final TableToken viewToken = engine.verifyTableName("mv");
+        if (isOperationsFuzzRestartIntoPurgedPart(viewToken)) {
+            LOG.info().$("fuzz: skipping the restart, the view's newest transactions are column changes above a purged txn-log part (N11)").$();
+            return;
+        }
+        final MatViewState before = opsViewState("mv");
+        final boolean isStateCompared = !before.isLocked()
+                && !before.isPendingInvalidation()
+                && !before.hasPendingInvalidationReason()
+                && !before.hasPendingFullRefreshOwnerForTesting();
+        final boolean wasInvalid = before.isInvalid();
+        final String reason = before.getInvalidationReasonForReport();
+        final long lastRefreshBaseTxn = before.getLastRefreshBaseTxn();
+        final int baseTableId = before.getBaseTableId();
+        final String backlogLostReason = before.getBacklogLostReason();
+        if (!wasInvalid) {
+            oracle.onValidAtRestart();
+        }
+        if (isOperationsFuzzTxnLogPartPurged(viewToken)) {
+            LOG.info().$("fuzz: restarting view states above purged txn-log parts").$();
+        } else {
+            LOG.info().$("fuzz: restarting view states").$();
+        }
         engine.getMatViewStateStore().clear();
         engine.hydrateMatViewStateStore();
         oracle.onRestart();
+        if (isStateCompared) {
+            final MatViewState after = opsViewState("mv");
+            final String context = " [before: invalid=" + wasInvalid + ", reason=" + reason + ", lastRefreshBaseTxn=" + lastRefreshBaseTxn
+                    + ", baseTableId=" + baseTableId + ", backlogLost=" + backlogLostReason + "; after: invalid=" + after.isInvalid()
+                    + ", reason=" + after.getInvalidationReasonForReport() + ", lastRefreshBaseTxn=" + after.getLastRefreshBaseTxn()
+                    + ", baseTableId=" + after.getBaseTableId() + ", backlogLost=" + after.getBacklogLostReason() + ']';
+            Assert.assertEquals("the restart changed the view's validity" + context, wasInvalid, after.isInvalid());
+            if (wasInvalid) {
+                Assert.assertEquals("the restart changed the invalidation reason" + context, reason, after.getInvalidationReasonForReport());
+            }
+            Assert.assertEquals("the restart changed the refresh position" + context, lastRefreshBaseTxn, after.getLastRefreshBaseTxn());
+            Assert.assertEquals("the restart changed the base table id" + context, baseTableId, after.getBaseTableId());
+            if (!oracle.isBacklogLostMarkerUnpersisted()) {
+                Assert.assertEquals("the restart changed the backlog-lost marker" + context, backlogLostReason, after.getBacklogLostReason());
+            }
+        }
     }
 
     // An UPDATE that changes every row of the day.
@@ -1760,6 +1818,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         oracle.onResumed();
                     } catch (SqlException e) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "materialized view backlog is lost");
+                        oracle.onBacklogLostMarkerUnpersisted();
                         execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
                         oracle.onResumed();
                         oracle.onGapAccepted();
@@ -1924,7 +1983,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 drainMatViewQueue(engine);
                 oracle.onRefreshJobRun();
             }
-            case PURGE_WAL -> drainPurgeJob();
+            // under the ADAPTIVE commit mode, a save point of the view's applied transactions comes first, as the WAL
+            // apply job takes one now and then, so that the purge deletes the view's txn-log parts below them
+            case PURGE_WAL -> MatViewTxnLogParts.purge(engine, engine.verifyTableName("mv"));
             default -> throw new AssertionError("unexpected operation: " + op.kind);
         }
     }
@@ -1946,6 +2007,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 if (oracle.isBacklogExpectedTracked(invalidationReason)) {
                     Assert.fail("RESUME found the backlog of a forced invalidation lost: " + message);
                 }
+                oracle.onBacklogLostMarkerUnpersisted();
                 return;
             }
             TestUtils.assertContains(message, "materialized view full refresh is pending");
@@ -1961,6 +2023,11 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     private static void runViewAndBaseOperations(Rnd rnd, int steps) throws Exception {
+        // The transaction logs of the base and the view in one file, or in parts, which the WAL purge deletes below the
+        // one of the table's applied seqTxn, so that a restart loads the view's state above the deleted parts.
+        final int seqPartTxnCount = MatViewFuzzOpGenerator.pickSeqPartTxnCount(rnd);
+        LOG.info().$("fuzz: txn log part size ").$(seqPartTxnCount).$();
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, seqPartTxnCount);
         final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         // The record copier the view's refresh writes rows with: picked by the schema's size (0), or forced to the
         // single-method, chunked or looping flavour. Production uses the looping copier for wide views when chunked
@@ -2001,8 +2068,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
         final ObjList<String> sqlColumnsBefore = new ObjList<>();
         boolean isViewColumnAdded = false;
-        // the view's last transaction that the test wrote without view state, see the RESTART steering below
-        long statelessViewTxn = -1;
         for (int step = 0; step < steps; step++) {
             sqlColumnsBefore.clear();
             sqlColumnsBefore.addAll(generator.getSqlColumns());
@@ -2016,19 +2081,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             if (isViewColumnAdded && isDroppingNewestViewPartition(op)) {
                 LOG.info().$("fuzz: skipping view DROP PARTITION of the newest view partition, see questdb/questdb#8330").$();
             } else {
-                // Steers clear of a known bug until it is fixed: a restart that finds a view transaction without
-                // view state, such as a view DROP PARTITION or DROP EXPIRE, behind a view state event that the view's
-                // WAL has not applied, such as the one of RESUME, loads the view's stale state file instead of the
-                // event, and a view resumed after a base replacement goes back to invalid. The view's WAL applies
-                // before such a restart. Remove the steering with the fix.
-                if (op.kind == MatViewFuzzOpGenerator.Kind.RESTART && !isOperationsFuzzViewWalApplied(statelessViewTxn)) {
-                    LOG.info().$("fuzz: applying the view's WAL before the restart, a view transaction without view state is pending").$();
-                    drainWalQueue();
-                }
                 runOperationsFuzzOp(generator, op, sqlColumnsBefore, wasSqlPositional, oracle, timestampType, isTimerView);
-                if (isOperationsFuzzStatelessViewTxn(op)) {
-                    statelessViewTxn = opsViewSeqTxn();
-                }
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
             if (rnd.nextBoolean()) {

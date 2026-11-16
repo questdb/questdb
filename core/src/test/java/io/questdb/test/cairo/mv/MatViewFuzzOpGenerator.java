@@ -241,6 +241,18 @@ public final class MatViewFuzzOpGenerator {
         return false;
     }
 
+    // The number of transactions per part of the transaction logs a round's tables keep: 0 keeps each log in one file,
+    // 1 starts a part with every transaction, and 2 to 5 a few. It draws from a copy of the round's Rnd, so the round's
+    // own draws, and the seeds that reproduce a round, stay as they were.
+    public static int pickSeqPartTxnCount(Rnd rnd) {
+        final Rnd copy = new Rnd(rnd.getSeed1(), rnd.getSeed0());
+        return switch (copy.nextInt(3)) {
+            case 0 -> 0;
+            case 1 -> 1;
+            default -> 2 + copy.nextInt(4);
+        };
+    }
+
     // The SQL of a view or of its twin, its columns in their order.
     public static String viewSql(ObjList<String> sqlColumns) {
         return viewSql(sqlColumns, false);

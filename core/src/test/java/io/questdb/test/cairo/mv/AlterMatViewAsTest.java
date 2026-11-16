@@ -377,6 +377,47 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseChangeThenResumeSkipBacklogAndRangeSurviveRestart() throws Exception {
+        // After a base change, RESUME SKIP BACKLOG positions the view on the new base table, and a RANGE refresh commits
+        // above RESUME's view state event. A restart before the view's WAL applies them loads the view valid on the new
+        // base, with no backlog-lost marker, and the new base's next commit reaches the view.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            final int base2Id = engine.verifyTableName("base2").getTableId();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "base table changed");
+            execute(RESUME_SKIP_SQL);
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-02' TO '2024-01-03'");
+            // the refresh job runs the RANGE, the WAL apply job does not
+            drainMatViewQueue(engine);
+            Assert.assertTrue(viewSeqTxn() > engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+
+            restartStates();
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertNull(viewState().getBacklogLostReason());
+            Assert.assertEquals(base2Id, viewState().getBaseTableId());
+            // RESUME jumped to base2's applied transaction, the insert of c
+            assertRefreshBaseTxn(1);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            execute("INSERT INTO base2 VALUES ('d', 7.0, 1.0, '2024-01-03T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertRefreshBaseTxn(2);
+            // the old base's rows stay, the RANGE recomputed c's day from base2, and d reached the view
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    2024-01-02T00:00:00.000000Z\tc\t5.0
+                    2024-01-03T00:00:00.000000Z\td\t7.0
+                    """);
+        });
+    }
+
+    @Test
     public void testBaseChangeWaitsForRefreshHoldingLatch() throws Exception {
         // A base change issued while a refresh holds the view latch waits for the refresh to finish, then goes through.
         assertMemoryLeak(() -> {
@@ -922,6 +963,66 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     @Test
     public void testPlainResumeRefusedAfterFollowingRenamedBaseWithCacheUpdates() throws Exception {
         assertPlainResumeRefusedAfterFollowingRenamedBase(true);
+    }
+
+    @Test
+    public void testRestartAfterAlterAsAbovePurgedTxnLogParts() throws Exception {
+        // With the view's transaction log in parts of one transaction, the WAL purge deletes the parts below the one of
+        // the view's applied seqTxn, an applied view ADD COLUMN. A restart before the view's WAL applies an ALTER ... AS
+        // takes the state from _mv.s and reads no deleted part; with WITH BASE, it loads the base change's
+        // invalidation, which lies below the definition.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        assertMemoryLeak(() -> {
+            for (int round = 0; round < 2; round++) {
+                final boolean isBaseChange = round == 1;
+                createBaseWithRefreshedView("IMMEDIATE");
+                if (isBaseChange) {
+                    createBase2WithRow();
+                }
+                execute(ALTER_PREFIX + "ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+                final long appliedSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn();
+                Assert.assertEquals(3, appliedSeqTxn);
+                MatViewTxnLogParts.purge(engine, viewToken());
+                Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), 0));
+                Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), 1));
+                Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), 2));
+                if (isBaseChange) {
+                    execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+                } else {
+                    execute(ALTER_PREFIX + "AS (" + VIEW_SQL + ")");
+                }
+                Assert.assertEquals(appliedSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+
+                restartStates();
+                if (isBaseChange) {
+                    Assert.assertTrue(viewState().isInvalid());
+                    Assert.assertEquals("base table changed", viewState().getInvalidationReasonForReport());
+                    Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_CHANGED, viewState().getBacklogLostReason());
+                    drainWalAndMatViewQueues();
+                    assertViewStatus("invalid", "base table changed");
+                } else {
+                    Assert.assertFalse(viewState().isInvalid());
+                    assertRefreshBaseTxn(1);
+                    Assert.assertEquals(engine.verifyTableName("base").getTableId(), viewState().getBaseTableId());
+                    drainWalAndMatViewQueues();
+                    execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
+                    drainWalAndMatViewQueues();
+                    assertViewStatus("valid", "");
+                    assertRefreshBaseTxn(2);
+                    assertQuery("SELECT ts, sym, price, extra FROM price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                            ts\tsym\tprice\textra
+                            2024-01-01T00:00:00.000000Z\ta\t1.0\tnull
+                            2024-01-01T01:00:00.000000Z\tb\t2.0\tnull
+                            2024-01-01T02:00:00.000000Z\tc\t3.0\tnull
+                            """);
+                }
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                execute("DROP TABLE IF EXISTS base2");
+                drainWalAndMatViewQueues();
+            }
+        });
     }
 
     @Test

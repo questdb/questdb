@@ -26,6 +26,7 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.PropertyKey;
 import io.questdb.TelemetryJob;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
@@ -41,7 +42,9 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlParser;
 import io.questdb.std.Files;
@@ -293,6 +296,16 @@ public class MatViewResumeTest extends AbstractCairoTest {
             assertViewStatus("invalid", "[21]: Invalid column: price");
             assertViewRows(VIEW_ROWS);
         });
+    }
+
+    @Test
+    public void testFullOnInvalidViewSurvivesRestartBeforeViewWalApplies() throws Exception {
+        assertFullOnInvalidViewSurvivesRestartBeforeViewWalApplies("TIMESTAMP");
+    }
+
+    @Test
+    public void testFullOnInvalidViewSurvivesRestartBeforeViewWalAppliesNanos() throws Exception {
+        assertFullOnInvalidViewSurvivesRestartBeforeViewWalApplies("TIMESTAMP_NS");
     }
 
     @Test
@@ -2319,6 +2332,221 @@ public class MatViewResumeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshAndBackfillSurviveRestartBeforeViewWalApplies() throws Exception {
+        // A REFRESH LIMIT view's applied backfill persisted its frontier; the view's first refresh and a second backfill
+        // follow, unapplied, and the server restarts. The restarted server loads the refresh's position with the
+        // persisted frontier, and the replay of the second backfill moves the frontier to that backfill's anchor.
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            createBase();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 5.0, 5.0, '2024-09-10T12:00:00.000000Z'),
+                    ('a', 7.0, 7.0, '2024-09-12T12:00:00.000000Z'),
+                    ('a', 9.0, 9.0, '2024-09-13T12:00:00.000000Z')
+                    """);
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS (" + VIEW_SQL + ") PARTITION BY DAY");
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 2 DAYS");
+            drainWalQueue();
+            // The anchor min(max(base) 09-13T12:00, now) less the limit puts the boundary at 09-11T12:00, so both
+            // backfills are frozen, and the apply of each sets the frontier to its bucket end plus the limit of 2 days.
+            execute("INSERT INTO price_1h VALUES ('2024-09-10T18:00:00.000000Z', 'a', 1.0)");
+            drainWalQueue();
+            final long frontier = parseFloorPartialTimestamp("2024-09-12T19:00:00.000000Z");
+            Assert.assertEquals(frontier, viewState().getBackfillFrontier());
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainMatViewQueue(engine);
+            assertRefreshBaseTxn(1);
+            execute("INSERT INTO price_1h VALUES ('2024-09-10T20:00:00.000000Z', 'a', 2.0)");
+            Assert.assertTrue(hasUnappliedViewWal());
+            Assert.assertEquals(frontier, viewState().getBackfillFrontier());
+
+            restartEngine((restarted, context) -> {
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(restarted.verifyTableName("price_1h"));
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(1, state.getLastRefreshBaseTxn());
+                Assert.assertEquals(frontier, state.getBackfillFrontier());
+                drainWalQueue(restarted);
+                Assert.assertEquals(parseFloorPartialTimestamp("2024-09-12T21:00:00.000000Z"), state.getBackfillFrontier());
+                Assert.assertEquals(1, state.getLastRefreshBaseTxn());
+                restarted.releaseInactive();
+            });
+        });
+    }
+
+    @Test
+    public void testRestartAfterInvalidationAndViewChangeKeepsInvalidation() throws Exception {
+        // An invalidation event and a view DROP PARTITION above it, both unapplied: a restart loads the invalidation,
+        // and the view refreshes no later base commit.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
+            drainMatViewQueue(engine);
+            Assert.assertTrue(viewState().isInvalid());
+            execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(hasUnappliedViewWal());
+
+            restart();
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals("test invalidation", viewState().getInvalidationReasonForReport());
+            assertRefreshBaseTxn(1);
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "test invalidation");
+            execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\trefresh_base_table_txn\tbase_table_txn
+                            invalid\t1\t2
+                            """);
+            assertViewRows("ts\tsym\tprice\n");
+        });
+    }
+
+    @Test
+    public void testRestartAfterRefreshIntervalsUpdateAndViewChangeKeepsCache() throws Exception {
+        // The refresh interval cache update writes a view state event with the base's new interval, a view DROP
+        // PARTITION follows, and a restart comes before the view's WAL applies them: the view keeps the cached interval,
+        // in the base's timestamp units.
+        assertMemoryLeak(() -> {
+            for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts " + ColumnType.nameOf(timestampType)
+                        + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO base VALUES
+                        ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z'),
+                        ('b', 2.0, 2.0, '2024-01-02T00:10:00.000000Z')
+                        """);
+                createView("MANUAL");
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-02T05:10:00.000000Z')");
+                drainWalQueue();
+                engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(viewToken());
+                drainMatViewQueue(engine);
+                execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+                Assert.assertTrue(hasUnappliedViewWal());
+
+                restart();
+                final long c = ColumnType.getTimestampDriver(timestampType).parseFloorLiteral("2024-01-02T05:10:00.000000Z");
+                final LongList intervals = viewState().getRefreshIntervals();
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(c, intervals.getQuick(0));
+                Assert.assertEquals(c, intervals.getQuick(1));
+                Assert.assertEquals(2, viewState().getRefreshIntervalsBaseTxn());
+                assertRefreshBaseTxn(1);
+                Assert.assertFalse(viewState().isInvalid());
+
+                drainWalAndMatViewQueues();
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                final String suffix = timestampType == ColumnType.TIMESTAMP_NANO ? "000Z" : "Z";
+                assertViewRows("ts\tsym\tprice\n"
+                        + "2024-01-02T00:00:00.000000" + suffix + "\tb\t2.0\n"
+                        + "2024-01-02T05:00:00.000000" + suffix + "\tc\t3.0\n");
+                assertRefreshBaseTxn(2);
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testRestartAfterResumeAndViewChangeAbovePurgedTxnLogParts() throws Exception {
+        // With the view's transaction log in parts of one transaction, the WAL purge deletes the parts below the one of
+        // the view's applied seqTxn, an applied view ADD COLUMN of the invalid view. RESUME SKIP BACKLOG and a view DROP
+        // PARTITION above it, both unapplied, survive a restart, which reads no deleted part.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, 2.0, '2024-01-02T00:10:00.000000Z')
+                    """);
+            createView("IMMEDIATE");
+            drainWalAndMatViewQueues();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+            drainWalQueue();
+            final long appliedSeqTxn = appliedTxn(viewToken());
+            Assert.assertEquals(4, appliedSeqTxn);
+            MatViewTxnLogParts.purge(engine, viewToken());
+            for (long part = 0; part < appliedSeqTxn - 1; part++) {
+                Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), part));
+            }
+            Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), appliedSeqTxn - 1));
+            execute(RESUME_SQL);
+            execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+            Assert.assertEquals(appliedSeqTxn, appliedTxn(viewToken()));
+
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            assertRefreshBaseTxn(1);
+            Assert.assertEquals(engine.verifyTableName("base").getTableId(), viewState().getBaseTableId());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-02T05:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\trefresh_base_table_txn\tbase_table_txn
+                            valid\t2\t2
+                            """);
+            assertQuery("SELECT ts, sym, price, extra FROM price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice\textra
+                    2024-01-02T00:00:00.000000Z\tb\t2.0\tnull
+                    2024-01-02T05:00:00.000000Z\tc\t3.0\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testRestartAfterResumeAndViewChangeAcrossTxnLogParts() throws Exception {
+        // As testRestartAfterResumeAndViewChangeKeepsResume() for a view DROP PARTITION, with the view's transaction
+        // log in parts of one and of two transactions: RESUME's view state event lies in an older part than the DROP
+        // PARTITION, at least with parts of one transaction.
+        assertMemoryLeak(() -> {
+            for (int partTxnCount = 1; partTxnCount < 3; partTxnCount++) {
+                setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, partTxnCount);
+                assertResumeSurvivesRestart(false, "ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+                assertResumeSurvivesRestart(true, "ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+            }
+        });
+    }
+
+    @Test
+    public void testRestartAfterResumeAndViewChangeKeepsResume() throws Exception {
+        // RESUME writes a view state event, and a view change that carries no view state follows it in the view's
+        // WAL. A restart before the WAL applies them keeps RESUME's state, and so does a second restart after. Each
+        // change runs after plain RESUME, which catches up and keeps the view's position with the backlog cached, and
+        // after RESUME SKIP BACKLOG, which jumps over the backlog.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 2; i++) {
+                final boolean isSkipBacklog = i == 1;
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h DROP PARTITION WHERE ts < '2024-01-02'");
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h SET TTL 30 DAYS");
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h SET EXPIRE ROWS WHEN price < 0.0");
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h DROP EXPIRE");
+                assertResumeSurvivesRestart(isSkipBacklog, "ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 100 YEARS");
+                assertResumeSurvivesRestart(
+                        isSkipBacklog,
+                        "ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE",
+                        "ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'"
+                );
+                assertResumeSurvivesRestart(isSkipBacklog, "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-02' TO '2024-01-03'");
+            }
+        });
+    }
+
+    @Test
     public void testResumeClearsRefreshIntervalCache() throws Exception {
         // RESUME jumps, so it clears the view's cached refresh intervals, also across a restart.
         assertMemoryLeak(() -> {
@@ -2987,8 +3215,151 @@ public class MatViewResumeTest extends AbstractCairoTest {
         }
     }
 
+    // FULL rebuilds an invalid view, a view SET TTL follows, and the server restarts before the view's WAL applies
+    // them. The restarted server loads the view valid, as FULL left it, and refreshes the base's next commit.
+    private void assertFullOnInvalidViewSurvivesRestartBeforeViewWalApplies(String timestampType) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            insertBaseRows();
+            createView("IMMEDIATE");
+            drainWalAndMatViewQueues();
+            assertRefreshBaseTxn(1);
+            invalidate("test invalidation");
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            // the refresh job runs the FULL, the WAL apply job does not
+            drainMatViewQueue(engine);
+            Assert.assertFalse(viewState().isInvalid());
+            execute("ALTER MATERIALIZED VIEW price_1h SET TTL 30 DAYS");
+            Assert.assertTrue(hasUnappliedViewWal());
+
+            restartEngine((restarted, context) -> {
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(restarted.verifyTableName("price_1h"));
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(1, state.getLastRefreshBaseTxn());
+                Assert.assertEquals(restarted.verifyTableName("base").getTableId(), state.getBaseTableId());
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'price_1h'")
+                        .withEngine(restarted)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\tinvalidation_reason\nvalid\t\n");
+                restarted.execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-01T02:10:00.000000Z')", context);
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                        .withEngine(restarted)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("view_status\trefresh_base_table_txn\tbase_table_txn\nvalid\t2\t2\n");
+                final String suffix = "TIMESTAMP_NS".equals(timestampType) ? "000Z" : "Z";
+                assertQuery("price_1h ORDER BY ts, sym")
+                        .withEngine(restarted)
+                        .withContext(context)
+                        .timestamp("ts")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("ts\tsym\tprice\n"
+                                + "2024-01-01T00:00:00.000000" + suffix + "\ta\t1.0\n"
+                                + "2024-01-01T01:00:00.000000" + suffix + "\tb\t2.0\n"
+                                + "2024-01-01T02:00:00.000000" + suffix + "\tc\t3.0\n");
+                try (SqlCompiler compiler = restarted.getSqlCompiler()) {
+                    TestUtils.assertSqlCursors(compiler, context, VIEW_SQL + " ORDER BY ts, sym", "price_1h ORDER BY ts, sym", LOG);
+                }
+                restarted.releaseInactive();
+            });
+        });
+    }
+
     private void assertRefreshBaseTxn(long expected) {
         Assert.assertEquals(expected, viewState().getLastRefreshBaseTxn());
+    }
+
+    // An IMMEDIATE view refreshed from the base's two rows of 2024-01-01 at base txn 1 goes invalid, the base takes c
+    // of 2024-01-02 at txn 2, and RESUME runs, followed by the changes: statements that write no view state, or a RANGE
+    // refresh that the refresh job runs. A restart before the view's WAL applies them, and another after, keep RESUME's
+    // state: valid on the base's id, at txn 2 after SKIP BACKLOG or the refresh job's catch-up, else at txn 1 with c's
+    // interval cached at txn 2, as plain RESUME catches up. The base's next commit, d of 2024-01-02, reaches the view.
+    private void assertResumeSurvivesRestart(boolean isSkipBacklog, String... changes) throws Exception {
+        createBase();
+        insertBaseRows();
+        createView("IMMEDIATE");
+        drainWalAndMatViewQueues();
+        assertRefreshBaseTxn(1);
+        invalidate("test invalidation");
+        execute("INSERT INTO base VALUES ('c', 3.0, 3.0, '2024-01-02T00:10:00.000000Z')");
+        drainWalAndMatViewQueues();
+        final TableToken baseToken = engine.verifyTableName("base");
+        Assert.assertEquals(2, appliedTxn(baseToken));
+        execute(isSkipBacklog ? RESUME_SQL : PLAIN_RESUME_SQL);
+        for (String change : changes) {
+            execute(change);
+        }
+        final boolean isRange = changes[0].startsWith("REFRESH");
+        if (isRange) {
+            // the refresh job runs the RANGE, and the incremental refresh RESUME queued; the WAL apply job does not run
+            drainMatViewQueue(engine);
+        }
+        Assert.assertTrue(hasUnappliedViewWal());
+
+        final boolean isCaughtUp = isSkipBacklog || isRange;
+        restart();
+        assertResumedState(isCaughtUp ? 2 : 1, baseToken.getTableId());
+        if (isCaughtUp) {
+            assertCacheEmpty();
+        } else {
+            final long c = parseFloorPartialTimestamp("2024-01-02T00:10:00.000000Z");
+            final LongList intervals = viewState().getRefreshIntervals();
+            Assert.assertEquals(2, intervals.size());
+            Assert.assertEquals(c, intervals.getQuick(0));
+            Assert.assertEquals(c, intervals.getQuick(1));
+            Assert.assertEquals(2, viewState().getRefreshIntervalsBaseTxn());
+        }
+        drainWalAndMatViewQueues();
+        assertViewStatus("valid", "");
+        restart();
+        assertResumedState(2, baseToken.getTableId());
+
+        execute("INSERT INTO base VALUES ('d', 4.0, 4.0, '2024-01-02T01:10:00.000000Z')");
+        drainWalAndMatViewQueues();
+        assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\trefresh_base_table_txn\tbase_table_txn\nvalid\t3\t3\n");
+        // the dropped day of the view, the gap RESUME SKIP BACKLOG jumps over, unless the RANGE recomputes it, and the
+        // view column no SQL produces
+        final boolean isDayDropped = changes[changes.length - 1].contains("DROP PARTITION");
+        final boolean isGap = isSkipBacklog && !isRange;
+        final String extra = changes[0].contains("ADD COLUMN") ? "\tnull" : "";
+        final StringBuilder rows = new StringBuilder("ts\tsym\tprice").append(extra.isEmpty() ? "" : "\textra").append('\n');
+        if (!isDayDropped) {
+            rows.append("2024-01-01T00:00:00.000000Z\ta\t1.0").append(extra).append('\n');
+            rows.append("2024-01-01T01:00:00.000000Z\tb\t2.0").append(extra).append('\n');
+        }
+        if (!isGap) {
+            rows.append("2024-01-02T00:00:00.000000Z\tc\t3.0").append(extra).append('\n');
+        }
+        rows.append("2024-01-02T01:00:00.000000Z\td\t4.0").append(extra).append('\n');
+        if (changes[0].contains("SET EXPIRE")) {
+            // the EXPIRE ROWS policy filters the view's rows on read, so the cursor does not know its size
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().returns(rows.toString());
+        } else {
+            assertViewRows(rows.toString());
+        }
+        if (!isDayDropped && !isGap && extra.isEmpty()) {
+            // the view holds what its SQL gives on the base
+            assertSqlCursors(VIEW_SQL + " ORDER BY ts, sym", "price_1h ORDER BY ts, sym");
+        }
+        execute("DROP MATERIALIZED VIEW price_1h");
+        execute("DROP TABLE base");
+        drainWalAndMatViewQueues();
+    }
+
+    private void assertResumedState(long refreshBaseTxn, int baseTableId) {
+        Assert.assertFalse(viewState().isInvalid());
+        Assert.assertNull(viewState().getInvalidationReasonForReport());
+        assertRefreshBaseTxn(refreshBaseTxn);
+        Assert.assertEquals(baseTableId, viewState().getBaseTableId());
     }
 
     // RESUME returns once the view state event is in the view's WAL; materialized_views() reports the state the
@@ -3215,6 +3586,20 @@ public class MatViewResumeTest extends AbstractCairoTest {
         engine.hydrateMatViewStateStore();
     }
 
+    // Stops the engine and starts another one on the same data directory, which loads the views from disk.
+    private void restartEngine(RestartedEngineCheck check) throws Exception {
+        engine.releaseInactive();
+        engine.releaseAllWriters();
+        try (
+                CairoEngine restarted = new CairoEngine(configuration);
+                SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+        ) {
+            restarted.load();
+            restarted.buildViewGraphs();
+            check.run(restarted, restartedContext);
+        }
+    }
+
     private long viewSeqTxn() {
         return engine.getTableSequencerAPI().getTxnTracker(viewToken()).getSeqTxn();
     }
@@ -3225,5 +3610,10 @@ public class MatViewResumeTest extends AbstractCairoTest {
 
     private TableToken viewToken() {
         return engine.verifyTableName("price_1h");
+    }
+
+    @FunctionalInterface
+    private interface RestartedEngineCheck {
+        void run(CairoEngine restarted, SqlExecutionContext context) throws Exception;
     }
 }

@@ -73,6 +73,9 @@ final class MatViewFuzzOracle {
     private int baseEpochAtLastValid;
     // the days, from the first, that the oracle compares: the complete periods of a period view, every day otherwise
     private int completeDays;
+    // RESUME refused a lost backlog, and kept the marker in memory until the view's next view state event persists it,
+    // see MatViewBacklog.markLost(): a restart before that event loses the marker
+    private boolean isBacklogLostMarkerUnpersisted;
     private boolean isFullPending;
     private boolean isGapAccepted;
     private boolean isInvalidationPending;
@@ -185,6 +188,10 @@ final class MatViewFuzzOracle {
         return MatViewFuzzTest.FUZZ_INVALIDATION_REASON.equals(invalidationReason) && baseEpoch == baseEpochAtLastValid;
     }
 
+    boolean isBacklogLostMarkerUnpersisted() {
+        return isBacklogLostMarkerUnpersisted;
+    }
+
     boolean isBaseReplacedSinceValid() {
         return baseEpoch != baseEpochAtLastValid;
     }
@@ -204,6 +211,10 @@ final class MatViewFuzzOracle {
     void onAttach(int day) {
         onRecreated(day);
         isPendingRange[day] = true;
+    }
+
+    void onBacklogLostMarkerUnpersisted() {
+        isBacklogLostMarkerUnpersisted = true;
     }
 
     void onBaseRemoved(int day) {
@@ -350,6 +361,11 @@ final class MatViewFuzzOracle {
 
     void onUpdate(int day) {
         isPendingRange[day] = true;
+    }
+
+    // The view was valid at a restart: a valid view has no backlog, so it has no marker to lose.
+    void onValidAtRestart() {
+        isBacklogLostMarkerUnpersisted = false;
     }
 
     void onViewColumnAdded(String name, ObjList<String> sqlColumns) {

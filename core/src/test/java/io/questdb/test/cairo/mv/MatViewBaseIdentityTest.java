@@ -42,6 +42,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
@@ -745,6 +746,175 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadDoesNotOpenAppliedTxnsWithoutState() throws Exception {
+        // With 10,000 applied refresh commits and three applied commits without view state above them, the load opens
+        // the event of the newest one and takes the state from _mv.s, which holds the applied transactions.
+        // the commits need no durability here, and syncing each of them would take most of the test's time
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger eventOpens = new AtomicInteger();
+        assertMemoryLeak(newViewEventOpenCountingFacade(isCounting, eventOpens), () -> {
+            createViewWithAppliedRefreshCommits();
+            commitViewRowsWithoutState(3);
+            drainWalQueue();
+            Assert.assertEquals(10_005, viewSeqTxn());
+
+            restartCountingViewEventOpens(isCounting);
+            Assert.assertEquals(1, eventOpens.get());
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(9_999, viewState().getLastRefreshFinishTimestampUs());
+            Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testLoadOpensUnappliedTxnsDownToStateEvent() throws Exception {
+        // Above 10,000 applied refresh commits, an unapplied view state event and three unapplied commits without view
+        // state above it: the load opens the three commits' events and the state event's, takes the state and the id
+        // from the state event, and opens no applied transaction's event.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger eventOpens = new AtomicInteger();
+        assertMemoryLeak(newViewEventOpenCountingFacade(isCounting, eventOpens), () -> {
+            createViewWithAppliedRefreshCommits();
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                writer.resetMatViewState(1, 77, true, "test reason", Numbers.LONG_NULL, null, -1, 12_345);
+            }
+            commitViewRowsWithoutState(3);
+            Assert.assertEquals(10_006, viewSeqTxn());
+
+            restartCountingViewEventOpens(isCounting);
+            Assert.assertEquals(4, eventOpens.get());
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals("test reason", viewState().getInvalidationReasonForReport());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(77, viewState().getLastRefreshFinishTimestampUs());
+            Assert.assertEquals(12_345, viewState().getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testLoadStopsAtAppliedTxnsBelowUnappliedTxnsWithoutState() throws Exception {
+        // Above 10,000 applied refresh commits, three unapplied commits without view state: the load opens their three
+        // events and, at the last unapplied one, takes the state from _mv.s, which holds the applied transactions. It
+        // opens no applied transaction's event, not even the newest one's.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isCounting = new AtomicBoolean();
+        final AtomicInteger eventOpens = new AtomicInteger();
+        assertMemoryLeak(newViewEventOpenCountingFacade(isCounting, eventOpens), () -> {
+            createViewWithAppliedRefreshCommits();
+            commitViewRowsWithoutState(3);
+            Assert.assertEquals(10_005, viewSeqTxn());
+
+            restartCountingViewEventOpens(isCounting);
+            Assert.assertEquals(3, eventOpens.get());
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(9_999, viewState().getLastRefreshFinishTimestampUs());
+            Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testLoadWithUnknownAppliedTxnAndOnlyTxnsWithoutStateTakesStateFile() throws Exception {
+        // A REFRESH LIMIT view that never refreshed holds only transactions without view state: SET REFRESH LIMIT and
+        // a backfill. With the view's applied seqTxn unknown, the load takes the state from _mv.s at the first
+        // transaction, and finds no state without the file.
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            createBase();
+            execute("INSERT INTO base VALUES ('a', 5.0, '2024-09-10T12:00'), ('a', 9.0, '2024-09-13T12:00')");
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS (" + VIEW_SQL + ") PARTITION BY DAY");
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 2 DAYS");
+            drainWalQueue();
+            // The anchor min(max(base) 09-13T12:00, now) less the limit puts the boundary at 09-11T12:00, so the
+            // backfill at 09-10T18:00 is frozen, and its apply sets the frontier to its bucket end 09-10T19:00 plus the
+            // limit of 2 days.
+            execute("INSERT INTO price_1h VALUES ('2024-09-10T18:00', 'a', 1.0)");
+            drainWalQueue();
+            final long frontier = parseFloorPartialTimestamp("2024-09-12T19:00:00.000000Z");
+            Assert.assertEquals(frontier, viewState().getBackfillFrontier());
+            Assert.assertEquals(WalTxnType.SQL + ",REPLACE", viewTxnTypes());
+
+            final MatViewStateReader stateReader = new MatViewStateReader();
+            Assert.assertTrue(readViewState(-1, stateReader));
+            Assert.assertFalse(stateReader.isInvalid());
+            Assert.assertEquals(-1, stateReader.getLastRefreshBaseTxn());
+            Assert.assertEquals(frontier, stateReader.getBackfillFrontier());
+
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+            }
+            Assert.assertFalse(readViewState(-1, new MatViewStateReader()));
+        });
+    }
+
+    @Test
+    public void testLoadWithUnknownAppliedTxnTakesNewestStateEvent() throws Exception {
+        // With the view's applied seqTxn unknown, every transaction counts as unapplied: the load passes a view DROP
+        // PARTITION to RESUME's view state event below it.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-02T00:10:00.000000Z')");
+            createView("IMMEDIATE");
+            drainWalAndMatViewQueues();
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken(), "test invalidation");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(viewState().isInvalid());
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG");
+            execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+            Assert.assertTrue(viewTxnTypes().endsWith(",INVALIDATE,INVALIDATE," + WalTxnType.SQL));
+
+            final MatViewStateReader stateReader = new MatViewStateReader();
+            Assert.assertTrue(readViewState(-1, stateReader));
+            Assert.assertFalse(stateReader.isInvalid());
+            Assert.assertEquals(1, stateReader.getLastRefreshBaseTxn());
+            Assert.assertEquals(baseTableId(), stateReader.getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testLoadWithUnknownAppliedTxnTakesStateFileAtUnreadableEvent() throws Exception {
+        // With the view's applied seqTxn unknown, the load passes a commit without view state to the view state event
+        // below it, whose WAL-e file is gone: the state comes from _mv.s, and the base table id from the newest view
+        // state event it can read, as for any unreadable event.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView("MANUAL");
+            final int walId;
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                walId = writer.getWalId();
+                // segment 0
+                writer.resetMatViewState(1, 11, false, null, Numbers.LONG_NULL, null, -1, 111);
+                writer.rollSegment();
+                // segment 1
+                writer.resetMatViewState(2, 22, true, "second", Numbers.LONG_NULL, null, -1, 222);
+                writer.rollSegment();
+            }
+            drainWalQueue();
+            assertPersistedBaseTableId(222);
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken()).concat(WalUtils.WAL_NAME_BASE).put(walId)
+                        .slash().put(1).concat(WalUtils.EVENT_FILE_NAME);
+                Assert.assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+            }
+            // segment 2
+            commitViewRowsWithoutState(1);
+            Assert.assertEquals(3, viewSeqTxn());
+
+            final MatViewStateReader stateReader = new MatViewStateReader();
+            Assert.assertTrue(readViewState(-1, stateReader));
+            Assert.assertTrue(stateReader.isInvalid());
+            Assert.assertEquals("second", Chars.toString(stateReader.getInvalidationReason()));
+            Assert.assertEquals(2, stateReader.getLastRefreshBaseTxn());
+            Assert.assertEquals(22, stateReader.getLastRefreshTimestampUs());
+            Assert.assertEquals(111, stateReader.getBaseTableId());
+        });
+    }
+
+    @Test
     public void testPeriodRangeRefreshKeepsIdInStateEvent() throws Exception {
         // The period timer's range refresh writes a view state event with the period it reached; the event carries
         // the base table id.
@@ -936,6 +1106,160 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestartAfterResumeOntoRecreatedBaseAndViewChangeLoadsResume() throws Exception {
+        // RESUME SKIP BACKLOG positions the view on a re-created base and writes the new id in its view state event. A
+        // view DROP EXPIRE, which carries no view state, follows it, and a restart comes before the view's WAL applies
+        // them: the view loads valid on the new base, and the new base's next commit reaches it.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+            createView("IMMEDIATE");
+            drainWalAndMatViewQueues();
+            final int oldBaseTableId = baseTableId();
+            execute("DROP TABLE base");
+            createBase();
+            insertBaseRow("b", 2.0, "2024-01-01T01:10:00.000000Z");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "base table is dropped or renamed");
+            final int newBaseTableId = baseTableId();
+            Assert.assertNotEquals(oldBaseTableId, newBaseTableId);
+
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG");
+            execute("ALTER MATERIALIZED VIEW price_1h DROP EXPIRE");
+            Assert.assertTrue(viewTxnTypes().endsWith(",INVALIDATE," + WalTxnType.SQL));
+            assertPersistedBaseTableId(oldBaseTableId);
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            // RESUME jumped to the new base's applied transaction, the insert of b
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(newBaseTableId, viewState().getBaseTableId());
+
+            drainWalAndMatViewQueues();
+            assertPersistedBaseTableId(newBaseTableId);
+            insertBaseRow("c", 3.0, "2024-01-01T02:10:00.000000Z");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            // b is the gap RESUME SKIP BACKLOG jumped over
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T02:00:00.000000Z\tc\t3.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRestartBeforeFirstRefreshAppliesLoadsIt() throws Exception {
+        // A new view's first refresh commits the id state event and the data, and a view SET TTL follows; a restart
+        // comes before the view's WAL applies anything, with no _mv.s yet. The view loads the refresh's position and
+        // the base table id.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+            drainWalQueue();
+            createView("IMMEDIATE");
+            drainMatViewQueue(engine);
+            execute("ALTER MATERIALIZED VIEW price_1h SET TTL 30 DAYS");
+            Assert.assertEquals("INVALIDATE,DATA," + WalTxnType.SQL, viewTxnTypes());
+            Assert.assertEquals(0, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRestartLoadsUnappliedLegacyStateEventBelowViewChange() throws Exception {
+        // A view state event in the legacy format, as a previous version writes it, and a view SET TTL above it, both
+        // unapplied: the restart loads the event's invalidation, which carries no base table id.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+            createView("MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertPersistedBaseTableId(baseTableId());
+            try (WalWriter writer = engine.getWalWriter(viewToken())) {
+                writer.setLegacyMatViewFormat(true);
+                try {
+                    writer.resetMatViewState(1, 1, true, "legacy", Numbers.LONG_NULL, null, -1, 777);
+                } finally {
+                    writer.setLegacyMatViewFormat(false);
+                }
+            }
+            execute("ALTER MATERIALIZED VIEW price_1h SET TTL 30 DAYS");
+            Assert.assertTrue(viewTxnTypes().endsWith(",INVALIDATE," + WalTxnType.SQL));
+
+            restart();
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals("legacy", viewState().getInvalidationReasonForReport());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(MatViewState.BASE_TABLE_ID_UNKNOWN, viewState().getBaseTableId());
+        });
+    }
+
+    @Test
+    public void testRestartStopsAtAppliedTxnsAbovePurgedTxnLogParts() throws Exception {
+        // With the view's transaction log in parts of one transaction, the WAL purge deletes the parts below the one of
+        // the view's applied seqTxn, an applied view ADD COLUMN. A view DROP PARTITION follows, unapplied, and in the
+        // second round an unapplied view ADD COLUMN lies between them. A restart takes the state from _mv.s at the last
+        // unapplied transaction, reads no deleted part, and the view refreshes on.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        assertMemoryLeak(() -> {
+            for (int round = 0; round < 2; round++) {
+                createBase();
+                execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-02T00:10:00.000000Z')");
+                createView("IMMEDIATE");
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+                drainWalQueue();
+                Assert.assertEquals("INVALIDATE,DATA,STRUCTURE", viewTxnTypes());
+                MatViewTxnLogParts.purge(engine, viewToken());
+                Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), 0));
+                Assert.assertFalse(MatViewTxnLogParts.exists(engine, viewToken(), 1));
+                Assert.assertTrue(MatViewTxnLogParts.exists(engine, viewToken(), 2));
+                if (round == 1) {
+                    execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra2 DOUBLE");
+                }
+                execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2024-01-01'");
+                Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+
+                restart();
+                Assert.assertFalse(viewState().isInvalid());
+                Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+                Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+                drainWalAndMatViewQueues();
+                insertBaseRow("c", 3.0, "2024-01-02T05:10:00.000000Z");
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\trefresh_base_table_txn\tbase_table_txn
+                                valid\t2\t2
+                                """);
+                assertQuery("SELECT ts, sym, price, extra FROM price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                        ts\tsym\tprice\textra
+                        2024-01-02T00:00:00.000000Z\tb\t2.0\tnull
+                        2024-01-02T05:00:00.000000Z\tc\t3.0\tnull
+                        """);
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testReplacedBaseBeforeFirstRefreshAfterRestartInvalidates() throws Exception {
         // A base replaced before the view's first refresh after a restart, with the drop's invalidation lost in the
         // restart, invalidates the view at that refresh with no rows written.
@@ -1013,6 +1337,19 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
         });
     }
 
+    // Counts the opens of the view's WAL event files while the flag is set.
+    private static TestFilesFacadeImpl newViewEventOpenCountingFacade(AtomicBoolean isCounting, AtomicInteger eventOpens) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isCounting.get() && Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME) && Utf8s.containsAscii(name, "price_1h")) {
+                    eventOpens.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+    }
+
     private void assertPersistedBaseTableId(int expected) {
         try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
             path.of(configuration.getDbRoot()).concat(viewToken()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
@@ -1058,6 +1395,74 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
 
     private void createViewWithoutBaseId() throws Exception {
         createViewWithoutBaseId("IMMEDIATE");
+    }
+
+    // An IMMEDIATE view refreshed from one base row, and 10,000 refresh commits of base txn 1 written to its WAL and
+    // applied, the last one with the refresh timestamp 9,999.
+    private void createViewWithAppliedRefreshCommits() throws SqlException {
+        createBase();
+        insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+        createView("IMMEDIATE");
+        drainWalAndMatViewQueues();
+        final long ts = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+        try (WalWriter writer = engine.getWalWriter(viewToken())) {
+            for (int i = 0; i < 10_000; i++) {
+                final TableWriter.Row row = writer.newRow(ts);
+                row.putSym(1, "a");
+                row.putDouble(2, i);
+                row.append();
+                writer.commitMatView(1, i, Numbers.LONG_NULL, ts, ts + 3_600_000_000L);
+            }
+        }
+        drainWalQueue();
+        Assert.assertEquals(10_002, viewSeqTxn());
+        Assert.assertEquals(10_002, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+    }
+
+    // Commits of one row each in the 00:00 bucket, written straight to the view's WAL without view state, as a user
+    // backfill commits.
+    private void commitViewRowsWithoutState(int count) {
+        final long ts = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+        try (WalWriter writer = engine.getWalWriter(viewToken())) {
+            for (int i = 0; i < count; i++) {
+                final TableWriter.Row row = writer.newRow(ts);
+                row.putSym(1, "a");
+                row.putDouble(2, 100 + i);
+                row.append();
+                writer.commit();
+            }
+        }
+    }
+
+    // Reads the view's state as the load does, with the given applied seqTxn of the view, and returns whether it found
+    // one.
+    private boolean readViewState(long appliedSeqTxn, MatViewStateReader stateReader) {
+        try (
+                Path path = new Path();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader eventReader = new WalEventReader(configuration)
+        ) {
+            path.of(configuration.getDbRoot()).concat(viewToken());
+            return WalUtils.readMatViewState(
+                    path,
+                    viewToken(),
+                    configuration,
+                    io.questdb.cairo.vm.Vm.getCMRInstance(),
+                    eventReader,
+                    reader,
+                    stateReader,
+                    appliedSeqTxn
+            );
+        }
+    }
+
+    private void restartCountingViewEventOpens(AtomicBoolean isCounting) {
+        isCounting.set(true);
+        try {
+            restart();
+        } finally {
+            isCounting.set(false);
+        }
     }
 
     // A refreshed view whose persisted state carries no base table id, as one that a previous version wrote: the view

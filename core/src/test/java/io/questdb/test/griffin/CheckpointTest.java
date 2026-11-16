@@ -3776,6 +3776,67 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreLoadsUnappliedRefreshBelowViewChange() throws Exception {
+        // A checkpoint taken while the view's WAL holds a refresh commit and a view SET TTL above it, both unapplied,
+        // restores them unapplied. The restored view loads the refresh commit's position, not the older one of the
+        // checkpoint's _mv.s, applies its WAL and refreshes on.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_price VALUES('a', 1.0, '2024-09-13T00:10')");
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            Assert.assertEquals(1, engine.getMatViewStateStore().getViewState(viewToken).getLastRefreshBaseTxn());
+            execute("INSERT INTO base_price VALUES('b', 2.0, '2024-09-13T01:10')");
+            drainWalQueue();
+            // the refresh job commits the refresh of base txn 2, the WAL apply job does not apply it
+            drainMatViewQueue(engine);
+            Assert.assertEquals(2, engine.getMatViewStateStore().getViewState(viewToken).getLastRefreshBaseTxn());
+            execute("ALTER MATERIALIZED VIEW price_1h SET TTL 1000 DAYS");
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn() < engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            final int baseTableId = engine.verifyTableName("base_price").getTableId();
+
+            execute("CHECKPOINT CREATE");
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            engine.checkpointRecover();
+            engine.reloadTableNames();
+            engine.getMetadataCache().onStartupAsyncHydrator();
+            engine.buildViewGraphs();
+
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            Assert.assertNotNull(viewState);
+            Assert.assertFalse(viewState.isInvalid());
+            Assert.assertEquals(2, viewState.getLastRefreshBaseTxn());
+            Assert.assertEquals(baseTableId, viewState.getBaseTableId());
+            execute("CHECKPOINT RELEASE");
+
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base_price VALUES('c', 3.0, '2024-09-13T02:10')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_status, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\trefresh_base_table_txn\tbase_table_txn
+                            valid\t3\t3
+                            """);
+            assertQuery("price_1h ORDER BY ts")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-13T00:00:00.000000Z
+                            b\t2.0\t2024-09-13T01:00:00.000000Z
+                            c\t3.0\t2024-09-13T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresMatViewBaseTableId() throws Exception {
         // The view's persisted base table id survives a checkpoint restore, so the restored view keeps refreshing
         // from its base table.

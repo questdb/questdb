@@ -58,7 +58,6 @@ import io.questdb.std.str.Utf8s;
 
 import static io.questdb.cairo.wal.WalTxnType.LIVE_VIEW_DATA;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DATA;
-import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_DEFINITION;
 import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
@@ -437,12 +436,16 @@ public class WalUtils {
     /**
      * Retrieves the last refresh state for a materialized view.
      * <p>
-     * The state comes from the newest {@code MAT_VIEW_DATA} or {@code MAT_VIEW_INVALIDATE} event in the view's WAL,
-     * and from the {@code _mv.s} state file when that event cannot be opened. The base table id comes from the
-     * newest {@code MAT_VIEW_INVALIDATE} event above {@code appliedSeqTxn}, the view's applied seqTxn, and otherwise
-     * from the {@code _mv.s} state file, which the WAL apply job writes before it marks a view state event applied
-     * and keeps when it applies a data commit. A data commit cannot carry the id. Bounding the scan by the applied
-     * seqTxn keeps the load from opening the event of every refresh commit in the view's unpurged WAL.
+     * The state comes from the newest {@code MAT_VIEW_DATA} or {@code MAT_VIEW_INVALIDATE} event above
+     * {@code appliedSeqTxn}, the view's applied seqTxn, past the unapplied transactions that carry no view state. When
+     * there is none and such a transaction is unapplied, it comes from the {@code _mv.s} state file, which holds the
+     * state of the applied transactions. When every transaction above {@code appliedSeqTxn} is structural, or none is
+     * there, it comes from the newest transaction with a WAL event: its view state event, or the state file. An event
+     * that cannot be opened gives the state file's state too. The base table id comes from the newest
+     * {@code MAT_VIEW_INVALIDATE} event above {@code appliedSeqTxn}, and otherwise from the {@code _mv.s} state file,
+     * which the WAL apply job writes before it marks a view state event applied and keeps when it applies a data
+     * commit. A data commit cannot carry the id. Bounding the scan by the applied seqTxn keeps the load from opening
+     * the event of every refresh commit in the view's unpurged WAL.
      * <p>
      * Note: This function is intended to be used during the initialization phase only.
      * It has been extracted into `WalUtils` solely to facilitate its usage in tests.
@@ -747,7 +750,7 @@ public class WalUtils {
             // As a result, fd and memory usage is not optimized.
             boolean refreshStateLoaded = false;
             int eventBaseTableId = Integer.MIN_VALUE;
-            boolean isUnappliedDefinition = false;
+            boolean isUnappliedWithoutState = false;
             try (WalEventReader eventReader = walEventReader) {
                 WalEventCursor walEventCursor = eventReader.of(tablePath, segmentTxn);
                 if (walEventCursor.getType() == MAT_VIEW_DATA) {
@@ -757,48 +760,66 @@ public class WalUtils {
                     matViewStateReader.of(walEventCursor.getMatViewInvalidationInfo());
                     eventBaseTableId = matViewStateReader.getBaseTableId();
                     refreshStateLoaded = true;
-                } else if (walEventCursor.getType() == MAT_VIEW_DEFINITION) {
-                    isUnappliedDefinition = isUnapplied;
+                } else {
+                    // a plain user backfill (DATA) or another type that carries no mat-view state
+                    isUnappliedWithoutState = isUnapplied;
                 }
-                // else: the last txn is a plain user backfill (DATA) or another type that carries
-                // no mat-view state; fall back to the _mv.s state file below.
             } catch (Throwable th) {
                 // walEventReader may not be able to find/open the WAL-e files; fall back to file.
             }
-            if (isUnappliedDefinition) {
-                // The definition event of ALTER MATERIALIZED VIEW ... AS carries no view state. A base change writes
-                // its invalidation right before it, which the state file does not hold until the view's WAL applies
-                // it, so the state comes from an older event.
+            if (isUnappliedWithoutState) {
+                // The state file does not hold the view state events below this transaction until the view's WAL
+                // applies them, so the state comes from an older event, or from the state file once the scan reaches
+                // the applied transactions, see MatViewStateScan.process().
+                scan.isStateFileDeferred = true;
                 return false;
             }
-            // Consult the _mv.s state file. It is the authoritative source for the frozen-zone
-            // runtime fields (backfill frontier / boundary floor), which no WAL event carries, and
-            // the only source of any state when the last txn was a plain user backfill.
-            try (BlockFileReader blockReader = blockFileReader) {
-                tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
-                blockReader.of(tablePath.$());
-                if (refreshStateLoaded) {
+            if (refreshStateLoaded) {
+                // Consult the _mv.s state file. It is the authoritative source for the frozen-zone
+                // runtime fields (backfill frontier / boundary floor), which no WAL event carries.
+                try (BlockFileReader blockReader = blockFileReader) {
+                    tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                    blockReader.of(tablePath.$());
                     // Keep the refresh state from the WAL event; overlay only the frozen-zone fields and the
                     // base table id.
                     matViewStateReader.ofFrozenZoneOverlay(blockReader);
-                } else {
-                    // No usable WAL event: load the complete state (incl. frozen-zone fields) from file.
-                    matViewStateReader.of(blockReader, tableToken);
-                    refreshStateLoaded = true;
+                } catch (Throwable ignored) {
+                    // _mv.s may not exist yet (never refreshed/backfilled). Keep the refresh state of the WAL
+                    // event with default frozen-zone fields and no base table id.
+                    matViewStateReader.setBaseTableId(MatViewState.BASE_TABLE_ID_UNKNOWN);
                 }
-            } catch (Throwable ignored) {
-                // _mv.s may not exist yet (never refreshed/backfilled). If the WAL event already
-                // provided refresh state, keep it with default frozen-zone fields and no base table id.
-                matViewStateReader.setBaseTableId(MatViewState.BASE_TABLE_ID_UNKNOWN);
+                // Only a view state event that loaded the state sets eventBaseTableId.
+                if (isUnapplied && eventBaseTableId != Integer.MIN_VALUE) {
+                    // A view state event that the view's WAL has not applied yet is newer than the state file.
+                    scan.onBaseTableIdFound(eventBaseTableId);
+                }
+                return true;
             }
-            // Only a view state event that loaded the state sets eventBaseTableId.
-            if (isUnapplied && eventBaseTableId != Integer.MIN_VALUE) {
-                // A view state event that the view's WAL has not applied yet is newer than the state file.
-                scan.onBaseTableIdFound(eventBaseTableId);
-            }
-            return refreshStateLoaded;
+            // No usable WAL event: an applied transaction without view state, or an event that cannot be opened.
+            return readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
         }
         return false;
+    }
+
+    // Loads the complete state, frozen-zone fields included, from the _mv.s state file, and returns whether it could
+    // read the file.
+    private static boolean readMatViewStateFile(
+            Path tablePath,
+            int tablePathLen,
+            BlockFileReader blockFileReader,
+            MatViewStateReader matViewStateReader,
+            TableToken tableToken
+    ) {
+        try (BlockFileReader blockReader = blockFileReader) {
+            tablePath.trimTo(tablePathLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            blockReader.of(tablePath.$());
+            matViewStateReader.of(blockReader, tableToken);
+            return true;
+        } catch (Throwable ignored) {
+            // _mv.s may not exist yet (never refreshed/backfilled)
+            matViewStateReader.setBaseTableId(MatViewState.BASE_TABLE_ID_UNKNOWN);
+            return false;
+        }
     }
 
     /**
@@ -909,6 +930,9 @@ public class WalUtils {
         private final long appliedSeqTxn;
         private int baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
         private boolean isBaseTableIdFound;
+        // an unapplied transaction without view state left the state to an older view state event, or else to the
+        // state file at the last unapplied transaction
+        private boolean isStateFileDeferred;
         private boolean isStateLoaded;
 
         private MatViewStateScan(long appliedSeqTxn) {
@@ -948,6 +972,15 @@ public class WalUtils {
                         this,
                         isUnapplied
                 );
+                if (!isStateLoaded && isStateFileDeferred && seqTxn - 1 <= Math.max(appliedSeqTxn, 0)) {
+                    // The unapplied transactions held no view state event, so the view's state is the one of the
+                    // applied transactions, which the state file holds. The scan stops here, at the last unapplied
+                    // transaction, as the WAL purge job may have deleted the applied ones: the txn-log parts below
+                    // the one of the applied seqTxn, and the WAL-e files of applied transactions. When the file
+                    // cannot be read, the scan goes on.
+                    isStateFileDeferred = false;
+                    isStateLoaded = readMatViewStateFile(tablePath, tablePathLen, blockFileReader, matViewStateReader, tableToken);
+                }
             } else {
                 // once the state is loaded, the scan goes on only while the records are unapplied
                 assert isUnapplied;

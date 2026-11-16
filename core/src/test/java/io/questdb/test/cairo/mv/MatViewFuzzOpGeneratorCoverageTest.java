@@ -74,6 +74,10 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int DAY_COUNT = 6;
     // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
     private static final int POSITIONAL_ALTER_MIN = 20;
+    // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts
+    private static final int PURGE_THEN_RESTART_MIN = 30;
+    // the restarts of testRestartShapesOverViewWal() above a view state operation and one without view state
+    private static final int STATE_OP_THEN_RESTART_MIN = 200;
     // the rounds of the bare-name round's shapes, which share their draws with the raced base column change; the
     // minimums of testBareNameRoundShapes() are for this many rounds
     private static final int BARE_NAME_ROUNDS = 1_000;
@@ -413,6 +417,82 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     }
 
     @Test
+    public void testRestartShapesOverViewWal() {
+        // The shapes that the load of a view's state at a restart needs, over the rounds of a view without a period and
+        // of a period view: each class of the transaction logs' part size; a view state operation, then a view
+        // operation that writes no view state, then RESTART, with no WAL apply operation from the first to the restart;
+        // and an accepted view column change, a WAL purge and a view operation that writes no view state, then RESTART
+        // with no WAL apply operation since that operation, which puts the restart above the purged txn-log parts.
+        final Rnd rnd = new Rnd(42, 42);
+        final int[] partSizeClasses = new int[3];
+        int stateOpThenRestart = 0;
+        int purgeThenRestart = 0;
+        final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
+        for (int round = 0; round < 2 * ROUNDS; round++) {
+            final int partSize = MatViewFuzzOpGenerator.pickSeqPartTxnCount(rnd);
+            Assert.assertTrue("part size out of range: " + partSize, partSize > -1 && partSize < 6);
+            partSizeClasses[Math.min(partSize, 2)]++;
+            final MatViewFuzzOpGenerator generator = new MatViewFuzzOpGenerator(DAY_COUNT, round >= ROUNDS);
+            generator.initView(rnd);
+            for (int day = 0; day < DAY_COUNT; day++) {
+                generator.initRows(rnd, day, op);
+            }
+            // 1: a view state operation, 2: then a view operation without view state
+            int stateOpStage = 0;
+            // 1: an accepted view column change, 2: then a WAL purge, 3: then a view operation without view state
+            int purgeStage = 0;
+            for (int step = 0; step < STEPS_PER_ROUND; step++) {
+                generator.next(rnd, op);
+                switch (op.kind) {
+                    case VIEW_RESUME, BASE_REPLACE_RESUME_RESTART, VIEW_FULL, VIEW_INVALIDATE, BACKLOG_UPDATE,
+                         VIEW_PERIOD_REFRESH -> stateOpStage = 1;
+                    case VIEW_ADD_COLUMN, VIEW_DROP_COLUMN -> {
+                        if (!op.isRefused) {
+                            purgeStage = 1;
+                        }
+                    }
+                    case PURGE_WAL -> {
+                        if (purgeStage == 1) {
+                            purgeStage = 2;
+                        }
+                    }
+                    case APPLY_WAL -> {
+                        stateOpStage = 0;
+                        if (purgeStage == 3) {
+                            purgeStage = 2;
+                        }
+                    }
+                    case RESTART -> {
+                        if (stateOpStage == 2) {
+                            stateOpThenRestart++;
+                            stateOpStage = 0;
+                        }
+                        if (purgeStage == 3) {
+                            purgeThenRestart++;
+                            purgeStage = 0;
+                        }
+                    }
+                    default -> {
+                    }
+                }
+                if (isViewOperationWithoutState(op)) {
+                    if (stateOpStage == 1) {
+                        stateOpStage = 2;
+                    }
+                    if (purgeStage == 2) {
+                        purgeStage = 3;
+                    }
+                }
+            }
+        }
+        assertShare("transaction logs in one file", partSizeClasses[0], 100);
+        assertShare("transaction logs in parts of one transaction", partSizeClasses[1], 100);
+        assertShare("transaction logs in parts of two to five transactions", partSizeClasses[2], 100);
+        assertShare("view state operation, view operation without view state, RESTART", stateOpThenRestart, STATE_OP_THEN_RESTART_MIN);
+        assertShare("view column change, WAL purge, view operation without view state, RESTART", purgeThenRestart, PURGE_THEN_RESTART_MIN);
+    }
+
+    @Test
     public void testBareNameRoundShapes() {
         // The shapes a bare-name round, which MatViewFuzzTest#testBareNameSwitchResume() runs, has to keep drawing:
         // every operation of the round and no other; a switch of the bare count while the view is invalid, which RESUME
@@ -666,5 +746,14 @@ public class MatViewFuzzOpGeneratorCoverageTest {
 
     private static void assertShare(String shape, int count, int min) {
         Assert.assertTrue(shape + " drawn " + count + " times, expected at least " + min, count >= min);
+    }
+
+    // A view operation that writes a transaction without view state to the view's WAL.
+    private static boolean isViewOperationWithoutState(MatViewFuzzOpGenerator.Op op) {
+        return switch (op.kind) {
+            case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE, VIEW_DROP_EXPIRE -> true;
+            case VIEW_SET_EXPIRE -> !op.isRefused;
+            default -> false;
+        };
     }
 }
