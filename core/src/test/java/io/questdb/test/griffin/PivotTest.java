@@ -1990,6 +1990,13 @@ public class PivotTest extends AbstractSqlParserTest {
                 assertQuery(fromView).noLeakCheck().fails(fromView.lastIndexOf("names"), message);
                 final String direct = "CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT " + nested + " FROM long_sequence(1))))";
                 assertQuery(direct).noLeakCheck().fails(direct.indexOf("admin_scalar"), message);
+                execute("CREATE TABLE events (cat VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                final String betweenBound = """
+                        CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM events
+                            WHERE ts BETWEEN (SELECT min(ts) FROM events WHERE cat = admin_scalar()) AND (SELECT max(ts) FROM events)
+                        )))""";
+                assertQuery(betweenBound).noLeakCheck().fails(betweenBound.indexOf("admin_scalar"), message);
                 Assert.assertNull(engine.getTableTokenIfExists("pv"));
 
                 // the plan of this IN subquery does not keep the nested sub-query, which never runs
