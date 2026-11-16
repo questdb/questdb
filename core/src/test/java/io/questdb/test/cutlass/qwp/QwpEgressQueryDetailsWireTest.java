@@ -44,6 +44,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
@@ -420,6 +421,41 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
                 QueryError baseline = conn.query(2, "COPY qd_window FROM stdin", 0, 0, 0).queryError();
                 Assert.assertEquals("COPY ... FROM is not supported on egress", baseline.message);
                 baseline.assertEnd();
+            }
+        });
+    }
+
+    @Test
+    public void testFailedSkipAndCountAreQueryErrors() throws Exception {
+        // A row window reads rows it does not stream: the skip reads the rows it
+        // leaves out, and the count reads the rows past the window. A failure
+        // there fails the query, as a failure in a batch does, and the server
+        // records it the same way, on the query error counter.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startFragmented(PropertyKey.METRICS_ENABLED.getEnvVarName(), "true");
+                 WireConnection conn = new WireConnection("")) {
+                final HealthMetrics health = serverMain.getEngine().getMetrics().healthMetrics();
+                // the filter fails at x = 10, whose 10 * 1_000 does not fit DECIMAL(4,0)
+                final String sql = "SELECT x FROM long_sequence(100) WHERE (x * 1_000)::DECIMAL(4,0) > 0::DECIMAL(4,0)";
+                final long errorsBefore = health.queryErrorCounter();
+
+                // without a window, the stream reaches the failing row
+                assertFailsAtRow10(conn.query(1, sql, 0, 0, 0));
+                Assert.assertEquals(errorsBefore + 1, health.queryErrorCounter());
+
+                // the skip reads past the failing row
+                assertFailsAtRow10(conn.query(2, sql, WINDOW, 20, 5));
+                Assert.assertEquals(errorsBefore + 2, health.queryErrorCounter());
+
+                // the window ends ahead of the failing row, and its count reads past it
+                assertFailsAtRow10(conn.query(3, sql, QwpEgressMsgKind.QUERY_FLAG_COUNT_ROWS | QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS, 0, 5));
+                Assert.assertEquals(errorsBefore + 3, health.queryErrorCounter());
+
+                // a window that ends ahead of the failing row succeeds, and counts no error
+                Response r = conn.query(4, sql, WINDOW, 2, 5);
+                assertSequence(r.longs, 3, 5);
+                r.resultEnd().assertEnd();
+                Assert.assertEquals(errorsBefore + 3, health.queryErrorCounter());
             }
         });
     }
@@ -1118,6 +1154,16 @@ public class QwpEgressQueryDetailsWireTest extends AbstractQwpQueryDetailsTest {
             Assert.assertEquals("0x" + Integer.toHexString(bit) + " is taken twice", 0, union & bit);
             union |= bit;
         }
+    }
+
+    // A query that fails at its 10th row, where 10 * 1_000 does not fit DECIMAL(4,0),
+    // before a batch goes out, answered with a baseline QUERY_ERROR.
+    private static void assertFailsAtRow10(Response r) {
+        Assert.assertEquals("no batch goes out", 0, r.batches);
+        final QueryError error = r.queryError();
+        Assert.assertEquals(QwpConstants.STATUS_INTERNAL_ERROR, error.status);
+        Assert.assertEquals("inconvertible value: 10000 [LONG -> DECIMAL(4,0)]", error.message);
+        error.assertEnd();
     }
 
     /**
