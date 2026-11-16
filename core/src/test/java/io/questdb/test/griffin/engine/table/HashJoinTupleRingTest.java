@@ -204,6 +204,16 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLocalTasksWithFramesDispatchedAheadOnOwnerAlone() throws Exception {
+        assertLocalTasksWithFramesDispatchedAhead(null);
+    }
+
+    @Test
+    public void testLocalTasksWithFramesDispatchedAheadOnThreadWorkers() throws Exception {
+        assertLocalTasksWithFramesDispatchedAhead(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
     public void testMemoryCountedByTrackerAndFreedOnClear() throws Exception {
         assertMemoryLeak(() -> withRing(WorkerPoolMode.LEGACY, 4, LARGE_RING, -1, "t", (engine, compiler, context, sequence, factory) -> {
             final RingAtom atom = sequence.getAtom();
@@ -505,6 +515,70 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
         return localTasks;
     }
 
+    // Reads every frame of a bound sequence in frame order under the ring's limit, as
+    // readFramesDispatchingAhead() does, up to localFrom. From there on the owner passes next() a
+    // limit of 0, as on a reduce queue that other queries keep full: next() hands it the frames still
+    // in flight, and once none is, reduces the next frame locally. While the owner holds that local
+    // frame, it dispatches the frames after it up to the ring's limit, as the join's cursor does on a
+    // queue that has room again, and then collects them under the limit of 0, so that the frame after
+    // them is local again. With workers, the owner holds each local frame until they joined the
+    // frames ahead of it. Returns how many frames the sequence reduced locally.
+    private static int readFramesDispatchingAheadOfLocalFrames(
+            PageFrameSequence<RingAtom> sequence,
+            int localFrom,
+            boolean isAwaitingWorkers
+    ) {
+        final RingAtom atom = sequence.getAtom();
+        final int dispatchLimit = atom.ring.getDispatchLimit();
+        int localTasks = 0;
+        int frameIndex = 0;
+        while (frameIndex < sequence.getFrameCount()) {
+            final boolean isQueueFull = frameIndex >= localFrom;
+            // Once the owner has collected every frame dispatched, a limit of 0 leaves next() no
+            // frame to collect or to publish, so it reduces the frame locally.
+            final boolean isLocal = isQueueFull && sequence.getDispatchedFrameCount() == frameIndex;
+            final long cursor = sequence.next(isQueueFull ? 0 : dispatchLimit, false);
+            if (cursor == -1) {
+                Os.pause();
+                continue;
+            }
+            Assert.assertTrue("cursor " + cursor, cursor > -1);
+            final PageFrameReduceTask task = sequence.getTask(cursor);
+            if (task.hasError()) {
+                throw task.buildError();
+            }
+            assertNoMismatch(atom);
+            Assert.assertEquals(frameIndex, task.getFrameIndex());
+            Assert.assertEquals("local task of frame " + frameIndex, isLocal, cursor == Long.MAX_VALUE);
+            if (!isQueueFull || isLocal) {
+                final int ownerTasks = atom.ownerTasks.get();
+                sequence.dispatchAhead(dispatchLimit);
+                final int dispatchedFrames = Math.min(FRAME_COUNT, frameIndex + dispatchLimit);
+                Assert.assertEquals("frame " + frameIndex, dispatchedFrames, sequence.getDispatchedFrameCount());
+                // dispatchAhead() runs no task on the owner.
+                Assert.assertEquals(ownerTasks, atom.ownerTasks.get());
+                if (isLocal) {
+                    localTasks++;
+                    if (isAwaitingWorkers) {
+                        // The owner holds the local frame, and its entry, until the workers joined
+                        // the frames ahead of it, each into an entry of its own.
+                        awaitFullWindow(atom, dispatchedFrames, dispatchedFrames - frameIndex);
+                    } else {
+                        // Without workers, the frames ahead wait in the queue: the frames up to the
+                        // local one ran, and no other.
+                        Assert.assertEquals(frameIndex + 1, sequence.getReduceFinishedCounter().get());
+                    }
+                }
+            }
+            verifyTuples(atom, frameIndex, task.getFilteredRowCount());
+            atom.lastCollectedFrame = frameIndex;
+            sequence.collect(cursor, false);
+            frameIndex++;
+        }
+        assertNoMismatch(atom);
+        return localTasks;
+    }
+
     private static long resumePositionOf(int frameIndex) {
         return frameIndex % 4 == 1 ? frameIndex : -1;
     }
@@ -733,6 +807,50 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
             Assert.assertTrue("local tasks: " + localTasks, localTasks >= FRAME_COUNT - 20 - 3);
             Assert.assertTrue("local tasks: " + localTasks, localTasks <= FRAME_COUNT - 20);
         }));
+    }
+
+    private void assertLocalTasksWithFramesDispatchedAhead(@Nullable WorkerPoolMode mode) throws Exception {
+        // Up to frame 19 the owner dispatches ahead of each frame, so frames 20 to 18 + limit are in
+        // flight once it has read frame 19. From frame 20 on it passes next() a limit of 0: it
+        // collects those, reduces frame 19 + limit locally and dispatches the limit - 1 frames after
+        // it, collects those, and so on. The local frames are 19 + k * limit for k from 1 up to
+        // frame 39: 20 / limit of them, rounded down. A reduce queue of 8: a limit of 100 is above
+        // it, so the queue's capacity sizes the ring.
+        final int[][] limitsEntriesAndLocalTasks = {{1, 1, 20}, {2, 2, 10}, {3, 3, 6}, {7, 7, 2}, {100, 8, 2}};
+        for (int[] limitEntriesAndLocalTasks : limitsEntriesAndLocalTasks) {
+            assertMemoryLeak(() -> withRing(mode, limitEntriesAndLocalTasks[0], LARGE_RING, 8, "t", (engine, compiler, context, sequence, factory) -> {
+                final RingAtom atom = sequence.getAtom();
+                atom.fanOut = 3;
+                for (int execution = 0; execution < 2; execution++) {
+                    bind(sequence, factory, context, null);
+                    final int localTasks;
+                    final int dispatchedFrames;
+                    final int reducedFrames;
+                    try {
+                        Assert.assertEquals(limitEntriesAndLocalTasks[1], atom.ring.getDispatchLimit());
+                        localTasks = readFramesDispatchingAheadOfLocalFrames(sequence, 20, mode != null);
+                    } finally {
+                        sequence.await();
+                        dispatchedFrames = sequence.getDispatchedFrameCount();
+                        reducedFrames = sequence.getReduceFinishedCounter().get();
+                        sequence.reset();
+                    }
+                    Assert.assertEquals(limitEntriesAndLocalTasks[2], localTasks);
+                    Assert.assertEquals(FRAME_COUNT, atom.tupleFramesRead);
+                    // Every frame dispatched ran, the local ones included, and reset() freed the ring.
+                    Assert.assertEquals(FRAME_COUNT, dispatchedFrames);
+                    Assert.assertEquals(FRAME_COUNT, reducedFrames);
+                    Assert.assertEquals(0, atom.ring.getAllocatedBytes());
+                    if (mode == null) {
+                        // The owner alone reduces the local frames and steals every other one.
+                        Assert.assertEquals(FRAME_COUNT, atom.ownerTasks.get());
+                        Assert.assertEquals(0, atom.workerTasks.get());
+                    } else {
+                        Assert.assertEquals(FRAME_COUNT, atom.ownerTasks.get() + atom.workerTasks.get());
+                    }
+                }
+            }));
+        }
     }
 
     private void assertMemoryLimitBreachWhileEntryGrows(@Nullable WorkerPoolMode mode) throws Exception {
