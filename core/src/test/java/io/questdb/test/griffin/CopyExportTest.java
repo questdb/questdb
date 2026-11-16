@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -61,6 +62,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.ParquetTestUtils;
 import io.questdb.test.tools.TestUtils;
@@ -852,23 +854,48 @@ public class CopyExportTest extends AbstractCairoTest {
 
     @Test
     public void testCopyParquetFromParquet() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
-            execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
+        final AtomicBoolean hasCopiedPartition = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                if (Utf8s.endsWithAscii(from, TableUtils.PARQUET_PARTITION_NAME)) {
+                    hasCopiedPartition.set(true);
+                }
+                return super.copy(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE test_table (ts TIMESTAMP, x INT, ns TIMESTAMP_NS, arr DOUBLE[][], " +
+                    "gh GEOHASH(4c), d DECIMAL(8,2)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO test_table VALUES
+                    ('2020-01-01', 0, '2020-01-01T00:00:00.123456789Z', ARRAY[ARRAY[1.0,2.0]], #u33d, '100.50'),
+                    ('2020-01-02', 1, '2020-01-02T00:00:00.987654321Z', NULL, #u33e, '200.75')
+                    """);
             drainWalQueue();
 
-            execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
-            drainWalQueue();
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
-                            .noLeakCheck()
-                            .expectSize()
-                            .returns("export_path\tnum_exported_files\tstatus\n" +
-                                    exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\n"));
+                    assertEventually(() -> {
+                        assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("export_path\tnum_exported_files\tstatus\n" +
+                                        exportRoot + File.separator + "test_table" + File.separator + "\t2\tfinished\n");
+                        for (int day = 1; day <= 2; day++) {
+                            final String date = "2020-01-0" + day;
+                            assertParquetMatchesQueryWithTypes("SELECT * FROM test_table WHERE ts IN '" + date + "'",
+                                    exportRoot + File.separator + "test_table" + File.separator + date + ".parquet");
+                        }
+                    });
             testCopyExport(stmt, test);
+            Assert.assertFalse("native partitions must be encoded", hasCopiedPartition.get());
+            execute("ALTER TABLE test_table CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            testCopyExport(stmt, test);
+            Assert.assertTrue("unchanged Parquet schema must retain the direct copy path", hasCopiedPartition.get());
         });
     }
 
@@ -933,6 +960,193 @@ public class CopyExportTest extends AbstractCairoTest {
                                         "test_table" + File.separator + "2020-01-02.parquet\t648.0 B\n");
                     });
             testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterAddColumn() throws Exception {
+        assertMemoryLeak(() -> assertCopyTableParquetSchemaChange("ADD COLUMN c INT"));
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterDropColumn() throws Exception {
+        assertMemoryLeak(() -> assertCopyTableParquetSchemaChange("DROP COLUMN b"));
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterDropReaddColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01', 1, 99), ('2024-01-01T01:00', 2, 98)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t DROP COLUMN b");
+            execute("ALTER TABLE t ADD COLUMN b INT");
+            drainWalQueue();
+            // The visible names, types and order are unchanged; only b's writer index differs.
+            final String expected = """
+                    ts\ta\tb
+                    2024-01-01T00:00:00.000000Z\t1\tnull
+                    2024-01-01T01:00:00.000000Z\t2\tnull
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().expectSize().timestamp("ts").returns(expected);
+            CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                    "COPY t TO 'readded_column' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck().expectSize().returns("status\nfinished\n");
+                assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "readded_column.parquet')")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .columnType(0, ColumnType.TIMESTAMP)
+                        .columnType(1, ColumnType.INT)
+                        .columnType(2, ColumnType.INT)
+                        .returns(expected);
+            });
+            testCopyExport(statement, test);
+            testCopyExport(statement, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterQueuedRenameColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (1, 10, '2024-01-01'), (2, 20, '2024-01-01T01:00')");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
+                Assert.assertTrue("COPY must queue while the partition is Parquet", reader.getTxFile().isPartitionParquet(0));
+            }
+            // Start the worker after ALTER, so its snapshot differs from COPY's enqueue-time schema.
+            runAndFetchCopyExportID("COPY t TO 'queued_rename' WITH FORMAT PARQUET", sqlExecutionContext);
+            execute("ALTER TABLE t RENAME COLUMN b TO b2");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
+                Assert.assertTrue("ALTER must preserve the Parquet partition", reader.getTxFile().isPartitionParquet(0));
+            }
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+            drainWalQueue();
+            assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck().expectSize().returns("status\nfinished\n");
+            final String expected = """
+                    a\tb2\tts
+                    1\t10\t2024-01-01T00:00:00.000000Z
+                    2\t20\t2024-01-01T01:00:00.000000Z
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().expectSize().timestamp("ts").returns(expected);
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "queued_rename.parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .columnType(0, ColumnType.INT)
+                    .columnType(1, ColumnType.INT)
+                    .columnType(2, ColumnType.TIMESTAMP)
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterRenameColumn() throws Exception {
+        assertMemoryLeak(() -> assertCopyTableParquetSchemaChange("RENAME COLUMN b TO b2"));
+    }
+
+    @Test
+    public void testCopyParquetFromParquetAfterRetypeColumn() throws Exception {
+        assertMemoryLeak(() -> assertCopyTableParquetSchemaChange("ALTER COLUMN b TYPE DATE"));
+    }
+
+    @Test
+    public void testCopyParquetFromParquetCancelledDuringSchemaCheck() throws Exception {
+        final AtomicBoolean hasCopiedPartition = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                if (Utf8s.endsWithAscii(from, TableUtils.PARQUET_PARTITION_NAME)) {
+                    hasCopiedPartition.set(true);
+                }
+                return super.copy(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01', 0), ('2024-01-02', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            final TableToken source = engine.verifyTableName("t");
+            final AtomicBoolean hasRequestedCancellation = new AtomicBoolean();
+            engine.releaseAllReaders();
+            engine.setReaderListener((tableToken, partitionIndex) -> {
+                if (source.equals(tableToken) && partitionIndex == 0 && hasRequestedCancellation.compareAndSet(false, true)) {
+                    Assert.assertTrue(engine.getCopyExportContext().cancel(engine.getCopyExportContext().getActiveExportId(), null));
+                }
+            });
+            try {
+                runAndFetchCopyExportID("COPY t TO 'cancelled_schema_check' WITH FORMAT PARQUET", sqlExecutionContext);
+                try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                    Assert.assertTrue("the queued export must be picked up", job.run());
+                }
+            } finally {
+                engine.setReaderListener(null);
+            }
+            drainWalQueue();
+            Assert.assertTrue("reader open must request cancellation", hasRequestedCancellation.get());
+            Assert.assertFalse("schema preflight must observe cancellation before copying files", hasCopiedPartition.get());
+            assertQuery("SELECT phase, status FROM \"sys.copy_export_log\" LIMIT -1")
+                    .noLeakCheck().expectSize().returns("phase\tstatus\n\tcancelled\n");
+            assertQuery("SELECT path FROM export_files()").noLeakCheck().noRandomAccess().returns("path\n");
+            assertQuery("SELECT * FROM t").noLeakCheck().expectSize().timestamp("ts").returns("""
+                    ts\tx
+                    2024-01-01T00:00:00.000000Z\t0
+                    2024-01-02T00:00:00.000000Z\t1
+                    """);
+        });
+    }
+
+    @Test
+    public void testCopyParquetFromParquetMetadataMmapFailure() throws Exception {
+        final AtomicBoolean isMmapFailureEnabled = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                if (memoryTag == MemoryTag.MMAP_PARQUET_METADATA_READER && isMmapFailureEnabled.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01', 10), ('2024-01-01T01:00', 20)");
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            CopyExportRunnable statement = () -> {
+                isMmapFailureEnabled.set(true);
+                runAndFetchCopyExportID("COPY t TO 'failed_schema_check' WITH FORMAT PARQUET", sqlExecutionContext);
+            };
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT phase, status, message LIKE 'could not mmap%' is_mmap_error " +
+                        "FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck().expectSize().returns("phase\tstatus\tis_mmap_error\n\tfailed\ttrue\n");
+                assertQuery("SELECT path FROM export_files()").noLeakCheck().noRandomAccess().returns("path\n");
+            });
+            testCopyExport(statement, test);
+            Assert.assertFalse("Parquet metadata mapping must hit the one-shot failure", isMmapFailureEnabled.get());
+            assertQuery("SELECT * FROM t").noLeakCheck().expectSize().timestamp("ts").returns("""
+                    ts\tx
+                    2024-01-01T00:00:00.000000Z\t10
+                    2024-01-01T01:00:00.000000Z\t20
+                    """);
         });
     }
 
@@ -4742,6 +4956,42 @@ public class CopyExportTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertCopyTableParquetSchemaChange(String alterClause) throws Exception {
+        for (int partitionCount : new int[]{1, 3}) {
+            final String tableName = "schema_" + partitionCount;
+            final String fileName = "schema_export_" + partitionCount;
+            execute("CREATE TABLE " + tableName + " (a INT, b BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " +
+                    (partitionCount == 1 ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO " + tableName + " SELECT x::INT, (x * 10)::BYTE, " +
+                    "timestamp_sequence('2024-01-01', 43_200_000_000) FROM long_sequence(" + partitionCount * 2 + ")");
+            drainWalQueue();
+            // The three-partition case mixes two Parquet partitions with a native partition.
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+            drainWalQueue();
+            execute("ALTER TABLE " + tableName + ' ' + alterClause);
+            drainWalQueue();
+
+            CopyExportRunnable statement = () -> runAndFetchCopyExportID(
+                    "COPY " + tableName + " TO '" + fileName + "' WITH FORMAT PARQUET",
+                    sqlExecutionContext
+            );
+            CopyExportRunnable test = () -> assertEventually(() -> {
+                assertQuery("SELECT num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("num_exported_files\tstatus\n" + partitionCount + "\tfinished\n");
+                for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                    final String day = "2024-01-0" + (partitionIndex + 1);
+                    final String query = "SELECT * FROM " + tableName + " WHERE ts IN '" + day + "'";
+                    final String parquetPath = exportRoot + File.separator + fileName +
+                            (partitionCount == 1 ? ".parquet" : File.separator + day + ".parquet");
+                    assertParquetMatchesQueryWithTypes(query, parquetPath);
+                }
+            });
+            testCopyExport(statement, test);
+        }
+    }
+
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
     }
@@ -4868,6 +5118,21 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private void assertParquetMatchesQueryWithTypes(String query, String parquetPath) throws Exception {
+        StringSink expected = new StringSink();
+        TestUtils.printSql(engine, sqlExecutionContext, query, expected);
+        try (RecordCursorFactory factory = select(query)) {
+            QueryAssertion actual = assertQuery("SELECT * FROM read_parquet('" + parquetPath + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts");
+            for (int columnIndex = 0, n = factory.getMetadata().getColumnCount(); columnIndex < n; columnIndex++) {
+                actual.columnType(columnIndex, factory.getMetadata().getColumnType(columnIndex));
+            }
+            actual.returns(expected);
+        }
     }
 
     private boolean exportFileExists(String fileName) {
