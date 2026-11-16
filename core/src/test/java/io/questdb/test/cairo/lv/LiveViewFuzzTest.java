@@ -378,7 +378,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private static final long KEPT_TIMELINE_MARKER_SALT0 = 0x452821E638D01377L;
     private static final long KEPT_TIMELINE_MARKER_SALT1 = 0xBE5466CF34E90C6CL;
     // Salt the draw of a leftover repair marker beside a seed sweep apart from the run's sequence,
-    // for the same reason: see seedBesideALockedMarker.
+    // for the same reason: see driveSeed.
     private static final long SEED_MARKER_SALT0 = 0xC0AC29B7C97C50DDL;
     private static final long SEED_MARKER_SALT1 = 0x3F84D5B5B5470917L;
     // Salt the draws of the sparse departure whose frontier seal fails apart from the run's
@@ -582,17 +582,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // truncate's publication under a lock on _timeline, which keeps the splice's generation the
     // view then refuses. Then the episodes that kept the timeline, the seals the view refused
     // while the lock held, the late rows it repaired with no anchor meanwhile, and the fresh
-    // histories the first seal after the lock opened: see runKeptTimelineEpisode.
+    // histories the episodes opened once the lock went: see runKeptTimelineEpisode.
     private boolean isKeptTimelineEpisodeArm;
     private int keptTimelineEpisodes;
     private int keptTimelineFreshHistories;
     private int keptTimelineLateRowRepairs;
     // Kept-timeline episodes whose repair marker a lock kept once _timeline went, the seed sweeps
     // that sealed a seed root beside a marker a lock kept, and the seals refused because they would
-    // open a runtime history beside such a marker: see runKeptTimelineEpisode and
-    // seedBesideALockedMarker.
+    // open a runtime history beside such a marker: see runKeptTimelineEpisode and driveSeed. Then
+    // the kept-timeline episodes whose marker no lock kept, where the first seal once the lock on
+    // _timeline went retried the retire, which removed _timeline and the marker with it, and
+    // opened the fresh history.
     private int keptTimelineMarkerLeftovers;
     private int keptTimelineRefusedSeals;
+    private int keptTimelineRetiresWithTheMarker;
     private int refusedHistoryOpenings;
     private int seedRootsBesideAMarker;
     // Retires that answered the failed frontier seal of a sparse departure with no lock on
@@ -854,18 +857,24 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     @Test
     public void testFuzzKeptTimelineEpisodes() throws Exception {
         // A pinned seed pair whose testFuzzDedup batch fails the frontier truncate of a filtered
-        // view's departure under a lock on _timeline, which keeps the splice's generation: the
-        // view refuses its seals while the lock holds, repairs a late row with no anchor in the
-        // kept generation, and opens a fresh history at its first seal once the lock goes. See
-        // runKeptTimelineEpisode. A generator change that stops producing that fails here.
+        // view's departure under a lock on _timeline twice, each time keeping the splice's
+        // generation: the view refuses its seals while the lock holds, repairs a late row with no
+        // anchor in the kept generation, and opens a fresh history once the lock goes. In the first
+        // episode the first seal after the lock retries the retire, which removes _timeline and
+        // the marker with it, and opens the history. In the second a lock keeps the marker once
+        // _timeline goes, and the writer refuses that seal, which would open a runtime history
+        // beside it. The batch's seed sweeps seal seed roots beside a marker a lock keeps too. See
+        // runKeptTimelineEpisode and driveSeed. A generator change that stops producing any of
+        // that fails here.
         isSecondRepairCommitFaultArm = true;
         isKeptTimelineEpisodeArm = true;
-        runDedupFuzzBatch(TestUtils.generateRandom(LOG, 1140836954857725101L, 2366910634094568575L));
+        runDedupFuzzBatch(TestUtils.generateRandom(LOG, 289968849569755L, 1794849741680L));
         logKeptTimelineEpisodes();
         Assert.assertTrue("no departure kept its timeline under the lock", keptTimelineEpisodes > 0);
         Assert.assertTrue("no seal was refused over a kept timeline", keptTimelineRefusedSeals > 0);
         Assert.assertTrue("no late row was repaired over a kept timeline", keptTimelineLateRowRepairs > 0);
         Assert.assertTrue("no seal opened a fresh history once the lock went", keptTimelineFreshHistories > 0);
+        Assert.assertTrue("no seal's retry of the retire removed the kept timeline with its marker", keptTimelineRetiresWithTheMarker > 0);
         Assert.assertTrue("no lock kept the marker once the kept timeline went", keptTimelineMarkerLeftovers > 0);
         Assert.assertTrue("no seed root landed beside a marker a lock kept", seedRootsBesideAMarker > 0);
         Assert.assertTrue("no seal was refused a runtime history beside such a marker", refusedHistoryOpenings > 0);
@@ -2505,6 +2514,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", refusedSeals=").$(keptTimelineRefusedSeals)
                 .$(", lateRowRepairs=").$(keptTimelineLateRowRepairs)
                 .$(", freshHistories=").$(keptTimelineFreshHistories)
+                .$(", retiresWithTheMarker=").$(keptTimelineRetiresWithTheMarker)
                 .$(", markerLeftovers=").$(keptTimelineMarkerLeftovers)
                 .$(", seedRootsBesideAMarker=").$(seedRootsBesideAMarker)
                 .$(", refusedHistoryOpenings=").$(refusedHistoryOpenings).I$();
@@ -3046,8 +3056,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * whose closing seal retries the retire and is refused. While the lock holds nothing
      * publishes over the kept generation, the head stays clear and the marker live, and the view
      * matches its oracle after each step. Once the lock goes, past any pause the refusals armed,
-     * the first seal, a forward row's, retires the kept file and opens a fresh history, which the
-     * caller's restart restores. Draws from {@code episodeRnd} alone.
+     * the first seal, a forward row's, retries the retire, which removes the kept file and the
+     * marker with it, and opens a fresh history, which the caller's restart restores. The test's
+     * second episode, and one in two after it, finds the marker locked once the lock on
+     * {@code _timeline} goes instead, which refuses that first seal: see
+     * {@link #refuseTheHistoryBesideALockedMarker}. Draws from {@code episodeRnd} alone.
      *
      * @param keptTs              the kept batch's timestamps, below the departed one's
      * @param sealFailuresBefore  the seal failures the view counted ahead of the departure
@@ -3110,12 +3123,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
         keptTimelineRefusedSeals += (int) (instance.getCheckpointSealFailures() - sealFailuresBefore);
         checkpointFaults.unlockTheTimeline();
-        // The test's first episode, and one in two after it, finds the repair marker locked once
-        // the lock on _timeline goes. Drawn from a sequence salted apart from the episode's, so the
-        // episode draws what it drew before.
+        // The test's first episode finds the repair marker unlocked once the lock on _timeline
+        // goes, and its next one, and one in two after that, finds it locked. Drawn from a
+        // sequence salted apart from the episode's, so the episode draws what it drew before.
         final Rnd markerRnd = keptTimelineMarkerRnd(episodeRnd);
-        if (keptTimelineMarkerLeftovers == 0 || markerRnd.nextInt(2) == 0) {
+        final boolean isMarkerLocked = keptTimelineRetiresWithTheMarker > 0
+                && (keptTimelineMarkerLeftovers == 0 || markerRnd.nextInt(2) == 0);
+        if (isMarkerLocked) {
             refuseTheHistoryBesideALockedMarker(markerRnd, job, usedTs, symCount, oracleOrderedSql, viewOrderedSql);
+        } else {
+            // The forward row's seal below is the first since the lock went: the kept file still
+            // stands, and the marker beside it.
+            assertKeptTimelineRefused(instance, keptGeneration);
         }
         // Past any pause the refusals armed: each is shorter than the duration cadence's wait.
         setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
@@ -3136,6 +3155,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Assert.assertFalse("the marker went with the kept file", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
         }
         keptTimelineFreshHistories++;
+        if (!isMarkerLocked) {
+            keptTimelineRetiresWithTheMarker++;
+        }
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
     }
 
