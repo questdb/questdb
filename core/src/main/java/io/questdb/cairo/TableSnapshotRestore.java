@@ -873,7 +873,8 @@ public class TableSnapshotRestore implements QuietCloseable {
      * so the walk alone does not guarantee a checkpointed head. Rebuild the index from restored column
      * data when the retained head names a missing or short value file, when the .pk is shorter than its
      * chain region, and when the .pk of a column with rows in the partition is missing. Remove the index
-     * files of a column with no rows in the partition instead of reading them.
+     * files of a column with no rows in the partition instead of reading them. Leave read-only partitions as
+     * they are.
      */
     private void dropUncommittedPostingIndexEntries(
             String tablePathStr,
@@ -893,6 +894,10 @@ public class TableSnapshotRestore implements QuietCloseable {
         try {
             int i;
             while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
+                // Nothing writes a read-only partition, and its soft link can lead to storage the restore must not write
+                if (txWriter.isPartitionReadOnly(i)) {
+                    continue;
+                }
                 final long partitionTimestamp;
                 final long partitionNameTxn;
                 if (isPartitioned) {
