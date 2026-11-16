@@ -401,6 +401,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // sequence, for the same reason.
     private static final long DRIFT_RECOVERY_CANCELLATION_SALT0 = 0x8BB84B93962EACC9L;
     private static final long DRIFT_RECOVERY_CANCELLATION_SALT1 = 0x4B33A62ED433D4A3L;
+    // The job.run() passes a burst of the closing window runs after a shutdown cancelled a turn: see
+    // cancelADriftRecoveryByShutdown and shutDownMidDrain.
+    private static final int CLOSING_BURST_RUNS = 8;
+    // The seed pair of testFuzzShutdownMidDrainShape.
+    private static final long SHUTDOWN_MID_DRAIN_SHAPE_SEED0 = 6601564164335161269L;
+    private static final long SHUTDOWN_MID_DRAIN_SHAPE_SEED1 = -3445544022848412854L;
+    // Salt the draws of a shutdown that cancels a lead drain ahead of a restart of runFuzz apart from the
+    // run's sequence, for the same reason.
+    private static final long SHUTDOWN_MID_DRAIN_SALT0 = 0x94D049BB133111EBL;
+    private static final long SHUTDOWN_MID_DRAIN_SALT1 = 0x2545F4914F6CDD1DL;
     // What handleRefreshFailure logs when a recovery a turn ran met the refresh breaker: see
     // cancelADriftRecoveryByShutdown.
     private static final String RECOVERY_CANCELLED_LINE = "live view refresh cancelled during recovery [view=lv, dropped=false, invalid=false]";
@@ -608,6 +618,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // than one that completed ahead of any breaker check: see cancelADriftRecoveryByShutdown.
     private int driftRecoveryCancellationTurns;
     private int cancelledDriftRecoveries;
+    // Of those turns, the ones after which the fallback scan would still drive the view, so the burst of the
+    // closing window that followed met a view a worker would have refreshed: see runClosingBurst.
+    private int drivenClosingBursts;
+    // Shutdowns runFuzz ran ahead of a restart that cancelled a lead drain after it fed rows past the lead, so the
+    // burst of the closing window that followed met accumulators ahead of the lead: see shutDownMidDrain.
+    private int leftoverClosingBursts;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -905,6 +921,20 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final Rnd rnd = new Rnd(3400517558656649421L, 9097098649117042840L);
         assertMemoryLeak(checkpointFaults, () -> runDedupFuzz(rnd, 0, 200, true, true, false, true, null, -1));
         Assert.assertTrue("the pinned seeds must cancel a drift recovery", cancelledDriftRecoveries > 0);
+        Assert.assertTrue("the pinned seeds must run a closing burst over a view the scan would drive", drivenClosingBursts > 0);
+    }
+
+    @Test
+    public void testFuzzShutdownMidDrainShape() throws Exception {
+        // A pinned seed pair whose runFuzz run has a shutdown cancel a lead drain after it fed rows past the lead,
+        // ahead of a restart (see shutDownMidDrain): the burst of the closing window that follows must start no
+        // turn, and the view the restart recovers must equal the recompute. A generator change that stops
+        // producing it fails here. The running count of variant 5 shifts every later row by any row fed twice, and
+        // a root a commit seals keeps the cadence's seal of the flush due.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final Rnd rnd = new Rnd(SHUTDOWN_MID_DRAIN_SHAPE_SEED0, SHUTDOWN_MID_DRAIN_SHAPE_SEED1);
+        assertMemoryLeak(checkpointFaults, () -> runFuzz(rnd, 5, 200, true, true, false, false));
+        Assert.assertTrue("the pinned seeds must cancel a lead drain that fed rows past the lead", leftoverClosingBursts > 0);
     }
 
     @Test
@@ -1991,6 +2021,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // from, drawn from the run's without advancing it.
     private static Rnd driftRecoveryCancellationRnd(Rnd rnd) {
         return new Rnd(rnd.getSeed0() ^ DRIFT_RECOVERY_CANCELLATION_SALT0, rnd.getSeed1() ^ DRIFT_RECOVERY_CANCELLATION_SALT1);
+    }
+
+    // The sequence a restart of runFuzz draws a shutdown that cancels a lead drain ahead of it, and the
+    // episode's rows, from, drawn from the run's without advancing it.
+    private static Rnd shutdownMidDrainRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ SHUTDOWN_MID_DRAIN_SALT0, rnd.getSeed1() ^ SHUTDOWN_MID_DRAIN_SALT1);
     }
 
     // The sequence a run draws which of its two frontier-sealing departures restores a root inside
@@ -6249,6 +6285,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
         try {
             job.run();
+            if (engine.isClosing() && runClosingBurst(job, instance)) {
+                drivenClosingBursts++;
+            }
         } finally {
             engine.setClosing(false);
             hooks(job).setRefreshFaultObserver(null);
@@ -6260,6 +6299,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (capture.countOccurrences(RECOVERY_CANCELLED_LINE) > cancelledBefore) {
             cancelledDriftRecoveries++;
         }
+    }
+
+    // The passes the refresh workers run after a shutdown cancelled a turn, with the engine's closing flag still up
+    // until the pools halt. None may start a turn, so the job's refresh latch, the view's refresh faults and its
+    // processed watermark stay where the cancelled turn left them. Returns whether the fallback scan would have
+    // driven the view at the burst's start - the base's applied head past what the view processed - which is when
+    // a burst that started turns would show it.
+    private boolean runClosingBurst(LiveViewRefreshJob job, LiveViewInstance instance) {
+        final LiveViewTestRefreshHooks hooks = hooks(job);
+        final long appliedHead = engine.getTableSequencerAPI()
+                .getTxnTracker(instance.getDefinition().getBaseTableToken())
+                .getWriterTxn();
+        final long processed = instance.getLastProcessedSeqTxn();
+        final boolean isDrivable = appliedHead > processed;
+        final int latchAttempts = hooks.getRefreshLatchAttempts();
+        final long faults = instance.getRefreshFaultCount();
+        for (int i = 0; i < CLOSING_BURST_RUNS; i++) {
+            job.run();
+        }
+        Assert.assertEquals("a closing engine must start no refresh turn", latchAttempts, hooks.getRefreshLatchAttempts());
+        Assert.assertEquals("a closing engine must cancel no refresh turn", faults, instance.getRefreshFaultCount());
+        Assert.assertEquals("a closing engine must flush no lead", processed, instance.getLastProcessedSeqTxn());
+        return isDrivable;
     }
 
     // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's
@@ -6659,6 +6721,74 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP TABLE IF EXISTS base_shadow");
     }
 
+    // Commits rowCount rows of one batch to the base, the first one second above fromTs and each one second above the
+    // one before, with i > 0 to pass the optional WHERE, and returns the timestamp of the last.
+    private long commitShutdownMidDrainBatch(Rnd episodeRnd, int symCount, long fromTs, int rowCount) throws SqlException {
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        long ts = fromTs;
+        for (int r = 0; r < rowCount; r++) {
+            ts += Micros.SECOND_MICROS;
+            sink.put(r == 0 ? "" : ", ").put('(').put(ts).put("::timestamp, '")
+                    .put(SYMBOLS[episodeRnd.nextInt(symCount)]).put("', ")
+                    .put(1 + episodeRnd.nextInt(1000)).put(", ")
+                    .put(episodeRnd.nextInt(1000) / 8.0).put(')');
+        }
+        execute(sink);
+        return ts;
+    }
+
+    // A shutdown that cancels a lead drain after it fed rows, ahead of a restart of runFuzz, and the passes of the
+    // closing window after it: see testFuzzShutdownMidDrainShape. With the view's flush held off, three in-order
+    // batches land above every row of the run: the first committed and applied, which queues its own task, then
+    // the second, and the third of at least six rows, both committed and not applied. One run drains the first
+    // into the lead, and the task the refreshed notification re-enqueues has the next turn drain the second and
+    // the third, with the engine's closing flag raised as the turn reads the third, so the breaker cancels the
+    // turn within the third's rows. FLUSH EVERY then falls due, and the burst of the closing window must start no
+    // turn: a pass of the fallback scan would drive the view at the base's applied head of the first batch, flush
+    // the lead and seal the accumulators holding the second as the root of the first, which the restart would
+    // replay the second over. Returns whether the flag rose; it is down again on return.
+    private boolean shutDownMidDrain(
+            Rnd episodeRnd,
+            LiveViewRefreshJob job,
+            LiveViewInstance instance,
+            int symCount,
+            long datasetMaxTs
+    ) throws Exception {
+        // The run's rows not committed yet sit at or below the dataset's newest one, and an earlier episode's above it.
+        final long fromTs = Math.max(datasetMaxTs, queryTimestamp("SELECT max(ts) FROM base"));
+        final TableToken baseToken = engine.verifyTableName("base");
+        // Installs the hooks ahead of the turns whose latch attempts the burst compares with.
+        hooks(job);
+        // Holds the flush off: the drains land in the lead until the clock moves past FLUSH EVERY.
+        instance.setLastFlushTimeUs(currentMicros);
+        final long firstBatchMaxTs = commitShutdownMidDrainBatch(episodeRnd, symCount, fromTs, 1 + episodeRnd.nextInt(3));
+        drainWalQueue();
+        final long firstBatchSeqTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
+        final long secondBatchMaxTs = commitShutdownMidDrainBatch(episodeRnd, symCount, firstBatchMaxTs, 1 + episodeRnd.nextInt(4));
+        commitShutdownMidDrainBatch(episodeRnd, symCount, secondBatchMaxTs, 6 + episodeRnd.nextInt(4));
+        checkpointFaults.armClosingAtBaseWalRead(baseToken.getDirName(), 2);
+        try {
+            job.run();
+            if (!engine.isClosing()) {
+                return false;
+            }
+            // The cancelled turn fed rows past the lead: the view saw a row above the first batch, while its refresh
+            // cursor stayed at the first batch's commit.
+            final boolean isLeftover = instance.getLatestSeenTs() > firstBatchMaxTs
+                    && instance.getRefreshedUpToSeqTxn() == firstBatchSeqTxn;
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            runClosingBurst(job, instance);
+            if (isLeftover) {
+                leftoverClosingBursts++;
+            }
+            return true;
+        } finally {
+            checkpointFaults.disarmClosingAtBaseWalRead();
+            engine.setClosing(false);
+        }
+    }
+
     private void runFuzz(
             Rnd rnd,
             int variant,
@@ -6873,10 +7003,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            // In a test that installs CheckpointFaults, a shutdown can cancel a lead drain ahead of
+                            // the restart.
+                            final Rnd shutdownRnd = shutdownMidDrainRnd(rnd);
+                            final boolean isShutDownMidDrain = ff == checkpointFaults
+                                    && shutdownRnd.nextInt(2) == 0
+                                    && shutDownMidDrain(shutdownRnd, job, inst, symCount, tsv[rowCount - 1]);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
                             job = new LiveViewRefreshJob(0, engine, 1);
+                            if (isShutDownMidDrain) {
+                                // The restart restores the newest root the closing window left. One sealed from the
+                                // accumulators the cancelled drain fed would count those rows twice here.
+                                driveRefreshToQuiescence(job);
+                                TestUtils.assertSqlCursors(
+                                        engine,
+                                        sqlExecutionContext,
+                                        "(" + oracleSql + ") ORDER BY 1, 2",
+                                        "(lv) ORDER BY 1, 2",
+                                        LOG,
+                                        true
+                                );
+                            }
                         }
                     }
                 }
@@ -9324,15 +9473,34 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * sibling, so the marker outlives a {@code _timeline} a retire removes.
      */
     private static final class CheckpointFaults extends TestFilesFacadeImpl {
+        // -1 disarmed; otherwise the base WAL timestamp column opens still to let through before the one that raises
+        // the engine's closing flag.
+        private final AtomicInteger closingCountdown = new AtomicInteger(-1);
         private final AtomicInteger markerRenames = new AtomicInteger();
         private final AtomicInteger refusedMarkerUnlinks = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
+        // The directory of the base whose WAL reads armClosingAtBaseWalRead counts.
+        private volatile String closingBaseDir;
         private volatile boolean hasCrashed;
         private volatile boolean hasKeptTheTimeline;
         private volatile boolean isMarkerLocked;
         private volatile boolean isTimelineLocked;
         private volatile Runnable onCrash;
         private volatile Runnable onTheKeptTimeline;
+
+        @Override
+        public long openRO(LPSZ name) {
+            final String dir = closingBaseDir;
+            if (dir != null
+                    && closingCountdown.get() >= 0
+                    && Utf8s.containsAscii(name, dir)
+                    && Utf8s.containsAscii(name, "wal")
+                    && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")
+                    && closingCountdown.getAndDecrement() == 0) {
+                engine.setClosing(true);
+            }
+            return super.openRO(name);
+        }
 
         @Override
         public boolean removeQuiet(LPSZ name) {
@@ -9383,6 +9551,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return result;
         }
 
+        // Raises the engine's closing flag, what a shutdown raises, at the open of the timestamp column of the WAL
+        // of the base in baseDir that comes after skip of them, and lets the open go ahead. A drain makes one as it
+        // starts reading each commit, so the flag rises inside the drain, after it fed the commits ahead of that
+        // one: see shutDownMidDrain.
+        void armClosingAtBaseWalRead(String baseDir, int skip) {
+            closingCountdown.set(-1);
+            closingBaseDir = baseDir;
+            closingCountdown.set(skip);
+        }
+
         void armTheCrash(Runnable onCrash) {
             markerRenames.set(0);
             hasCrashed = false;
@@ -9414,6 +9592,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             final boolean wasCrashed = hasCrashed;
             hasCrashed = false;
             return wasCrashed;
+        }
+
+        void disarmClosingAtBaseWalRead() {
+            closingCountdown.set(-1);
+            closingBaseDir = null;
         }
 
         void disarmTheCrash() {

@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -69,12 +70,15 @@ import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -192,6 +196,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
     // own bound - the driver inlines that loop to sample the tier between passes.
     private static final int REFRESH_PASSES_PER_TICK = 64;
+    // The name of a refresh worker thread of the soaks, ahead of its worker id.
+    private static final String REFRESH_WORKER_THREAD_NAME = "lv-refresh-worker-";
     // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
     private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
@@ -1241,7 +1247,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // from-scratch recompute. Nothing else exercises refresh-vs-refresh: every
         // other test drives a single LiveViewRefreshJob(0, engine, 1).
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200)));
+        assertMemoryLeak(() -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200), null));
     }
 
     @Test
@@ -1260,6 +1266,24 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // must equal the recompute, and again after a restart and forward rows.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runMultiRefreshWorkerRepairSoak(rnd, 3, 2 + rnd.nextInt(2), 2, reducedOnWindows(1500 + rnd.nextInt(1000), 500)));
+    }
+
+    @Test
+    public void testMultiRefreshWorkerShutdownSoak() throws Exception {
+        // testMultiRefreshWorkerConvergence with a shutdown in it. At a random tick the engine's closing flag, which
+        // ServerMain raises while the refresh pools still run, rises inside a refresh worker's turn, and the soak
+        // keeps ticking past FLUSH EVERY with the flag up until the writers finish. No turn may start then, and
+        // above all none may run over what a turn the shutdown cancelled left in the accumulators: a worker that
+        // flushed the lead over a peer's cancelled drain would seal its rows as the root of a commit they run past.
+        // The views then restart with the flag down, and the view the restart recovers must equal the recompute.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final ClosingAtRefreshTimestampRead closingFault = new ClosingAtRefreshTimestampRead();
+        try {
+            assertMemoryLeak(closingFault, () -> runMultiRefreshWorkerSoak(rnd, 4, 3, 3, reducedOnWindows(800, 200), closingFault));
+        } finally {
+            engine.setClosing(false);
+        }
     }
 
     @Test
@@ -2131,7 +2155,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } finally {
                 clearWorkerThreadLocals();
             }
-        }, "lv-refresh-worker-" + workerId);
+        }, REFRESH_WORKER_THREAD_NAME + workerId);
     }
 
     private Thread newTierSwapRefreshThread(
@@ -3319,7 +3343,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // - two workers or more did work, the readers read the view through the tier - and
     // then, once the workers have driven the refresh to quiescence together, that the view
     // equals the from-scratch recompute.
-    private void runMultiRefreshWorkerSoak(Rnd rnd, int numWriters, int numRefreshWorkers, int numReaders, int rowCount) throws Exception {
+    // closingFault, when not null, raises the engine's closing flag inside a refresh worker's turn once the apply
+    // driver reaches a tick the run draws: see testMultiRefreshWorkerShutdownSoak.
+    private void runMultiRefreshWorkerSoak(
+            Rnd rnd,
+            int numWriters,
+            int numRefreshWorkers,
+            int numReaders,
+            int rowCount,
+            @Nullable ClosingAtRefreshTimestampRead closingFault
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         // A SYMBOL-free row_number() IN MEMORY view: the reads route through the
@@ -3337,6 +3370,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final long[] iv = new long[rowCount];
         final double[] xv = new double[rowCount];
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+        // From the second tick, by when a worker has finished a turn that did work, and no later than one every
+        // writer reaches with commits still to come.
+        final int closingTick = closingFault != null ? 2 + rnd.nextInt(isReducedWindowsLoad ? 1 : 4) : -1;
 
         execute(createSql);
 
@@ -3361,6 +3397,23 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final AtomicLong refreshTicks = new AtomicLong();
         final AtomicLong reads = new AtomicLong();
         final AtomicLong routedReads = new AtomicLong();
+        // The turns the shutdown cancelled, and each job's refresh latch attempts when the flag rose.
+        final AtomicLong cancelledTurns = new AtomicLong();
+        final long[] latchAttemptsAtTheFlag = new long[numRefreshWorkers];
+        if (closingFault != null) {
+            for (int w = 0; w < numRefreshWorkers; w++) {
+                hooks(jobs.getQuick(w)).setRefreshFaultObserver(t -> {
+                    if (t instanceof CairoException ce && ce.isCancellation()) {
+                        cancelledTurns.incrementAndGet();
+                    }
+                });
+            }
+            closingFault.of(baseToken.getDirName(), () -> {
+                for (int w = 0; w < numRefreshWorkers; w++) {
+                    latchAttemptsAtTheFlag[w] = hooks(jobs.getQuick(w)).getRefreshLatchAttempts();
+                }
+            });
+        }
         try {
             final CyclicBarrier barrier = new CyclicBarrier(numWriters + 1 + numRefreshWorkers + numReaders);
             final ObjList<Thread> threads = new ObjList<>();
@@ -3389,9 +3442,13 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         Os.sleep(1);
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
-                        refreshTicks.incrementAndGet();
+                        if (refreshTicks.incrementAndGet() == closingTick && closingFault != null) {
+                            closingFault.arm();
+                        }
                         final long turnDeadlineNanos = System.nanoTime() + TURN_WAIT_NANOS;
+                        // A closing engine starts no turn, so there is none to wait for.
                         while (sumWorkedTurns(workedTurns) == workedTurnsBefore
+                                && !engine.isClosing()
                                 && isRunning.get()
                                 && errors.isEmpty()
                                 && System.nanoTime() < turnDeadlineNanos) {
@@ -3469,11 +3526,32 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             Assert.assertTrue("the readers must have read the view mid-soak", reads.get() > 0);
             Assert.assertTrue("the readers must have routed through the tier mid-soak", routedReads.get() > 0);
 
-            // Quiesce through every worker, then assert the oracle below.
-            drainWalQueue();
-            driveRefreshToQuiescence(jobs);
+            if (closingFault == null) {
+                // Quiesce through every worker, then assert the oracle below.
+                drainWalQueue();
+                driveRefreshToQuiescence(jobs);
+            } else {
+                Assert.assertTrue("the shutdown must have risen inside a refresh worker's turn", engine.isClosing());
+                LOG.info().$("LV concurrency multi-refresh-worker shutdown: closingTick=").$(closingTick)
+                        .$(", cancelledTurns=").$(cancelledTurns.get()).$();
+                Assert.assertTrue("the shutdown must have cancelled the turn it rose in", cancelledTurns.get() > 0);
+                // Past the flag, a worker reaches the refresh latch at most once more: with a call that read the flag
+                // down ahead of the latch before it rose, which the read under the latch refuses.
+                for (int w = 0; w < numRefreshWorkers; w++) {
+                    Assert.assertTrue(
+                            "refresh worker " + w + " kept starting turns on a closing engine",
+                            hooks(jobs.getQuick(w)).getRefreshLatchAttempts() <= latchAttemptsAtTheFlag[w] + 1
+                    );
+                }
+            }
         } finally {
             Misc.freeObjList(jobs);
+        }
+        if (closingFault != null) {
+            // What a process stop leaves: the flag goes down with the process, and the views come back from what
+            // is durable, never from what a cancelled turn left in RAM.
+            engine.setClosing(false);
+            restartLiveViewsAndRecover();
         }
 
         TestUtils.assertSqlCursors(
@@ -4550,6 +4628,45 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)) {
                 Assert.assertTrue("quiesced row_number() read must route through Mode B", cursor.isRoutingEligible());
             }
+        }
+    }
+
+    // Raises the engine's closing flag, once armed, at the next open of a file of the base's timestamp column that a
+    // refresh worker makes, and lets the open go ahead. A worker's drain of the base's WAL makes one as it starts
+    // reading a commit, and its replay of the applied base as it starts reading a partition, so the shutdown lands
+    // inside the turn, ahead of the rows the drain or the replay reads next. Runs the action of() names right after
+    // the flag rises, on that worker's thread.
+    private static final class ClosingAtRefreshTimestampRead extends TestFilesFacadeImpl {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private volatile String baseDir;
+        private volatile Runnable onClosing;
+
+        @Override
+        public long openRO(LPSZ name) {
+            final String dir = baseDir;
+            if (isArmed.get()
+                    && dir != null
+                    && Thread.currentThread().getName().startsWith(REFRESH_WORKER_THREAD_NAME)
+                    && Utf8s.containsAscii(name, dir)
+                    && Utf8s.endsWithAscii(name, Files.SEPARATOR + "ts.d")
+                    && isArmed.compareAndSet(true, false)) {
+                engine.setClosing(true);
+                final Runnable action = onClosing;
+                if (action != null) {
+                    action.run();
+                }
+            }
+            return super.openRO(name);
+        }
+
+        void arm() {
+            isArmed.set(true);
+        }
+
+        void of(String baseDir, Runnable onClosing) {
+            isArmed.set(false);
+            this.onClosing = onClosing;
+            this.baseDir = baseDir;
         }
     }
 }
