@@ -59,6 +59,9 @@ import org.junit.Assert;
  * A function registered with a close failure hands out factories that throw it from every
  * {@code close()}, after they counted the call and closed what they wrap. That is the fixture for the
  * cleanup paths that have to carry on, and report, when a close fails.
+ * <p>
+ * The factories also count their {@code getCursor()} calls, for tests that check whether a factory a
+ * compile created ran.
  */
 public final class TableFunctionTestUtils {
 
@@ -126,6 +129,7 @@ public final class TableFunctionTestUtils {
         private final @Nullable RuntimeException closeFailure;
         private final RecordCursorFactory delegate;
         private int closeCount;
+        private int cursorCount;
 
         private CloseCountingRecordCursorFactory(RecordCursorFactory delegate, @Nullable RuntimeException closeFailure) {
             this.delegate = delegate;
@@ -147,7 +151,12 @@ public final class TableFunctionTestUtils {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+            cursorCount++;
             return delegate.getCursor(executionContext);
+        }
+
+        public int getCursorCount() {
+            return cursorCount;
         }
 
         @Override
