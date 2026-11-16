@@ -51,11 +51,13 @@ import org.junit.Test;
 import java.util.*;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.PropertyKey.CAIRO_WRITER_ALTER_BUSY_WAIT_TIMEOUT;
 
 public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTest {
     private static final Log LOG = LogFactory.getLog(LineTcpReceiverUpdateFuzzTest.class);
+    private final AtomicReference<AssertionError> updateFailure = new AtomicReference<>();
     private final ConcurrentLinkedQueue<String> updateSqlQueue = new ConcurrentLinkedQueue<>();
     private SqlExecutionContext[] executionContexts;
     private int numOfUpdateThreads;
@@ -131,10 +133,13 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         runTest();
     }
 
-    private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) {
+    private List<ColumnNameType> getMetaData(Map<CharSequence, ArrayList<ColumnNameType>> columnsCache, CharSequence tableName) throws Exception {
         if (columnsCache.containsKey(tableName)) {
             return columnsCache.get(tableName);
         }
+        // A non-WAL table enters tableNames on the pool unlock event, which the engine fires before it
+        // registers the table's name, so the name can take a moment to resolve.
+        TestUtils.assertEventually(() -> Assert.assertNotNull(engine.getTableTokenIfExists(tableName)));
         try (TableReader reader = getReader(tableName)) {
             final TableReaderMetadata metadata = reader.getMetadata();
             final ArrayList<ColumnNameType> columns = new ArrayList<>();
@@ -170,7 +175,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
         throw new IllegalStateException();
     }
 
-    private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone, AtomicInteger failureCounter) {
+    private void startUpdateThread(final int threadId, SOCountDownLatch updatesDone) {
         // use different random
         System.out.println("thread random");
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -195,10 +200,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
                     update(updateSql, executionContext, eventSubSeq);
                     updateSqlQueue.add(updateSql);
                 }
-            } catch (Exception e) {
-                LOG.error().$(e).$();
-                Assert.fail("Update failed [e=" + e + ", updateSql=" + updateSql + "]");
-                failureCounter.incrementAndGet();
+            } catch (Throwable th) {
+                LOG.error().$(th).$();
+                // An assertion thrown here would end only this thread; waitDone() fails the test with it instead.
+                updateFailure.compareAndSet(null, new AssertionError("Update failed [e=" + th + ", updateSql=" + updateSql + "]", th));
             } finally {
                 Path.clearThreadLocals();
                 updatesDone.countDown();
@@ -220,7 +225,7 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     protected void startThread(int threadId, Socket socket, SOCountDownLatch threadPushFinished, AtomicInteger failureCounter) {
         super.startThread(threadId, socket, threadPushFinished, failureCounter);
         while (numOfUpdateThreads-- > 0) {
-            startUpdateThread(numOfUpdateThreads, updatesDone, failureCounter);
+            startUpdateThread(numOfUpdateThreads, updatesDone);
         }
     }
 
@@ -228,6 +233,10 @@ public class LineTcpReceiverUpdateFuzzTest extends AbstractLineTcpReceiverFuzzTe
     protected void waitDone(ObjList<Socket> sockets) throws SqlException {
         // wait for update threads to finish
         updatesDone.await();
+        final AssertionError updateError = updateFailure.get();
+        if (updateError != null) {
+            throw updateError;
+        }
 
         // wait for ingestion to finish
         super.waitDone(sockets);

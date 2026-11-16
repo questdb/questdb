@@ -903,6 +903,15 @@ public class FilesTest {
     }
 
     @Test
+    public void testGetFileSystemStatusTellsApfsByName() throws Exception {
+        // macOS numbers file system types in the order it loads them: HFS+ takes 0x19 on macOS 26, a number APFS had on
+        // macOS 15. The status must follow the name of the file system, on disk images of both.
+        Assume.assumeTrue(Os.isOSX());
+        assertFileSystemStatusOfImage("APFS", "apfs", true);
+        assertFileSystemStatusOfImage("HFS+", "hfs", false);
+    }
+
+    @Test
     public void testHardLinkAsciiName() throws Exception {
         assertHardLinkPreservesFileContent("some_column.d");
     }
@@ -2028,6 +2037,14 @@ public class FilesTest {
         return file.toPath().toRealPath().toString();
     }
 
+    private static int runCommand(String... command) throws IOException, InterruptedException {
+        return new ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                .start()
+                .waitFor();
+    }
+
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {
         try (
                 Path path = new Path().of(pathName).concat("hello.").put(index).put(".txt");
@@ -2065,6 +2082,35 @@ public class FilesTest {
     private static void touch(File file) throws IOException {
         FileOutputStream fos = new FileOutputStream(file);
         fos.close();
+    }
+
+    // Creates a disk image of the file system format, mounts it, and checks the name and the status that
+    // Files.getFileSystemStatus reports for the mounted volume. Skips the check where hdiutil cannot mount an image.
+    private void assertFileSystemStatusOfImage(String format, String expectedName, boolean isExpectedSupported) throws Exception {
+        assertMemoryLeak(() -> {
+            final File dir = temporaryFolder.newFolder();
+            final File image = new File(dir, "volume.sparseimage");
+            final File mountPoint = new File(dir, "mnt");
+            Assert.assertTrue(mountPoint.mkdir());
+            Assume.assumeTrue(
+                    "hdiutil cannot create an image of " + format,
+                    runCommand("hdiutil", "create", "-quiet", "-size", "16m", "-fs", format, "-type", "SPARSE", "-volname", "qdb", image.getAbsolutePath()) == 0
+            );
+            Assume.assumeTrue(
+                    "hdiutil cannot attach an image of " + format,
+                    runCommand("hdiutil", "attach", "-quiet", "-nobrowse", "-mountpoint", mountPoint.getAbsolutePath(), image.getAbsolutePath()) == 0
+            );
+            try (Path path = new Path()) {
+                path.of(mountPoint.getAbsolutePath());
+                final int status = Files.getFileSystemStatus(path.$());
+                // the file system name overwrites the path
+                path.seekZ();
+                Assert.assertEquals(expectedName, path.toString());
+                Assert.assertEquals(format + " status " + status, isExpectedSupported, status < 0);
+            } finally {
+                runCommand("hdiutil", "detach", "-quiet", "-force", mountPoint.getAbsolutePath());
+            }
+        });
     }
 
     private void assertHardLinkPreservesFileContent(String fileName) throws Exception {
