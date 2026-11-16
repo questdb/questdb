@@ -1086,7 +1086,7 @@ public class SqlParser {
      * carry names up from subqueries, CTEs and join branches, so the walk covers those too. A model expanded
      * from a regular view is not part of the text; its columns reach the query as plain columns.
      */
-    private static boolean namesItsColumns(@Nullable IQueryModel model) {
+    private static boolean isNamingItsColumns(@Nullable IQueryModel model) {
         for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
             if (m.getViewNameExpr() != null) {
                 // the regular view's own models sit below this one, as its nested, join and union models
@@ -1109,11 +1109,11 @@ public class SqlParser {
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 final IQueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel != m && !namesItsColumns(joinModel)) {
+                if (joinModel != m && !isNamingItsColumns(joinModel)) {
                     return false;
                 }
             }
-            if (!namesItsColumns(m.getUnionModel())) {
+            if (!isNamingItsColumns(m.getUnionModel())) {
                 return false;
             }
         }
@@ -10580,7 +10580,7 @@ public class SqlParser {
         attachViewReads(model);
         if (executionContext.isViewSqlCompile() && model.getModelType() == ExecutionModel.QUERY) {
             // The optimiser renames and wraps models, so only the parser's output shows the names the SQL wrote.
-            executionContext.setViewSqlGeneratedColumnNames(!namesItsColumns((IQueryModel) model));
+            executionContext.setViewSqlGeneratedColumnNames(!isNamingItsColumns((IQueryModel) model));
         }
         return model;
     }
@@ -10733,6 +10733,9 @@ public class SqlParser {
         }
         validateMatViewQuery(queryModel, baseTableName, true);
 
+        result.baseTableReferencePosition = SqlUtil.findTableNamePosition(queryModel, baseTableName);
+        // collectAllTableNames() above found the table on the same walk, with the same comparison
+        assert result.baseTableReferencePosition > -1;
         result.timeZone = getMatViewSampleBy(queryModel, true);
         result.timeZoneOffset = getMatViewSampleBy(queryModel, false);
         result.timeZonePosition = getMatViewSampleByPosition(queryModel, true, matViewQueryLo);
@@ -10754,12 +10757,13 @@ public class SqlParser {
 
     /**
      * The new SQL of {@code ALTER MATERIALIZED VIEW ... AS}, as {@link #parseAlterMatViewQuery} parsed it: its text and
-     * position in the statement, its SAMPLE BY time zone and offset, which the view's must equal, with their positions,
-     * the SQL's when it has none, and where each named column of its outermost SELECT starts, keyed by the column's
-     * name.
+     * position in the statement, where it first references the base table, its SAMPLE BY time zone and offset, which
+     * the view's must equal, with their positions, the SQL's when it has none, and where each named column of its
+     * outermost SELECT starts, keyed by the column's name.
      */
     public static final class AlterMatViewQuery {
         public final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
+        public int baseTableReferencePosition;
         public String sql;
         public int sqlPosition;
         public @Nullable String timeZone;
@@ -10775,6 +10779,7 @@ public class SqlParser {
 
         private void clear() {
             columnPositions.clear();
+            baseTableReferencePosition = 0;
             sql = null;
             sqlPosition = 0;
             timeZone = null;

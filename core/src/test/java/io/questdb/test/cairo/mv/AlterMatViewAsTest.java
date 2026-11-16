@@ -1523,7 +1523,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             final String sql = ALTER_PREFIX + "AS (" + VIEW_SQL + ")";
             assertExceptionNoLeakCheck(
                     sql,
-                    sql.indexOf("SELECT"),
+                    sql.indexOf("FROM base") + "FROM ".length(),
                     "base table does not exist, name the new base table with WITH BASE [baseTable=base]"
             );
             createBase2WithRow();
@@ -1532,6 +1532,44 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             execute(RESUME_SKIP_SQL);
             drainWalAndMatViewQueues();
             assertViewStatus("valid", "");
+        });
+    }
+
+    @Test
+    public void testBaseRecreatedWithoutWithBaseIsRefusedAtBaseReference() throws Exception {
+        // Without WITH BASE the view keeps its base table's name. When a table the view cannot use took the name, the
+        // statement fails at the SQL's first reference to the base table, as CREATE does, and leaves the view as it
+        // was. The base table sits in the top query, in a join, and in a subquery joined to a UNION.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute("CREATE TABLE other (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = ALTER_PREFIX + "AS (" + VIEW_SQL + ")";
+            final int position = sql.indexOf("FROM base") + "FROM ".length();
+            final String joinSql = ALTER_PREFIX + "AS (SELECT o.ts, b.sym, last(b.price) AS price FROM other o "
+                    + "JOIN base b ON (sym) SAMPLE BY 1h)";
+            final String unionSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM (SELECT * FROM base) b "
+                    + "JOIN (SELECT sym FROM other UNION ALL SELECT sym FROM other) u ON (sym) SAMPLE BY 1h)";
+
+            execute("DROP TABLE base");
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(sql, position, "base table has to be WAL enabled");
+            assertExceptionNoLeakCheck(joinSql, joinSql.indexOf("base b"), "base table has to be WAL enabled");
+            assertExceptionNoLeakCheck(unionSql, unionSql.indexOf("FROM base") + "FROM ".length(), "base table has to be WAL enabled");
+
+            execute("DROP TABLE base");
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(
+                    sql,
+                    position,
+                    "base table designated timestamp type does not match the view's [view=price_1h, baseTable=base, viewType=TIMESTAMP, baseTableType=TIMESTAMP_NS]; "
+                            + "move the view to another base table with ALTER MATERIALIZED VIEW ... WITH BASE, or re-create the view"
+            );
+
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            Assert.assertEquals("base", viewDefinition().getBaseTableName());
+            assertViewRows(VIEW_ROWS);
         });
     }
 

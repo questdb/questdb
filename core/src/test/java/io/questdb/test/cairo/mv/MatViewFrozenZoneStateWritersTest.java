@@ -31,7 +31,6 @@ import io.questdb.std.Files;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -143,7 +142,10 @@ public class MatViewFrozenZoneStateWritersTest extends AbstractCairoTest {
             engine.buildViewGraphs();
             execute("CHECKPOINT RELEASE");
 
-            TestUtils.assertEquals(frontier, queryResult("SELECT backfill_max_ts FROM materialized_views()"));
+            assertQuery("SELECT backfill_max_ts FROM materialized_views()")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns(frontier);
             assertRows(ROWS);
             assertSurvivesRestartAndFull(ROWS);
         });

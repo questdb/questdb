@@ -1111,6 +1111,44 @@ public class SqlUtil {
         return null;
     }
 
+    /**
+     * Returns the position of the first reference to the table in the query, in the order
+     * {@link #collectAllTableNames(IQueryModel, LowerCaseCharSequenceHashSet, IntList)} walks the models, or -1 when
+     * the query does not reference the table.
+     */
+    public static int findTableNamePosition(@NotNull IQueryModel model, @NotNull CharSequence tableName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL
+                    && Chars.equalsIgnoreCase(unquote(tableNameExpr.token), tableName)) {
+                return tableNameExpr.position;
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    final int position = findTableNamePosition(joinModel, tableName);
+                    if (position > -1) {
+                        return position;
+                    }
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final int position = findTableNamePosition(unionModel, tableName);
+                if (position > -1) {
+                    return position;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return -1;
+    }
+
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
         final IQueryModel queryModel = model.getQueryModel();
         assert queryModel != null;

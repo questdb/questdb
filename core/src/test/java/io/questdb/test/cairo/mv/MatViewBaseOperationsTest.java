@@ -1591,6 +1591,48 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateCutTakesLastTruncateInSequencerOrderAcrossWalWriters() throws Exception {
+        // Four WAL writers commit a TRUNCATE, a row, a second TRUNCATE and another row, in that sequencer order, before
+        // the view refreshes. The interval scan reads the transactions by WAL, so it reads the second TRUNCATE before
+        // the first one. The cut sits at the TRUNCATE sequenced last, not at the one read last: it drops the interval
+        // of the row sequenced between the two truncates, which the base no longer holds, so the view keeps its row
+        // at 00:00 and gains the 05:00 row only.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute(TRUNCATE_BASE_ROWS);
+            createView("price_1h", "IMMEDIATE");
+            drainWalAndMatViewQueues();
+
+            try (
+                    WalWriter first = getWalWriter("base");
+                    WalWriter second = getWalWriter("base");
+                    WalWriter third = getWalWriter("base");
+                    WalWriter fourth = getWalWriter("base")
+            ) {
+                Assert.assertTrue(first.getWalId() < second.getWalId());
+                Assert.assertTrue(second.getWalId() < third.getWalId());
+                Assert.assertTrue(third.getWalId() < fourth.getWalId());
+                third.truncateSoft();
+                TableWriter.Row row = fourth.newRow(parseFloorPartialTimestamp("2024-01-01T00:20:00.000000Z"));
+                row.putSym(0, "a");
+                row.putDouble(1, 11.0);
+                row.append();
+                fourth.commit();
+                second.truncateSoft();
+                row = first.newRow(parseFloorPartialTimestamp("2024-01-01T05:10:00.000000Z"));
+                row.putSym(0, "d");
+                row.putDouble(1, 4.0);
+                row.append();
+                first.commit();
+            }
+            drainWalAndMatViewQueues();
+
+            assertViewRows(VIEW_ROWS_AFTER_TRUNCATE);
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
     public void testTruncateKeepsRowsAndSkipsCachedIntervalsQueuedBeforeIt() throws Exception {
         // A MANUAL view caches the interval of a row written before the TRUNCATE. The refresh after the truncate drops
         // the cached interval, keeps the view's rows and recomputes only the bucket of the row written after it.
@@ -1640,6 +1682,38 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
 
             assertViewRows(VIEW_ROWS_AFTER_TRUNCATE);
             assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testTruncateRecordGoesWithDroppedBase() throws Exception {
+        // A view's base drops and comes back under its name, and each incarnation is truncated. The store keeps the
+        // TRUNCATE record of the live base only, so the records do not pile up over the incarnations, and a TRUNCATE
+        // recorded for a base that has dropped leaves no record either.
+        assertMemoryLeak(() -> {
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            createBase();
+            createView("price_1h", "IMMEDIATE");
+            drainWalAndMatViewQueues();
+            for (int i = 0; i < 3; i++) {
+                execute(TRUNCATE_BASE_ROWS);
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                final TableToken baseToken = engine.verifyTableName("base");
+                Assert.assertEquals(1, store.getLastBaseTableTruncateRecordCount());
+                Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), store.getLastBaseTableTruncateTxn(baseToken));
+
+                execute("DROP TABLE base");
+                Assert.assertEquals(0, store.getLastBaseTableTruncateRecordCount());
+                Assert.assertEquals(-1, store.getLastBaseTableTruncateTxn(baseToken));
+                // a TRUNCATE of the dropped base that the WAL apply job applies after the drop
+                store.notifyBaseTableTruncate(baseToken, 100);
+                Assert.assertEquals(0, store.getLastBaseTableTruncateRecordCount());
+                Assert.assertEquals(-1, store.getLastBaseTableTruncateTxn(baseToken));
+                drainWalAndMatViewQueues();
+                createBase();
+                drainWalAndMatViewQueues();
+            }
         });
     }
 

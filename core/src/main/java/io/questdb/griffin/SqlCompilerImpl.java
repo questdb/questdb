@@ -574,8 +574,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int sqlPosition,
             MatViewQueryValidator validator
     ) throws SqlException {
-        final boolean previousViewSqlCompile = executionContext.isViewSqlCompile();
-        final boolean previousViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
+        final boolean wasViewSqlCompile = executionContext.isViewSqlCompile();
+        final boolean hadViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
         executionContext.setViewSqlCompile(true);
         // The parser reports only on a query; anything else counts as relying on generated names.
         executionContext.setViewSqlGeneratedColumnNames(true);
@@ -601,8 +601,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } finally {
             Misc.free(factory);
-            executionContext.setViewSqlGeneratedColumnNames(previousViewSqlGeneratedColumnNames);
-            executionContext.setViewSqlCompile(previousViewSqlCompile);
+            executionContext.setViewSqlGeneratedColumnNames(hadViewSqlGeneratedColumnNames);
+            executionContext.setViewSqlCompile(wasViewSqlCompile);
             clear();
         }
     }
@@ -1143,8 +1143,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
         final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
         final boolean previousAllowBareNoArgFunctionCalls = executionContext.allowBareNoArgFunctionCalls();
-        final boolean previousViewSqlCompile = executionContext.isViewSqlCompile();
-        final boolean previousViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
+        final boolean wasViewSqlCompile = executionContext.isViewSqlCompile();
+        final boolean hadViewSqlGeneratedColumnNames = executionContext.hasViewSqlGeneratedColumnNames();
         executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, viewDefinition.getMatViewToken().getTableName());
         executionContext.setAllowBareNoArgFunctionCalls(!isReadingBareNamesAsColumns && !viewDefinition.isPassthrough());
         // A bare name of a zero-argument function fails with the parentheses the call needs, as in CREATE.
@@ -1189,8 +1189,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             validator.ofError(e.getFlyweightMessage());
         } finally {
             optimiser.setRejectingBareNoArgCalls(false);
-            executionContext.setViewSqlGeneratedColumnNames(previousViewSqlGeneratedColumnNames);
-            executionContext.setViewSqlCompile(previousViewSqlCompile);
+            executionContext.setViewSqlGeneratedColumnNames(hadViewSqlGeneratedColumnNames);
+            executionContext.setViewSqlCompile(wasViewSqlCompile);
             executionContext.setAllowBareNoArgFunctionCalls(previousAllowBareNoArgFunctionCalls);
             executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
             clear();
@@ -1965,10 +1965,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // Without WITH BASE, the view keeps its base table, which the view's refresh can use only while it exists.
             baseTableToken = executionContext.getVisibleTableTokenIfExists(baseTableName);
             if (baseTableToken == null) {
-                throw SqlException.$(query.sqlPosition, "base table does not exist, name the new base table with WITH BASE [baseTable=")
+                throw SqlException.$(query.baseTableReferencePosition, "base table does not exist, name the new base table with WITH BASE [baseTable=")
                         .put(baseTableName).put(']');
             }
-            checkAlterMatViewBaseTable(matViewToken, viewMetadata, baseTableToken, query.sqlPosition);
+            checkAlterMatViewBaseTable(matViewToken, viewMetadata, baseTableToken, query.baseTableReferencePosition);
         }
         if (executionContext.isValidationOnly()) {
             compiledQuery.ofAlterView();

@@ -31,7 +31,6 @@ import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -383,9 +382,14 @@ public class MatViewRefreshCopierTypesTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         final String label = xConversion[0] + " -> " + xConversion[3] + " = " + aValue + ", " + yConversion[0] + " -> " + yConversion[3]
                 + " = " + bValue + (isXFirst ? ", x first" : ", y first");
-        sink.clear();
-        printSql("SELECT view_status, invalidation_reason FROM materialized_views()", sink);
-        TestUtils.assertEquals(label, "view_status\tinvalidation_reason\ninvalid\t" + expectedReason + '\n', sink);
+        try {
+            assertQuery("SELECT view_status, invalidation_reason FROM materialized_views()")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_status\tinvalidation_reason\ninvalid\t" + expectedReason + '\n');
+        } catch (AssertionError e) {
+            throw new AssertionError(label, e);
+        }
         execute("DROP MATERIALIZED VIEW mv");
         execute("DROP TABLE base");
         drainWalAndMatViewQueues();

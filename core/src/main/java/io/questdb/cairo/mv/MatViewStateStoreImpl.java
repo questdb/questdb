@@ -62,7 +62,7 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     // Base table directory name to the seqTxn of the last TRUNCATE the WAL apply job applied to it. The directory
     // name tells a base dropped and re-created under the same name from the original. Kept only for tables some
-    // view used as its base, see notifyBaseTableTruncate(). Grow-only, like lastNotifiedTxnByTableName.
+    // view used as its base, see notifyBaseTableTruncate(), and removed when the table drops, see removeViewState().
     private final ConcurrentHashMap<AtomicLong> lastTruncateTxnByTableDirName = new ConcurrentHashMap<>();
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
@@ -312,6 +312,11 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     }
 
     @TestOnly
+    public int getLastBaseTableTruncateRecordCount() {
+        return lastTruncateTxnByTableDirName.size();
+    }
+
+    @TestOnly
     public Queue<MatViewRefreshTask> getTaskQueue() {
         return taskQueue;
     }
@@ -388,6 +393,12 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         // so the record only grows; a truncate applied again after a failed attempt keeps its seqTxn.
         if (seqTxn > lastTruncateTxn.get()) {
             lastTruncateTxn.set(seqTxn);
+        }
+        // The table drops after the registry marks it dropped, see CairoEngine.dropTableOrViewOrMatView(). A TRUNCATE
+        // that the WAL apply job applies while the table drops can record it after the drop removed the record, so
+        // the record goes again once the table is gone.
+        if (engine.isTableDropped(baseTableToken)) {
+            lastTruncateTxnByTableDirName.remove(baseTableToken.getDirName(), lastTruncateTxn);
         }
     }
 
@@ -520,6 +531,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void removeViewState(TableToken matViewToken) {
+        // The engine calls this for every dropped WAL table. No view refreshes from a dropped base, so the base's
+        // TRUNCATE record goes too, and the records do not pile up over the drops and re-creates of a base.
+        lastTruncateTxnByTableDirName.remove(matViewToken.getDirName());
         final MatViewState state = stateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
             state.markAsDropped();

@@ -874,9 +874,11 @@ public class MatViewDropColumnExpiryPolicyTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         assertViewValid(viewName);
         // Every read of the view goes through the policy's rewrite.
-        sink.clear();
-        printSql("SELECT count() FROM " + viewName, sink);
-        TestUtils.assertEquals("count\n" + visibleRowCount + "\n", sink);
+        assertQuery("SELECT count() FROM " + viewName)
+                .expectSize()
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("count\n" + visibleRowCount + "\n");
     }
 
     // ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS <policy> fails at compile, at the policy, and writes nothing to the

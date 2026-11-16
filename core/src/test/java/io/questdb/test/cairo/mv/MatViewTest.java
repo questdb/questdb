@@ -14074,6 +14074,58 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderReleasesLargeScanBuffer() throws Exception {
+        // The scan buffers three longs per data transaction. A scan over a long backlog must not keep that buffer
+        // once it is done, while a short scan keeps its small buffer for the next load.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken baseToken = engine.verifyTableName("base");
+            final int txnCount = 2_000;
+            final long ts = parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z");
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                for (int i = 0; i < txnCount; i++) {
+                    final TableWriter.Row row = walWriter.newRow(ts);
+                    row.putSym(0, "a");
+                    row.putDouble(1, i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            drainWalQueue();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 2);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                final int smallScanCapacity = loader.getTxnIntervalsCapacity();
+                Assert.assertTrue(smallScanCapacity <= WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY);
+
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, txnCount);
+                // the rows share their timestamp, so their intervals merge into one
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+                Assert.assertEquals(smallScanCapacity, loader.getTxnIntervalsCapacity());
+
+                // the loader still works after it dropped its buffer
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, txnCount - 1, txnCount);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+            }
+        });
+    }
+
+    @Test
     public void testWalTxnRangeLoaderSkipsRebaseSeeds() throws Exception {
         // REBASE WAL seeds the table with two empty transactions. They hold no rows, so they add no refresh interval.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");

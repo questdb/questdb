@@ -3885,8 +3885,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // Do not turn a fatal flush failure into a recorded range error either.
         engine.handleDataSyncFailure(th);
         errorMsgSink.clear();
-        if (th instanceof Sinkable) {
-            ((Sinkable) th).toSink(errorMsgSink);
+        if (th instanceof Sinkable sinkable) {
+            sinkable.toSink(errorMsgSink);
         } else {
             errorMsgSink.put(th.getMessage());
         }
@@ -3911,8 +3911,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // Do not turn a fatal flush failure into a view invalidation and a later fence refusal.
         engine.handleDataSyncFailure(th);
         errorMsgSink.clear();
-        if (th instanceof Sinkable) {
-            ((Sinkable) th).toSink(errorMsgSink);
+        if (th instanceof Sinkable sinkable) {
+            sinkable.toSink(errorMsgSink);
         } else {
             errorMsgSink.put(th.getMessage());
         }

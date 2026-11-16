@@ -1019,7 +1019,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                     }
                     // The restored view could not catch up on the gap, so its backlog is lost in the checkpoint.
                     LOG.error().$("could not load missing refresh intervals for materialized view backlog [view=").$(matViewToken)
-                            .$(", baseTable=").$(baseTableName)
+                            .$(", baseTable=").$safe(baseTableName)
                             .$(", error=").$safe(e.getFlyweightMessage())
                             .I$();
                     markCheckpointedBacklogLost(checkpointRoot, matViewToken, matViewStateReader, matViewFileWriter, MatViewBacklog.LOST_BASE_TABLE_WAL_MISSING);

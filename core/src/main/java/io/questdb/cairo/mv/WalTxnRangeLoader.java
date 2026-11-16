@@ -41,10 +41,14 @@ import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
+    // The scan keeps txnIntervals up to this capacity, in longs, between loads, and drops a larger buffer after the
+    // load, so that a scan over a long backlog does not hold its buffer until restart.
+    public static final int TXN_INTERVALS_RETAINED_CAPACITY = 3 * 1024;
     // the data intervals of the scanned transactions as triples: min timestamp, max timestamp, transaction index
     private final LongList txnIntervals = new LongList();
     private final WalEventReader walEventReader;
@@ -68,6 +72,11 @@ public class WalTxnRangeLoader implements QuietCloseable {
 
     public long getMinTimestamp() {
         return minTimestamp;
+    }
+
+    @TestOnly
+    public int getTxnIntervalsCapacity() {
+        return txnIntervals.capacity();
     }
 
     // True when the last load() scan saw a base-table TRUNCATE in the scanned (txnLo, txnHi] range. The scan
@@ -201,6 +210,11 @@ public class WalTxnRangeLoader implements QuietCloseable {
             }
         } finally {
             txnDetails.resetCapacity();
+            if (txnIntervals.capacity() > TXN_INTERVALS_RETAINED_CAPACITY) {
+                txnIntervals.restoreInitialCapacity();
+            } else {
+                txnIntervals.clear();
+            }
         }
     }
 }
