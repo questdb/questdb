@@ -2962,6 +2962,28 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows() throws Exception {
+        // The first write of a column into a partition creates its .pk anew. The copy can catch it empty or before
+        // its header is written, and the column has nothing to index either way.
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(0, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(100, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(16_384, false);
+        // A readable .pk goes too, and so does the marker of an interrupted rebuild
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(-1, false);
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(-1, true);
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailsToRemoveKeyFile() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(".pk", "could not remove file");
+    }
+
+    @Test
+    public void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailsToRemoveValueFile() throws Exception {
+        testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(".pv", "could not remove posting index files of a column with no rows");
+    }
+
+    @Test
     public void testCheckpointRestorePostingIndexRebuildMarkerCreateFailure() throws Exception {
         testCheckpointRestoreRepeatsInterruptedPostingIndexRebuild(false, "s.pk.rebuild", "could not create posting index rebuild marker");
     }
@@ -6709,6 +6731,13 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    private static String[] listFiles(File partitionDir, String prefix) {
+        final String[] names = partitionDir.list((_, name) -> name.startsWith(prefix));
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        return names;
+    }
+
     private static void removePostingValueFiles(File partitionDir) throws IOException {
         Assert.assertTrue("partition must have a posting value file", removeFiles(partitionDir, "s.pv.") > 0);
     }
@@ -6823,6 +6852,112 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
             }
             execute("DROP TABLE t");
+        });
+    }
+
+    // q is added after the rows of both partitions, so it has no rows in either; only the active partition
+    // 2024-01-02 has index files for it
+    private File createTableWithEmptyPostingColumn(boolean hasRebuildMarker) throws Exception {
+        execute("CREATE TABLE t (s SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES ('a', 1, '2024-01-01'), ('b', 2, '2024-01-02')");
+        execute("ALTER TABLE t ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+        engine.clear();
+        final File partDir = new File(new File(configuration.getDbRoot(), engine.verifyTableName("t").getDirName()), "2024-01-02");
+        final String[] keyFiles = listFiles(partDir, "q.pk");
+        Assert.assertEquals(1, keyFiles.length);
+        Assert.assertTrue("setup: q must have a value file", listFiles(partDir, "q.pv").length > 0);
+        if (hasRebuildMarker) {
+            // An earlier restore that stopped inside a rebuild of the index leaves its marker
+            Assert.assertTrue(new File(partDir, keyFiles[0] + ".rebuild").createNewFile());
+        }
+        return partDir;
+    }
+
+    private void assertEmptyPostingColumnRestored(File partDir) throws Exception {
+        Assert.assertArrayEquals(new String[0], listFiles(partDir, "q.p"));
+        execute("INSERT INTO t VALUES ('c', 3, '2024-01-02T01:00:00', 'k')");
+        assertQuery("SELECT v, ts FROM t WHERE q = 'k'")
+                .timestamp("ts")
+                .withPlanContaining("on: q")
+                .returns("""
+                        v\tts
+                        3\t2024-01-02T01:00:00.000000Z
+                        """);
+        assertQuery("SELECT v FROM t WHERE q IS NULL")
+                .returns("v\n1\n2\n");
+        execute("DROP TABLE t");
+    }
+
+    private void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRows(long keyFileLength, boolean hasRebuildMarker) throws Exception {
+        assertMemoryLeak(() -> {
+            final File partDir = createTableWithEmptyPostingColumn(hasRebuildMarker);
+            if (keyFileLength >= 0) {
+                // Zero bytes after the length cut: no header
+                try (java.io.RandomAccessFile file = new java.io.RandomAccessFile(new File(partDir, listFiles(partDir, "q.pk")[0]), "rw")) {
+                    file.setLength(0);
+                    file.setLength(keyFileLength);
+                }
+            }
+            final TableToken token = engine.verifyTableName("t");
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertEmptyPostingColumnRestored(partDir);
+        });
+    }
+
+    // The first restore fails to remove a file whose name ends in failingSuffix; the repeated restore removes it
+    private void testCheckpointRestoreRemovesPostingIndexOfColumnWithNoRowsFailure(
+            String failingSuffix,
+            String expectedError
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            final File partDir = createTableWithEmptyPostingColumn(true);
+            final String[] keyAndMarkerFiles = listFiles(partDir, "q.pk");
+            final AtomicInteger failures = new AtomicInteger();
+            final FilesFacade failingFacade = new TestFilesFacadeImpl() {
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.containsAscii(name, Files.SEPARATOR + "q" + failingSuffix)) {
+                        failures.incrementAndGet();
+                        return false;
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+            final CairoConfiguration failingConfig = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return failingFacade;
+                }
+            };
+            final TableToken token = engine.verifyTableName("t");
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(failingConfig)
+            ) {
+                try {
+                    restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+                    Assert.fail("expected the restore to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "2024-01-02");
+                }
+            }
+            Assert.assertEquals(1, failures.get());
+            // The .pk and the marker go last, so the repeated restore finds the column again
+            Assert.assertArrayEquals(keyAndMarkerFiles, listFiles(partDir, "q.pk"));
+
+            try (
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false);
+            }
+            assertEmptyPostingColumnRestored(partDir);
         });
     }
 
