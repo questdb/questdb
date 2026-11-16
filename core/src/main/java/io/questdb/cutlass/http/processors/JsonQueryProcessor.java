@@ -512,11 +512,11 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 final CompiledQuery cc;
                 // The variables reach this statement's compile and nothing else: an operation
                 // that parses SQL when it executes, such as CREATE TABLE AS, reads the text alone.
-                sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+                sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.getQuery());
                 try {
                     cc = compiler.compile(state.getQuery(), sqlExecutionContext);
                 } finally {
-                    sqlExecutionContext.setQueryVariables(null);
+                    sqlExecutionContext.setQueryVariables(null, null);
                 }
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {

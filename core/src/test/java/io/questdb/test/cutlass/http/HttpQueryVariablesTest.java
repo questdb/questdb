@@ -94,6 +94,27 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testAlterExpirePolicyIgnoresVariables() throws Exception {
+        // ALTER checks a window EXPIRE ROWS policy with a query of its own, which compiles while the
+        // statement compiles. The view keeps the policy as text, without the variables, so the
+        // statement fails as it does without the parameter, and the view keeps no policy.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)", sqlExecutionContext);
+            final String sql = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k) - @k";
+            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
+                final String response = assertSameResponse(url, sql, "@k := 1.0");
+                TestUtils.assertContains(response, "\"error\":\"invalid EXPIRE ROWS policy: Invalid column: @k\"");
+            }
+            assertGet(
+                    "{\"query\":\"SELECT count() FROM mv\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0]],\"count\":1}",
+                    "SELECT count() FROM mv",
+                    null
+            );
+        }));
+    }
+
+    @Test
     public void testCreateIgnoresVariables() throws Exception {
         // CREATE TABLE AS and views keep their text, without the variables: each answers as it
         // does without the parameter.

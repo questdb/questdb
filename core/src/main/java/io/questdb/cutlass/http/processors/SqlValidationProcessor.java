@@ -274,11 +274,11 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             sqlExecutionContext.setValidationOnly(true);
             final CompiledQuery cc;
             // the variables reach this compile and nothing else, as on /exec
-            sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+            sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.getQuery());
             try {
                 cc = compiler.compile(state.getQuery(), sqlExecutionContext);
             } finally {
-                sqlExecutionContext.setQueryVariables(null);
+                sqlExecutionContext.setQueryVariables(null, null);
             }
             sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP_QUERY_VALIDATE);
             state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);

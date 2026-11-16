@@ -131,6 +131,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private CharSequence queryVariables;
+    private CharSequence queryVariablesSqlText;
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
@@ -408,6 +409,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public @Nullable CharSequence getQueryVariables() {
         return queryVariables;
+    }
+
+    @Override
+    public @Nullable CharSequence getQueryVariablesSqlText() {
+        return queryVariablesSqlText;
     }
 
     @Override
@@ -788,12 +794,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     /**
-     * Sets the variables the client declared for the statements this context compiles next, or
-     * {@code null} for none, see {@link #getQueryVariables()}. The caller sets them around one
-     * compile and clears them after, so they never reach another statement on the connection.
+     * Sets the variables the client declared outside the text of the statement it sent, and that
+     * text, or {@code null} for none, see {@link #getQueryVariables()}. The parser reads them only
+     * where it parses that text, not in the other SQL a compile of it parses, such as a stored
+     * definition. The caller sets them around the compiles of the text and clears them after, so
+     * they never reach another statement on the connection.
      */
-    public void setQueryVariables(@Nullable CharSequence queryVariables) {
+    public void setQueryVariables(@Nullable CharSequence queryVariables, @Nullable CharSequence sqlText) {
         this.queryVariables = queryVariables;
+        this.queryVariablesSqlText = sqlText;
     }
 
     @Override

@@ -8157,10 +8157,16 @@ public class SqlParser {
     ) throws SqlException {
         queryVariablesModel = null;
         final CharSequence variables = executionContext.getQueryVariables();
-        // ALTER VIEW and CREATE OR REPLACE VIEW compile the new body while the statement compiles.
-        // The view keeps the body as text, which no reader parses with the client's variables, so
-        // the body compiles without them, as CREATE VIEW's does.
-        if (variables == null || variables.length() == 0 || executionContext.isViewCompile()) {
+        if (variables == null || variables.length() == 0) {
+            return null;
+        }
+        // The variables belong to the text the client sent them with, as a DECLARE block belongs
+        // to the text it opens. A compile of that text parses it again on a retry, which reads
+        // them again, but also parses SQL of its own with the same context: the body of a view
+        // that ALTER VIEW defines, the query that checks an EXPIRE ROWS policy. Those texts are
+        // stored or made up, and no DECLARE block of the statement reaches them, so the variables
+        // do not either.
+        if (!Chars.equalsNc(lexer.getContent(), executionContext.getQueryVariablesSqlText())) {
             return null;
         }
         queryVariablesSource.clear();

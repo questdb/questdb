@@ -505,11 +505,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws SqlException {
-        sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
         try {
             return compiler.compile(state.sqlText, sqlExecutionContext);
         } finally {
-            sqlExecutionContext.setQueryVariables(null);
+            sqlExecutionContext.setQueryVariables(null, null);
         }
     }
 
@@ -520,11 +520,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             ExportQueryProcessorState state,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws Exception {
-        sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
         try {
             exporter.process();
         } finally {
-            sqlExecutionContext.setQueryVariables(null);
+            sqlExecutionContext.setQueryVariables(null, null);
         }
     }
 
@@ -554,7 +554,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 // only while the context carries them: here, and when the exporter creates the
                 // table, see copyQueryToParquetFile().
                 final CreateTableOperation createOp;
-                sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+                sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
                 try {
                     createOp = copyExportContext.validateAndCreateParquetExportTableOp(
                             sqlExecutionContext,
@@ -567,7 +567,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             exportModel.getBloomFilterColumnsPosition()
                     );
                 } finally {
-                    sqlExecutionContext.setQueryVariables(null);
+                    sqlExecutionContext.setQueryVariables(null, null);
                 }
                 state.setParquetTempTableCreate(createOp);
             }
