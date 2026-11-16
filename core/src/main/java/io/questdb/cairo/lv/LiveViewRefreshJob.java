@@ -18188,6 +18188,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     private boolean refreshInstance(LiveViewInstance instance, long seqTxn) {
+        // Engine shutdown: ServerMain raised the closing flag (signalClose), which nothing
+        // lowers, and every check of the refresh breaker trips from here on. A turn would
+        // start a drain, a seed sweep, a repair or a recovery only to have the breaker
+        // cancel it, and a cancelled turn reports work without arming the retry back-off,
+        // so the workers would drive every lagging view again on every pass until the pools
+        // halt. Start none, ahead of every other guard; the restart recovers each view from
+        // _lv.s and its checkpoint timeline, and the job's close or the engine's teardown
+        // discards a repair left parked. Covers every caller: the fallback scan, the
+        // notification path and driveSuspendedRepairs. Cheap guard before the latch;
+        // re-checked under it.
+        if (engine.isClosing()) {
+            return false;
+        }
         // Tracks whether this call did real refresh work (seed sweep, drain, flush,
         // reconcile). Returned to the fallback scan so a call that did nothing - most
         // importantly one that lost the refresh latch to another worker - does NOT count
@@ -18203,9 +18216,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // publish over it, and it cannot prove that rebuilding the view from the
         // base rows that survive today would reproduce the output the view already
         // serves. Decline the whole turn - restore, seed sweep, drain, flush and
-        // seal alike - ahead of every other guard, so no watermark advances and no
-        // generic missing-timeline recovery below reaches the directory. The view
-        // keeps serving the rows it has; see LiveViewCheckpointRecoveryPhase.
+        // seal alike - ahead of every other guard but the shutdown's, so no
+        // watermark advances and no generic missing-timeline recovery below reaches
+        // the directory. The view keeps serving the rows it has; see
+        // LiveViewCheckpointRecoveryPhase.
         //
         // An older layout version is not a block and passes. Nothing between here and
         // the restore attempt below reads the view's checkpoint directory, and that
@@ -18336,6 +18350,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // over a stopped view: the lead flush alone advances the watermarks over a lead the
             // refusal dropped from the count, with no row behind them.
             if (instance.isCheckpointRecoveryBlocked()) {
+                return false;
+            }
+            // Authoritative shutdown gate. The flag can rise between this worker's pre-latch read
+            // and its taking the latch, and a peer's turn the shutdown cancelled meanwhile can have
+            // released the latch with rows its drain fed still in the accumulators, past the lead
+            // and the durable output: the cancellation leaves no window-state debt (see
+            // handleRefreshFailure). This turn would then flush the lead and seal those
+            // accumulators as the root of a commit they have run past, which the restart restores
+            // and replays the same rows over. The peer read the flag up before it released the
+            // latch, so the re-read here cannot miss it.
+            if (engine.isClosing()) {
                 return false;
             }
             // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
@@ -18802,12 +18827,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // second time.
         final boolean wasMetadataDrift = t instanceof TableReferenceOutOfDateException;
         if (t instanceof CairoException cancelled && cancelled.isCancellation()) {
-            // The circuit breaker tripped. Only three things trip it, and none is a refresh
-            // fault: DROP and invalidation, both of which end this view's refreshing life
-            // outright (the guards at the top of refreshInstance refuse it from here on),
-            // and engine shutdown, where restart recovery rebuilds the runtime from _lv.s
-            // and the checkpoint timeline anyway. So the accumulators being left ahead of
-            // the last durable commit costs nothing: no later turn drains over them.
+            // The circuit breaker tripped. Four things trip it, and none is a refresh fault:
+            // DROP and invalidation, which end this view's refreshing life outright, a
+            // recovery block, which stops it, and engine shutdown, which ends every view's,
+            // and after which restart recovery rebuilds the runtime from _lv.s and the
+            // checkpoint timeline. refreshInstance refuses every later turn after each of
+            // them under the refresh latch this turn holds (isDropped / isInvalid,
+            // isCheckpointRecoveryBlocked, engine.isClosing()), so the accumulators being
+            // left ahead of the last durable commit cost nothing: no later turn drains,
+            // flushes or seals over them.
             // Counting a cancellation toward the flush-retry budget would let a shutdown
             // that caught several views mid-scan invalidate them durably on the way down,
             // and running the mid-drain rebuild below would re-enter a scan the same

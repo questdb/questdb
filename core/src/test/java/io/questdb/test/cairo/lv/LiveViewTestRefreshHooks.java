@@ -63,6 +63,8 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Runnable noRowHeadCheckpointStart;
     private Runnable peerTurnBeforeRefreshLatch;
     private Consumer<Throwable> refreshFaultObserver;
+    // The calls of refreshInstance that passed every hold ahead of the refresh latch: see getRefreshLatchAttempts.
+    private int refreshLatchAttempts;
     // Repair cleanup chains to let through before the next one throws; -1 is disarmed.
     private int repairCleanupFaultCountdown = -1;
     private Runnable resumeHeadSealStart;
@@ -170,6 +172,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     @Override
     public void beforeRefreshLatch() {
+        refreshLatchAttempts++;
         final Runnable action = peerTurnBeforeRefreshLatch;
         if (action != null) {
             peerTurnBeforeRefreshLatch = null;
@@ -239,6 +242,16 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
         isStagingBufferCloseFaultArmed = false;
         isStoredSuffixCountFaultArmed = false;
         repairCleanupFaultCountdown = -1;
+    }
+
+    /**
+     * The calls of the job's refreshInstance that passed every hold it runs ahead of the refresh latch,
+     * counted before the one-shot action {@link #setSimulatePeerTurnBeforeRefreshLatch} arms runs. A call
+     * that then loses the latch, or that a hold under the latch refuses, still counts. Read it on the
+     * job's own thread, or after joining the thread that ran the job.
+     */
+    public int getRefreshLatchAttempts() {
+        return refreshLatchAttempts;
     }
 
     public boolean isColdKeyedTimelineFaultArmed() {

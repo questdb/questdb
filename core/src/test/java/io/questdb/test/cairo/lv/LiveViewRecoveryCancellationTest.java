@@ -962,16 +962,4 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
         hooks(job).setRefreshFaultObserver(null);
         Assert.assertTrue("the drift must have reached the handler", isTripped.get());
     }
-
-    // Drives one pass at a time over a view whose every drain fails until one more failure spends the
-    // flush-retry budget.
-    private void spendTheFlushRetryBudgetButOne(LiveViewRefreshJob job, LiveViewInstance instance) {
-        final int maxRetry = configuration.getLiveViewFlushRetryMax();
-        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && instance.getFlushRetryCount() < maxRetry - 1; pass++) {
-            advanceClockToNextRefreshPass();
-            job.run();
-        }
-        Assert.assertEquals(maxRetry - 1, instance.getFlushRetryCount());
-        Assert.assertFalse(instance.isInvalid());
-    }
 }

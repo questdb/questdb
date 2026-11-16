@@ -614,13 +614,21 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * returns the WAL segments its WAL directories still hold.
      */
     protected static long purgeBaseWalAndCountSegments() {
-        releaseSavePointHolds("base");
+        return purgeBaseWalAndCountSegments("base");
+    }
+
+    /**
+     * Runs the purge job over the table {@code baseTableName} with every hold but the views' lifted,
+     * and returns the WAL segments its WAL directories still hold.
+     */
+    protected static long purgeBaseWalAndCountSegments(String baseTableName) {
+        releaseSavePointHolds(baseTableName);
         engine.releaseInactive();
         setCurrentMicros(currentMicros + 60_000_000L);
         try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
             purgeJob.drain(0);
         }
-        final File tableDir = new File(engine.getConfiguration().getDbRoot(), engine.verifyTableName("base").getDirName());
+        final File tableDir = new File(engine.getConfiguration().getDbRoot(), engine.verifyTableName(baseTableName).getDirName());
         final File[] walDirs = tableDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
         if (walDirs == null) {
             return 0;

@@ -80,6 +80,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * refresh memory limit instead of failing the open, so the turn fails mid-drain with the error the
  * view's tracker raises for any allocation over that limit.
  * <p>
+ * {@link #runAtWalRead} fails nothing: it runs an action at the WAL read {@link #arm} would fail,
+ * which then goes ahead, so the action lands inside a drain that already fed the commits ahead of it.
+ * <p>
  * {@link #armViewStateOpen} fails nothing mid-drain: it fails the next open for writing of a live
  * view's state file, once. A lead flush opens that file first to persist the consumed watermark
  * its apply earned, and again to persist the rest of its state when that fails, so the fault
@@ -141,6 +144,10 @@ final class LiveViewMidDrainFault {
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
     // The timeline opens the armed fault failed.
     private final AtomicInteger timelineOpenFailures = new AtomicInteger();
+    // Run by the WAL read runAtWalRead names; null when nothing is armed.
+    private final AtomicReference<Runnable> walReadAction = new AtomicReference<>();
+    // -1 disarmed; otherwise the number of reads still to let through before the one that runs walReadAction.
+    private final AtomicInteger walReadActionCountdown = new AtomicInteger(-1);
     // The file name, with its leading separator, of the view symbol key file
     // armViewSymbolKeyOpen fails.
     private final String viewSymbolKeyFileName;
@@ -309,6 +316,8 @@ final class LiveViewMidDrainFault {
      */
     void disarmAll() {
         disarm();
+        walReadActionCountdown.set(-1);
+        walReadAction.set(null);
         appliedScanArmed.set(false);
         isViewStateOpenArmed.set(false);
         isViewSymbolKeyOpenArmed.set(false);
@@ -364,6 +373,17 @@ final class LiveViewMidDrainFault {
                     appliedScanFired.set(true);
                     isMissingFileErrnoPending.set(true);
                     return -1;
+                }
+                if (walReadActionCountdown.get() >= 0
+                        && dir != null
+                        && Utf8s.containsAscii(name, dir)
+                        && Utf8s.containsAscii(name, "wal")
+                        && Utf8s.endsWithAscii(name, walReadFileName)
+                        && walReadActionCountdown.getAndDecrement() == 0) {
+                    final Runnable action = walReadAction.getAndSet(null);
+                    if (action != null) {
+                        action.run();
+                    }
                 }
                 if (countdown.get() >= 0
                         && dir != null
@@ -466,6 +486,16 @@ final class LiveViewMidDrainFault {
      */
     void reportReadErrno(int errno) {
         readErrno = errno;
+    }
+
+    /**
+     * Runs {@code action} once, at the WAL read {@link #arm} would fail - after letting {@code skip}
+     * of them through - and lets that read go ahead. A drain reads each commit it feeds in turn, so
+     * the action lands after the drain fed the commits ahead of the one it reads.
+     */
+    void runAtWalRead(int skip, Runnable action) {
+        walReadAction.set(action);
+        walReadActionCountdown.set(skip);
     }
 
     /**

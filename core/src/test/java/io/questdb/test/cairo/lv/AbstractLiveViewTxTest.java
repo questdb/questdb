@@ -86,6 +86,10 @@ abstract class AbstractLiveViewTxTest extends AbstractLiveViewTest {
         }
     }
 
+    static String repairRow(int day, int hour, String account) {
+        return "('2026-01-0" + day + "T0" + hour + ":00:00.000000Z', '" + account + "', 1.0)";
+    }
+
     // What a process stop does: the registry drops its instances and every reader and writer goes back.
     static void shutdown() {
         engine.getLiveViewRegistry().clear();
@@ -141,5 +145,38 @@ abstract class AbstractLiveViewTxTest extends AbstractLiveViewTest {
         }
         assertViewMatchesRecompute();
         assertNoRefreshFaults("lv");
+    }
+
+    // tx partitioned by hour with three days of rows and a view refreshed over them, head rows on the fifth
+    // day, then a correction on the second whose repair parks on its turn budget, which
+    // cairo.live.view.checkpoint.repair.replay.max.rows = 1 makes one row.
+    void parkARepair(LiveViewRefreshJob job) throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) TIMESTAMP(created_at) PARTITION BY HOUR WAL");
+        final StringBuilder rows = new StringBuilder();
+        for (int day = 2; day <= 4; day++) {
+            for (int hour = 1; hour <= 4; hour++) {
+                rows.append(rows.length() > 0 ? ", " : "").append(repairRow(day, hour, "acct-1"));
+            }
+            rows.append(", ").append(repairRow(day, 1, "acct-2"));
+        }
+        insert(rows.toString());
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + VIEW_SQL);
+        driveRefreshToQuiescence(job);
+        insert(repairRow(5, 1, "acct-1") + ", " + repairRow(5, 2, "acct-2"));
+        driveRefreshToQuiescence(job);
+        insert(repairRow(2, 5, "acct-1"));
+        driveUntilParked(job, "lv");
+    }
+
+    // Drives one pass at a time over a view whose every drain fails until one more failure spends the
+    // flush-retry budget.
+    void spendTheFlushRetryBudgetButOne(LiveViewRefreshJob job, LiveViewInstance instance) {
+        final int maxRetry = configuration.getLiveViewFlushRetryMax();
+        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && instance.getFlushRetryCount() < maxRetry - 1; pass++) {
+            advanceClockToNextRefreshPass();
+            job.run();
+        }
+        Assert.assertEquals(maxRetry - 1, instance.getFlushRetryCount());
+        Assert.assertFalse(instance.isInvalid());
     }
 }
