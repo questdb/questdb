@@ -140,9 +140,14 @@ public class HttpAllowedHostsTest {
                 "[::1]",
                 "[::1]:9000",
                 "[2001:db8::1]:443",
+                // a last octet with 9, the highest digit
+                "10.0.0.9",
+                "192.168.1.19:9000",
                 // a browser takes a name whose last label is a number for an IPv4 address
                 "rebind.1",
+                "rebind.9",
                 "rebind.0x7f",
+                "rebind.0x9f",
                 "rebind.0X7F",
                 "rebind.0x",
                 "rebind.01",
