@@ -41,13 +41,20 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -1093,6 +1100,22 @@ public final class QueryRunner {
         return false;
     }
 
+    static boolean factoryHasLimitOverStream(RecordCursorFactory factory) {
+        boolean hasLimit = false;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
+                return hasLimit;
+            }
+            if (f instanceof LimitRecordCursorFactory) {
+                hasLimit = true;
+            } else if (!(f instanceof QueryProgress || f instanceof SelectedRecordCursorFactory
+                    || f instanceof VirtualRecordCursorFactory || f instanceof FilteredRecordCursorFactory)) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
         if (outcome.failure == null) {
             return "ok, " + outcome.rowsRead + " rows:\n" + rows;
@@ -1558,6 +1581,17 @@ public final class QueryRunner {
                 && executionContext.isParallelHashJoinGroupByEnabled();
     }
 
+    private boolean isLimitOverStream(String sql) {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = engine.select(compiler, sql, executionContext)
+        ) {
+            return factoryHasLimitOverStream(factory);
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
     /**
      * Reconciles {@code bF}, the run with the fused hash join GROUP BY disabled (see
      * {@link #runFusedOff}), against the pivot {@code bJ}, which ran with it enabled. The run with
@@ -1805,7 +1839,7 @@ public final class QueryRunner {
             return Result.failed(query.sql(), new AssertionError(
                     "the stream GROUP BY is disabled but the plan still uses it: " + query.sql()));
         }
-        if (bS.failure instanceof ImplicitCastException) {
+        if (bS.failure instanceof ImplicitCastException && isLimitOverStream(query.sql())) {
             return Result.skipped("stream early exit " + bS.exceptionClass);
         }
         return reconcilePair(
