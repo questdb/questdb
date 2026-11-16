@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.Metrics;
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
@@ -135,14 +136,20 @@ public class PGAsyncHashJoinTest extends BasePGTest {
             // f8 holds 96 probe rows, twelve frames of eight rows, and each meets the three rows of its
             // key in d3, every one of which the residual keeps. pgjdbc fetches seven rows per Execute,
             // so the server's consumer holds a frame across round trips while the query workers join
-            // the frames after it.
+            // the frames after it: a window of three frames sends the frame two past the one the
+            // consumer takes out as it takes it. The connections take the configured frame sizes, and
+            // a task's cap of tuples stays at a million, which no frame reaches.
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 8);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 8);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1_000_000);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
             execute("CREATE TABLE f8 AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(96)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d3 AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
             final String sql = "SELECT f8.v, d3.w FROM f8 LEFT JOIN d3 ON f8.k = d3.k AND d3.w > f8.v";
             final StringSink expected = new StringSink();
             final StringSink actual = new StringSink();
-            withServer(false, WorkerPoolMode.LEGACY, 8, port -> readInChunks(port, sql, expected, false));
-            withServer(true, WorkerPoolMode.LEGACY, 8, port -> readInChunks(port, sql, actual, true));
+            withServer(false, WorkerPoolMode.LEGACY, port -> readInChunks(port, sql, expected, false));
+            withServer(true, WorkerPoolMode.LEGACY, port -> readInChunks(port, sql, actual, true));
             // Each of the 96 probe rows yields three rows, in binary and text transfer, twice each.
             Assert.assertEquals(2 * 2 * 96 * 3, countLines(expected));
             TestUtils.assertEquals(expected, actual);
@@ -289,16 +296,11 @@ public class PGAsyncHashJoinTest extends BasePGTest {
         }
     }
 
-    private void withServer(boolean isParallel, @Nullable WorkerPoolMode queryPoolMode, ServerCode code) throws Exception {
-        withServer(isParallel, queryPoolMode, 0, code);
-    }
-
     /**
      * Runs the code against a PG server whose connections run the parallel hash join or not, with a
-     * query pool of their own when asked; without one the owner runs every task. The connections cut
-     * page frames of the given rows, or of the configured sizes when that is 0.
+     * query pool of their own when asked; without one the owner runs every task.
      */
-    private void withServer(boolean isParallel, @Nullable WorkerPoolMode queryPoolMode, int pageFrameRows, ServerCode code) throws Exception {
+    private void withServer(boolean isParallel, @Nullable WorkerPoolMode queryPoolMode, ServerCode code) throws Exception {
         final Port0PGConfiguration configuration = new Port0PGConfiguration() {
             @Override
             public int getWorkerCount() {
@@ -323,9 +325,6 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                             () -> {
                                 final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, WORKER_COUNT);
                                 context.setParallelHashJoinEnabled(isParallel);
-                                if (pageFrameRows > 0) {
-                                    context.changePageFrameSizes(pageFrameRows, pageFrameRows);
-                                }
                                 return context;
                             }
                     );
