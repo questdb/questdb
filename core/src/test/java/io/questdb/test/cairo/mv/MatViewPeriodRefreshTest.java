@@ -259,24 +259,26 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             drain(timerJob);
 
             // No view has rows to refresh, but every refresh records the end of the last complete period. A view over
-            // the empty base table has no rows to write, so its first refresh commits only the refresh state.
+            // the empty base table has no rows to write, so its first refresh commits only the refresh state, after
+            // the view state event that records the view's base table, see MatViewBaseIdentityTest.
             assertPeriodHi("empty_mv", "2022-01-02T05:00:00.000000Z");
             assertPeriodHi("manual_mv", "2022-01-02T05:00:00.000000Z");
             assertPeriodHi("late_mv", "2022-01-02T05:00:00.000000Z");
             assertView("empty_mv", "min_v\tmax_v\tts\n");
             assertView("manual_mv", "min_v\tmax_v\tts\n");
             assertView("late_mv", "min_v\tmax_v\tts\n");
-            assertWalTxnCount("empty_mv", 1);
-            assertWalTxnCount("manual_mv", 1);
+            assertWalTxnCount("empty_mv", 2);
+            assertWalTxnCount("manual_mv", 2);
 
             // Another refresh within the same period leaves the recorded end as it is and commits nothing.
             execute("refresh materialized view empty_mv incremental");
             drain(timerJob);
             assertPeriodHi("empty_mv", "2022-01-02T05:00:00.000000Z");
-            assertWalTxnCount("empty_mv", 1);
+            assertWalTxnCount("empty_mv", 2);
 
             // The refresh of the period that completes at 12:00 starts at the recorded end. The period timer runs it
-            // as a range refresh, which commits twice: it replaces the period's range, then stores the new period end.
+            // as a range refresh. The empty base table has no partition in the period's range, so the partition clip
+            // leaves nothing to replace, and the refresh commits only the new period end.
             currentMicros = parseFloorPartialTimestamp("2022-01-02T12:00:00.000000Z");
             drain(timerJob);
             assertPeriodHi("empty_mv", "2022-01-02T12:00:00.000000Z");
@@ -292,14 +294,14 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             assertWalTxnCount("empty_mv", 3);
 
             // The manual view has no period timer, so the period waits for its next incremental refresh. That refresh
-            // commits once: the replaced range and the new period end go into the same transaction.
+            // commits once, the new period end.
             assertPeriodHi("manual_mv", "2022-01-02T05:00:00.000000Z");
-            assertWalTxnCount("manual_mv", 1);
+            assertWalTxnCount("manual_mv", 2);
             execute("refresh materialized view manual_mv incremental");
             drain(timerJob);
             assertPeriodHi("manual_mv", "2022-01-02T12:00:00.000000Z");
             assertView("manual_mv", "min_v\tmax_v\tts\n");
-            assertWalTxnCount("manual_mv", 2);
+            assertWalTxnCount("manual_mv", 3);
         });
     }
 
@@ -354,7 +356,10 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
             // them at 00:00 UTC. At 12:00 UTC the last complete period ends at 2022-01-01T23:00Z, which the 6h bucket
             // [2022-01-01T18:00Z, 2022-01-02T00:00Z) crosses.
             currentMicros = parseFloorPartialTimestamp("2022-01-02T12:00:00.000000Z");
-            createBaseTable("base");
+            // The second range replace deletes the only row of 2022-01-01. Monthly partitions keep that day's partition:
+            // where a replace commit empties a whole partition, the base removes it, and the refresh keeps the view's
+            // rows there (the partition clip).
+            createBaseTable("base", "MONTH");
             execute(
                     "create materialized view mv refresh immediate period (length 1d time zone 'Europe/Berlin' delay 1h) as " +
                             viewSql("base", "6h")
@@ -457,7 +462,11 @@ public class MatViewPeriodRefreshTest extends AbstractCairoTest {
     }
 
     private void createBaseTable(String tableName) throws SqlException {
-        execute("create table " + tableName + " (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by DAY WAL");
+        createBaseTable(tableName, "DAY");
+    }
+
+    private void createBaseTable(String tableName, String partitionBy) throws SqlException {
+        execute("create table " + tableName + " (v int, ts " + timestampType.getTypeName() + ") timestamp(ts) partition by " + partitionBy + " WAL");
     }
 
     // At 10:30, creates the view "mv" over the table "base", empty or with a row at baseRowTs, then alters its period
