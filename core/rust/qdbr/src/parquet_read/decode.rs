@@ -3740,6 +3740,7 @@ mod tests {
                         row_group_size,
                         column_index,
                         col_info,
+                        false,
                     )
                     .unwrap();
 
@@ -3800,6 +3801,7 @@ mod tests {
                                 row_hi,
                                 column_index,
                                 col_info,
+                                false,
                             )
                             .unwrap();
 
@@ -3863,6 +3865,7 @@ mod tests {
                                 ascii: None,
                                 id: None,
                             },
+                            false,
                         )
                         .unwrap();
 
@@ -4103,6 +4106,7 @@ mod tests {
                             ascii: None,
                             id: None,
                         },
+                        false,
                     )
                     .unwrap();
 

@@ -27,9 +27,11 @@ package io.questdb.test.cairo.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
@@ -45,6 +47,9 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -62,7 +67,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -162,6 +166,7 @@ public class FuzzRunner {
     private FailureFileFacade ff;
     private int fuzzRowCount;
     private boolean hasApplySeeds;
+    private boolean hasPoolColumnPurgeJob;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
     private boolean isNoSentinelTypeChangeEnabled;
@@ -366,7 +371,10 @@ public class FuzzRunner {
 
         calculateReplaceRanges(transactions);
 
-        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+        try (
+                O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+        ) {
             int transactionSize = transactions.size();
             Rnd rnd = newApplyRnd();
             int failuresObserved = 0;
@@ -463,7 +471,7 @@ public class FuzzRunner {
                 }
 
                 try {
-                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, reloadProbability);
+                    purgeAndReloadReaders(reloadRnd, rdr1, rdr2, purgeJob, columnPurgeJob, reloadProbability);
                 } catch (CairoException | CairoError e) {
                     int failures = ff.failureGenerated();
                     if (failures > failuresObserved) {
@@ -483,6 +491,7 @@ public class FuzzRunner {
                     }
                 }
             }
+            runColumnPurgeJob(columnPurgeJob);
         } finally {
             // Don't mess simulating failures anymore, we are done here.
             ff.clearFailures();
@@ -557,6 +566,29 @@ public class FuzzRunner {
             drainWalQueue(applyRnd, tableName);
         }
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+    }
+
+    /**
+     * Holds the index of every indexed SYMBOL column of the table against scans that read no index: for each distinct
+     * key, up to {@link #MAX_COVERED_KEYS_CHECKED} of them, {@code WHERE sym = key} must return through the index the
+     * rows a full scan returns. Unlike {@link #assertRandomIndexes}, it needs no second table, so it can check a table
+     * that no other table mirrors, such as one a checkpoint restore just left.
+     */
+    public void assertIndexesMatchScans(String tableName) throws SqlException {
+        final ObjList<String> indexedColumnNames = new ObjList<>();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && metadata.isColumnIndexed(columnIndex)) {
+                    indexedColumnNames.add(metadata.getColumnName(columnIndex));
+                }
+            }
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            for (int i = 0, n = indexedColumnNames.size(); i < n; i++) {
+                checkIndexAgainstScan(compiler, tableName, indexedColumnNames.getQuick(i));
+            }
+        }
     }
 
     public void assertRandomIndexes(String tableNameNoWal, String tableNameWal, Rnd rnd) throws SqlException {
@@ -705,7 +737,7 @@ public class FuzzRunner {
         }
     }
 
-    public FilesFacade getFileFacade() {
+    public FailureFileFacade getFileFacade() {
         return ff;
     }
 
@@ -717,9 +749,17 @@ public class FuzzRunner {
         return transactionCount;
     }
 
-    public void purgeAndReloadReaders(Rnd reloadRnd, TableReader rdr1, TableReader rdr2, O3PartitionPurgeJob purgeJob, double realoadThreashold) {
+    public void purgeAndReloadReaders(
+            Rnd reloadRnd,
+            TableReader rdr1,
+            TableReader rdr2,
+            O3PartitionPurgeJob purgeJob,
+            @Nullable ColumnPurgeJob columnPurgeJob,
+            double realoadThreashold
+    ) {
         if (reloadRnd.nextDouble() < realoadThreashold) {
             purgeJob.run();
+            runColumnPurgeJob(columnPurgeJob);
             reloadReader(reloadRnd, rdr1, "1");
             reloadReader(reloadRnd, rdr2, "2");
         }
@@ -987,6 +1027,14 @@ public class FuzzRunner {
      */
     public void setDropIndexProbability(double dropIndexProb) {
         this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Tells the applies that a worker pool runs a {@link ColumnPurgeJob}. A pool job that fails to save a purge frees
+     * the purge log but keeps draining the queue, so the purge log cannot tell.
+     */
+    public void setHasPoolColumnPurgeJob(boolean hasPoolColumnPurgeJob) {
+        this.hasPoolColumnPurgeJob = hasPoolColumnPurgeJob;
     }
 
     /**
@@ -1432,6 +1480,47 @@ public class FuzzRunner {
         if (checked == MAX_COVERED_KEYS_CHECKED) {
             LOG.info().$("covered value check capped at ").$(MAX_COVERED_KEYS_CHECKED)
                     .$(" keys [table=").$safe(tableName).$(", column=").$safe(symbolColumnName).I$();
+        }
+    }
+
+    // Compares, key by key, the rows an equality filter on the indexed column reads through the index with those it
+    // reads from a scan that uses no index. Each comparison is a single-key equality, which both plans emit in the
+    // same order. The keys come from a scan too: a DISTINCT over a posting index reads them from that index, and so
+    // would never name a key the index lost. They come off the cursor rather than its printout, where the empty
+    // string, a key of its own, reads the same as NULL.
+    private void checkIndexAgainstScan(SqlCompiler compiler, String tableName, String symbolColumnName) throws SqlException {
+        final ObjList<String> keys = new ObjList<>();
+        try (
+                RecordCursorFactory factory = compiler.compile(
+                        "select /*+ no_index */ distinct \"" + symbolColumnName + "\" a from " + tableName + " order by 1",
+                        sqlExecutionContext
+                ).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final CharSequence key = record.getSymA(0);
+                keys.add(key != null ? key.toString() : null);
+            }
+        }
+        final StringSink plan = new StringSink();
+        int checked = 0;
+        for (int i = 0, n = keys.size(); i < n && checked < MAX_COVERED_KEYS_CHECKED; i++) {
+            final String key = keys.getQuick(i);
+            if (key != null && key.indexOf('\'') >= 0) {
+                continue; // a quote would need escaping; skip this key
+            }
+            checked++;
+            final String whereClause = " where \"" + symbolColumnName + "\" = " + (key != null ? "'" + key + "'" : "null");
+            final String indexed = "select * from " + tableName + whereClause;
+            plan.clear();
+            TestUtils.printSql(compiler, sqlExecutionContext, "explain " + indexed, plan);
+            Assert.assertTrue(
+                    "index not chosen for " + indexed + ", plan was:\n" + plan,
+                    Chars.contains(plan, "on: " + symbolColumnName)
+            );
+            LOG.info().$("checking index against scan: ").$safe(indexed).I$();
+            TestUtils.assertSqlCursors(compiler, sqlExecutionContext, "select /*+ no_index */ * from " + tableName + whereClause, indexed, LOG);
         }
     }
 
@@ -2029,6 +2118,7 @@ public class FuzzRunner {
         final Rnd drainRnd = new Rnd(applyRnd.getSeed0(), applyRnd.getSeed1());
         try (ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
              O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+             ColumnPurgeJob columnPurgeJob = openColumnPurgeJob();
              PartitionCompactionScanJob compactionJob = new PartitionCompactionScanJob(engine);
              TableReader rdr1 = getReaderWithRetries(tableName, null);
              TableReader rdr2 = getReaderWithRetries(tableName, null)
@@ -2046,13 +2136,14 @@ public class FuzzRunner {
                     break;
                 }
                 committedAtRelease = forceReleaseTableWriter(drainRnd, tableTokenBucket, committedAtRelease);
-                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, 0.25);
+                purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, columnPurgeJob, 0.25);
             }
             // This path is the ONLY compaction coverage for single-writer tables driven through
             // applyWal() -> applyToWal() (walWriterCount=1 never goes through
             // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
             // not just the threaded one.
             compactionJob.drain(0);
+            runColumnPurgeJob(columnPurgeJob);
         }
     }
 
@@ -2151,6 +2242,23 @@ public class FuzzRunner {
             hasApplySeeds = true;
         }
         return new Rnd(applySeed0, applySeed1);
+    }
+
+    /**
+     * Opens the column purge job of an apply, or returns null when another job drains the queue, which takes one
+     * consumer: the job of a worker pool, see {@link #setHasPoolColumnPurgeJob}, or a job that holds the purge log.
+     */
+    private @Nullable ColumnPurgeJob openColumnPurgeJob() {
+        if (hasPoolColumnPurgeJob) {
+            return null;
+        }
+        try {
+            return new ColumnPurgeJob(engine);
+        } catch (EntryUnavailableException e) {
+            return null;
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     private String printReaderRows(TableReader reader, LongList rowIds) {
@@ -2348,6 +2456,17 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Runs the column purge job, which purges the column versions that the queue holds and no reader uses. The job
+     * swallows the failures of its file operations, so it does not run while a planted failure is pending: the failure
+     * belongs to the operation it was planted for.
+     */
+    private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
+        if (columnPurgeJob != null && !ff.isArmed()) {
+            columnPurgeJob.run();
+        }
+    }
+
     private void runPartitionCompactionJob(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors) {
         try {
             try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
@@ -2371,7 +2490,10 @@ public class FuzzRunner {
         // another worker fails first; this lets the open give up instead of stranding the thread.
         BooleanSupplier isRunOver = () -> done.get() != 0 || !errors.isEmpty();
         try {
-            try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            try (
+                    O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
+                    ColumnPurgeJob columnPurgeJob = openColumnPurgeJob()
+            ) {
                 int forceReloadNum = forceReaderReload.get();
                 for (int i = 0; i < tableCount; i++) {
                     String tableNameWal = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
@@ -2398,15 +2520,17 @@ public class FuzzRunner {
                         }
                     }
                     int reader = runRnd.nextInt(tableCount);
-                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, 0.25);
+                    purgeAndReloadReaders(runRnd, readers.get(reader * 2), readers.get(reader * 2 + 1), purgeJob, columnPurgeJob, 0.25);
                     Os.sleep(50);
                 }
+                runColumnPurgeJob(columnPurgeJob);
             }
         } catch (Throwable e) {
             errors.add(e);
         } finally {
             Misc.freeObjList(readers);
             Path.clearThreadLocals();
+            Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
         }
     }
 

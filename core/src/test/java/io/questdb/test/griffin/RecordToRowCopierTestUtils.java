@@ -27,6 +27,7 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
+import io.questdb.griffin.LoopingRecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.std.BytecodeAssembler;
@@ -39,6 +40,16 @@ import java.lang.reflect.Method;
 public final class RecordToRowCopierTestUtils {
 
     private RecordToRowCopierTestUtils() {
+    }
+
+    /**
+     * Reports which implementation {@code generateCopier} returned.
+     */
+    public static CopierMode copierModeOf(RecordToRowCopier copier) {
+        if (copier instanceof LoopingRecordToRowCopier) {
+            return CopierMode.LOOPING;
+        }
+        return countChunkMethods(copier) > 0 ? CopierMode.CHUNKED : CopierMode.SINGLE_METHOD;
     }
 
     /**
@@ -70,5 +81,24 @@ public final class RecordToRowCopierTestUtils {
                 columnFilter,
                 configuration
         );
+    }
+
+    /**
+     * The copier implementation a test forces through {@code debug.cairo.copier.type}.
+     */
+    public enum CopierMode {
+        CHUNKED(RecordToRowCopierUtils.COPIER_TYPE_CHUNKED),
+        LOOPING(RecordToRowCopierUtils.COPIER_TYPE_LOOPING),
+        SINGLE_METHOD(RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD);
+
+        private final int copierType;
+
+        CopierMode(int copierType) {
+            this.copierType = copierType;
+        }
+
+        public int getCopierType() {
+            return copierType;
+        }
     }
 }

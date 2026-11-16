@@ -6711,12 +6711,13 @@ public class MatViewTest extends AbstractCairoTest {
                     "view_sql, view_status, " + txnColumns() + ", refresh_period_hi, timer_time_zone, timer_start, " +
                     "timer_interval, timer_interval_unit, period_length, period_length_unit, period_delay, period_delay_unit " +
                     "from materialized_views";
+            // no base row lies before 00:00, but the refresh still records the end of the last complete period
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn\trefresh_period_hi\ttimer_time_zone\ttimer_start\ttimer_interval\ttimer_interval_unit\tperiod_length\tperiod_length_unit\tperiod_delay\tperiod_delay_unit
-                            price_1h\timmediate\tbase_price\t2000-01-01T00:00:00.000000Z\t2000-01-01T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t\t\t2000-01-01T00:00:00.000000Z\t0\t\t4\tHOUR\t0\t
+                            price_1h\timmediate\tbase_price\t2000-01-01T00:00:00.000000Z\t2000-01-01T00:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t1\t1\t2000-01-01T00:00:00.000000Z\t\t2000-01-01T00:00:00.000000Z\t0\t\t4\tHOUR\t0\t
                             """);
 
             // the first period still hasn't finished

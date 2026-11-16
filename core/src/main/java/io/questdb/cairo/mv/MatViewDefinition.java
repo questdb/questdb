@@ -80,7 +80,7 @@ public class MatViewDefinition implements Mutable {
     private char periodDelayUnit;
     private int periodLength;
     private char periodLengthUnit;
-    // Not persisted, parsed from periodLength and periodLengthUnit.
+    // Not persisted, parsed from periodLength and periodLengthUnit, in microseconds.
     // Access must be synchronized as this object is not thread-safe.
     private TimestampSampler periodSampler;
     private int refreshLimitHoursOrMonths;
