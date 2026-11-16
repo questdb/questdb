@@ -79,7 +79,22 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
             final Stream stream = stream("SELECT * FROM t ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, 140_000);
             Assert.assertEquals(3 * 140_000, stream.rows);
             Assert.assertEquals("the rows of both native frames, each once", 2 * 140_000, stream.prefetchedRows);
-            Assert.assertTrue(stream.prefetchedPages > 0);
+            // Each native frame of 140_000 rows streams in 1_024-row slices from its
+            // top down, and is read ahead in chunks of 65_536 rows from its top down:
+            // [74_464, 140_000), [8_928, 74_464) and [0, 8_928). The first slice reads
+            // the first chunk ahead; each later chunk waits for the first slice that
+            // reaches below the chunk above it, [73_440, 74_464) and [7_904, 8_928),
+            // and the slices in between read nothing ahead. The parquet frame, last,
+            // reads nothing ahead.
+            final ObjList<String> expected = new ObjList<>();
+            for (int frame = 0; frame < 2; frame++) {
+                expected.add(readAhead(138_976, 140_000, 74_464, 140_000));
+                expected.add(readAhead(73_440, 74_464, 8_928, 74_464));
+                expected.add(readAhead(7_904, 8_928, 0, 8_928));
+            }
+            Assert.assertEquals(expected, stream.readAheads);
+            Assert.assertEquals(2 * (tablePages(74_464, 140_000) + tablePages(8_928, 74_464) + tablePages(0, 8_928)),
+                    stream.prefetchedPages);
         });
     }
 
@@ -89,8 +104,6 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
         // the first slice of a frame reads ahead a chunk from the frame's end down
         long prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024);
         Assert.assertEquals(frameRows - PAGE_FRAME_PREFETCH_ROWS, prefetchedLo);
-        // the slices inside the chunk read nothing ahead: they are at or above it
-        Assert.assertTrue(frameRows - 2 * 1_024 >= prefetchedLo);
         // the first slice below the chunk reads ahead the next chunk down
         prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1);
         Assert.assertEquals(frameRows - 2 * PAGE_FRAME_PREFETCH_ROWS, prefetchedLo);
@@ -190,6 +203,29 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
         return hi > lo ? (hi - 1) / Files.PAGE_SIZE - lo / Files.PAGE_SIZE + 1 : 0;
     }
 
+    // A read-ahead of the column pages of rows [lo, hi) before the slice
+    // [sliceLo, sliceHi) of a frame of the createTable() table is copied.
+    private static String readAhead(long sliceLo, long sliceHi, long lo, long hi) {
+        return readAheadEvent(sliceLo, sliceHi, hi - lo, tablePages(lo, hi));
+    }
+
+    private static String readAheadEvent(long sliceLo, long sliceHi, long rows, long pages) {
+        return "slice [" + sliceLo + ", " + sliceHi + ") read ahead " + rows + " rows, " + pages + " pages";
+    }
+
+    // OS pages that hold rows [lo, hi) of a native partition of the createTable()
+    // table, each one starting at row 0 of the partition's column files: ts, l,
+    // the sym keys, the aux and data vectors of v, whose values take 20 bytes, and
+    // of a, whose values take 24 bytes: the 4-byte shape, padded to 8, and two
+    // doubles. The column top of top has no pages.
+    private static long tablePages(long lo, long hi) {
+        return pages(lo * 8, hi * 8) // ts
+                + pages(lo * 8, hi * 8) // l
+                + pages(lo * 4, hi * 4) // sym keys
+                + pages(lo * 16, hi * 16) + pages(lo * 20, hi * 20) // v aux, data
+                + pages(lo * 16, hi * 16) + pages(lo * 24, hi * 24); // a aux, data
+    }
+
     /**
      * Streams {@code sql}'s page frames in {@code order} through the state, as
      * {@code streamResults} does, starting a fresh batch every
@@ -210,8 +246,23 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
             cursor = null;
             final QwpResultBatchBuffer buffer = beginBatch(state, metadata);
             final Stream stream = new Stream();
+            final boolean isDescending = order == PartitionFrameCursorFactory.ORDER_DESC;
             while (state.advanceToPageFrame() != null) {
-                stream.rows += state.appendPageFrameSlice(1_024);
+                // the unconsumed rows of the frame; a descending stream takes its
+                // slice from their top, an ascending one from their bottom
+                final long lo = state.getStreamingPageFrameRow();
+                final long hi = state.getStreamingPageFrameRowHi();
+                final long rowsBefore = state.getStreamingPageFramePrefetchedRows();
+                final long pagesBefore = state.getStreamingPageFramePrefetchedPages();
+                final int sliceRows = state.appendPageFrameSlice(1_024);
+                stream.rows += sliceRows;
+                final long rowsRead = state.getStreamingPageFramePrefetchedRows() - rowsBefore;
+                final long pagesRead = state.getStreamingPageFramePrefetchedPages() - pagesBefore;
+                if (rowsRead != 0 || pagesRead != 0) {
+                    stream.readAheads.add(isDescending
+                            ? readAheadEvent(hi - sliceRows, hi, rowsRead, pagesRead)
+                            : readAheadEvent(lo, lo + sliceRows, rowsRead, pagesRead));
+                }
                 if (buffer.getRowCount() >= QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH) {
                     beginBatch(state, metadata);
                 }
@@ -228,6 +279,8 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
     }
 
     private static class Stream {
+        // the slices that read ahead, with what they read, in stream order
+        final ObjList<String> readAheads = new ObjList<>();
         long prefetchedPages;
         long prefetchedRows;
         long rows;
