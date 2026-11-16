@@ -138,6 +138,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     public SampleByFillRecordCursorFactory(
+            BytecodeAssembler asm,
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
@@ -192,7 +193,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     columnFilter.of(metadata.getColumnCount());
                     recordChain = new RecordChain(
                             metadata,
-                            RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), metadata, columnFilter),
+                            RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter),
                             configuration.getSqlSmallMapPageSize(),
                             Integer.MAX_VALUE
                     );

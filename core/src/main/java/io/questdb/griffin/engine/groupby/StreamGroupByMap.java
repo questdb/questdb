@@ -291,9 +291,6 @@ public final class StreamGroupByMap implements QuietCloseable {
         if (map != null) {
             map.setMemoryTracker(null);
         }
-        if (mergeMemory != null) {
-            mergeMemory.setMemoryTracker(null);
-        }
         CairoException.rethrowCleanupFailure(th);
     }
 
@@ -409,7 +406,6 @@ public final class StreamGroupByMap implements QuietCloseable {
     public void reopen(MemoryTracker tracker) {
         memoryTracker = tracker;
         map.setMemoryTracker(tracker);
-        mergeMemory.setMemoryTracker(tracker);
         map.reopen();
         initialKeyCapacity = map.getKeyCapacity();
         map.setBatchEmptyValue(updater);

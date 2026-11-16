@@ -5514,6 +5514,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             fillValues = null;
             CairoException.rethrowCleanupFailure(cleanupFailure);
             return new SampleByFillRecordCursorFactory(
+                    asm,
                     configuration,
                     fillMetadata,
                     groupByFactory,

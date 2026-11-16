@@ -213,7 +213,6 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             mapCursor = null;
             th = Misc.freeBestEffort(th, segmentMap);
             th = Misc.freeBestEffort(th, memory);
-            memory.setMemoryTracker(null);
             Function.cursorClosed(recordFunctions);
             Function.cursorClosed(keyFunctions);
             CairoException.rethrowCleanupFailure(th);
@@ -294,7 +293,6 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
             if (segmentMap != null) {
                 segmentMap.reopen(executionContext.getMemoryTracker());
             } else {
-                memory.setMemoryTracker(executionContext.getMemoryTracker());
                 memory.ensureCapacity((value.getSizeInBytes() + 7) / 8);
                 value.of(memory.getAddress());
             }

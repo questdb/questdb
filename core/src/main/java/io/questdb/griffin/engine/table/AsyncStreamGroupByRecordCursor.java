@@ -155,7 +155,6 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             spanMaps.clear();
             spanSlots.clear();
             memory.close();
-            memory.setMemoryTracker(null);
             Function.cursorClosed(nonGroupByFunctions);
         }
     }
@@ -218,7 +217,6 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         spanSlots.clear();
         resetSegments();
         if (segmentMap == null) {
-            memory.setMemoryTracker(executionContext.getMemoryTracker());
             memory.ensureCapacity(stride);
             value.of(memory.getAddress());
         }
