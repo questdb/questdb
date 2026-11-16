@@ -509,7 +509,15 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                final CompiledQuery cc;
+                // The variables reach this statement's compile and nothing else: an operation
+                // that parses SQL when it executes, such as CREATE TABLE AS, reads the text alone.
+                sqlExecutionContext.setQueryVariables(state.getQueryVariables());
+                try {
+                    cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                } finally {
+                    sqlExecutionContext.setQueryVariables(null);
+                }
                 state.setQueryType(cc.getType());
                 if (!state.isSqlExecutionOwnerStarted()) {
                     try {
@@ -931,6 +939,16 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             state.storeBadUtf8();
             header(response, context, keepAliveHeader, HTTP_BAD_REQUEST);
             state.onResumeBadUtf8(response);
+            return false;
+        }
+
+        try {
+            state.parseQueryVariables(header);
+        } catch (SqlException e) {
+            state.info().$("invalid variables [msg=").$safe(e.getFlyweightMessage()).I$();
+            state.storeVariablesError(e.getPosition(), e.getFlyweightMessage());
+            header(context.getChunkedResponse(), context, keepAliveHeader, HTTP_BAD_REQUEST);
+            state.onResumeError(context.getChunkedResponse());
             return false;
         }
         return true;

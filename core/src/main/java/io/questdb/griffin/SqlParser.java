@@ -209,6 +209,10 @@ public class SqlParser {
     private final ObjList<IQueryModel> pivotSubQueryModelsInAuditedView = new ObjList<>();
     private final ObjectPool<QueryColumn> queryColumnPool;
     private final ObjectPool<QueryModel> queryModelPool;
+    // parses the variables a client declared outside the statement's text, see parseQueryVariables()
+    private final GenericLexer queryVariablesLexer;
+    // the statement's text, a newline and the variables' assignments, see parseQueryVariables()
+    private final StringSink queryVariablesSource = new StringSink();
     // One entry per reference to an audited view, in the order the parser expanded them, less the
     // ones an audited view around them shadows. A list rather than a map: the same view read twice
     // is two reads, and each records its own arguments.
@@ -310,6 +314,8 @@ public class SqlParser {
     // The context-less parser path is always an ordinary/internal parse and therefore retains FILTER.
     private ExpiryReadPolicy rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
     private boolean pivotMode = false;
+    // the declarations parsed from the client's variables, see parseQueryVariables(), or null
+    private LowerCaseCharSequenceObjHashMap<ExpressionNode> queryVariableDecls;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
     // The length of the text the statement came in, for its parse budget, see checkParseBudget().
@@ -361,6 +367,7 @@ public class SqlParser {
         this.characterStore = characterStore;
         this.viewAuditModelPool = new ObjectPool<>(ViewAuditModel.FACTORY, configuration.getViewLexerPoolCapacity());
         this.viewLexers = new ObjectPool<>(this::createLexer, configuration.getViewLexerPoolCapacity());
+        this.queryVariablesLexer = createLexer();
         boolean tempCairoSqlLegacyOperatorPrecedence = configuration.getCairoSqlLegacyOperatorPrecedence();
         if (tempCairoSqlLegacyOperatorPrecedence) {
             this.expressionParser = new ExpressionParser(
@@ -984,6 +991,19 @@ public class SqlParser {
 
     private static SqlException errUnexpected(GenericLexer lexer, CharSequence token, @NotNull CharSequence extraMessage) {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
+    }
+
+    // whether the declared name, with its '@', names one of the client's variables
+    private static boolean isQueryVariable(QueryVariables variables, CharSequence declaredName) {
+        final CharSequence declarations = variables.getDeclarations();
+        for (int i = 0, n = variables.size(); i < n; i++) {
+            final int lo = variables.getNameLo(i);
+            final int hi = variables.getNameHi(i);
+            if (Chars.equalsIgnoreCase(declaredName, declarations, lo - 1, hi)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The name the row-expiry read filter resolves a table reference by: unquoted, without the no-rowid
@@ -2778,6 +2798,51 @@ public class SqlParser {
     }
 
     /**
+     * Whether the WITH clause whose CTEs the lexer is about to read heads an UPDATE. Reads past the
+     * CTEs, skipping their bodies by their brackets, to the token after them, and leaves the
+     * lexer where it found it. A WITH clause of another shape is no UPDATE; parseWithClauses()
+     * reports what is wrong with it.
+     */
+    private boolean isUpdateAfterWith(GenericLexer lexer) throws SqlException {
+        lexer.stash();
+        try {
+            while (true) {
+                // the CTE's name
+                CharSequence tok = optTok(lexer);
+                if (tok == null) {
+                    return false;
+                }
+                tok = optTok(lexer);
+                if (tok == null || !isAsKeyword(tok)) {
+                    return false;
+                }
+                tok = optTok(lexer);
+                if (tok == null || !Chars.equals(tok, '(')) {
+                    return false;
+                }
+                int depth = 1;
+                while (depth > 0) {
+                    tok = optTok(lexer);
+                    if (tok == null) {
+                        return false;
+                    }
+                    if (Chars.equals(tok, '(')) {
+                        depth++;
+                    } else if (Chars.equals(tok, ')')) {
+                        depth--;
+                    }
+                }
+                tok = optTok(lexer);
+                if (tok == null || !Chars.equals(tok, ',')) {
+                    return tok != null && isUpdateKeyword(tok);
+                }
+            }
+        } finally {
+            lexer.unstash();
+        }
+    }
+
+    /**
      * Reports whether the token after the one just read is {@code keyword}, and hands it back to the lexer
      * so the caller sees it again. {@code keyword} is lower case.
      */
@@ -2940,11 +3005,16 @@ public class SqlParser {
         // the flag is still false. Every other statement rejects the clause.
         expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
         securityContext = executionContext.getSecurityContext();
+        // The client's variables reach the statements that read: queries, and the query of an
+        // INSERT. Statements that keep their text for later skip them, because the text is all
+        // that is parsed again: CREATE TABLE AS, views and materialized views keep it as their
+        // definition, and UPDATE as what the WAL applies.
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> variableDecls = parseQueryVariables(lexer, executionContext, sqlParserCallback);
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback, variableDecls);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
             explainModel.setModel(model);
@@ -2952,7 +3022,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelect(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isCreateKeyword(tok)) {
@@ -2968,7 +3038,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, null);
+            return parseInsert(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isCopyKeyword(tok)) {
@@ -2976,7 +3046,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isCompileKeyword(tok)) {
@@ -2987,7 +3057,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, variableDecls);
     }
 
     /**
@@ -6047,6 +6117,13 @@ public class SqlParser {
 
         tok = tok(lexer, "'select', 'with', 'declare' or table name expected");
 
+        if (isTopLevel && decls != null && decls == queryVariableDecls) {
+            // The client's variables are in scope in the statement's own DECLARE block, as the
+            // block's earlier declarations are, and a declaration of the same name replaces one,
+            // so the statement's own value wins, as copyDeclsFrom() below has it.
+            model.copyDeclsFrom(decls, false);
+        }
+
         // [declare]
         if (isDeclareKeyword(tok)) {
             parseDeclare(lexer, model, sqlParserCallback, isTopLevel);
@@ -6296,12 +6373,13 @@ public class SqlParser {
     private ExecutionModel parseExplain(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback
+            SqlParserCallback sqlParserCallback,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> variableDecls
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, null);
+            return parseSelect(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isCreateKeyword(tok)) {
@@ -6313,11 +6391,11 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, null);
+            return parseInsert(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, null);
+            return parseWith(lexer, sqlParserCallback, variableDecls);
         }
 
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
@@ -6326,7 +6404,7 @@ public class SqlParser {
             ).put(" expected");
         }
 
-        return parseSelect(lexer, sqlParserCallback, null);
+        return parseSelect(lexer, sqlParserCallback, variableDecls);
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -8064,6 +8142,67 @@ public class SqlParser {
         return col;
     }
 
+    /**
+     * Parses the variables the client declared for the statement outside its text, see
+     * {@link QueryVariables}, as the assignments of a DECLARE block that opens the statement.
+     * Returns null when the client declared none.
+     * <p>
+     * The assignments are parsed from a text of their own: the statement's text, a newline, and
+     * the assignments, read from past the newline. So everything parsed from them takes a
+     * position past the statement's text, and an error in a value, which the code generator may
+     * report long after this parse, points past it too. The caller tells such a position apart
+     * by the length of the statement's text, see {@link QueryVariables#indexOf(int)}. The text
+     * outlives this parse, as the statement's does: a sub-query in a value is parsed again from
+     * it for each read past the first, see {@link #parseDeclaredQuery}.
+     */
+    private @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> parseQueryVariables(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        final QueryVariables variables = executionContext.getQueryVariables();
+        if (variables == null || variables.size() == 0) {
+            return null;
+        }
+        queryVariablesSource.clear();
+        queryVariablesSource.put(lexer.getContent()).put('\n');
+        final int assignmentsLo = queryVariablesSource.length();
+        queryVariablesSource.put(variables.getDeclarations());
+        queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
+        recordStatementTextLength(queryVariablesLexer);
+
+        final IQueryModel model = queryModelPool.next();
+        // a sub-query in a value resolves table names against tables only, as one in a DECLARE
+        // block that opens a statement does
+        final LowerCaseCharSequenceObjHashMap<WithClauseModel> withScopeBefore = withScope;
+        withScope = model.getWithClauses();
+        try {
+            // not a top-level block: a value cannot mark a variable AUDITED
+            parseDeclare(queryVariablesLexer, model, sqlParserCallback, false);
+        } finally {
+            withScope = withScopeBefore;
+        }
+        final CharSequence tok = optTok(queryVariablesLexer);
+        if (tok != null) {
+            // a value ended early, as `1 SELECT 2` does
+            throw SqlException.unexpectedToken(queryVariablesLexer.lastTokenPosition(), tok);
+        }
+
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
+        if (decls.size() != variables.size()) {
+            // A value held another assignment, as `1, @y := 2` does. Every variable declared its
+            // name, so the block holds a name no variable has: point at it.
+            final ObjList<CharSequence> keys = decls.keys();
+            int i = 0;
+            while (isQueryVariable(variables, keys.getQuick(i))) {
+                i++;
+            }
+            throw SqlException.$(decls.get(keys.getQuick(i)).lhs.position, "a variable value must be a single expression");
+        }
+        queryVariableDecls = decls;
+        return decls;
+    }
+
     private ExecutionModel parseRenameStatement(GenericLexer lexer) throws SqlException {
         expectTok(lexer, "table");
         RenameTableModel model = renameTableModelPool.next();
@@ -8851,6 +8990,13 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
     ) throws SqlException {
+        // only parse0() and parseExplain() pass declarations here: the client's variables
+        assert decls == null || decls == queryVariableDecls;
+        if (decls != null && isUpdateAfterWith(lexer)) {
+            // The WAL applies an UPDATE by parsing its text again, without the client's
+            // variables, so neither the UPDATE nor its CTEs read them, see parse0().
+            decls = null;
+        }
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
@@ -10283,6 +10429,7 @@ public class SqlParser {
         explainModelPool.clear();
         idleViewLexers.clear();
         viewLexers.clear();
+        queryVariableDecls = null;
         digit = 1;
         traversalAlgo.clear();
         tempCharSequenceSet.clear();

@@ -59,4 +59,40 @@ public class SelectCacheKeyTest {
         Assert.assertNotEquals(sql, keyA);
         Assert.assertEquals(keyA, SelectCacheKey.of("alice", sql, sinkB).toString());
     }
+
+    @Test
+    public void testVariablesCannotSpellAnotherKey() {
+        final StringSink sink = new StringSink();
+        // moving characters between the variables, the scope and the SQL text changes the key
+        final String keyA = SelectCacheKey.of("s", "c", "@a := 1", sink).toString();
+        final String keyB = SelectCacheKey.of("s", "1c", "@a := ", sink).toString();
+        final String keyC = SelectCacheKey.of(null, "c", "@a := 1", sink).toString();
+        final String keyD = SelectCacheKey.of(null, "1c", "@a := ", sink).toString();
+        Assert.assertNotEquals(keyA, keyB);
+        Assert.assertNotEquals(keyC, keyD);
+        Assert.assertNotEquals(keyA, keyC);
+        // no key without variables, scoped or not, starts with the NUL and 'V' that start one with them
+        Assert.assertEquals('\u0000', keyA.charAt(0));
+        Assert.assertEquals('V', keyA.charAt(1));
+        Assert.assertNotEquals('V', SelectCacheKey.of("Vx", "c", sink).charAt(1));
+    }
+
+    @Test
+    public void testVariablesQualifyTheKey() {
+        final String sql = "SELECT * FROM t WHERE v > @a";
+        final String keyA = SelectCacheKey.of(null, sql, "@a := 1", new StringSink()).toString();
+        final String keyB = SelectCacheKey.of(null, sql, "@a := 2", new StringSink()).toString();
+        Assert.assertNotEquals(keyA, keyB);
+        Assert.assertNotEquals(sql, keyA);
+        // without variables, the key is the one of the SQL text alone
+        Assert.assertSame(sql, SelectCacheKey.of(null, sql, "", new StringSink()));
+        Assert.assertEquals(
+                SelectCacheKey.of("alice", sql, new StringSink()).toString(),
+                SelectCacheKey.of("alice", sql, "", new StringSink()).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("alice", sql, "@a := 1", new StringSink()).toString(),
+                SelectCacheKey.of("bob", sql, "@a := 1", new StringSink()).toString()
+        );
+    }
 }

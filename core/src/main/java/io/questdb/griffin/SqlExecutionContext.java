@@ -218,6 +218,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return -1;
     }
 
+    /**
+     * Returns the variables the client declared for the statement being compiled outside its
+     * text, or {@code null} for none. The parser reads them as a DECLARE block that opens the
+     * statement, see {@link QueryVariables}.
+     */
+    default @Nullable QueryVariables getQueryVariables() {
+        return null;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
