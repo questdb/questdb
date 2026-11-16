@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -34,14 +33,10 @@ import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Files;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -62,7 +57,7 @@ import static io.questdb.cairo.lv.LiveViewRefreshStats.BASE_METADATA_DRIFT_RECOM
  * a cancellation the turn itself meets is not: nothing is charged, no back-off is armed, no last resort
  * runs and the view is not invalidated - a shutdown leaves it valid on disk, and an invalidation keeps
  * its own reason. A view the cancellation leaves running owes the window-state debt, so the next turn
- * that drives it recovers before it drains or flushes; a seeding view restarts its sweep instead.
+ * that drives it recovers before it drains or flushes.
  * <p>
  * The breaker trips where a concurrent one would: from the refresh-fault observer, once the turn's
  * fault reached the handler and before the recovery scans; from the hook ahead of the re-derive's
@@ -394,7 +389,7 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
     public void testShutdownAtTheRederivesFirstCursorKeepsTheViewValid() throws Exception {
         // The breaker stops the re-derive's replay as it opens its first cursor, ahead of anything the replay
         // changes, after the re-derive dropped the lead's row count.
-        final BaseAmountOpenFault fault = new BaseAmountOpenFault();
+        final LiveViewBaseAmountOpenFault fault = new LiveViewBaseAmountOpenFault();
         assertMemoryLeak(fault, () -> assertShutdownDuringTheRederiveKeepsTheViewValid(fault, STAGE_PROBE));
     }
 
@@ -629,69 +624,10 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
     }
 
     @Test
-    public void testShutdownDuringTheRederiveOfASeedingViewReArmsItsSweep() throws Exception {
-        // A seeding view's sweep cannot open a base column file for the whole flush-retry budget, and the
-        // base has applied past the seed's target, so the spent budget re-derives the view from the applied
-        // base. The file opens again from there on, and a shutdown stops the re-derive's scan on its second
-        // page frame, after the replay wiped the runtime and fed it the first day's rows. The view stays
-        // valid and seeding, and its sweep restarts from identity rather than continue over that runtime.
-        final BaseAmountOpenFault fault = new BaseAmountOpenFault();
-        assertMemoryLeak(fault, () -> {
-            execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
-            insert("('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0), ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0), "
-                    + "('2026-01-02T09:00:00.000000Z', 'acct-1', 4.0), ('2026-01-02T09:10:00.000000Z', 'acct-2', 8.0)");
-            fault.of(engine.verifyTableName("tx").getDirName());
-            engine.releaseAllReaders();
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + VIEW_SQL);
-            final LiveViewInstance instance = instance();
-            insert("('2026-01-03T09:00:00.000000Z', 'acct-1', 16.0)");
-            fault.failOpensIn("2026-01-01");
-            final AtomicBoolean isTripped = new AtomicBoolean();
-            final AtomicBoolean isDirtyAtTrip = new AtomicBoolean();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                hooks(job).setSimulateBaseApplyDuringRederive(() -> {
-                    fault.failOpensIn(null);
-                    fault.runAtFirstOpen("2026-01-02", () -> {
-                        isDirtyAtTrip.set(instance.isWindowStateDirty());
-                        tripByShutdown(isTripped);
-                    });
-                });
-                try {
-                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !isTripped.get() && !instance.isInvalid(); pass++) {
-                        advanceClockToNextRefreshPass();
-                        job.run();
-                    }
-                } finally {
-                    engine.setClosing(false);
-                }
-                Assert.assertTrue("the re-derive must have met the breaker", isTripped.get());
-                Assert.assertTrue("the trip must land after the replay wiped the runtime", isDirtyAtTrip.get());
-                Assert.assertFalse("[reason=" + instance.getInvalidationReason() + ']', instance.isInvalid());
-                Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
-                Assert.assertFalse("the cancelled re-derive re-arms the sweep's resume", instance.isSeedResumeAttempted());
-                Assert.assertEquals(configuration.getLiveViewFlushRetryMax(), instance.getFlushRetryCount());
-                capture.drain();
-                Assert.assertEquals(1, capture.countOccurrences(REDERIVE_CANCELLED_LINE + "false, invalid=false]"));
-                capture.assertNotLogged("live view refresh budget exhausted, invalidating");
-
-                driveRefreshToQuiescence(job);
-                Assert.assertEquals(LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
-                Assert.assertFalse(instance.isInvalid());
-                assertViewMatchesRecompute();
-                assertQuery("SELECT count() FROM lv")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("count\n5\n");
-            }
-        });
-    }
-
-    @Test
     public void testShutdownDuringTheRederivesDriftRetryKeepsTheViewValid() throws Exception {
         // A base ADD COLUMN lands during the re-derive, whose replay then meets a stale plan, and the breaker
         // stops the rebuild the re-derive recompiles the plan for.
-        final BaseAmountOpenFault fault = new BaseAmountOpenFault();
+        final LiveViewBaseAmountOpenFault fault = new LiveViewBaseAmountOpenFault();
         assertMemoryLeak(fault, () -> assertShutdownDuringTheRederiveKeepsTheViewValid(fault, STAGE_DRIFT));
     }
 
@@ -699,7 +635,7 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
     public void testShutdownDuringTheRederivesScanKeepsTheViewValid() throws Exception {
         // The breaker stops the re-derive's replay on its second page frame, after the replay wiped the
         // runtime and fed it the first day's rows.
-        final BaseAmountOpenFault fault = new BaseAmountOpenFault();
+        final LiveViewBaseAmountOpenFault fault = new LiveViewBaseAmountOpenFault();
         assertMemoryLeak(fault, () -> assertShutdownDuringTheRederiveKeepsTheViewValid(fault, STAGE_SCAN));
     }
 
@@ -910,7 +846,7 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
     // nothing more is charged. The next pass restores the runtime from the timeline the cancelled replay
     // left in place before it drains, the drain meets the lost segment again, and the spent budget
     // re-derives the view.
-    private void assertShutdownDuringTheRederiveKeepsTheViewValid(BaseAmountOpenFault fault, int stage) throws Exception {
+    private void assertShutdownDuringTheRederiveKeepsTheViewValid(LiveViewBaseAmountOpenFault fault, int stage) throws Exception {
         createRederiveFixture();
         fault.of(engine.verifyTableName("tx").getDirName());
         final LiveViewInstance instance = instance();
@@ -1037,63 +973,5 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
         }
         Assert.assertEquals(maxRetry - 1, instance.getFlushRetryCount());
         Assert.assertFalse(instance.isInvalid());
-    }
-
-    /**
-     * Acts on the opens of the base's {@code amount} column file outside its WAL, which a scan of the
-     * applied base makes and a raw-WAL drain never does: fails every such open in one partition until
-     * lifted, reporting a missing file, and runs an action once, at the first such open in another, which
-     * then goes ahead.
-     */
-    private static final class BaseAmountOpenFault extends TestFilesFacadeImpl {
-        private final AtomicReference<String> failedPartition = new AtomicReference<>();
-        private final AtomicBoolean isMissingFileErrnoPending = new AtomicBoolean();
-        private final AtomicReference<Runnable> openAction = new AtomicReference<>();
-        private volatile String actionPartition;
-        private volatile String baseDir;
-
-        @Override
-        public int errno() {
-            return isMissingFileErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
-        }
-
-        @Override
-        public long openRO(LPSZ name) {
-            final String dir = baseDir;
-            if (dir != null
-                    && Utf8s.containsAscii(name, dir)
-                    && !Utf8s.containsAscii(name, "wal")
-                    && Utf8s.endsWithAscii(name, Files.SEPARATOR + "amount.d")) {
-                final String failed = failedPartition.get();
-                if (failed != null && Utf8s.containsAscii(name, failed)) {
-                    isMissingFileErrnoPending.set(true);
-                    return -1;
-                }
-                final String partition = actionPartition;
-                if (partition != null && Utf8s.containsAscii(name, partition)) {
-                    final Runnable action = openAction.getAndSet(null);
-                    if (action != null) {
-                        action.run();
-                    }
-                }
-            }
-            return super.openRO(name);
-        }
-
-        // Fails every open in the partition, or none with null.
-        void failOpensIn(String partition) {
-            failedPartition.set(partition);
-        }
-
-        void of(String baseDir) {
-            this.baseDir = baseDir;
-            failedPartition.set(null);
-            openAction.set(null);
-        }
-
-        void runAtFirstOpen(String partition, Runnable action) {
-            actionPartition = partition;
-            openAction.set(action);
-        }
     }
 }

@@ -18012,6 +18012,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * The replay resets runtime state, replaces the whole view and advances only through
      * applied base transactions. It runs under the refresh latch and the restatement
      * guard, after apply reaches every transaction represented in durable view output.
+     * Takes only an ACTIVE view: a seeding view's sweep reads no base WAL, and the replay
+     * would not end its seed.
      * <p>
      * Referenced columns must retain their names and types. Check before replay and again
      * before recompilation on metadata drift; allow one recompile/retry because the outer
@@ -18022,9 +18024,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * leaving an invalid but queryable view recomputed under the new schema.
      *
      * @return true when the re-derive recovered the view, a refused rebuild stopped it, the view's WAL
-     * suspension refused its write, or a cancellation ended it; false when the caller must invalidate the view
+     * suspension refused its write, or a cancellation ended it; false when the caller must invalidate the view,
+     * a seeding view among them
      */
     private boolean rederiveFromAppliedBaseAfterWalLoss(LiveViewInstance instance, CairoException cause) {
+        // Only an ACTIVE view can have lost base WAL, and only an ACTIVE view comes out of the replay below
+        // whole. A seeding view's sweep reads its pinned base snapshot, never base WAL, so the file it could
+        // not open is no lost segment. And the replay commits the whole view at the base's applied head
+        // without ending the seed: the SEEDING flag, the pinned snapshot, the sweep's offset and its
+        // skip-write floor all stay as the failed turn left them, so the next sweep turn appends every row
+        // the replay committed. Refuse, as the restore-retry rebuild does: the caller invalidates the view,
+        // as it does every seed fault the budget outlives.
+        if (instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
+            return false;
+        }
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
         if (baseToken == null) {
             return false;
@@ -18079,15 +18092,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             blockRefusedRebuild(instance, "base WAL segment missing");
             return true;
         } catch (TableReferenceOutOfDateException drift) {
-            // recoverFromBaseMetadataDrift only re-derives an ACTIVE view; for a SEEDING one it
-            // re-arms the sweep and returns null WITHOUT rebuilding, so reporting that as a
-            // recovery would claim a re-derive that did not happen - and this method has already
-            // dropped the un-flushed lead via setLeadRowCount(0). Refuse instead: the caller
-            // invalidates, which is the loud, correct outcome for a view whose data it cannot
-            // reconstruct here.
-            if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
-                return false;
-            }
+            // The refusal at the top admitted only an ACTIVE view, and nothing in this turn turns a view back to
+            // SEEDING. recoverFromBaseMetadataDrift relies on it: it rebuilds an ACTIVE view and only re-arms a
+            // seeding one's sweep, which would report a re-derive that did not happen.
+            assert instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE;
             // The drift proves the base metadata moved AFTER the entry check read it, so that read
             // decided nothing about the schema the recompile is about to adopt. Ask again, against
             // metadata read now. That narrows the window to the gap between this read and the
