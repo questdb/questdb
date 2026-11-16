@@ -3897,6 +3897,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             // when QuestDB's writer wrote the file.
             for (boolean isWrittenByQuestDB : new boolean[]{true, false}) {
                 execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
+                // a pooled reader still maps the detached parquet file, which Windows then refuses to rewrite
+                engine.releaseInactive();
                 final Path table = Path.of(configuration.getDbRoot().toString(), engine.verifyTableName("x").getDirName());
                 final Path attach = table.resolve("2024-01-01" + configuration.getAttachPartitionSuffix());
                 Files.move(table.resolve("2024-01-01.detached"), attach);

@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
+import io.questdb.std.Os;
 import io.questdb.std.Uuid;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1513,6 +1514,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
     @Test
     public void testOperatorNamedColumns() throws Exception {
+        // a Windows file name cannot hold < or >, so the column files of "<" and ">=" cannot exist there
+        Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE x (
