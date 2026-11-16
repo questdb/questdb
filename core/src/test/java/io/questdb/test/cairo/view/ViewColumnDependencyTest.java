@@ -3636,32 +3636,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     /**
-     * Grants everything, and counts the reads of a table: a plan authorizes the read of the columns of a table as
-     * it opens the cursor of a scan of the table.
-     */
-    private static final class ReadCountingSecurityContext extends AllowAllSecurityContext {
-        private final String tableName;
-        private int readCount;
-
-        private ReadCountingSecurityContext(String tableName) {
-            this.tableName = tableName;
-        }
-
-        @Override
-        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-            if (tableName.equals(tableToken.getTableName())) {
-                readCount++;
-            }
-        }
-
-        private int takeReadCount() {
-            final int count = readCount;
-            readCount = 0;
-            return count;
-        }
-    }
-
-    /**
      * Grants everything, and records the columns of each table a read authorizes: a read that selects from a table
      * itself authorizes every column its scan reads, see {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}.
      */

@@ -239,6 +239,27 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
     ) throws SqlException;
 
+    /**
+     * Compiles the SELECT of a view as a query of its own, which requires no order of its result, and returns its
+     * plan, whose metadata CREATE VIEW records for the view. The plan CREATE VIEW opens keeps the order a reader of
+     * the view requires, and its metadata can differ, such as by the designated timestamp. This takes the values of
+     * the PIVOT IN sub-queries from what the compile that planned the SELECT recorded, rather than running the
+     * sub-queries again, and finds a view out of date when it expands another definition of it, or another set of
+     * views, than that compile, see {@link SqlUtil.ViewCompileRecord}. It retries nothing: a table or a view out of
+     * date reaches the caller, which compiles the SELECT again, this compile included. Call it on a compiler of its
+     * own.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param compileRecord    what the compile that planned the SELECT of the view recorded
+     * @return the plan of the SELECT as a query of its own, which the caller owns
+     */
+    RecordCursorFactory generateViewMetadataFactory(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            SqlUtil.ViewCompileRecord compileRecord
+    ) throws SqlException;
+
     BytecodeAssembler getAsm();
 
     CairoEngine getEngine();

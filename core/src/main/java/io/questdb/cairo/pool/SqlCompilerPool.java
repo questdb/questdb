@@ -237,6 +237,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public RecordCursorFactory generateViewMetadataFactory(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                SqlUtil.ViewCompileRecord compileRecord
+        ) throws SqlException {
+            return delegate.generateViewMetadataFactory(viewSql, executionContext, compileRecord);
+        }
+
+        @Override
         public BytecodeAssembler getAsm() {
             return delegate.getAsm();
         }

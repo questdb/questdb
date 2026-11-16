@@ -3305,14 +3305,15 @@ public class SqlUtil {
     }
 
     /**
-     * What the compile of a view's SELECT that plans it saw, and the compile that collects what the reads of
-     * the view read and that plan does not has to see the same, see
-     * {@link SqlCompiler#collectOtherReadDependencies}. The latter takes the values each PIVOT IN
-     * sub-query returned rather than running the sub-queries again, and finds a table of the same name with
-     * another id than the one the plan scans out of date: a table that replaced it would lend its own
-     * columns to the dependencies of the view. It also finds a view out of date that it expands with another
-     * definition than the plan, or that only one of them expands, see {@link #checkViews}: it would run
-     * another SELECT than the plan, whose PIVOT IN sub-queries the plan did not run.
+     * What the compile of a view's SELECT that plans it saw, and the compiles of the same SELECT that follow it have
+     * to see the same: the compiles that collect what the reads of the view read and that plan does not, see
+     * {@link SqlCompiler#collectOtherReadDependencies}, and the compile of the SELECT as a query of its own that
+     * CREATE VIEW runs for the metadata of the view, see {@link SqlCompiler#generateViewMetadataFactory}. They take
+     * the values each PIVOT IN sub-query returned rather than running the sub-queries again, and find a view out of
+     * date that they expand with another definition than the plan, or that only one of them expands, see
+     * {@link #checkViews}: they would run another SELECT than the plan, whose PIVOT IN sub-queries the plan did not
+     * run. The compiles of the reads also find a table of the same name with another id than the one the plan scans
+     * out of date: a table that replaced it would lend its own columns to the dependencies of the view.
      */
     public static final class ViewCompileRecord implements Mutable {
         private static final int TABLE_ID_CONFLICT = Integer.MIN_VALUE + 1;
@@ -3409,8 +3410,8 @@ public class SqlUtil {
 
         /**
          * Makes the next compile of the same SELECT take the values of the PIVOT IN sub-queries from the first one
-         * recorded on, see {@link #takePivotIn}: each compile of the reads planned otherwise runs them in the order
-         * the compile that plans the SELECT recorded them.
+         * recorded on, see {@link #takePivotIn}: each compile that follows the one that plans the SELECT reaches
+         * them in the order that compile recorded them.
          */
         void restartPivotInReplay() {
             pivotInReplayIndex = 0;

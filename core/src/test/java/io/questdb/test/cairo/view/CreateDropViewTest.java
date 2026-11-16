@@ -26,6 +26,7 @@ package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Before;
@@ -318,6 +320,53 @@ public class CreateDropViewTest extends AbstractViewTest {
     }
 
     @Test
+    public void testCreateViewCompilesAgainWhenViewChangesBeforeMetadataCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotBase();
+            execute("CREATE VIEW iv AS (SELECT * FROM data PIVOT (sum(val) FOR cat IN ('c1') GROUP BY grp))");
+            drainViewQueue();
+            // iv gains a PIVOT IN sub-query as CREATE VIEW generates the plan of its SELECT: after the compile that
+            // records the values of the PIVOT IN sub-queries, none, and before the compile of the SELECT as a query of
+            // its own for the metadata of the view, which takes the values from it. That compile finds iv out of date,
+            // so CREATE VIEW compiles both again: the second attempt runs the sub-query once, and the view has the
+            // columns iv has now.
+            final AtomicInteger generationCount = new AtomicInteger();
+            final AtomicBoolean isAltering = new AtomicBoolean();
+            SqlCompilerImpl.setViewFactoryGenerationBarrier(() -> {
+                // ALTER VIEW generates the plan of its SELECT too
+                if (!isAltering.get() && generationCount.getAndIncrement() == 0) {
+                    isAltering.set(true);
+                    try {
+                        execute("ALTER VIEW iv AS (SELECT * FROM data PIVOT (sum(val) FOR cat IN (SELECT c FROM cats) GROUP BY grp))");
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    } finally {
+                        isAltering.set(false);
+                    }
+                }
+            });
+            final ReadCountingSecurityContext securityContext = new ReadCountingSecurityContext("cats");
+            try (SqlExecutionContext context = readCountingContext(securityContext)) {
+                execute("CREATE VIEW v AS (SELECT *, sum(c1) OVER () s FROM iv)", context);
+            } finally {
+                SqlCompilerImpl.setViewFactoryGenerationBarrier(null);
+            }
+            assertEquals(2, generationCount.get());
+            assertEquals(1, securityContext.takeReadCount());
+            drainViewQueue();
+            assertViewState("v");
+            assertQuery("SELECT * FROM v ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tc1\tc2\ts
+                            g1\t1\t2\t4.0
+                            g2\t3\tnull\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testCreateViewCompilesSelectOnceWhenReaderOrderChangesNoPlan() throws Exception {
         assertMemoryLeak(() -> {
             createPivotBase();
@@ -354,8 +403,9 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createPivotBase();
             // The window function makes CREATE VIEW compile the SELECT once more, as a query of its own, for the
-            // metadata of the view, which runs the PIVOT IN sub-query again. A DROP TABLE between the two compiles
-            // fails the second one, and CREATE VIEW reports where the statement names the table.
+            // metadata of the view, which compiles the PIVOT IN sub-query again, and takes its values from the first
+            // compile. A DROP TABLE between the two compiles fails the second one, and CREATE VIEW reports where the
+            // statement names the table.
             final String sql = "CREATE VIEW v AS (" + WINDOW_OVER_PIVOT + ")";
             dropCatsAsPlanGenerates(() -> assertExceptionNoLeakCheck(sql, sql.indexOf("cats"), "table does not exist [table=cats]"));
             assertNull(engine.getTableTokenIfExists("v"));
@@ -454,6 +504,51 @@ public class CreateDropViewTest extends AbstractViewTest {
             }
             assertEquals(1, securityContext.changeCount);
             assertNull(engine.getTableTokenIfExists("v"));
+        });
+    }
+
+    @Test
+    public void testCreateViewRunsPivotInSubQueryOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createPivotBase();
+            // a NULL value of the PIVOT IN sub-query names a column too
+            execute("INSERT INTO data VALUES (3, 'g2', null, 4)");
+            execute("INSERT INTO cats VALUES (null)");
+            execute("CREATE TABLE vals (v LONG)");
+            // values each group of data has a row of
+            execute("INSERT INTO vals VALUES (1), (3)");
+            // An aggregate or a window function at the top of the SELECT makes the plan CREATE VIEW opens keep the
+            // order a reader requires, so CREATE VIEW compiles the SELECT once more, as a query of its own, for the
+            // metadata of the view. That compile takes the values of the PIVOT IN sub-query from the first one.
+            final String pivotOfCats = "SELECT * FROM data PIVOT (sum(val) FOR cat IN (SELECT c FROM cats) GROUP BY grp)";
+            assertPivotInSubQueryRunsOnce("cats", "SELECT *, sum(c1) OVER () s FROM (" + pivotOfCats + ")", """
+                    grp\tc1\tc2\tNULL\ts
+                    g1\t1\t2\tnull\t4.0
+                    g2\t3\tnull\t4\t4.0
+                    """);
+            assertPivotInSubQueryRunsOnce("cats", "SELECT count() n FROM (" + pivotOfCats + ")", """
+                    n
+                    2
+                    """);
+            assertPivotInSubQueryRunsOnce("cats", "SELECT grp, sum(c2) s FROM (" + pivotOfCats + ")", """
+                    grp\ts
+                    g1\t2
+                    g2\tnull
+                    """);
+            assertPivotInSubQueryRunsOnce("cats", "WITH p AS (" + pivotOfCats + ") SELECT count() n FROM p", """
+                    n
+                    2
+                    """);
+            // the values of a LONG column name the columns as they print
+            assertPivotInSubQueryRunsOnce(
+                    "vals",
+                    "SELECT *, count() OVER () n FROM (SELECT * FROM data PIVOT (sum(val) FOR val IN (SELECT v FROM vals) GROUP BY grp))",
+                    """
+                            grp\t1\t3\tn
+                            g1\t1\tnull\t2
+                            g2\tnull\t3\t2
+                            """
+            );
         });
     }
 
@@ -582,6 +677,27 @@ public class CreateDropViewTest extends AbstractViewTest {
         assertTrue("the barrier dropped cats", isDropped.get());
     }
 
+    // the name and type of each column of the metadata, and its designated timestamp
+    private static String metadataOf(RecordMetadata metadata) {
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            sink.put(metadata.getColumnName(i)).put(':').put(ColumnType.nameOf(metadata.getColumnType(i))).put('\n');
+        }
+        return sink.put("timestamp: ").put(timestampOf(metadata)).toString();
+    }
+
+    // the metadata of the view, see metadataOf()
+    private static String metadataOfView(String viewName) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(viewName))) {
+            return metadataOf(metadata);
+        }
+    }
+
+    // the context of a principal that may read everything, whose reads of a table the security context counts
+    private static SqlExecutionContext readCountingContext(ReadCountingSecurityContext securityContext) {
+        return new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
+    }
+
     private static @Nullable String timestampOf(RecordMetadata metadata) {
         final int timestampIndex = metadata.getTimestampIndex();
         return timestampIndex > -1 ? metadata.getColumnName(timestampIndex) : null;
@@ -619,6 +735,42 @@ public class CreateDropViewTest extends AbstractViewTest {
                         k1\t5
                         k2\t1
                         """);
+    }
+
+    // Creates the view v of the SELECT, whose PIVOT IN sub-query reads the table, with each statement that creates a
+    // view, and asserts that the statement runs the sub-query once, that the view records the metadata of the SELECT
+    // as a query of its own, before and after the view compile that follows, and that the view returns the rows,
+    // ordered by their first column. Then ALTER VIEW and CREATE OR REPLACE VIEW of the view, which compile the SELECT
+    // for the dependencies of the view only, run the sub-query once too.
+    private void assertPivotInSubQueryRunsOnce(String tableName, String viewSql, String expectedRows) throws Exception {
+        final String expectedMetadata;
+        try (RecordCursorFactory factory = select(viewSql)) {
+            expectedMetadata = metadataOf(factory.getMetadata());
+        }
+        final ReadCountingSecurityContext securityContext = new ReadCountingSecurityContext(tableName);
+        try (SqlExecutionContext context = readCountingContext(securityContext)) {
+            for (String statement : new String[]{"CREATE VIEW", "CREATE VIEW IF NOT EXISTS", "CREATE OR REPLACE VIEW"}) {
+                final String sql = statement + " v AS (" + viewSql + ")";
+                execute(sql, context);
+                assertEquals(sql, 1, securityContext.takeReadCount());
+                assertEquals(sql, expectedMetadata, metadataOfView("v"));
+                drainViewQueue();
+                assertViewState("v");
+                assertEquals(sql, expectedMetadata, metadataOfView("v"));
+                assertQuery("SELECT * FROM v ORDER BY 1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expectedRows);
+
+                for (String replacingStatement : new String[]{"ALTER VIEW", "CREATE OR REPLACE VIEW"}) {
+                    execute(replacingStatement + " v AS (" + viewSql + ")", context);
+                    assertEquals(replacingStatement + " after " + sql, 1, securityContext.takeReadCount());
+                    drainViewQueue();
+                    assertViewState("v");
+                }
+                execute("DROP VIEW v");
+            }
+        }
     }
 
     // Adds a column to x as the plan of the SELECT of CREATE VIEW opens, the first changeLimit times, as an ALTER TABLE

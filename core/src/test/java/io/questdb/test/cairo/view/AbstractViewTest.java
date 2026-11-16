@@ -316,4 +316,30 @@ class AbstractViewTest extends AbstractCairoTest {
             }
         }
     }
+
+    /**
+     * Grants everything, and counts the reads of a table: a plan authorizes the read of the columns of a table as
+     * it opens the cursor of a scan of the table.
+     */
+    static final class ReadCountingSecurityContext extends AllowAllSecurityContext {
+        private final String tableName;
+        private int readCount;
+
+        ReadCountingSecurityContext(String tableName) {
+            this.tableName = tableName;
+        }
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            if (tableName.equals(tableToken.getTableName())) {
+                readCount++;
+            }
+        }
+
+        int takeReadCount() {
+            final int count = readCount;
+            readCount = 0;
+            return count;
+        }
+    }
 }

@@ -239,7 +239,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
-    // what the compile of a view's SELECT that plans it saw, for the compile collectOtherReadDependencies() runs
+    // What the compile of a view's SELECT that plans it saw, for the compiles of the same SELECT that follow it:
+    // collectOtherReadDependencies() and, for CREATE VIEW, generateViewMetadataFactory(). optimiseViewQuery() fills it,
+    // and its callers clear it once those compiles are done.
     private final SqlUtil.ViewCompileRecord viewCompileRecord = new SqlUtil.ViewCompileRecord();
     // the outputs of a view's SELECT the compile that plans it optimised, for collectFilteredReadDependencies()
     private final ObjList<CharSequence> viewOutputNames = new ObjList<>();
@@ -791,6 +793,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         lexer.of(viewSql);
         return compileExecutionModel(executionContext, false, viewSql, dependencies);
+    }
+
+    @Override
+    public RecordCursorFactory generateViewMetadataFactory(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            SqlUtil.ViewCompileRecord compileRecord
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        // the caller planned the same SELECT before
+        assert model.getModelType() == ExecutionModel.QUERY;
+        // A view altered since the caller's compile expanded it makes this another SELECT, whose PIVOT IN sub-queries
+        // the caller did not run, so the statement compiles again, before the replay of their values.
+        compileRecord.checkViews(((IQueryModel) model).getReferencedViews());
+        final IQueryModel queryModel;
+        optimiser.setPivotInValueSource(compileRecord);
+        compileRecord.restartPivotInReplay();
+        try {
+            // a throw closes the table functions optimise() opened
+            queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+        } finally {
+            optimiser.setPivotInValueSource(null);
+        }
+        // Nothing generates the PIVOT IN sub-queries, whose values the plan takes from compileRecord: the generation
+        // of the plan closes the table functions their compile opened. A table out of date reaches the caller.
+        return generateSelectWithoutRetries(queryModel, executionContext, false);
     }
 
     @Override
@@ -4393,7 +4423,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (model.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(0, "SELECT query expected");
                     }
-                    return optimiseViewQuery(viewSql, (IQueryModel) model, executionContext, viewDependencies);
+                    try {
+                        return optimiseViewQuery(viewSql, (IQueryModel) model, executionContext, viewDependencies);
+                    } finally {
+                        // no compile of the SELECT follows this one
+                        viewCompileRecord.clear();
+                    }
                 }
                 if (model.getModelType() != ExecutionModel.EXPLAIN) {
                     return compileExecutionModel0(executionContext, model);
@@ -5772,6 +5807,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofCompileView();
     }
 
+    // Compiles the SELECT of a view, viewSql, as a query of its own, which requires no order of its result, and
+    // returns its plan, whose metadata ViewCompilerJob records for the view. The plan compileViewQuery() generates
+    // keeps the order a reader of the view requires, see optimiseViewQuery(), and can lose the designated timestamp
+    // that the plan of the SELECT as a query of its own keeps, such as when it keeps the ORDER BY of a sub-query of
+    // a window function. CREATE VIEW records the metadata of this plan, so that the catalog does not change when
+    // ViewCompilerJob compiles the view next. The compile takes the values of the PIVOT IN sub-queries from the one
+    // compileViewQuery() ran, see SqlCompiler.generateViewMetadataFactory(), so it runs none of them again.
+    private RecordCursorFactory compileViewMetadataFactory(
+            CharSequence viewSql,
+            int viewSqlPosition,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return compiler.generateViewMetadataFactory(viewSql, executionContext, viewCompileRecord);
+        } catch (SqlException e) {
+            // position is reported from the view SQL, we have to adjust it
+            e.setPosition(e.getPosition() + viewSqlPosition);
+            throw e;
+        }
+    }
+
     private long compileViewQuery(
             @Transient @NotNull SqlExecutionContext executionContext,
             @NotNull CreateViewOperation createViewOp
@@ -6487,7 +6543,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
                     // the plan of the SELECT as a query of its own, whose metadata the view records when newFactory
-                    // keeps an order a reader requires, see generateViewMetadataFactory()
+                    // keeps an order a reader requires, see compileViewMetadataFactory()
                     RecordCursorFactory metadataFactory = null;
                     RecordCursor newCursor;
                     long expiryPolicyVersion;
@@ -6499,7 +6555,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             if (isViewPlanOrderedForReader) {
-                                metadataFactory = generateViewMetadataFactory(
+                                metadataFactory = compileViewMetadataFactory(
                                         createTableOp.getSelectText(),
                                         createTableOp.getSelectTextPosition(),
                                         executionContext
@@ -6540,6 +6596,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             Misc.free(newFactory);
                             Misc.free(metadataFactory);
                             throw th;
+                        } finally {
+                            // what the first compile of the attempt recorded, which its other compiles have taken
+                            viewCompileRecord.clear();
                         }
                     }
 
@@ -7076,27 +7135,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    // Compiles the SELECT of a view, viewSql, as a query of its own, which requires no order of its result, and
-    // returns its plan, whose metadata ViewCompilerJob records for the view. The plan compileViewQuery() generates
-    // keeps the order a reader of the view requires, see optimiseViewQuery(), and can lose the designated timestamp
-    // that the plan of the SELECT as a query of its own keeps, such as when it keeps the ORDER BY of a sub-query of
-    // a window function. CREATE VIEW records the metadata of this plan, so that the catalog does not change when
-    // ViewCompilerJob compiles the view next.
-    private RecordCursorFactory generateViewMetadataFactory(
-            CharSequence viewSql,
-            int viewSqlPosition,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            return SqlUtil.generateFactory(compiler, executionModel, executionContext);
-        } catch (SqlException e) {
-            // position is reported from the view SQL, we have to adjust it
-            e.setPosition(e.getPosition() + viewSqlPosition);
-            throw e;
-        }
-    }
-
     private int getNextValidTokenPosition() throws SqlException {
         while (lexer.hasNext()) {
             CharSequence token = SqlUtil.fetchNext(lexer);
@@ -7222,7 +7260,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // collectFilteredReadDependencies(), collects the columns of the same name as an output a model computes,
     // which a read that filters on that output scans. optimise() changes the model in place, so the parsed
     // references are collected before it runs. The plan of the SELECT keeps the order a reader requires, which
-    // can differ from the plan of the SELECT as a query of its own, see isViewPlanOrderedForReader.
+    // can differ from the plan of the SELECT as a query of its own, see isViewPlanOrderedForReader. The compile
+    // of the latter that CREATE VIEW runs takes what this compile recorded in viewCompileRecord, which this leaves
+    // for the caller to clear.
     private IQueryModel optimiseViewQuery(
             CharSequence viewSql,
             IQueryModel parsedModel,
@@ -7279,7 +7319,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return queryModel;
         } finally {
             viewWildcardSources.clear();
-            viewCompileRecord.clear();
             viewOutputNames.clear();
         }
     }

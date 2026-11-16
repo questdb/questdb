@@ -99,6 +99,11 @@ import static org.junit.Assert.fail;
  *     that joins a sub-query without a key, for one. CREATE VIEW and ALTER VIEW optimise it and never generate it,
  *     before they generate the first compile, and sweep whether it returns or throws
  *     ({@code testSubQueryJoinedWithoutKey*}).</li>
+ *     <li>{@code SqlCompilerImpl#generateViewMetadataFactory}, the compile of the SELECT of a view as a query of
+ *     its own that CREATE VIEW runs for the metadata of the view. It takes the values of a PIVOT IN sub-query from
+ *     the compile that planned the SELECT and generates no plan of the sub-query, so the sweep of
+ *     {@code generateSelectOneShot} closes the factory the optimiser opened for it
+ *     ({@code testPivotInSubQueryReplayedForViewMetadataClosesTableFunctionFactoryOnce}).</li>
  *     <li>{@code SqlCodeGenerator#generateFunctionQuery}, which takes over a factory that projects its
  *     columns, as {@code read_parquet()} does, then builds the projected metadata, and closes the factory
  *     when that throws ({@code *ProjectionFailure*}).</li>
@@ -623,6 +628,45 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
                 execute("CREATE TABLE other (x LONG)");
                 assertEachClosedOnce(factories, factoryCount + 1);
+            } finally {
+                TableFunctionTestUtils.unregister(engine, FUNCTION_NAME);
+            }
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryReplayedForViewMetadataClosesTableFunctionFactoryOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetFile();
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            try {
+                TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
+                // The window function makes CREATE VIEW compile the SELECT once more, as a query of its own, for the
+                // metadata of the view. Both compiles optimise the IN sub-query, which opens its table function. The
+                // first one runs the sub-query, whose plan takes the factory over. The second one takes the IN values
+                // from the first, and so generates no plan of the sub-query: the sweep that follows the generation of
+                // the plan of the SELECT closes the factory.
+                final String viewSql = "SELECT k, sum(a) OVER () s FROM (SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_ONE_VALUE + ") GROUP BY k))";
+                execute("CREATE VIEW v AS (" + viewSql + ")");
+                assertEquals(2, factories.size());
+                assertEachClosedOnce(factories, 2);
+
+                assertQuery("SELECT * FROM v ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ts
+                                1\t60.0
+                                2\t60.0
+                                3\t60.0
+                                """);
+                assertEachClosedOnce(factories, 3);
+
+                // the next compile borrows a pooled compiler, and must not close a factory a second time
+                final int factoryCount = factories.size();
+                execute("CREATE TABLE other (x LONG)");
+                assertEachClosedOnce(factories, factoryCount);
             } finally {
                 TableFunctionTestUtils.unregister(engine, FUNCTION_NAME);
             }
