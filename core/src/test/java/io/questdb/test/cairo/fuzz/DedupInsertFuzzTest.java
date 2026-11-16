@@ -44,7 +44,6 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogRecord;
-import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -1580,7 +1579,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("enabling dedup: ").$(alterStatement).$();
                 execute(alterStatement);
 
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 sharedWorkerPool.start(LOG);
 
                 try {
@@ -1623,7 +1622,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     );
 
                 } finally {
-                    sharedWorkerPool.halt();
+                    haltWorkerPool();
                 }
             } finally {
                 Misc.freeObjListAndClear(transactions);
@@ -1661,7 +1660,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 // initial rows are 1 second apart, see FuzzRunner.createInitialTable()
                 long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1);
                 transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, initialStep, dedupMode);
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 sharedWorkerPool.start(LOG);
 
                 try {
@@ -1685,7 +1684,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         Misc.freeObjListAndClear(transactionsWithDups);
                     }
                 } finally {
-                    sharedWorkerPool.halt();
+                    haltWorkerPool();
                 }
             } finally {
                 Misc.freeObjListAndClear(transactions);

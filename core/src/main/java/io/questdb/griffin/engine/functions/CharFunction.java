@@ -227,12 +227,12 @@ public abstract class CharFunction implements Function {
 
     @Override
     public final CharSequence getSymbol(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStrA(rec);
     }
 
     @Override
     public final CharSequence getSymbolB(Record rec) {
-        throw new UnsupportedOperationException();
+        return getStrB(rec);
     }
 
     @Override

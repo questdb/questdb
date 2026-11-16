@@ -75,8 +75,8 @@ import java.util.Comparator;
  * chains. A view's dependencies come from the view graph; a materialized view's
  * dependencies are discovered by compiling its query and walking the plan for
  * the tables it reads (a materialized view may join tables beyond its declared
- * base). The enterprise build extends this with ACL principals (emitted first,
- * ahead of any inline {@code OWNED BY}) and the trailing grants and memberships.
+ * base). The enterprise build extends this with ACL principals, emitted ahead of
+ * the objects, and the trailing grants and memberships.
  * <p>
  * Each object's DDL is produced by delegating to the matching per-object
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
@@ -150,8 +150,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     protected void appendAclGrants(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
-    // emitted before the object DDL so that inline OWNED BY targets already exist;
-    // no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
+    // emitted before the object DDL; no-op in OSS, overridden in ent to add CREATE USER/GROUP/SERVICE ACCOUNT
     protected void appendAclPrincipals(ObjList<CharSequence> out, SqlExecutionContext executionContext) throws SqlException {
     }
 
@@ -365,6 +364,14 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         if (definition == null) {
             return;
         }
+        // The compile below builds the plan of the mat view's SQL only to walk it, and opens none of its
+        // cursors. When a view's PIVOT IN subquery reads this dump, the context rejects administrative
+        // functions, see SqlExecutionContext.isViewMetadataSubquery(): one that a view the mat view reads
+        // calls would fail the compile, and the fallback would order the mat view by its base table only.
+        // A PIVOT IN subquery of the mat view's own SQL does run here, so the view compile flag stays set
+        // and that subquery raises the flag again for itself.
+        final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
+        executionContext.setViewMetadataSubquery(false);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // Compile the mat view SQL once: build the execution model, then derive the factory
             // from that same model. The two walks below need different artifacts but share one
@@ -410,6 +417,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
         } catch (SqlException e) {
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
         }
     }
 
