@@ -359,6 +359,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // same reason.
     private static final long KEPT_TIMELINE_RETIRE_SALT0 = 0x3243F6A8885A308DL;
     private static final long KEPT_TIMELINE_RETIRE_SALT1 = 0x13198A2E03707344L;
+    // What a seed sweep's seal logs when it fails.
+    private static final String SEED_SEAL_FAILED = "could not write live view seed checkpoint [view=lv";
     // What a restart logs when a live repair marker sends it to the rebuild from the applied base.
     private static final String MARKER_REBUILD = "live view restart rebuilding from applied base [view=lv, "
             + "cause=prefix preservation repair marker present";
@@ -370,6 +372,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // from the run's sequence, for the same reason: see runKeptTimelineEpisode.
     private static final long KEPT_TIMELINE_EPISODE_SALT0 = 0x1B873593CC9E2D51L;
     private static final long KEPT_TIMELINE_EPISODE_SALT1 = 0x85EBCA6BC2B2AE35L;
+    // Salt the draw of a lock on the repair marker the kept-timeline episode leaves without its
+    // _timeline apart from the episode's sequence, so the episode draws what it drew before: see
+    // runKeptTimelineEpisode.
+    private static final long KEPT_TIMELINE_MARKER_SALT0 = 0x452821E638D01377L;
+    private static final long KEPT_TIMELINE_MARKER_SALT1 = 0xBE5466CF34E90C6CL;
+    // Salt the draw of a leftover repair marker beside a seed sweep apart from the run's sequence,
+    // for the same reason: see seedBesideALockedMarker.
+    private static final long SEED_MARKER_SALT0 = 0xC0AC29B7C97C50DDL;
+    private static final long SEED_MARKER_SALT1 = 0x3F84D5B5B5470917L;
     // Salt the draws of the sparse departure whose frontier seal fails apart from the run's
     // sequence, for the same reason.
     private static final long FRONTIER_SEAL_FAILURE_SALT0 = 0x2C1B3C6D7E9F0A1BL;
@@ -576,7 +587,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int keptTimelineEpisodes;
     private int keptTimelineFreshHistories;
     private int keptTimelineLateRowRepairs;
+    // Kept-timeline episodes whose repair marker a lock kept once _timeline went, the seed sweeps
+    // that sealed a seed root beside a marker a lock kept, and the seals refused because they would
+    // open a runtime history beside such a marker: see runKeptTimelineEpisode and
+    // seedBesideALockedMarker.
+    private int keptTimelineMarkerLeftovers;
     private int keptTimelineRefusedSeals;
+    private int refusedHistoryOpenings;
+    private int seedRootsBesideAMarker;
     // Retires that answered the failed frontier seal of a sparse departure with no lock on
     // _timeline, which removed the timeline and its marker, and whose restart the restatement
     // guard refused over the day the run dropped, as a rebuild over an absent timeline: see
@@ -848,6 +866,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         Assert.assertTrue("no seal was refused over a kept timeline", keptTimelineRefusedSeals > 0);
         Assert.assertTrue("no late row was repaired over a kept timeline", keptTimelineLateRowRepairs > 0);
         Assert.assertTrue("no seal opened a fresh history once the lock went", keptTimelineFreshHistories > 0);
+        Assert.assertTrue("no lock kept the marker once the kept timeline went", keptTimelineMarkerLeftovers > 0);
+        Assert.assertTrue("no seed root landed beside a marker a lock kept", seedRootsBesideAMarker > 0);
+        Assert.assertTrue("no seal was refused a runtime history beside such a marker", refusedHistoryOpenings > 0);
     }
 
     @Test
@@ -1935,6 +1956,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_EPISODE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_EPISODE_SALT1);
     }
 
+    // The sequence a kept-timeline episode draws its lock on the repair marker from, drawn from
+    // the episode's without advancing it.
+    private static Rnd keptTimelineMarkerRnd(Rnd episodeRnd) {
+        return new Rnd(episodeRnd.getSeed0() ^ KEPT_TIMELINE_MARKER_SALT0, episodeRnd.getSeed1() ^ KEPT_TIMELINE_MARKER_SALT1);
+    }
+
+    // The sequence a run draws a leftover repair marker beside its seed from, drawn from the run's
+    // without advancing it.
+    private static Rnd seedMarkerRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ SEED_MARKER_SALT0, rnd.getSeed1() ^ SEED_MARKER_SALT1);
+    }
+
     // The sequence a departure draws a crash at its frontier truncate from, drawn from the run's
     // without advancing it.
     private static Rnd frontierTruncateCrashRnd(Rnd rnd) {
@@ -2471,7 +2504,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         LOG.info().$("LV fuzz kept-timeline episodes [episodes=").$(keptTimelineEpisodes)
                 .$(", refusedSeals=").$(keptTimelineRefusedSeals)
                 .$(", lateRowRepairs=").$(keptTimelineLateRowRepairs)
-                .$(", freshHistories=").$(keptTimelineFreshHistories).I$();
+                .$(", freshHistories=").$(keptTimelineFreshHistories)
+                .$(", markerLeftovers=").$(keptTimelineMarkerLeftovers)
+                .$(", seedRootsBesideAMarker=").$(seedRootsBesideAMarker)
+                .$(", refusedHistoryOpenings=").$(refusedHistoryOpenings).I$();
     }
 
     // A retire that met a lock on _timeline on each arm that draws one: the test's first owed-seal
@@ -3074,6 +3110,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
         keptTimelineRefusedSeals += (int) (instance.getCheckpointSealFailures() - sealFailuresBefore);
         checkpointFaults.unlockTheTimeline();
+        // The test's first episode, and one in two after it, finds the repair marker locked once
+        // the lock on _timeline goes. Drawn from a sequence salted apart from the episode's, so the
+        // episode draws what it drew before.
+        final Rnd markerRnd = keptTimelineMarkerRnd(episodeRnd);
+        if (keptTimelineMarkerLeftovers == 0 || markerRnd.nextInt(2) == 0) {
+            refuseTheHistoryBesideALockedMarker(markerRnd, job, usedTs, symCount, oracleOrderedSql, viewOrderedSql);
+        }
         // Past any pause the refusals armed: each is shorter than the duration cadence's wait.
         setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
         Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
@@ -3094,6 +3137,122 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
         keptTimelineFreshHistories++;
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+    }
+
+    /**
+     * The kept-timeline episode's lock on {@code _timeline} is gone, and a lock now keeps the
+     * repair marker beside it. A forward row's seal, past any pause the episode's refusals armed,
+     * retries the retire, which removes {@code _timeline} and cannot remove the marker, and would
+     * then open a runtime history beside the marker, which every restart would read against it:
+     * the seal is refused, and no history opens. The marker's lock goes on the way out, and the
+     * episode's own forward row then opens the history. Draws from {@code markerRnd} alone.
+     */
+    private void refuseTheHistoryBesideALockedMarker(
+            Rnd markerRnd,
+            LiveViewRefreshJob job,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            String oracleOrderedSql,
+            String viewOrderedSql
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        keptTimelineMarkerLeftovers++;
+        checkpointFaults.lockTheMarker();
+        try {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+            Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
+            final long sealFailuresBefore = instance.getCheckpointSealFailures();
+            long forwardTs = Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()) + 1;
+            while (usedTs != null && !usedTs.add(forwardTs)) {
+                forwardTs++;
+            }
+            final StringSink values = new StringSink();
+            appendEpisodeRow(values, forwardTs, markerRnd.nextInt(symCount), 1 + markerRnd.nextInt(1000), markerRnd.nextDouble() * 1000.0);
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertFalse("the seal's retry of the retire removed the kept file", instance.isCheckpointTimelineRetirePending());
+            Assert.assertEquals("the seal is refused while the marker stays", sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+            Assert.assertEquals("no history opens beside it", 0, publishedCheckpointGeneration(instance));
+            try (Path dir = checkpointsDirOf(instance)) {
+                Assert.assertTrue("the lock keeps the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            }
+            Assert.assertTrue("the retry of the retire and the seal each meet the lock", checkpointFaults.getRefusedMarkerUnlinks() >= 2);
+            refusedHistoryOpenings++;
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        } finally {
+            checkpointFaults.unlockTheMarker();
+        }
+    }
+
+    /**
+     * Drives the view's seed to completion. While the kept-timeline arm is on, the test's runs
+     * draw, from a sequence salted apart from the run's, a seed beside a leftover repair marker,
+     * until one seed root has landed beside one and one run in three after that: the marker naming
+     * no base generation that a retire keeping its timeline writes, stamped ahead of the first seed
+     * turn, under a lock that refuses every unlink of it until the seed completes. No reader of a
+     * seed history reads the marker, so no seed seal fails on it, and the sweep keeps its resume
+     * points. The completion's seal opens the runtime history, which a restart would read the
+     * marker against, so it opens none while the lock holds. Then the lock goes, and the view's
+     * next seal removes the marker and opens the history.
+     */
+    private void driveSeed(Rnd rnd, LiveViewRefreshJob job) {
+        if (!isKeptTimelineEpisodeArm || !(seedRootsBesideAMarker == 0 || seedMarkerRnd(rnd).nextInt(3) == 0)) {
+            driveSeedToCompletion(job, "lv");
+            return;
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        try (Path dir = checkpointsDirOf(instance)) {
+            LiveViewCheckpointRepairMarker.write(
+                    configuration,
+                    dir,
+                    instance.getLiveViewToken().getTableId(),
+                    0,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL,
+                    Numbers.LONG_NULL
+            );
+        }
+        final LogCapture capture = walApplySuspensionRule.getCapture();
+        capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+        final int seedSealFailuresBefore = capture.countOccurrences(SEED_SEAL_FAILED);
+        final long sealFailuresBefore = instance.getCheckpointSealFailures();
+        boolean isSeedRootBesideTheMarker = false;
+        checkpointFaults.lockTheMarker();
+        try {
+            for (int pass = 0; pass < SEED_COMPLETION_PASSES && instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING; pass++) {
+                if (!job.run()) {
+                    // A turn that faulted backs off: the sweep resumes at the view's deadline.
+                    final long retryUs = nextRefreshRetryMicros();
+                    if (retryUs != Numbers.LONG_NULL) {
+                        setCurrentMicros(retryUs);
+                    }
+                }
+                drainWalQueue();
+                if (instance.getStateReader().getSeedState() == LiveViewState.SEED_STATE_SEEDING) {
+                    Assert.assertEquals("no seal fails while the view seeds", sealFailuresBefore, instance.getCheckpointSealFailures());
+                    isSeedRootBesideTheMarker |= instance.getSeedCheckpointDataOffset() != Numbers.LONG_NULL;
+                }
+            }
+            Assert.assertEquals("the seed completes", LiveViewState.SEED_STATE_ACTIVE, instance.getStateReader().getSeedState());
+            capture.drain(LogCapture.STOP_DRAIN_TIMEOUT_MS);
+            Assert.assertEquals("no seed seal fails on the marker", seedSealFailuresBefore, capture.countOccurrences(SEED_SEAL_FAILED));
+            final long completionSealFailures = instance.getCheckpointSealFailures() - sealFailuresBefore;
+            Assert.assertTrue("the completion seals once at most", completionSealFailures <= 1);
+            Assert.assertEquals("no runtime history opens beside the marker", 0, publishedCheckpointGeneration(instance));
+            try (Path dir = checkpointsDirOf(instance)) {
+                Assert.assertTrue("the lock keeps the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            }
+            if (isSeedRootBesideTheMarker) {
+                seedRootsBesideAMarker++;
+            }
+            refusedHistoryOpenings += (int) completionSealFailures;
+        } finally {
+            checkpointFaults.unlockTheMarker();
+        }
+        drainWalQueue();
     }
 
     /**
@@ -6249,7 +6408,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             job = new LiveViewRefreshJob(0, engine, 1);
 
             if (preCount > 0) {
-                driveSeedToCompletion(job, "lv");
+                driveSeed(rnd, job);
             }
 
             if (preCount < rowCount) {
@@ -8634,7 +8793,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             job = new LiveViewRefreshJob(0, engine, 1);
 
             if (preCount > 0) {
-                driveSeedToCompletion(job, "lv");
+                driveSeed(rnd, job);
             }
 
             if (preCount < rowCount) {
@@ -9139,18 +9298,29 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * the caller consumes it. While the timeline is locked, refuses the unlink of {@code _timeline}
      * and every directory removal under the checkpoint directory, as a lock on the file refuses
      * them, so a retire keeps the generation, and the repair marker the retire keeps beside it.
+     * While the marker is locked, refuses every unlink of the repair marker and of its staged
+     * sibling, so the marker outlives a {@code _timeline} a retire removes.
      */
     private static final class CheckpointFaults extends TestFilesFacadeImpl {
         private final AtomicInteger markerRenames = new AtomicInteger();
+        private final AtomicInteger refusedMarkerUnlinks = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
         private volatile boolean hasCrashed;
         private volatile boolean hasKeptTheTimeline;
+        private volatile boolean isMarkerLocked;
         private volatile boolean isTimelineLocked;
         private volatile Runnable onCrash;
         private volatile Runnable onTheKeptTimeline;
 
         @Override
         public boolean removeQuiet(LPSZ name) {
+            if (isMarkerLocked
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && (Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                    || Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX))) {
+                refusedMarkerUnlinks.incrementAndGet();
+                return false;
+            }
             if (isTimelineLocked
                     && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
@@ -9232,9 +9402,26 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return hasCrashed;
         }
 
+        // Refuses every unlink of the repair marker, _repairing, and of its staged sibling.
+        void lockTheMarker() {
+            refusedMarkerUnlinks.set(0);
+            isMarkerLocked = true;
+        }
+
         void lockTheTimeline() {
             refusedTimelineUnlinks.set(0);
             isTimelineLocked = true;
+        }
+
+        // The unlinks of the repair marker the lock refused since it was set.
+        int getRefusedMarkerUnlinks() {
+            return refusedMarkerUnlinks.get();
+        }
+
+        // Lifts the lock on the repair marker and returns the unlinks it refused since it was set.
+        int unlockTheMarker() {
+            isMarkerLocked = false;
+            return refusedMarkerUnlinks.getAndSet(0);
         }
 
         // Lifts the lock and returns the unlinks of _timeline it refused since it was set.

@@ -25,8 +25,12 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
+import io.questdb.cairo.lv.LiveViewCheckpointDependency;
+import io.questdb.cairo.lv.LiveViewCheckpointFunctionIdentity;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
@@ -39,9 +43,16 @@ import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectory;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
+import io.questdb.cairo.lv.LiveViewStatePageReader;
+import io.questdb.cairo.lv.LiveViewStatePageWriter;
+import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
+import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -59,15 +70,35 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
+import java.util.zip.CRC32;
 
 public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
     private static final LongList EMPTY_SEGMENT_IDS = new LongList();
+    // The shapes of a repair marker an older history can leave beside the next one; see
+    // writeLeftoverMarker.
+    private static final String LEFTOVER_MARKER_BASE_5 = "a record naming base generation 5 and a seqTxn";
+    private static final String LEFTOVER_MARKER_BOTH_NAMES = "a record naming base generation 5 beside an empty staged sibling";
+    private static final String LEFTOVER_MARKER_NO_BASE = "a record naming no base generation";
+    private static final String LEFTOVER_MARKER_STAGED_ALONE = "a staged record alone";
+    private static final String LEFTOVER_MARKER_TORN = "a record that fails its checksum";
+    private static final String LEFTOVER_MARKER_VERSION_1 = "a version 1 record";
+    private static final String[] LEFTOVER_MARKER_SHAPES = {
+            LEFTOVER_MARKER_BASE_5,
+            LEFTOVER_MARKER_NO_BASE,
+            LEFTOVER_MARKER_TORN,
+            LEFTOVER_MARKER_VERSION_1,
+            LEFTOVER_MARKER_STAGED_ALONE,
+            LEFTOVER_MARKER_BOTH_NAMES
+    };
     private static final long LIFECYCLE_IDENTITY = 101;
     private static final String LV_DIR = "lv_checkpoint_lifecycle";
     // The generation and view seqTxn the repair marker of writeRetireFixture names.
@@ -115,6 +146,148 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                     "the newer generation's segment is the newer build's to explain",
                     segmentExists(true, 2, false)
             );
+        });
+    }
+
+    @Test
+    public void testAppendBesideAChecksumValidSlotWithUnusableRootsKeepsItsMarker() throws Exception {
+        // Both generations name a timeline root page that fails validation, so the store selects no
+        // generation, but both slots pass their checksum: the history the marker guards is still on
+        // disk, and a restart judges the marker against it. The append opens no history there - the
+        // publication gate refuses generation 1 below the checksum-valid slots, as it always has -
+        // and leaves the marker as it is.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            ensureDirs();
+            try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                Assert.assertEquals(1, appendRoot(writer, 10, Numbers.LONG_NULL));
+                final LiveViewCheckpointPageRef firstRoot = timelineRootRef();
+                Assert.assertEquals(2, appendRoot(writer, 20, Numbers.LONG_NULL));
+                final LiveViewCheckpointPageRef secondRoot = timelineRootRef();
+                corruptMetaPage(firstRoot);
+                corruptMetaPage(secondRoot);
+                try (LiveViewCheckpointMetaStore store = openStore()) {
+                    Assert.assertFalse("no generation passes its root validation", store.isValid());
+                    Assert.assertEquals("both slots pass their checksum", 1, store.getSuperblock().getOldestValidGeneration());
+                }
+                try (Path dir = checkpointsDir()) {
+                    LiveViewCheckpointRepairMarker.write(configuration, dir, 7, 0, 2, 1_000, MARKER_LV_SEQ_TXN);
+                }
+                ff.refuseMarkerUnlinks(true);
+                try {
+                    appendRoot(writer, 30, Numbers.LONG_NULL);
+                    Assert.fail("a generation below the checksum-valid slots must not publish");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "live view checkpoint generation must advance [current=2, next=1]");
+                }
+                Assert.assertEquals("no unlink of the marker was attempted", 0, ff.getRefusedUnlinks());
+                assertRepairMarkerReads(2, MARKER_LV_SEQ_TXN);
+            }
+        });
+    }
+
+    @Test
+    public void testAppendBesideAValidGenerationKeepsItsMarker() throws Exception {
+        // A marker beside a valid generation is the repair's own, whatever the append that follows
+        // it: no seal, runtime or seed, removes it or tries to.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            for (long seedCursorOffset : new long[]{Numbers.LONG_NULL, 5}) {
+                removeCheckpointsDir();
+                ensureDirs();
+                try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                    Assert.assertEquals(1, appendRoot(writer, 10, seedCursorOffset));
+                    try (Path dir = checkpointsDir()) {
+                        LiveViewCheckpointRepairMarker.write(configuration, dir, 7, 0, 1, 1_000, MARKER_LV_SEQ_TXN);
+                    }
+                    Assert.assertEquals(2, appendRoot(writer, 20, nextSeedCursorOffset(seedCursorOffset)));
+                    assertRepairMarkerReads(1, MARKER_LV_SEQ_TXN);
+
+                    ff.refuseMarkerUnlinks(true);
+                    Assert.assertEquals(3, appendRoot(writer, 30, nextSeedCursorOffset(seedCursorOffset)));
+                    ff.refuseMarkerUnlinks(false);
+                    Assert.assertEquals("no unlink of the marker was attempted", 0, ff.getRefusedUnlinks());
+                    assertRepairMarkerReads(1, MARKER_LV_SEQ_TXN);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAppendOverATimelineWithNoValidSlotOpensAHistoryWithoutTheMarker() throws Exception {
+        // A _timeline whose slots are zeroed, or both fail their checksum, holds no history, so the
+        // append over it opens one, and removes the marker an older history left first.
+        assertMemoryLeak(() -> {
+            for (boolean isTorn : new boolean[]{false, true}) {
+                removeCheckpointsDir();
+                ensureDirs();
+                try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                    if (isTorn) {
+                        Assert.assertEquals(1, appendRoot(writer, 10, Numbers.LONG_NULL));
+                        Assert.assertEquals(2, appendRoot(writer, 20, Numbers.LONG_NULL));
+                        withTimelineMemory(mem -> {
+                            for (int slot = 0; slot < 2; slot++) {
+                                final long offset = (long) slot * LiveViewCheckpointSuperblock.SLOT_SIZE + LiveViewCheckpointSuperblock.SLOT_CRC_OFFSET;
+                                mem.putByte(offset, (byte) (mem.getByte(offset) ^ 1));
+                            }
+                        });
+                    } else {
+                        try (LiveViewCheckpointMetaStore store = openStore()) {
+                            Assert.assertFalse(store.isValid());
+                        }
+                        Assert.assertTrue("the open left a zero-filled _timeline", timelineExists());
+                    }
+                    try (LiveViewCheckpointMetaStore store = openStore()) {
+                        Assert.assertEquals("no slot passes its checksum", Long.MAX_VALUE, store.getSuperblock().getOldestValidGeneration());
+                    }
+                    writeLeftoverMarker(LEFTOVER_MARKER_NO_BASE);
+                    Assert.assertEquals(1, appendRoot(writer, 30, Numbers.LONG_NULL));
+                }
+                assertSeedCursorOffset(Numbers.LONG_NULL);
+                Assert.assertFalse("the history opened without the marker", isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+            }
+        });
+    }
+
+    @Test
+    public void testAppendThatOpensAHistoryRemovesALeftoverMarker() throws Exception {
+        // A marker beside no generation was written for a history that is gone: whatever its shape,
+        // the append that opens the next history removes it, a seed opening as a runtime one, so
+        // the history opens without it.
+        assertMemoryLeak(() -> {
+            for (String shape : LEFTOVER_MARKER_SHAPES) {
+                for (long seedCursorOffset : new long[]{Numbers.LONG_NULL, 7}) {
+                    removeCheckpointsDir();
+                    ensureDirs();
+                    writeLeftoverMarker(shape);
+                    try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                        Assert.assertEquals(shape, 1, appendRoot(writer, 10, seedCursorOffset));
+                    }
+                    assertSeedCursorOffset(seedCursorOffset);
+                    Assert.assertFalse(shape + ": the marker is gone", isRepairMarkerFilePresent(false));
+                    Assert.assertFalse(shape + ": and its staged sibling", isRepairMarkerFilePresent(true));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAppendWithInvalidCoordinatesLeavesTheMarker() throws Exception {
+        // An append that refuses its input refuses it before anything else, the marker removal
+        // included.
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            writeLeftoverMarker(LEFTOVER_MARKER_BOTH_NAMES);
+            try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                appendRoot(writer, 10, -1);
+                Assert.fail("a negative seed cursor that is not LONG_NULL must refuse");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "invalid live view normal checkpoint coordinates");
+            }
+            Assert.assertTrue(isRepairMarkerFilePresent(false));
+            Assert.assertTrue(isRepairMarkerFilePresent(true));
+            assertRepairMarkerReads(5, MARKER_LV_SEQ_TXN);
         });
     }
 
@@ -680,6 +853,99 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeHistoryOpeningRefusesWhileTheMarkerStays() throws Exception {
+        // A runtime history that opened beside a marker an older history left would be read against
+        // it by every restart. While either name stays the append opens nothing: it fails ahead of
+        // its first write, and the next append tries the removal again.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            for (boolean isStagedRefused : new boolean[]{false, true}) {
+                removeCheckpointsDir();
+                ensureDirs();
+                writeLeftoverMarker(LEFTOVER_MARKER_BOTH_NAMES);
+                ff.refuseUnlinkOf(isStagedRefused
+                        ? LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX
+                        : LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME);
+                try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                    try {
+                        appendRoot(writer, 10, Numbers.LONG_NULL);
+                        Assert.fail("a runtime history must not open beside a marker it cannot remove");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "could not remove the repair marker an earlier live view checkpoint timeline left [path="
+                        );
+                    }
+                    try (LiveViewCheckpointMetaStore store = openStore()) {
+                        Assert.assertFalse("no generation is published", store.isValid());
+                    }
+                    Assert.assertEquals("only the refused name stays", !isStagedRefused, isRepairMarkerFilePresent(false));
+                    Assert.assertEquals("only the refused name stays", isStagedRefused, isRepairMarkerFilePresent(true));
+                    Assert.assertEquals("no metadata segment is written", 0, countFiles(LiveViewCheckpointLayout.META_DIR_NAME));
+                    Assert.assertEquals("no data segment is written", 0, countFiles(LiveViewCheckpointLayout.DATA_DIR_NAME));
+
+                    ff.refuseUnlinkOf(null);
+                    Assert.assertEquals("the next append opens the history", 1, appendRoot(writer, 10, Numbers.LONG_NULL));
+                }
+                Assert.assertFalse(isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+            }
+        });
+    }
+
+    @Test
+    public void testSeedHistoryOpeningPublishesBesideAMarkerItCannotRemove() throws Exception {
+        // No reader of a seed history reads the marker, so a seed opening that cannot remove it
+        // publishes all the same, and the appends that follow it try no removal. The runtime opening
+        // after a retire of that history is refused while the marker stays, and opens the history
+        // once it goes. Cursor 0 is a seed opening too: only LONG_NULL marks a runtime one.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            for (long seedCursorOffset : new long[]{0, 3}) {
+                removeCheckpointsDir();
+                ensureDirs();
+                writeLeftoverMarker(LEFTOVER_MARKER_NO_BASE);
+                final int refusedBefore = ff.getRefusedUnlinks();
+                ff.refuseMarkerUnlinks(true);
+                try (LiveViewCheckpointTimelineStoreWriter writer = new LiveViewCheckpointTimelineStoreWriter(configuration)) {
+                    Assert.assertEquals("the seed history opens", 1, appendRoot(writer, 10, seedCursorOffset));
+                    assertSeedCursorOffset(seedCursorOffset);
+                    Assert.assertEquals("the opening tried the removal", refusedBefore + 1, ff.getRefusedUnlinks());
+                    Assert.assertTrue("beside the marker it could not remove", isRepairMarkerFilePresent(false));
+                    assertRepairMarkerReads(Numbers.LONG_NULL, Numbers.LONG_NULL);
+
+                    Assert.assertEquals(2, appendRoot(writer, 20, seedCursorOffset + 2));
+                    assertSeedCursorOffset(seedCursorOffset + 2);
+                    Assert.assertEquals("no removal beside a valid generation", refusedBefore + 1, ff.getRefusedUnlinks());
+
+                    try (Path dir = checkpointsDir()) {
+                        Assert.assertFalse(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true));
+                    }
+                    Assert.assertFalse(timelineExists());
+                    Assert.assertTrue("the retire keeps the marker it could not remove", isRepairMarkerFilePresent(false));
+                    Assert.assertEquals(refusedBefore + 2, ff.getRefusedUnlinks());
+                    try {
+                        appendRoot(writer, 30, Numbers.LONG_NULL);
+                        Assert.fail("a runtime history must not open beside a marker it cannot remove");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "could not remove the repair marker an earlier live view checkpoint timeline left [path="
+                        );
+                    }
+                    Assert.assertEquals(refusedBefore + 3, ff.getRefusedUnlinks());
+
+                    ff.refuseMarkerUnlinks(false);
+                    Assert.assertEquals("the runtime history opens once the marker goes", 1, appendRoot(writer, 30, Numbers.LONG_NULL));
+                    assertSeedCursorOffset(Numbers.LONG_NULL);
+                }
+                Assert.assertFalse(isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+            }
+        });
+    }
+
+    @Test
     public void testSupersededTimelineVersionRefusesASealOverIt() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();
@@ -862,8 +1128,28 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         });
     }
 
+    // Appends a root at maxTimestamp over one scalar window function, as the view of definition txn 7
+    // and history epoch 0 seals one, carrying seedCursorOffset, and returns the generation it
+    // published.
+    private static long appendRoot(LiveViewCheckpointTimelineStoreWriter writer, long maxTimestamp, long seedCursorOffset) {
+        try (Path dir = checkpointsDir(); ScalarStateStub stub = new ScalarStateStub()) {
+            final ObjList<WindowFunction> functions = new ObjList<>();
+            functions.add(stub);
+            return writer.append(
+                    dir, functions, null, 7, 0, maxTimestamp, maxTimestamp, 0, LIFECYCLE_IDENTITY, true, maxTimestamp, 1,
+                    Numbers.LONG_NULL, seedCursorOffset, null
+            ).getGeneration();
+        }
+    }
+
     private static Path checkpointsDir() {
         return new Path().of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
+    }
+
+    // The seed cursor of the append after one that carried seedCursorOffset: LONG_NULL for a steady
+    // seal, the next row offset for a seed seal.
+    private static long nextSeedCursorOffset(long seedCursorOffset) {
+        return seedCursorOffset == Numbers.LONG_NULL ? Numbers.LONG_NULL : seedCursorOffset + 1;
     }
 
     /**
@@ -933,6 +1219,98 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         }
         try (Path dir = checkpointsDir()) {
             Assert.assertFalse(LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true).isFormatReset());
+        }
+    }
+
+    // The selected generation carries seedCursorOffset.
+    private void assertSeedCursorOffset(long seedCursorOffset) {
+        try (LiveViewCheckpointMetaStore store = openStore()) {
+            Assert.assertTrue(store.isValid());
+            Assert.assertEquals("the seed cursor the append carried", seedCursorOffset, store.getSuperblock().seedCursorOffset);
+        }
+    }
+
+    // Flips one byte of the page ref names, past its header, so the page fails its checksum.
+    private void corruptMetaPage(LiveViewCheckpointPageRef ref) {
+        try (Path dir = checkpointsDir(); Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+            LiveViewCheckpointLayout.metaSegmentPath(path, dir, ref.getSegmentId());
+            mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+            final long offset = ref.getOffset() + LiveViewCheckpointLayout.PAGE_HEADER_SIZE;
+            mem.putByte(offset, (byte) (mem.getByte(offset) ^ 1));
+        }
+    }
+
+    // The files in the checkpoint directory's subdirectory dirName.
+    private long countFiles(String dirName) throws IOException {
+        try (Path dir = checkpointsDir(); Stream<java.nio.file.Path> files = Files.list(Paths.get(dir.toString(), dirName))) {
+            return files.count();
+        }
+    }
+
+    private void removeCheckpointsDir() {
+        try (Path dir = checkpointsDir()) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            if (ff.exists(dir.$())) {
+                Assert.assertTrue(ff.rmdir(dir.slash()));
+            }
+        }
+    }
+
+    // The timeline root the selected generation names.
+    private LiveViewCheckpointPageRef timelineRootRef() {
+        try (LiveViewCheckpointMetaStore store = openStore()) {
+            final LiveViewCheckpointPageRef ref = store.getSuperblock().timelineRootRef;
+            return new LiveViewCheckpointPageRef().of(ref.getSegmentId(), ref.getOffset(), ref.getLength());
+        }
+    }
+
+    /**
+     * Writes one of {@link #LEFTOVER_MARKER_SHAPES} into the checkpoint directory: what an older
+     * history's repair marker can look like once that history is gone.
+     */
+    private void writeLeftoverMarker(String shape) throws IOException {
+        try (Path dir = checkpointsDir(); Path path = new Path(); Path stagedPath = new Path()) {
+            LiveViewCheckpointLayout.repairingMarkerPath(path, dir);
+            LiveViewCheckpointLayout.repairingMarkerPath(stagedPath, dir).put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            final java.nio.file.Path markerFile = Paths.get(path.toString());
+            if (shape.equals(LEFTOVER_MARKER_NO_BASE)) {
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 7, 0, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            } else if (shape.equals(LEFTOVER_MARKER_VERSION_1)) {
+                final ByteBuffer record = ByteBuffer.allocate(LiveViewCheckpointRepairMarker.V1_SIZE).order(ByteOrder.LITTLE_ENDIAN);
+                record.putLong(LiveViewCheckpointRepairMarker.MAGIC_OFFSET, LiveViewCheckpointRepairMarker.MARKER_MAGIC);
+                record.putInt(LiveViewCheckpointRepairMarker.FORMAT_VERSION_OFFSET, LiveViewCheckpointRepairMarker.V1_FORMAT_VERSION);
+                record.putLong(LiveViewCheckpointRepairMarker.DEFINITION_TXN_OFFSET, 7);
+                record.putLong(LiveViewCheckpointRepairMarker.HISTORY_EPOCH_OFFSET, 0);
+                record.putLong(LiveViewCheckpointRepairMarker.BASE_GENERATION_OFFSET, 5);
+                record.putLong(LiveViewCheckpointRepairMarker.FLOOR_TIMESTAMP_OFFSET, 1_000);
+                final CRC32 crc = new CRC32();
+                crc.update(record.array(), 0, LiveViewCheckpointRepairMarker.V1_CRC_OFFSET);
+                record.putInt(LiveViewCheckpointRepairMarker.V1_CRC_OFFSET, (int) crc.getValue());
+                Files.write(markerFile, record.array());
+            } else {
+                LiveViewCheckpointRepairMarker.write(configuration, dir, 7, 0, 5, 1_000, MARKER_LV_SEQ_TXN);
+                if (shape.equals(LEFTOVER_MARKER_TORN)) {
+                    final byte[] bytes = Files.readAllBytes(markerFile);
+                    bytes[LiveViewCheckpointRepairMarker.BASE_GENERATION_OFFSET] ^= 1;
+                    Files.write(markerFile, bytes);
+                } else if (shape.equals(LEFTOVER_MARKER_STAGED_ALONE)) {
+                    Assert.assertEquals(
+                            io.questdb.std.Files.FILES_RENAME_OK,
+                            configuration.getFilesFacade().rename(path.$(), stagedPath.$())
+                    );
+                } else if (shape.equals(LEFTOVER_MARKER_BOTH_NAMES)) {
+                    Assert.assertTrue(configuration.getFilesFacade().touch(stagedPath.$()));
+                } else {
+                    Assert.assertEquals(LEFTOVER_MARKER_BASE_5, shape);
+                }
+            }
+            Assert.assertTrue(shape, LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            final boolean isNamingBase5 = !shape.equals(LEFTOVER_MARKER_NO_BASE) && !shape.equals(LEFTOVER_MARKER_TORN);
+            Assert.assertEquals(
+                    shape,
+                    isNamingBase5 ? 5 : Numbers.LONG_NULL,
+                    LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir)
+            );
         }
     }
 
@@ -1308,10 +1686,80 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         void apply(MemoryCMARW mem);
     }
 
-    // Refuses the unlink of the checkpoint file whose name ends with the refused name, and, when
-    // set, every directory removal under the checkpoint directory: a file lock or a permission
-    // fault a retire has to work around.
+    // A scalar (map-less) whole-state window function, so an append walks the production
+    // publication path over a fixed, tiny state image.
+    private static final class ScalarStateStub extends BaseWindowFunction {
+
+        private ScalarStateStub() {
+            super(null);
+            setCheckpointCompilerMetadata(
+                    new LiveViewCheckpointFunctionIdentity(
+                            "w0",
+                            "lifecycle_stub()",
+                            0,
+                            "",
+                            "ts asc",
+                            "lifecycle-stub-v1"
+                    ),
+                    new LiveViewCheckpointDependency(
+                            LiveViewCheckpointContracts.DependencyKind.UNBOUNDED_CUMULATIVE_NO_RESET,
+                            "",
+                            "ts asc",
+                            Long.MIN_VALUE,
+                            0,
+                            Long.MIN_VALUE,
+                            ColumnType.TIMESTAMP,
+                            false,
+                            false,
+                            false,
+                            LiveViewCheckpointDependency.StructuralConvergence.EXACT,
+                            LiveViewCheckpointDependency.NumericConvergence.EXACT
+                    )
+            );
+        }
+
+        @Override
+        public int checkpointStateFormatVersion() {
+            return 1;
+        }
+
+        @Override
+        public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
+            sink.putLong(0);
+        }
+
+        @Override
+        public String getName() {
+            return "lifecycle_stub";
+        }
+
+        @Override
+        public int getType() {
+            return ColumnType.LONG;
+        }
+
+        @Override
+        public void pass1(Record record, long recordOffset, WindowSPI spi) {
+        }
+
+        @Override
+        public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
+            return Long.BYTES;
+        }
+
+        @Override
+        public boolean supportsCheckpointState() {
+            return true;
+        }
+    }
+
+    // Refuses the unlink of the checkpoint file whose name ends with the refused name, when set
+    // the unlinks of both repair marker names, and, when set, every directory removal under the
+    // checkpoint directory: a file lock or a permission fault a retire has to work around. Counts
+    // the unlinks it refuses.
     private static final class RetireRemovalFault extends TestFilesFacadeImpl {
+        private final AtomicInteger refusedUnlinks = new AtomicInteger();
+        private volatile boolean isRefusingMarkerUnlinks;
         private volatile boolean isRefusingTreeRemovals;
         private volatile String refusedUnlinkName;
 
@@ -1319,9 +1767,25 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
         public boolean removeQuiet(LPSZ name) {
             final String refused = refusedUnlinkName;
             if (refused != null && Utf8s.containsAscii(name, LV_DIR) && Utf8s.endsWithAscii(name, refused)) {
+                refusedUnlinks.incrementAndGet();
+                return false;
+            }
+            if (isRefusingMarkerUnlinks
+                    && Utf8s.containsAscii(name, LV_DIR)
+                    && (Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                    || Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX))) {
+                refusedUnlinks.incrementAndGet();
                 return false;
             }
             return super.removeQuiet(name);
+        }
+
+        int getRefusedUnlinks() {
+            return refusedUnlinks.get();
+        }
+
+        void refuseMarkerUnlinks(boolean isRefusing) {
+            isRefusingMarkerUnlinks = isRefusing;
         }
 
         @Override

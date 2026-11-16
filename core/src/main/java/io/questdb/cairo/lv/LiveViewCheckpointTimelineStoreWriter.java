@@ -316,6 +316,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * the generation that carries it. When the head's timestamp group grew after
      * the head was sealed, the new boundary replaces the head in the same
      * generation instead of stacking above it; see {@code batchMinTs}.
+     * <p>
+     * An append over a directory where no superblock slot passes its checksum opens a
+     * history, and first removes the repair marker an older history left there. While
+     * the marker cannot be removed, an append that would open a runtime history fails
+     * before its first write, and one that opens a seed history publishes beside it;
+     * see {@code seedCursorOffset}.
      *
      * @param batchMinTs       the lowest designated timestamp the runtime has
      *                         processed since the current head boundary, or
@@ -334,7 +340,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                         restart can resume the sweep from the root this
      *                         publishes; {@link Numbers#LONG_NULL} for a steady
      *                         cadence seal, which is what tells a restart the
-     *                         newest root is not a resume point
+     *                         newest root is not a resume point. It also tells
+     *                         the history an append opens: a runtime one, which
+     *                         every restart weighs a repair marker against, opens
+     *                         only once no older history's marker is left beside
+     *                         it, and a seed one, whose readers never read the
+     *                         marker, opens beside one it cannot remove
      * @param memoryTracker    the sealed view's refresh workload tracker, which
      *                         the freeze scratch buffers charge while this
      *                         append runs, or null to account against process
@@ -1991,6 +2002,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (metaStore.isValid() && (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch)) {
                 throw HistoryEpochChangedException.INSTANCE;
             }
+            if (!superblock.hasChecksumValidSlot()) {
+                removeLeftoverRepairMarker(checkpointsDir, seedCursorOffset);
+            }
             hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
             if (metaStore.isValid()
                     && (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn
@@ -3596,6 +3610,32 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (partitionMapObjectPool.getRetainedObjectCount() > MAX_RETAINED_PARTITION_MAP_OBJECTS) {
                 partitionMapObjectPool.clear();
             }
+        }
+    }
+
+    /**
+     * Runs for an append that opens a history - no slot of the superblock passes its checksum,
+     * so it publishes generation 1 - ahead of its first write, and removes the repair marker an
+     * older history left beside it. Nothing on disk tells two histories apart: every slot names
+     * the view's definition txn and history epoch 0. A marker beside the new history would be read
+     * against it as the older history's: a restart and the in-place recovery would decline to
+     * restore it, and the next repair's marker would record no seqTxn. A marker beside a
+     * checksum-valid slot is never touched here: a repair writes one only over such a slot, and the
+     * appends that follow it build on that slot.
+     * <p>
+     * A runtime opening ({@code seedCursorOffset} is {@link Numbers#LONG_NULL}) opens nothing while
+     * either name stays: it fails before any write, and the next seal, again an opening, tries the
+     * removal again. A seed opening publishes all the same. No reader of a seed history reads the
+     * marker, and the retire at the seed's completion, which runs before the first runtime root,
+     * removes it or leaves it to that root's opening, so refusing would only cost the sweep its
+     * resume points.
+     */
+    private void removeLeftoverRepairMarker(@Transient @NotNull Path checkpointsDir, long seedCursorOffset) {
+        if (!LiveViewCheckpointLifecycle.removeRepairMarker(configuration, checkpointsDir)
+                && seedCursorOffset == Numbers.LONG_NULL) {
+            throw CairoException.critical(configuration.getFilesFacade().errno())
+                    .put("could not remove the repair marker an earlier live view checkpoint timeline left [path=")
+                    .put(checkpointsDir).put(']');
         }
     }
 

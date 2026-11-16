@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
@@ -922,6 +923,44 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     @Test
+    public void testAnUpgradeWhoseRetireLeavesTheOlderMarkerOpensItsHistoryWithoutIt() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            shutdown();
+            stampOlderFormat(checkpointsRootByDirName());
+            // The repair marker of a repair the older build left in flight, in its version 1 layout,
+            // naming the generation the older timeline carries: live against it.
+            writeVersionOneRepairMarker(engine.verifyTableName("lv").getTableId());
+            loadCatalogue();
+
+            // The upgrade rebuild's retire removes the older _timeline and cannot remove the marker.
+            // The rebuild's closing seal opens the history in this build's format, and removes the
+            // marker ahead of it, so no restart reads the marker against the new history.
+            fault.armMarkerRemove();
+            drive();
+            Assert.assertTrue("the retire's unlink of the marker must have been refused", fault.hasMarkerRemoveFired());
+            assertUpgradeRebuilt("lv");
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+            Assert.assertFalse(
+                    "the closing seal removed the older marker",
+                    new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME).exists()
+            );
+            Assert.assertFalse(
+                    new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX).exists()
+            );
+            Assert.assertEquals("and the seal lands", 0, instance("lv").getCheckpointSealFailures());
+            assertViewRows(ALL_ROWS);
+            assertNoRefreshFaults("lv");
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(ALL_ROWS);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testAnUpgradeRebuildOverABaseThatLostAMiddleDayRestatesItWithoutALogLine() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows();
@@ -1166,6 +1205,28 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         );
     }
 
+    /**
+     * Writes the version 1 repair marker an older build leaves for a repair in flight, beside the
+     * view's timeline: the fields of {@link LiveViewCheckpointRepairMarker} up to the floor
+     * timestamp, then the CRC of everything before it, naming base generation 1.
+     */
+    private void writeVersionOneRepairMarker(long definitionTxn) throws IOException {
+        final byte[] bytes = new byte[LiveViewCheckpointRepairMarker.V1_SIZE];
+        putLeLong(bytes, LiveViewCheckpointRepairMarker.MAGIC_OFFSET, LiveViewCheckpointRepairMarker.MARKER_MAGIC);
+        putLeInt(bytes, LiveViewCheckpointRepairMarker.FORMAT_VERSION_OFFSET, LiveViewCheckpointRepairMarker.V1_FORMAT_VERSION);
+        putLeLong(bytes, LiveViewCheckpointRepairMarker.DEFINITION_TXN_OFFSET, definitionTxn);
+        putLeLong(bytes, LiveViewCheckpointRepairMarker.HISTORY_EPOCH_OFFSET, 0);
+        putLeLong(bytes, LiveViewCheckpointRepairMarker.BASE_GENERATION_OFFSET, 1);
+        putLeLong(bytes, LiveViewCheckpointRepairMarker.FLOOR_TIMESTAMP_OFFSET, 0);
+        final CRC32 crc = new CRC32();
+        crc.update(bytes, 0, LiveViewCheckpointRepairMarker.V1_CRC_OFFSET);
+        putLeInt(bytes, LiveViewCheckpointRepairMarker.V1_CRC_OFFSET, (int) crc.getValue());
+        Files.write(new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME).toPath(), bytes);
+        try (Path dir = new Path().of(checkpointsRootByDirName().getAbsolutePath())) {
+            Assert.assertEquals("a valid version 1 record", 1, LiveViewCheckpointRepairMarker.readBaseGeneration(configuration, dir));
+        }
+    }
+
     private void assertRecoveryReport(String expectedRow) throws Exception {
         assertQuery("SELECT view_status, checkpoint_recovery_phase, checkpoint_recovery_reason, invalidation_reason "
                 + "FROM live_views() WHERE view_name = 'lv'")
@@ -1320,6 +1381,8 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         private final AtomicBoolean isAppliedScanFired = new AtomicBoolean();
         private final AtomicBoolean isAppliedScanPastFirstDayArmed = new AtomicBoolean();
         private final AtomicBoolean isAppliedScanPersistent = new AtomicBoolean();
+        private final AtomicBoolean isMarkerRemoveArmed = new AtomicBoolean();
+        private final AtomicBoolean isMarkerRemoveFired = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveFired = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
@@ -1402,6 +1465,12 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         @Override
         public boolean removeQuiet(LPSZ name) {
+            if (isMarkerRemoveArmed.get()
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                    && isMarkerRemoveArmed.compareAndSet(true, false)) {
+                isMarkerRemoveFired.set(true);
+                return false;
+            }
             if (isTimelineRemoveArmed.get()
                     && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                     && isTimelineRemoveArmed.compareAndSet(true, false)) {
@@ -1457,6 +1526,11 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             isSchemaChangeArmed.set(true);
         }
 
+        void armMarkerRemove() {
+            isMarkerRemoveFired.set(false);
+            isMarkerRemoveArmed.set(true);
+        }
+
         void armMetaDirRemove() {
             isMetaDirRemoveFired.set(false);
             isMetaDirRemoveArmed.set(true);
@@ -1478,6 +1552,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         boolean hasAppliedScanFired() {
             return isAppliedScanFired.get();
+        }
+
+        boolean hasMarkerRemoveFired() {
+            return isMarkerRemoveFired.get();
         }
 
         boolean hasMetaDirRemoveFired() {

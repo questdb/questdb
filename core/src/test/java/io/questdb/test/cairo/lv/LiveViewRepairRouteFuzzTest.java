@@ -147,6 +147,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // reaches it draws everything else as it did before the episode existed.
     private static final long KEPT_TIMELINE_SALT0 = 0x510E527FADE682D1L;
     private static final long KEPT_TIMELINE_SALT1 = 0x9B05688C2B3E6C1FL;
+    // Salt the draw of keptTimelineRetireEpisode's lock on the repair marker apart from both, so
+    // the episode draws what it drew before the lock existed.
+    private static final long KEPT_TIMELINE_MARKER_SALT0 = 0x1F83D9ABFB41BD6BL;
+    private static final long KEPT_TIMELINE_MARKER_SALT1 = 0x5BE0CD19137E2179L;
     // How a pass decides whether to hold its flush off.
     private static final int PIN_NO = 0;
     private static final int PIN_RANDOM = -1;
@@ -195,6 +199,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private int keptSpliceEpisodes;
     private int keptTimelineLateRowsLocked;
     private int keptTimelineLateRowsReleased;
+    // Episodes of keptTimelineRetireEpisode in which a seal was refused a runtime history beside
+    // the marker a lock kept once _timeline went.
+    private int keptTimelineMarkerRefusals;
     private int keptTimelineRetireEpisodes;
     // Cycles without rows that sealed the root a keyed resume owed once its closing seal failed:
     // see keyedOwedRootEpisode.
@@ -627,8 +634,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                     LOG.info().$("LV route fuzz kept timelines [retireEpisodes=").$(keptTimelineRetireEpisodes)
                             .$(", lateRowsLocked=").$(keptTimelineLateRowsLocked)
                             .$(", lateRowsReleased=").$(keptTimelineLateRowsReleased)
+                            .$(", markerRefusals=").$(keptTimelineMarkerRefusals)
                             .$(", spliceEpisodes=").$(keptSpliceEpisodes).I$();
                     Assert.assertTrue("no repair retired its timeline under a lock that kept the file", keptTimelineRetireEpisodes > 0);
+                    Assert.assertTrue("no seal was refused a history beside a marker its retire left", keptTimelineMarkerRefusals > 0);
                     Assert.assertTrue("no failed head-miss splice left its timeline under a lock", keptSpliceEpisodes > 0);
                 }
             }
@@ -1601,9 +1610,18 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * marker. A forward row past the duration cadence then seals a root, which a fresh history
      * takes when no seal landed since the retire. Draws from a sequence salted apart from the
      * run's, so the run draws everything else as it did before the episode existed.
+     * <p>
+     * The batch's first episode, and one in two after it until a seal has been refused, also locks
+     * the repair marker once the lock on {@code _timeline} goes, drawn from a sequence salted apart
+     * from the episode's. The first late row past the lock on {@code _timeline} then retires the
+     * kept file, cannot remove the marker, and its closing seal opens no runtime history beside the
+     * marker, which every restart would read against it. With no late row past that lock, a forward
+     * row's seal does the same. The marker's lock goes ahead of the forward row that seals the root.
      */
     private void keptTimelineRetireEpisode(Rnd rnd, PassShape shape) throws Exception {
         final Rnd episodeRnd = new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_SALT1);
+        final Rnd markerRnd = new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_MARKER_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_MARKER_SALT1);
+        final boolean isMarkerLockDrawn = keptTimelineMarkerRefusals == 0 || markerRnd.nextInt(2) == 0;
         final LiveViewInstance instance = viewInstance();
         driveRefreshToQuiescence(job);
         setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
@@ -1634,6 +1652,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 .$(", keptGeneration=").$(keptGeneration)
                 .$(", lateRows=").$(lateRows)
                 .$(", releasedAhead=").$(releasedAhead).I$();
+        long sealFailuresAtTheMarkerLock = Numbers.LONG_NULL;
         timelineLock.lock();
         try {
             insertSynthetic(minTs - 1);
@@ -1654,6 +1673,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             for (int k = 0; k < lateRows; k++) {
                 if (k == releasedAhead) {
                     timelineLock.unlock();
+                    if (isMarkerLockDrawn) {
+                        sealFailuresAtTheMarkerLock = instance.getCheckpointSealFailures();
+                        timelineLock.lockMarker();
+                    }
                 }
                 final long resumesBefore = countResumes(stats);
                 insertSynthetic(minTs + episodeRnd.nextLong(rootTs - minTs));
@@ -1665,12 +1688,37 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                     keptTimelineLateRowsLocked++;
                 } else {
                     Assert.assertFalse("the late row's retire removed the kept file", instance.isCheckpointTimelineRetirePending());
+                    if (isMarkerLockDrawn) {
+                        assertNoHistoryBesideTheMarker(instance, "late row " + k + " past the lock on _timeline");
+                    }
                     keptTimelineLateRowsReleased++;
                 }
                 assertView(shape.oracleSql, shape.orderBy, "after late row " + k + " over the kept timeline");
             }
         } finally {
             timelineLock.unlock();
+        }
+        try {
+            if (isMarkerLockDrawn && sealFailuresAtTheMarkerLock == Numbers.LONG_NULL) {
+                // No late row ran past the lock on _timeline: a forward row's seal retries the
+                // retire, which removes the kept file and cannot remove the marker, and is refused.
+                sealFailuresAtTheMarkerLock = instance.getCheckpointSealFailures();
+                timelineLock.lockMarker();
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                insertSynthetic(maxInsertedTs + 1);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("the seal's retry of the retire removed the kept file", instance.isCheckpointTimelineRetirePending());
+                Assert.assertEquals("the seal is refused", sealFailuresAtTheMarkerLock + 1, instance.getCheckpointSealFailures());
+                assertNoHistoryBesideTheMarker(instance, "the forward row under the lock on the marker");
+                assertView(shape.oracleSql, shape.orderBy, "after the forward row under the lock on the marker");
+            }
+            if (isMarkerLockDrawn && instance.getCheckpointSealFailures() > sealFailuresAtTheMarkerLock) {
+                Assert.assertTrue("the lock refused the marker's removal", timelineLock.getRefusedMarkerUnlinks() > 0);
+                keptTimelineMarkerRefusals++;
+            }
+        } finally {
+            timelineLock.unlockMarker();
         }
         final boolean isKeptBeforeTheForwardRow = instance.isCheckpointTimelineRetirePending();
         final boolean hasTimelineBeforeTheForwardRow = hasTimeline(instance);
@@ -1680,7 +1728,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
         Assert.assertFalse("nothing keeps the timeline once the lock is gone", instance.isCheckpointTimelineRetirePending());
         Assert.assertEquals("a root seals the forward row", maxInsertedTs, instance.getHeadCheckpointMaxTs());
-        if (isKeptBeforeTheForwardRow || !hasTimelineBeforeTheForwardRow) {
+        if (isKeptBeforeTheForwardRow || !hasTimelineBeforeTheForwardRow || isMarkerLockDrawn) {
             Assert.assertEquals("in a fresh history", 1, publishedCheckpointGeneration(instance));
         }
         try (Path dir = checkpointsDir(instance)) {
@@ -1819,6 +1867,15 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     }
 
     // Whether the view's checkpoint timeline, _timeline, is on disk.
+    // The lock on the repair marker kept it beside no history: no slot of the view's _timeline
+    // passes its checksum, so no generation stands that a restart would read the marker against.
+    private static void assertNoHistoryBesideTheMarker(LiveViewInstance instance, String when) {
+        try (Path dir = checkpointsDir(instance)) {
+            Assert.assertTrue("[" + when + "] the lock keeps the marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        Assert.assertEquals("[" + when + "] no history opens beside it", 0, publishedCheckpointGeneration(instance));
+    }
+
     private static boolean hasTimeline(LiveViewInstance instance) {
         try (Path dir = checkpointsDir(instance); Path timeline = new Path()) {
             LiveViewCheckpointLayout.timelinePath(timeline, dir);
@@ -2405,17 +2462,28 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     /**
      * While locked, refuses to unlink a live view's checkpoint timeline, {@code _timeline}, and
      * to remove its {@code _checkpoints} directory, the way a reader that holds the file open
-     * refuses it on Windows. Also runs an action once, right after the next rename that publishes
-     * a repair marker, {@code _repairing}, ahead of anything the repair does next.
+     * refuses it on Windows. While the marker is locked, refuses every unlink of the repair
+     * marker, {@code _repairing}, and of its staged sibling, counting them. Also runs an action
+     * once, right after the next rename that publishes a repair marker, ahead of anything the
+     * repair does next.
      */
     private static final class TimelineLock extends TestFilesFacadeImpl {
         private final AtomicInteger markerRenames = new AtomicInteger();
+        private final AtomicInteger refusedMarkerUnlinks = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
         private volatile Runnable afterTheNextMarker;
         private volatile boolean isLocked;
+        private volatile boolean isMarkerLocked;
 
         @Override
         public boolean removeQuiet(LPSZ name) {
+            if (isMarkerLocked
+                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && (Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                    || Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX))) {
+                refusedMarkerUnlinks.incrementAndGet();
+                return false;
+            }
             if (isLocked
                     && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
@@ -2455,6 +2523,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             return markerRenames.get();
         }
 
+        int getRefusedMarkerUnlinks() {
+            return refusedMarkerUnlinks.get();
+        }
+
         int getRefusedTimelineUnlinks() {
             return refusedTimelineUnlinks.get();
         }
@@ -2465,8 +2537,18 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             isLocked = true;
         }
 
+        // Counts the refused unlinks of the marker from 0.
+        void lockMarker() {
+            refusedMarkerUnlinks.set(0);
+            isMarkerLocked = true;
+        }
+
         void unlock() {
             isLocked = false;
+        }
+
+        void unlockMarker() {
+            isMarkerLocked = false;
         }
     }
 }

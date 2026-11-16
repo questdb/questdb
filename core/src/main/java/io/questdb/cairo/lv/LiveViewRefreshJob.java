@@ -919,6 +919,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * retired, which the append runs the retire's on-disk half over again first
      * ({@link #removeCheckpointTimelineFiles}): once the file goes the append opens the
      * fresh history, and while it stays the append is refused and fails as a seal does.
+     * The append that opens a runtime history is refused the same way while it cannot
+     * remove the repair marker a retire left without {@code _timeline}, which a restart
+     * would read against the fresh history (see
+     * {@link LiveViewCheckpointTimelineStoreWriter#append}).
      * <p>
      * {@code seedCursorOffset} carries the seed sweep's base-cursor row offset
      * when a mid-sweep cadence event drives the append, so a restart can resume

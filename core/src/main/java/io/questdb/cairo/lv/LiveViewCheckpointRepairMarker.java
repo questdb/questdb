@@ -102,6 +102,13 @@ import org.jetbrains.annotations.NotNull;
  * publication that fails with no final record left keeps the staged one for the same
  * reason: the record the rewrite unlinked may have been a live marker.
  * <p>
+ * <b>Markers beside no generation.</b> The marker goes with the timeline it guards, but a
+ * retire can remove {@code _timeline} and fail to unlink the marker. Nothing on disk tells
+ * that timeline's history from the next one, so the append that opens the next history
+ * removes the marker first, and a runtime history opens only once it is gone (see
+ * {@link LiveViewCheckpointTimelineStoreWriter#append}). No runtime history therefore
+ * stands beside a marker written for an older one.
+ * <p>
  * This type is stateless; every method is static.
  */
 public final class LiveViewCheckpointRepairMarker {
@@ -139,8 +146,10 @@ public final class LiveViewCheckpointRepairMarker {
      * {@code LiveViewRefreshJob.isRepairMarkerLive}: the record carries a seqTxn,
      * the view's sequencer still ends at it, and the view's table has applied
      * nothing past it. Otherwise it sends a restart to the conservative rebuild,
-     * which the restatement guard may refuse. A crash between the two unlinks
-     * leaves the staged record alone, which the reads then fall back to.
+     * which the restatement guard may refuse. A record left once its timeline is
+     * retired goes at the next history opening, and no runtime history opens
+     * beside it (see the class doc). A crash between the two unlinks leaves the
+     * staged record alone, which the reads then fall back to.
      */
     public static void clear(@NotNull FilesFacade ff, @Transient @NotNull Path checkpointsDir) {
         try (Path path = new Path()) {

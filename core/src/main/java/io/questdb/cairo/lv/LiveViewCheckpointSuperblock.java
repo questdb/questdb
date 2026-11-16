@@ -456,6 +456,19 @@ public class LiveViewCheckpointSuperblock implements Closeable {
     }
 
     /**
+     * Reports whether either slot passed its checksum at the last selection, whatever the bounded
+     * validation of the roots it names found: the independently checksum-valid slots
+     * {@link #getOldestValidGeneration()} ranges over. {@link #selectFallbackSlot()} and
+     * {@link #clearSelection()} leave it as the selection found it, so it differs from
+     * {@link #isValid()} exactly over slots whose roots failed validation. With no such slot the
+     * directory holds no history: the next publication opens one at generation 1.
+     */
+    boolean hasChecksumValidSlot() {
+        ensureOpen();
+        return newestValidGeneration != Long.MIN_VALUE;
+    }
+
+    /**
      * @return true when at least one slot passed validation on the last selection
      */
     public boolean isValid() {
