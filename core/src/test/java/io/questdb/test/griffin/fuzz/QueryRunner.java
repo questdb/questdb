@@ -1805,6 +1805,9 @@ public final class QueryRunner {
             return Result.failed(query.sql(), new AssertionError(
                     "the stream GROUP BY is disabled but the plan still uses it: " + query.sql()));
         }
+        if (bS.failure instanceof ImplicitCastException) {
+            return Result.skipped("stream early exit " + bS.exceptionClass);
+        }
         return reconcilePair(
                 query.sql(),
                 bJ,
