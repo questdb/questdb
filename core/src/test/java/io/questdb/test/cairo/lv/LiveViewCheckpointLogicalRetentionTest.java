@@ -134,6 +134,17 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             """;
     // The forward row 00:05 of 5.0 above them: 5.0 + 4.0 + 3.0.
     private static final String CHANGE_BELOW_EVERY_ROOT_ROW_0005 = "2026-01-01T00:05:00.000000Z\ta\t5.0\t12.0\n";
+    // What the upsert of 00:01 to 100 over commitFourRootsOverTheDayTheBaseLoses leaves, the row
+    // of the day the base lost kept: s sums x over the row and the two rows of 'a' below it, by
+    // hand; the rebuild's state reads the base, which no longer holds 12:00.
+    private static final String CHANGE_BELOW_EVERY_ROOT_OVER_THE_LOST_DAY_ROWS = """
+            ts\tsym\tx\ts
+            2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+            2026-01-01T00:01:00.000000Z\ta\t100.0\t100.0
+            2026-01-01T00:02:00.000000Z\ta\t2.0\t102.0
+            2026-01-01T00:03:00.000000Z\ta\t3.0\t105.0
+            2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
+            """;
     // Too many open files: a fault a retry may get past.
     private static final int ERRNO_EMFILE = 24;
     // What a departure of the newest of two roots above the day the base loses leaves.
@@ -196,6 +207,10 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // What the retire logs when it keeps _timeline and cannot write the marker beside it.
     private static final String KEPT_TIMELINE_MARKER_WRITE_FAILED = "could not write the live view checkpoint repair marker "
             + "beside a timeline its retire could not remove [view=lv";
+    // What the retire logs when it keeps _timeline and the view refuses no timeline yet: once for
+    // each file a retire keeps, until a retire removes it.
+    private static final String KEPT_TIMELINE_NEWLY_KEPT = "live view could not remove the checkpoint timeline it retired, "
+            + "refusing it until a retire removes it [view=lv";
     // What a read or a write of the checkpoint timeline fails with while a retire's kept _timeline
     // stands.
     private static final String KEPT_TIMELINE_REFUSAL = "live view checkpoint timeline is retired, its _timeline could not be removed";
@@ -6632,16 +6647,6 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         // Each restart then rebuilds rather than restore the kept generation, and the restatement
         // guard refuses the rebuild over the day the base lost: the view stops with every row.
         final TimelineUnlinkFault fault = new TimelineUnlinkFault();
-        // s sums x over the row and the two rows of 'a' below it; the rebuild's state reads the
-        // base, which no longer holds 12:00.
-        final String rows = """
-                ts\tsym\tx\ts
-                2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
-                2026-01-01T00:01:00.000000Z\ta\t100.0\t100.0
-                2026-01-01T00:02:00.000000Z\ta\t2.0\t102.0
-                2026-01-01T00:03:00.000000Z\ta\t3.0\t105.0
-                2026-01-01T00:04:00.000000Z\ta\t4.0\t9.0
-                """;
         final LogCapture capture = new LogCapture();
         capture.start();
         try {
@@ -6653,8 +6658,8 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     changeBelowEveryRootUnderALock(job, fault);
                     assertTimelineRetirePending(instance, generationBefore, Numbers.LONG_NULL);
                 }
-                assertViewRows(rows, DEPARTURE_ROWS_QUERY);
-                assertRestartsBlockedByTheRepairMarker(rows, OWED_ROOT_HISTORY_FLOOR);
+                assertViewRows(CHANGE_BELOW_EVERY_ROOT_OVER_THE_LOST_DAY_ROWS, DEPARTURE_ROWS_QUERY);
+                assertRestartsBlockedByTheRepairMarker(CHANGE_BELOW_EVERY_ROOT_OVER_THE_LOST_DAY_ROWS, OWED_ROOT_HISTORY_FLOOR);
                 capture.drain();
                 capture.assertNotLogged(GUARD_STAND_DOWN);
                 capture.assertNotLogged("does not match durable materialization");
@@ -6733,6 +6738,46 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                     Assert.assertFalse(instance.isSealOnCooldown(currentMicros));
                 }
                 assertViewMatchesRecompute(DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testOnlyTheRetireThatFirstKeepsTheTimelineLogsItsRefusal() throws Exception {
+        // The change below every root keeps _timeline under the lock, and the closing seal's and
+        // the forward row's retries of the retire meet the lock too: only the retire that first kept
+        // the file logs that the view refuses it. With the lock gone the next seal's retry removes
+        // the file. A retire that keeps it again under a new lock then logs once more, and the
+        // seal's retry after it does not.
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = commitFourRoots(job, false);
+                    changeBelowEveryRootUnderALock(job, fault);
+                    commitDeparture(job, "('2026-01-01T00:05:00.000000Z', 'a', 5.0)");
+                    Assert.assertEquals("the retire, then two retries of it", 3, fault.getRefusedTimelineUnlinks());
+                    capture.drain();
+                    Assert.assertEquals("only the retire that kept the file first logs it", 1, capture.countOccurrences(KEPT_TIMELINE_NEWLY_KEPT));
+
+                    fault.unlock();
+                    commitDeparture(job, "('2026-01-01T00:06:00.000000Z', 'a', 6.0)");
+                    Assert.assertFalse("the seal's retry removes the file", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertEquals("and opens a fresh history", 1, generation(instance));
+
+                    keepTheTimelineUnderALock(job, fault);
+                    commitDeparture(job, "('2026-01-01T00:07:00.000000Z', 'a', 7.0)");
+                    Assert.assertEquals("the truncate's retire, then the seal's retry of it", 2, fault.getRefusedTimelineUnlinks());
+                    Assert.assertTrue(instance.isCheckpointTimelineRetirePending());
+                    capture.drain();
+                    Assert.assertEquals("the retire that keeps the file again logs it once more", 2, capture.countOccurrences(KEPT_TIMELINE_NEWLY_KEPT));
+                    fault.unlock();
+                }
             });
         } finally {
             capture.stop();
@@ -7410,6 +7455,21 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         } finally {
             capture.stop();
         }
+    }
+
+    @Test
+    public void testBaseColumnAddedOverAKeptTimelineWithoutItsMarkerRebuildsInPlace() throws Exception {
+        // testBaseColumnAddedOverAKeptTimelineRebuildsInPlace with no marker beside the kept file:
+        // the in-place recovery's read of the kept generation is refused instead, and it rebuilds
+        // from the applied base all the same.
+        assertBaseColumnAddedOverAKeptTimelineWithoutItsMarker(false);
+    }
+
+    @Test
+    public void testBaseColumnAddedOverAKeptTimelineWithoutItsMarkerStopsTheViewOverTheDayTheBaseLost() throws Exception {
+        // As above, over the day the base lost: the restatement guard refuses the rebuild, and the
+        // view stops at once with every row, without retrying the restore that was refused.
+        assertBaseColumnAddedOverAKeptTimelineWithoutItsMarker(true);
     }
 
     @Test
@@ -8424,6 +8484,85 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         Assert.assertEquals("nor the head's base WAL arm", Numbers.LONG_NULL, instance.getHeadCheckpointBaseSeqTxn());
         Assert.assertEquals("nor the timeline's", Numbers.LONG_NULL, instance.getCheckpointTimelineWalPurgeFloor());
         assertMarkerNames(markerBaseGeneration);
+    }
+
+    /**
+     * The change below every root over {@link #commitFourRoots}, or over
+     * {@link #commitFourRootsOverTheDayTheBaseLoses} when isDayLost, under a lock on _timeline that
+     * stays on, with every marker write of the change's turn failing: the retire keeps the file
+     * with no marker beside it. A base column added in the same process then has the view recover
+     * in place, which no marker declines, so it reaches the restore, and the restore's read of the
+     * kept generation is refused. The refusal says the timeline cannot be restored from, which a
+     * retry would not change, so the recovery rebuilds from the applied base at once, and stops
+     * the view at once, with every row it held, when the restatement guard refuses that rebuild
+     * over the day the base lost.
+     */
+    private void assertBaseColumnAddedOverAKeptTimelineWithoutItsMarker(boolean isDayLost) throws Exception {
+        final TimelineUnlinkFault fault = new TimelineUnlinkFault();
+        final String restoreRefused = "live view could not restore its runtime from the checkpoint timeline, rebuilding from "
+                + "the applied base [view=lv, cause=base table metadata change, error=";
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault, () -> {
+                createDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    final LiveViewInstance instance = isDayLost ? commitFourRootsOverTheDayTheBaseLoses(job) : commitFourRoots(job, false);
+                    fault.failMarkerWrites(-1);
+                    try {
+                        changeBelowEveryRootUnderALock(job, fault);
+                    } finally {
+                        fault.failMarkerWrites(0);
+                    }
+                    Assert.assertEquals("the retire's marker write and the retry's", 2, fault.getRefusedMarkerWrites());
+                    Assert.assertTrue(instance.isCheckpointTimelineRetirePending());
+                    assertTimelineOnDisk(instance, true);
+                    assertNoRepairMarker(instance);
+                    final long runtimeRestoresBefore = instance.getCheckpointRuntimeRestores();
+                    final long faultsBefore = instance.getRefreshFaultCount();
+                    execute("ALTER TABLE base ADD COLUMN y INT");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    Assert.assertEquals("nothing restores the kept generation", runtimeRestoresBefore, instance.getCheckpointRuntimeRestores());
+                    Assert.assertEquals("the drift is the one refresh fault", faultsBefore + 1, instance.getRefreshFaultCount());
+                    Assert.assertEquals("and the recovery charges no retry", 0, instance.getFlushRetryCount());
+                    Assert.assertTrue("the view goes on refusing the kept generation", instance.isCheckpointTimelineRetirePending());
+                    Assert.assertFalse(instance.isInvalid());
+                    Assert.assertEquals("the refused rebuild stops the view", isDayLost, instance.isCheckpointRecoveryBlocked());
+                    if (isDayLost) {
+                        TestUtils.assertContains(
+                                instance.getCheckpointRecoveryReason(),
+                                "would drop rows it retains [cause=base table metadata change]: " + OWED_ROOT_HISTORY_FLOOR
+                        );
+                    }
+                    fault.unlock();
+                }
+                capture.drain();
+                Assert.assertEquals("one restore, refused", 1, capture.countOccurrences(restoreRefused));
+                capture.assertLoggedRE(Pattern.quote(restoreRefused) + "[^\\n]*" + Pattern.quote(KEPT_TIMELINE_REFUSAL));
+                capture.assertNotLogged("live view could not restore its runtime from the checkpoint timeline, retrying [view=lv");
+                if (isDayLost) {
+                    capture.assertLogged("live view rebuild from the applied base refused, it would drop rows the view retains "
+                            + "[view=lv, cause=base table metadata change, reason=");
+                    capture.assertNotLogged("live view restore failed and its rebuild would drop rows the view retains, retrying the restore");
+                    capture.assertNotLogged(GUARD_STAND_DOWN);
+                    assertViewRows(CHANGE_BELOW_EVERY_ROOT_OVER_THE_LOST_DAY_ROWS, DEPARTURE_ROWS_QUERY);
+                } else {
+                    capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=base table metadata change]");
+                    assertViewRows(CHANGE_BELOW_EVERY_ROOT_ROWS, DEPARTURE_ROWS_QUERY);
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            "(" + DEPARTURE_VIEW_SQL + ") ORDER BY 2, 1",
+                            "(" + DEPARTURE_ROWS_QUERY + ") ORDER BY 2, 1",
+                            LOG,
+                            true
+                    );
+                }
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     /**
