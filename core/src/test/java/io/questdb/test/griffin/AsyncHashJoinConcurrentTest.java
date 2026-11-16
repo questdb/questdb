@@ -119,6 +119,16 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
         assertOwnerRunsTasksWhileWorkersHoldTheirs(WorkerPoolMode.LEGACY, true);
     }
 
+    @Test
+    public void testWalkingJoinsShareOneShardOnFiberWorkers() throws Exception {
+        assertWalkingJoinsShareOneShard(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testWalkingJoinsShareOneShardOnThreadWorkers() throws Exception {
+        assertWalkingJoinsShareOneShard(WorkerPoolMode.LEGACY);
+    }
+
     private static boolean isOnStack(String className, String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
     }
@@ -347,6 +357,67 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
                     }
                 }
             }
+        }, configuration, LOG));
+    }
+
+    // Walking joins on three threads at once, whose frames all go out through the one shard's reduce
+    // queue of four slots: each consumer, once it takes a frame, dispatches the frames after it into
+    // a queue that the other queries' frames fill, and races them for its slots.
+    private void assertWalkingJoinsShareOneShard(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
+            Assert.assertEquals(1, db.getMessageBus().getPageFrameReduceShardCount());
+            Assert.assertEquals(4, db.getMessageBus().getPageFrameReduceQueue(0).getCycle());
+            final String[] queries = {
+                    "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v % 50",
+                    "SELECT t.k, t.v, d.w FROM t JOIN d ON t.l = d.l WHERE d.w + t.v > 0",
+                    "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.s = d.s AND d.w % 7 <> t.v % 7",
+            };
+            final ObjList<String> expected = new ObjList<>();
+            try (SqlExecutionContextImpl context = newContext(db)) {
+                createTables(db, context);
+                context.changePageFrameSizes(64, 64);
+                for (String sql : queries) {
+                    expected.add(ordinary(sql, context));
+                }
+            }
+            final int iterations = 6;
+            final CyclicBarrier start = new CyclicBarrier(queries.length);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            final AtomicInteger operatorRuns = new AtomicInteger();
+            final ObjList<Thread> threads = new ObjList<>();
+            for (int i = 0; i < queries.length; i++) {
+                final int q = i;
+                final Thread thread = new Thread(() -> {
+                    try (SqlExecutionContextImpl context = newContext(db)) {
+                        context.changePageFrameSizes(64, 64);
+                        try (RecordCursorFactory factory = db.select(queries[q], context)) {
+                            final AsyncHashJoinRecordCursorFactory join = find(factory);
+                            Assert.assertNotNull(queries[q], join);
+                            start.await(30, TimeUnit.SECONDS);
+                            for (int n = 0; n < iterations; n++) {
+                                Assert.assertEquals(queries[q], expected.getQuick(q), result(factory, context));
+                                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                operatorRuns.incrementAndGet();
+                            }
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    }
+                });
+                threads.add(thread);
+                thread.start();
+            }
+            for (int i = 0; i < queries.length; i++) {
+                threads.getQuick(i).join();
+            }
+            for (Throwable th : errors) {
+                LOG.error().$("concurrent query failed: ").$(th).$();
+            }
+            Assert.assertTrue(errors.isEmpty() ? "" : errors.peek().toString(), errors.isEmpty());
+            Assert.assertEquals(queries.length * iterations, operatorRuns.get());
         }, configuration, LOG));
     }
 

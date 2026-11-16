@@ -68,7 +68,9 @@ import static io.questdb.griffin.engine.table.HashJoinTupleRing.computeRingBudge
 /**
  * The tuple ring of a parallel hash join under a real ordered {@link PageFrameSequence}: a test
  * reducer writes each probe frame's tuples into the frame's ring entry as the join's probe reducer
- * does, and the owner reads them back in frame order as the join's cursor does.
+ * does, and the owner reads them back in frame order as the join's cursor does, with
+ * {@code next()} alone, or dispatching the frames after each frame it takes up to the window, see
+ * {@link PageFrameSequence#dispatchAhead(int)}.
  * <p>
  * The test atom checks the ring's safety argument directly. A task claims its entry before it
  * writes it and the owner releases the entry once it has read it, before it collects the frame,
@@ -174,6 +176,21 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     @Test
     public void testEntriesNeverSharedAtEachDispatchLimitOnThreadWorkers() throws Exception {
         assertEntriesNeverSharedAtEachDispatchLimit(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testEntriesNeverSharedWhenDispatchingAheadOnFiberWorkers() throws Exception {
+        assertEntriesNeverSharedWhenDispatchingAhead(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testEntriesNeverSharedWhenDispatchingAheadOnOwnerAlone() throws Exception {
+        assertEntriesNeverSharedWhenDispatchingAhead(null);
+    }
+
+    @Test
+    public void testEntriesNeverSharedWhenDispatchingAheadOnThreadWorkers() throws Exception {
+        assertEntriesNeverSharedWhenDispatchingAhead(WorkerPoolMode.LEGACY);
     }
 
     @Test
@@ -320,12 +337,13 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
         }
     }
 
-    // The owner holds frame 0 until the workers have joined every other frame of the first window,
-    // so that all of the ring's entries are claimed at once.
-    private static void awaitFullWindow(RingAtom atom, int windowFrames) {
+    // The owner holds a frame until the workers have joined the given frames, the ones before the
+    // frame it holds and the ones of the window, so that all of the window's entries are claimed at
+    // once, each by a frame of its own.
+    private static void awaitFullWindow(RingAtom atom, int reducedFrames, int windowFrames) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-        while (atom.reducedTupleFrames.get() < windowFrames) {
-            Assert.assertTrue("the workers did not join the first window", System.nanoTime() < deadline);
+        while (atom.reducedTupleFrames.get() < reducedFrames) {
+            Assert.assertTrue("the workers did not join the window", System.nanoTime() < deadline);
             Os.pause();
         }
         int claimed = 0;
@@ -336,6 +354,15 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
         }
         Assert.assertEquals(windowFrames, claimed);
         atom.hasSeenFullWindow = true;
+    }
+
+    // Waits until the workers joined every frame that the sequence dispatched.
+    private static void awaitReducedFrames(PageFrameSequence<RingAtom> sequence) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        while (sequence.getReduceFinishedCounter().get() < sequence.getDispatchedFrameCount()) {
+            Assert.assertTrue("the workers did not join the frames dispatched", System.nanoTime() < deadline);
+            Os.pause();
+        }
     }
 
     // Binds the sequence to an execution over the factory's frames and the ring to the sequence, as
@@ -417,10 +444,59 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
                     }
                 }
                 if (frameIndex == 0 && atom.isAwaitingFullWindow) {
-                    awaitFullWindow(atom, Math.min(dispatchLimit, sequence.getFrameCount()));
+                    final int windowFrames = Math.min(dispatchLimit, sequence.getFrameCount());
+                    awaitFullWindow(atom, windowFrames, windowFrames);
                 }
                 verifyTuples(atom, frameIndex, task.getFilteredRowCount());
             }
+            atom.lastCollectedFrame = frameIndex;
+            sequence.collect(cursor, false);
+            frameIndex++;
+        }
+        assertNoMismatch(atom);
+        return localTasks;
+    }
+
+    // Reads every frame of a bound sequence in frame order under the ring's limit, as the join's
+    // cursor does: once next() hands it a frame, the owner dispatches the frames after it up to the
+    // limit, so that as many frames are in flight as the limit allows, the one it reads included.
+    // With workers, the owner first waits until they joined every frame dispatched, so that next()
+    // finds each frame ready and only dispatchAhead() sends the frames after it, and holds frame 1
+    // until the workers joined the frames ahead of it. Returns how many frames the sequence reduced
+    // locally.
+    private static int readFramesDispatchingAhead(PageFrameSequence<RingAtom> sequence, boolean isAwaitingWorkers) {
+        final RingAtom atom = sequence.getAtom();
+        final int dispatchLimit = atom.ring.getDispatchLimit();
+        int localTasks = 0;
+        int frameIndex = 0;
+        while (frameIndex < sequence.getFrameCount()) {
+            if (isAwaitingWorkers) {
+                awaitReducedFrames(sequence);
+            }
+            final long cursor = sequence.next(dispatchLimit, false);
+            if (cursor == -1) {
+                Os.pause();
+                continue;
+            }
+            Assert.assertTrue("cursor " + cursor, cursor > -1);
+            final PageFrameReduceTask task = sequence.getTask(cursor);
+            if (task.hasError()) {
+                throw task.buildError();
+            }
+            assertNoMismatch(atom);
+            Assert.assertEquals(frameIndex, task.getFrameIndex());
+            if (cursor == Long.MAX_VALUE) {
+                localTasks++;
+            }
+            sequence.dispatchAhead(dispatchLimit);
+            final int dispatchedFrames = Math.min(FRAME_COUNT, frameIndex + dispatchLimit);
+            Assert.assertEquals(dispatchedFrames, sequence.getDispatchedFrameCount());
+            if (frameIndex == 1 && isAwaitingWorkers) {
+                // Frame 0's entry is free again, and frame 1 and the frames ahead of it claim one
+                // entry each.
+                awaitFullWindow(atom, dispatchedFrames, dispatchedFrames - 1);
+            }
+            verifyTuples(atom, frameIndex, task.getFilteredRowCount());
             atom.lastCollectedFrame = frameIndex;
             sequence.collect(cursor, false);
             frameIndex++;
@@ -593,6 +669,43 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
                         // joined the rest of the window.
                         if (limitAndEntries[1] > 1) {
                             Assert.assertTrue(atom.workerTasks.get() > 0);
+                        }
+                    }
+                }
+            }));
+        }
+    }
+
+    private void assertEntriesNeverSharedWhenDispatchingAhead(@Nullable WorkerPoolMode mode) throws Exception {
+        // A reduce queue of 8: a limit of 100 is above it, so the queue's capacity sizes the ring.
+        final int[][] limitsAndEntries = {{1, 1}, {2, 2}, {3, 3}, {7, 7}, {100, 8}};
+        for (int[] limitAndEntries : limitsAndEntries) {
+            assertMemoryLeak(() -> withRing(mode, limitAndEntries[0], LARGE_RING, 8, "t", (engine, compiler, context, sequence, factory) -> {
+                final RingAtom atom = sequence.getAtom();
+                atom.fanOut = 3;
+                for (int execution = 0; execution < 2; execution++) {
+                    bind(sequence, factory, context, null);
+                    try {
+                        Assert.assertEquals(limitAndEntries[1], atom.ring.getDispatchLimit());
+                        Assert.assertEquals(0, readFramesDispatchingAhead(sequence, mode != null));
+                    } finally {
+                        sequence.await();
+                        sequence.reset();
+                    }
+                    Assert.assertEquals(FRAME_COUNT, atom.tupleFramesRead);
+                    if (mode == null) {
+                        // The owner alone steals every frame it published.
+                        Assert.assertEquals(FRAME_COUNT, atom.ownerTasks.get());
+                        Assert.assertEquals(0, atom.workerTasks.get());
+                    } else {
+                        Assert.assertTrue(atom.hasSeenFullWindow);
+                        Assert.assertEquals(FRAME_COUNT, atom.ownerTasks.get() + atom.workerTasks.get());
+                        // A window of one frame holds the frame the owner reads and none ahead of it,
+                        // so each next() publishes the frame it returns, which the owner may steal.
+                        // A wider window has the owner steal frames of the first window alone, which
+                        // the first next() publishes: it finds every later frame ready.
+                        if (limitAndEntries[1] > 1) {
+                            Assert.assertTrue("owner tasks: " + atom.ownerTasks.get(), atom.ownerTasks.get() <= limitAndEntries[1]);
                         }
                     }
                 }

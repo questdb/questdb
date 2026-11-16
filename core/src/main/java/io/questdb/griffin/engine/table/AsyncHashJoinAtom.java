@@ -111,9 +111,10 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * probe row's pairs always finish in one chunk, so a key with more matches than the cap overruns it
  * by its own matches, in memory that the execution's tracker counts. To keep that rare, the builds
  * tell the cursor how many rows of a probe frame fit the cap at the fan-out they lead one to expect,
- * see {@link #getProbeFrameRowCap()}, before the probe scan cuts its frames. Under a LIMIT, the task
- * of the last frame of the first window joins only the rows that the LIMIT may need, and leaves the
- * rest to the consumer's continuation, whose chunks then double; see {@link #setRowCappedFrame}.
+ * down to 1,000 rows a frame, see {@link #getProbeFrameRowCap()}, before the probe scan cuts its
+ * frames. Under a LIMIT, the task of the last frame of the first window joins only the rows that the
+ * LIMIT may need, and leaves the rest to the consumer's continuation, whose chunks then double; see
+ * {@link #setRowCappedFrame}.
  * <p>
  * A count of the join's rows dispatches count-only tasks, which walk the stages as a probe task
  * does, but count the frame's joined rows instead of writing tuples, and leave the ring alone; see
@@ -160,6 +161,12 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * 10,000,000 probe rows, and gain about 2 ns per probe row once compiled.
      */
     public static final long STEPPER_WARM_UP_ROWS = 50_000_000;
+    // The fewest rows that the fan-out of the builds lowers a probe frame's rows to, or the context's
+    // cairo.sql.page.frame.min.rows when that is fewer; see getProbeFrameRowCap(). A frame costs the
+    // owner a few microseconds of dispatch, collection and ring work, so frames of this many rows cost
+    // a few nanoseconds per probe row, also when the builds lead the join to expect far more matches
+    // per probe row than the rows meet.
+    private static final long FAN_OUT_FRAME_MIN_ROWS = 1_000;
     // Set by tests alone; see AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting().
     private static volatile long stepperWarmUpRowsForTesting = STEPPER_WARM_UP_ROWS;
     // The runtime stages in the execution's orientation: those of the query's, the first one swapped
@@ -215,7 +222,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     // True when the execution hashes the left input and streams the right one.
     private boolean isSwapped;
     // The context's cairo.sql.page.frame.min.rows in the open cursor's execution, below which the
-    // fan-out of the builds lowers no probe frame's rows; see getProbeFrameRowCap().
+    // fan-out of the builds lowers no probe frame's rows when it is fewer than
+    // FAN_OUT_FRAME_MIN_ROWS; see getProbeFrameRowCap().
     private long pageFrameMinRows;
     // The pairs an enumerated stage walks between two checks of the circuit breaker.
     private long pairsPerCheck = 1;
@@ -742,8 +750,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * frame's rows, or of the rows the probe filter kept, from the ring's resume position on, until
      * the chunk's tuples reach the cap. The consumer calls it between two calls to the frame
      * sequence's {@code next()}, the only place where the owner otherwise runs tasks on that slot,
-     * while it holds the frame's task, whose frame memory and kept rows stay put until the consumer
-     * collects it.
+     * since the sequence's {@code dispatchAhead()} runs none, while it holds the frame's task, whose
+     * frame memory and kept rows stay put until the consumer collects it.
      *
      * @return the chunk's tuples, or {@link HashJoinStageStepper#CANCELLED} when the execution was
      * cancelled, which leaves nothing to read
@@ -775,10 +783,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * The most rows of a probe frame whose tuples fit a task's cap,
      * {@code cairo.sql.parallel.hash.join.task.output.max.rows}, at the fan-out that the execution's
      * builds lead one to expect: the cap divided by the product of the rows per key of each build
-     * whose matches the workers walk in the execution, and no fewer than
-     * {@code cairo.sql.page.frame.min.rows}. A probe row that meets a key yields as many pairs as the
-     * key has rows, while the stages that hand their chains to the consumer write one entry per probe
-     * row, so their builds do not count.
+     * whose matches the workers walk in the execution, and no fewer than 1,000 rows, or
+     * {@code cairo.sql.page.frame.min.rows} when that is fewer. A probe row that meets a key yields as
+     * many pairs as the key has rows, while the stages that hand their chains to the consumer write
+     * one entry per probe row, so their builds do not count.
      * Returns {@code Long.MAX_VALUE} when no such build has more rows than keys. The owner calls it
      * once the builds are done, before the probe scan cuts its frames, so that a frame of duplicate
      * matches leaves no rest to a serial continuation.
@@ -799,7 +807,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         if (fanOut <= 1) {
             return Long.MAX_VALUE;
         }
-        return Math.max(pageFrameMinRows, (long) (taskOutputMaxRows / fanOut));
+        return Math.max(Math.min(pageFrameMinRows, FAN_OUT_FRAME_MIN_ROWS), (long) (taskOutputMaxRows / fanOut));
     }
 
     Slot getSlot(int slotId) {

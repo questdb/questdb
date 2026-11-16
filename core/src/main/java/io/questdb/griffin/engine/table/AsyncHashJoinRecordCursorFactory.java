@@ -285,6 +285,15 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * The probe frames whose tasks finished since the last execution's cursor opened or went back to
+     * the top, on a worker, stolen by the owner or reduced locally.
+     */
+    @TestOnly
+    public int getReducedFrameCount() {
+        return frameSequence.getReduceFinishedCounter().get();
+    }
+
+    /**
      * Answers as the left input as compiled answered, as the serial join asks its master. A scan
      * direction other than {@code SCAN_DIRECTION_OTHER} fixes the join's order, which rules the swap
      * of its inputs out, as it does the serial join's.

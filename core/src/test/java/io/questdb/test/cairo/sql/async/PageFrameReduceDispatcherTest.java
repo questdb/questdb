@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -54,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.MPSequence;
@@ -75,6 +77,8 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -2994,6 +2998,96 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQuiesceMidReadStopsDispatchAhead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab AS (
+                        SELECT
+                            x,
+                            x::varchar AS k,
+                            timestamp_sequence(0, 1_000_000) AS ts
+                        FROM long_sequence(1_000)
+                    ) TIMESTAMP(ts)
+                    """);
+            execute("CREATE TABLE d AS (SELECT x k, x * 2 w FROM long_sequence(500))");
+            drainWalQueue();
+            // Ten frames of a hundred probe rows, each of which yields one row, with a window of two.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 2);
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                engine.getMessageBus().setPageFrameReduceDispatcher(dispatcher);
+                try (RecordCursorFactory factory = select("SELECT tab.x, d.w FROM tab LEFT JOIN d ON tab.x = d.k AND d.w > tab.x")) {
+                    final AsyncHashJoinRecordCursorFactory join = findHashJoin(factory);
+                    Assert.assertNotNull(join);
+                    final int shardCount = engine.getMessageBus().getPageFrameReduceShardCount();
+                    final LongList publicationCursors = new LongList(shardCount);
+                    int rows = 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        // The test thread owns the query, outside the dispatcher's runtime: the first row
+                        // publishes the first window, frames 0 and 1.
+                        Assert.assertTrue(cursor.hasNext());
+                        rows++;
+                        Assert.assertEquals(2, join.getDispatchedFrameCount());
+                        // The dispatcher's fibers join frame 1, so that the consumer finds it ready.
+                        final long deadline = System.nanoTime() + 5_000_000_000L;
+                        while (join.getReducedFrameCount() < join.getDispatchedFrameCount()) {
+                            Assert.assertTrue("frame 1 was not joined", System.nanoTime() < deadline);
+                            for (int shard = 0; shard < shardCount; shard++) {
+                                dispatcher.consumeOrdered(
+                                        -1,
+                                        engine.getMessageBus().getPageFrameReduceQueue(shard),
+                                        engine.getMessageBus().getPageFrameReduceSubSeq(shard),
+                                        null
+                                );
+                            }
+                            runtime.drain(8);
+                            Os.pause();
+                        }
+                        runtime.beginQuiesce();
+                        for (int shard = 0; shard < shardCount; shard++) {
+                            publicationCursors.add(engine.getMessageBus().getPageFrameReducePubSeq(shard).current());
+                        }
+                        // The consumer takes frame 1 and reads it whole: the quiescing dispatcher refuses
+                        // to publish frame 2 ahead of it, which cancels nothing. The next() that fetches
+                        // frame 2 then cancels the query, as the dispatcher's quiesce does to any query
+                        // that has frames to publish.
+                        try {
+                            while (cursor.hasNext()) {
+                                rows++;
+                            }
+                            Assert.fail("a query over a quiescing dispatcher must cancel");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                        }
+                        Assert.assertEquals(200, rows);
+                        for (int shard = 0; shard < shardCount; shard++) {
+                            Assert.assertEquals(
+                                    publicationCursors.getQuick(shard),
+                                    engine.getMessageBus().getPageFrameReducePubSeq(shard).current()
+                            );
+                        }
+                    }
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+                close(runtime);
+                Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
     public void testQuiescePreservesSuccessfulOrderedSequence() throws Exception {
         assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -3282,6 +3376,23 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
             sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            // A walking hash join, whose probe rows each yield one row, and its rows on the ordinary
+            // plan, read before the dispatcher takes the reduce queues.
+            execute("CREATE TABLE d AS (SELECT x k, x * 2 w FROM long_sequence(500))");
+            final String joinSql = "SELECT tab.x, d.w FROM tab LEFT JOIN d ON tab.x = d.k AND d.w > tab.x";
+            final String expectedJoinRows;
+            sqlExecutionContext.setParallelHashJoinEnabled(false);
+            try (
+                    RecordCursorFactory factory = select(joinSql);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertNull(findHashJoin(factory));
+                final StringSink sink = new StringSink();
+                while (cursor.hasNext()) {
+                    CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), sink);
+                }
+                expectedJoinRows = sink.toString();
+            }
 
             final FiberRuntime runtime = new FiberRuntime(1);
             final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
@@ -3314,6 +3425,18 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                         "SELECT k, count() FROM tab GROUP BY k",
                         AsyncGroupByRecordCursorFactory.class
                 );
+                // The hash join over ten frames: each frame that the owner reduced locally would have
+                // the frames after it go out ahead of the consumer, which the dispatcher refuses too.
+                sqlExecutionContext.changePageFrameSizes(100, 100);
+                sqlExecutionContext.setParallelHashJoinEnabled(true);
+                try {
+                    TestUtils.assertEquals(
+                            expectedJoinRows,
+                            assertSameRuntimeQueryReducesLocally(runtime, dispatcher, joinSql, AsyncHashJoinRecordCursorFactory.class)
+                    );
+                } finally {
+                    sqlExecutionContext.restoreToDefaultPageFrameSizes();
+                }
                 for (int shard = 0; shard < shardCount; shard++) {
                     Assert.assertEquals(
                             orderedPublicationCursors.getQuick(shard),
@@ -4808,7 +4931,9 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSameRuntimeQueryReducesLocally(
+    // Runs the query on a fiber of the dispatcher's runtime, which reduces every frame locally, and
+    // returns its rows.
+    private String assertSameRuntimeQueryReducesLocally(
             FiberRuntime runtime,
             PageFrameReduceDispatcher dispatcher,
             String sql,
@@ -4816,6 +4941,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     ) throws Exception {
         final AtomicReference<Throwable> failure = new AtomicReference<>();
         final AtomicInteger rowCount = new AtomicInteger();
+        final StringSink rows = new StringSink();
         try (
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
@@ -4832,6 +4958,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         while (cursor.hasNext()) {
                             rowCount.incrementAndGet();
+                            CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), rows);
                         }
                     } catch (SqlException e) {
                         throw new AssertionError(e);
@@ -4853,6 +4980,17 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
             Assert.assertEquals(0, runtime.getParkedFiberCount());
             Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
         }
+        return rows.toString();
+    }
+
+    // The parallel hash join inside a compiled query, or null when the query does not run it.
+    private static AsyncHashJoinRecordCursorFactory findHashJoin(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+                return join;
+            }
+        }
+        return null;
     }
 
     private void assertUnorderedTailCompletion(TailCompletionScenario scenario) throws Exception {

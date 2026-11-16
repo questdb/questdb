@@ -51,11 +51,12 @@ import io.questdb.std.QuietCloseable;
  * with {@code N} stages, and the ring budget, {@code cairo.sql.parallel.hash.join.tuple.ring.max.size},
  * capped at a quarter of a configured per-query memory limit. The task of frame {@code f} writes
  * entry {@code f % R}, or, with a dynamic window, see below, {@code f} modulo the entry count. That
- * is safe because {@link PageFrameSequence#next(int, boolean)} keeps the
- * frames it dispatched and the owner has not collected, the frame the owner reads included, to a
- * contiguous window of at most the dispatch limit it receives, and reduces a frame locally only
- * when that window is empty. The owner therefore passes {@code R}, or less, to every
- * {@code next()} that dispatches tuple-producing tasks. Count-only tasks never touch the ring,
+ * is safe because {@link PageFrameSequence#next(int, boolean)} and
+ * {@link PageFrameSequence#dispatchAhead(int)} keep the frames dispatched and not collected by the
+ * owner, the frame the owner reads included, to a contiguous window of at most the dispatch limit
+ * they receive, and next() reduces a frame locally only when that window is empty. The owner
+ * therefore passes {@code R}, or less, to every {@code next()} and {@code dispatchAhead()} that
+ * dispatches tuple-producing tasks. Count-only tasks never touch the ring,
  * neither its tuples nor its per-entry state, because a count-only {@code next()} may pass a wider
  * limit, so that count-only frame {@code f + R} can run while the owner still reads entry
  * {@code f % R}.

@@ -279,6 +279,65 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    /**
+     * Publishes the frames that follow the dispatched ones, as tasks that are not count-only, as long
+     * as fewer frames than the limit are in flight, the dispatched ones that the owner has not
+     * collected, the one it holds included, and the reduce queue has room. It collects no frame,
+     * runs no task, steals none and never waits, so it costs the owner only the publication.
+     * <p>
+     * {@link #next(int, boolean)} publishes frames only when none is ready to collect, so an owner
+     * that reads each frame for about as long as a worker takes to reduce one lets the window drain,
+     * and then waits for a whole task at every refill. Such an owner calls this once next() handed
+     * it a frame, and the workers reduce the next frames while it reads that one. The frames in
+     * flight stay within the limit, as next()'s do, so a caller that passes the limit it passes to
+     * next(), or a smaller one, never has more frames in flight than next() would allow.
+     * <p>
+     * Publishes nothing for a cancelled sequence, nor when the fiber dispatcher refuses the
+     * publication, and stops once the queue is full or another publisher takes the slot: the next
+     * call to next() then dispatches, steals, reduces locally or cancels, as it does on its own.
+     * This method is not thread safe; the query owner thread calls it, as it calls next().
+     *
+     * @param dispatchLimit a cap for the frames in flight, the one the owner holds included
+     */
+    public void dispatchAhead(int dispatchLimit) {
+        if (dispatchStartFrameIndex >= frameCount
+                || dispatchStartFrameIndex - (collectedFrameIndex + 1) >= dispatchLimit
+                || !isActive()) {
+            return;
+        }
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (dispatcher != null && !dispatcher.tryAcquirePublication()) {
+            return;
+        }
+        try {
+            final MPSequence reducePubSeq = messageBus.getPageFrameReducePubSeq(shard);
+            while (dispatchStartFrameIndex < frameCount
+                    && dispatchStartFrameIndex - (collectedFrameIndex + 1) < dispatchLimit) {
+                final long cursor = reducePubSeq.next();
+                if (cursor < 0) {
+                    // The queue is full, -1, or another publisher took the slot, -2: the next frame
+                    // that the owner takes publishes again, and next() steals or waits, as it does
+                    // on its own.
+                    break;
+                }
+                reduceQueue.get(cursor).of(this, dispatchStartFrameIndex, false);
+                reducePubSeq.done(cursor);
+                LOG.debug()
+                        .$("dispatched ahead [shard=").$(shard)
+                        .$(", id=").$(id)
+                        .$(", frameIndex=").$(dispatchStartFrameIndex)
+                        .$(", frameCount=").$(frameCount)
+                        .$(", cursor=").$(cursor)
+                        .I$();
+                dispatchStartFrameIndex++;
+            }
+        } finally {
+            if (dispatcher != null) {
+                dispatcher.releasePublication();
+            }
+        }
+    }
+
     public T getAtom() {
         return atom;
     }

@@ -59,7 +59,10 @@ import io.questdb.std.Os;
  * <p>
  * The cursor passes every {@code next()} the execution's effective dispatch limit, the window of
  * the atom's tuple ring, which keeps frames in flight from sharing an entry; see
- * {@link HashJoinTupleRing}. The ring's window is dynamic: each frame the cursor has read tells the
+ * {@link HashJoinTupleRing}. Once {@code next()} handed it a frame, the cursor dispatches the frames
+ * after it up to the same window, see {@link PageFrameSequence#dispatchAhead(int)}, so that the
+ * workers join them while it reads the frame: {@code next()} alone publishes frames only when none
+ * is ready to collect. The ring's window is dynamic: each frame the cursor has read tells the
  * ring how much memory its entry took, and the window follows the largest, so that frames whose
  * tuples are few, under a selective probe filter, keep more workers busy within the ring's budget.
  * {@code toTop()} probes again over the same builds, in the same orientation.
@@ -493,6 +496,10 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 assert !task.isCountOnly();
                 allFramesActive &= frameSequence.isActive();
                 frameIndex = task.getFrameIndex();
+                // The frames after this one go out now, within the window that the next() that
+                // fetched it allowed, so that the workers join them while the consumer reads this
+                // one, rather than once the consumer has drained the window.
+                frameSequence.dispatchAhead(getDispatchLimit(frameIndex));
                 tupleIndex = 0;
                 tupleCount = task.getFilteredRowCount();
                 if (frameSequence.isActive()) {

@@ -128,10 +128,23 @@ import java.util.concurrent.locks.LockSupport;
  *       the JIT does not compile, and {@code SMALL_BUILD_LIKE_TINY} its first 10,000 rows with a
  *       dimension of 500 rows over 50 daily partitions, ten rows each, under a LIKE: builds of fewer
  *       rows than parallel.min.rows whose filters run interpreted over many frames.
+ *       {@code FANOUT_5_RESIDUAL_ALL} to {@code FANOUT_50_RESIDUAL_ALL} are LEFT joins of the fact
+ *       table's first 3,000,000 rows, an interval scan, with a dimension of a thousand keys of 5, 10,
+ *       20 and 50 rows each under a cheap ON residual over both inputs that every pair passes,
+ *       {@code FANOUT_50_POST_FILTER_ALL} the INNER join of the same rows with the 50-row keys under
+ *       the same condition as a post-join filter, and {@code FANOUT_50_RESIDUAL_SELECTIVE} the LEFT
+ *       join under a residual that about 2% of the pairs pass. {@code FANOUT_MISESTIMATE} joins the
+ *       same rows with a dimension of one row for each of the fact table's thousand keys and
+ *       2,000,000 rows of a key that no fact row has: the builds lead the join to expect about 2,000
+ *       matches per probe row, where each meets one, which cuts the probe's frames to their
+ *       smallest. Run them with {@code pageFrameMinRows} and {@code pageFrameMaxRows} at the
+ *       server's defaults, 100,000 and 1,000,000.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
+ *   <li>{@code pageFrameMinRows}: {@code cairo.sql.page.frame.min.rows}; the default of 1,000 is
+ *       the default configuration's, and a server's is 100,000.</li>
  *   <li>{@code pageFrameMaxRows}: {@code cairo.sql.page.frame.max.rows}, which also sets the
  *       join's task output cap, as on a server. The table scan splits each partition into about
  *       one frame per worker, of at most this many rows: 250,000-row frames up to 4 workers,
@@ -181,14 +194,16 @@ public class ParallelHashJoinBenchmark {
     // The rows that a count after a page reads first, as an HTTP request for a page of 1,000 rows
     // reads one row past it.
     private static final long COUNT_PAGE_ROWS = 1_001;
-    private static final String DATA_VERSION = "v3";
+    // The fact rows that the FANOUT_*_ALL, FANOUT_50_* and FANOUT_MISESTIMATE shapes join.
+    private static final long FAN_OUT_PROBE_ROWS = 3_000_000;
+    private static final String DATA_VERSION = "v4";
     private static final int LIMIT_PROBE_EXECUTIONS = 20;
     private static final String OPERATOR_NODE = "Hash Join workers:";
     private static final String POOL_NAME = "hashjoinbench";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
-    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup50", "dup1000", "dreg", "dtiny"};
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny"};
 
     @Param({"10000000"})
     public long factRows;
@@ -198,6 +213,9 @@ public class ParallelHashJoinBenchmark {
 
     @Param({"250000"})
     public int pageFrameMaxRows;
+
+    @Param({"1000"})
+    public int pageFrameMinRows;
 
     @Param({"-1"})
     public long parquetCacheSize;
@@ -238,7 +256,9 @@ public class ParallelHashJoinBenchmark {
             "SMALL_SINGLE", "SMALL_STAR",
             "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE", "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE",
             "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE",
-            "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY"
+            "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY",
+            "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
+            "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE"
     })
     public String shape;
 
@@ -355,6 +375,13 @@ public class ParallelHashJoinBenchmark {
         return sink.toString();
     }
 
+    // A LEFT join of the fact table's first FAN_OUT_PROBE_ROWS rows with a dimension of duplicate keys,
+    // under an ON residual over both inputs.
+    private static String fanOutResidualSql(String dimension, String residual) {
+        return "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN " + dimension + " x ON f.k1 = x.k AND " + residual
+                + " WHERE f.ts < " + probeBound(FAN_OUT_PROBE_ROWS);
+    }
+
     private String smallProbeBound() {
         return probeBound(probeRows);
     }
@@ -406,8 +433,14 @@ public class ParallelHashJoinBenchmark {
         // fact rows; and 50 and 1,000 rows of each of k1's thousand keys.
         engine.execute("CREATE TABLE dup2 AS (SELECT ((x - 1) % " + (largeDimRows / 2) + ")::INT k, (x * 7 % 1_000) / 1000.0 w " +
                 "FROM long_sequence(" + largeDimRows + "))", ctx);
+        engine.execute("CREATE TABLE dup5 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(5_000))", ctx);
+        engine.execute("CREATE TABLE dup10 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(10_000))", ctx);
+        engine.execute("CREATE TABLE dup20 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(20_000))", ctx);
         engine.execute("CREATE TABLE dup50 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(50_000))", ctx);
         engine.execute("CREATE TABLE dup1000 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000_000))", ctx);
+        // One row for each of k1's thousand keys, and 2,000,000 rows of a key that no fact row has.
+        engine.execute("CREATE TABLE dhot AS (SELECT CASE WHEN x <= 1_000 THEN (x - 1)::INT ELSE -1 END k, (x * 7 % 1_000) / 1000.0 w " +
+                "FROM long_sequence(2_001_000))", ctx);
         // The active partition cannot convert, so each Parquet table gets one more row, in a later
         // partition, whose keys match no dimension.
         engine.execute("CREATE TABLE fact_pq AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
@@ -488,6 +521,11 @@ public class ParallelHashJoinBenchmark {
             }
 
             @Override
+            public int getSqlPageFrameMinRows() {
+                return pageFrameMinRows;
+            }
+
+            @Override
             public int getSqlParallelFilterDispatchLimit() {
                 return Math.min(workers, 32);
             }
@@ -564,6 +602,7 @@ public class ParallelHashJoinBenchmark {
                 .append(" workers=").append(workers)
                 .append(" factRows=").append(factRows)
                 .append(" largeDimRows=").append(largeDimRows)
+                .append(" pageFrameMinRows=").append(pageFrameMinRows)
                 .append(" pageFrameMaxRows=").append(pageFrameMaxRows)
                 .append(" ringBudgetFactor=").append(ringBudgetFactor)
                 .append(" payloadCopyMaxSize=").append(payloadCopyMaxSize)
@@ -738,6 +777,18 @@ public class ParallelHashJoinBenchmark {
                     + probeBound(5_000_000);
             case "SMALL_BUILD_LIKE_TINY" -> "SELECT f.id, f.v, d.w FROM fact f JOIN dtiny d ON f.k1 = d.k WHERE d.s LIKE '%B%' AND f.ts < "
                     + probeBound(10_000);
+            // The fact table's first 3,000,000 rows meet 5 to 50 rows of their key, all of which a cheap
+            // condition over both inputs keeps, or about 2% of them: v and w lie in [0, 0.999].
+            case "FANOUT_5_RESIDUAL_ALL" -> fanOutResidualSql("dup5", "x.w + f.v >= 0");
+            case "FANOUT_10_RESIDUAL_ALL" -> fanOutResidualSql("dup10", "x.w + f.v >= 0");
+            case "FANOUT_20_RESIDUAL_ALL" -> fanOutResidualSql("dup20", "x.w + f.v >= 0");
+            case "FANOUT_50_RESIDUAL_ALL" -> fanOutResidualSql("dup50", "x.w + f.v >= 0");
+            case "FANOUT_50_RESIDUAL_SELECTIVE" -> fanOutResidualSql("dup50", "x.w - f.v > 0.8");
+            case "FANOUT_50_POST_FILTER_ALL" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k WHERE x.w + f.v >= 0 AND f.ts < "
+                    + probeBound(FAN_OUT_PROBE_ROWS);
+            // Each fact row meets one row of dhot, whose builds lead the join to expect about 2,000.
+            case "FANOUT_MISESTIMATE" -> "SELECT f.id, f.v, h.w FROM fact f JOIN dhot h ON f.k1 = h.k WHERE h.w + f.v >= 0 AND f.ts < "
+                    + probeBound(FAN_OUT_PROBE_ROWS);
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }
