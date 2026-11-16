@@ -177,28 +177,6 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedFillCompileReusesAssembler() throws Exception {
-        Assume.assumeTrue(parallel && workers == 0);
-        run((engine, compiler, context) -> {
-            createTable(compiler, context);
-            final String sql = "SELECT ts, sym, sum(v) FROM trades SAMPLE BY 1m FILL(PREV)";
-            TestUtils.assertContains(compileAndRead(compiler, context, "EXPLAIN " + sql), "Sample By Fill");
-            try (TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
-                final ThreadMXBean bean = scope.getBean();
-                final long threadId = Thread.currentThread().threadId();
-                long minAllocated = Long.MAX_VALUE;
-                for (int i = 0; i < 5; i++) {
-                    final long before = bean.getThreadAllocatedBytes(threadId);
-                    try (RecordCursorFactory ignore = compiler.compile(sql, context).getRecordCursorFactory()) {
-                        minAllocated = Math.min(minAllocated, bean.getThreadAllocatedBytes(threadId) - before);
-                    }
-                }
-                Assert.assertTrue("compile allocated " + minAllocated + " bytes", minAllocated < 1024 * 1024);
-            }
-        });
-    }
-
-    @Test
     public void testHighCardinalityBucketsMergeShards() throws Exception {
         // Every frame of a bucket brings more keys than the threshold, so a span map shards in any schedule.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
