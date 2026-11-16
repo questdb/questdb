@@ -55,9 +55,9 @@ public final class SelectCacheKey {
 
     /**
      * Returns the key of the SQL text compiled with the variables the client declared outside it,
-     * see {@link io.questdb.griffin.QueryVariables#getDeclarations()}, in the given scope. The
-     * compiled statement holds the values of the variables, so the same text with other values
-     * takes another key. Without variables, the key is the one {@link #of(CharSequence,
+     * see {@link io.questdb.griffin.SqlExecutionContext#getQueryVariables()}, in the given scope.
+     * The compiled statement holds the values of the variables, so the same text with other
+     * values takes another key. Without variables, the key is the one {@link #of(CharSequence,
      * CharSequence, StringSink)} returns. With them, the key starts with a NUL and a 'V', which
      * no other key starts with, and length-prefixes the variables and the scope, so no
      * combination can spell the key of another.

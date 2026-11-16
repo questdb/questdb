@@ -41,7 +41,8 @@ import org.junit.Test;
 
 /**
  * The {@code variables} parameter of {@code /exec}: variables a client declares outside the
- * query's text, which the query reads as a DECLARE block that opens it.
+ * query's text, as the assignments of a DECLARE block, which the query reads as a DECLARE block
+ * that opens it.
  */
 public class HttpQueryVariablesTest extends AbstractTest {
     private static final VariablesHttpClient testHttpClient = new VariablesHttpClient();
@@ -72,12 +73,12 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 assertGet(
                         "{\"query\":\"SELECT v FROM t WHERE v > @min\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2],[3]],\"count\":2}",
                         sql,
-                        "[{\"name\":\"min\",\"value\":\"1\"}]"
+                        "@min := 1"
                 );
                 assertGet(
                         "{\"query\":\"SELECT v FROM t WHERE v > @min\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[3]],\"count\":1}",
                         sql,
-                        "[{\"name\":\"min\",\"value\":\"2\"}]"
+                        "@min := 2"
                 );
             }
             // the text without variables is another query again
@@ -94,7 +95,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
         // CREATE TABLE AS and views keep their text, without the variables: each answers as it
         // does without the parameter.
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final String variables = "[{\"name\":\"a\",\"value\":\"1\"}]";
+            final String variables = "@a := 1";
             assertSameResponse("CREATE TABLE x AS (SELECT @a v)", variables);
             assertSameResponse("CREATE VIEW vw AS (SELECT @a v)", variables);
             assertSameResponse("CREATE VIEW vw AS SELECT @a v", variables);
@@ -113,7 +114,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final Utf8StringSink without = new Utf8StringSink();
             testHttpClient.get("SELECT 1 x", null, params, without);
             final Utf8StringSink with = new Utf8StringSink();
-            testHttpClient.get("SELECT 1 x", "[{\"name\":\"a\",\"value\":\"1\"}]", params, with);
+            testHttpClient.get("SELECT 1 x", "@a := 1", params, with);
             TestUtils.assertContains(with.toString(), "column not found: 'y'");
             TestUtils.assertEquals(without.toString(), with.toString());
         }));
@@ -126,16 +127,11 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final String sql = "SELECT simulate_crash('0') FROM long_sequence(1)";
             final String prefix = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", ";
             // a position past the variables' text is left as it is
-            assertGet(prefix + "\"errorPos\":222}", sql, "[{\"name\":\"pad\",\"value\":\"1\"}]");
-            // Within it, it is one in the variable's value. The assignment "@pad := '...'" starts
-            // past the query and a newline, at 49, and its value 8 characters later, so 222 is
-            // 222 - 49 - 8 = 165 characters into the value.
-            final String pad = "'" + "x".repeat(200) + "'";
-            assertGet(
-                    prefix + "\"errorPos\":165,\"errorSource\":\"variables\",\"variable\":\"pad\"}",
-                    sql,
-                    "[{\"name\":\"pad\",\"value\":\"" + pad + "\"}]"
-            );
+            assertGet(prefix + "\"errorPos\":222}", sql, "@pad := 1");
+            // Within it, it is the position in the variables parameter: the parser reads the
+            // variables past the query and a newline, from 49 on, so 222 is 173 into them.
+            final String pad = "@pad := '" + "x".repeat(200) + "'";
+            assertGet(prefix + "\"errorPos\":173,\"errorSource\":\"variables\"}", sql, pad);
         }));
     }
 
@@ -144,30 +140,37 @@ public class HttpQueryVariablesTest extends AbstractTest {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> assertGet(
                 "{\"query\":\"SELECT @a, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":11}",
                 "SELECT @a, nope_fn()",
-                "[{\"name\":\"a\",\"value\":\"1\"}]"
+                "@a := 1"
         )));
     }
 
     @Test
-    public void testErrorInVariableValue() throws Exception {
+    public void testErrorInVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            // the position is in the value of the variable the error lies in
+            // the position is in the variables parameter: "@a := 1, @b := 1 + " is 19 characters
             assertGet(
-                    "{\"query\":\"SELECT @a + @b\",\"error\":\"unknown function name: nope_fn()\",\"position\":4,\"errorSource\":\"variables\",\"variable\":\"b\"}",
+                    "{\"query\":\"SELECT @a + @b\",\"error\":\"unknown function name: nope_fn()\",\"position\":19,\"errorSource\":\"variables\"}",
                     "SELECT @a + @b",
-                    "[{\"name\":\"a\",\"value\":\"1\"},{\"name\":\"b\",\"value\":\"1 + nope_fn()\"}]"
+                    "@a := 1, @b := 1 + nope_fn()"
             );
             // a value that reads a later variable
             assertGet(
-                    "{\"query\":\"SELECT @a\",\"error\":\"tried to use undeclared variable `@b`\",\"position\":0,\"errorSource\":\"variables\",\"variable\":\"a\"}",
+                    "{\"query\":\"SELECT @a\",\"error\":\"tried to use undeclared variable `@b`\",\"position\":6,\"errorSource\":\"variables\"}",
                     "SELECT @a",
-                    "[{\"name\":\"a\",\"value\":\"@b\"},{\"name\":\"b\",\"value\":\"1\"}]"
+                    "@a := @b, @b := 1"
             );
             // a value with a query after it
             assertGet(
-                    "{\"query\":\"SELECT @a\",\"error\":\"unexpected token [SELECT]\",\"position\":2,\"errorSource\":\"variables\",\"variable\":\"a\"}",
+                    "{\"query\":\"SELECT @a\",\"error\":\"unexpected token [SELECT]\",\"position\":8,\"errorSource\":\"variables\"}",
                     "SELECT @a",
-                    "[{\"name\":\"a\",\"value\":\"1 SELECT 2\"}]"
+                    "@a := 1 SELECT 2"
+            );
+            // not an assignment
+            final Utf8StringSink sink = new Utf8StringSink();
+            Assert.assertEquals("400", testHttpClient.get("SELECT 1", "a := 1", sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT 1\",\"error\":\"unexpected token [a]\",\"position\":0,\"errorSource\":\"variables\"}",
+                    sink.toString()
             );
         }));
     }
@@ -176,7 +179,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
     public void testInsertReadsVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             engine.execute("CREATE TABLE t (v INT, s VARCHAR)", sqlExecutionContext);
-            final String variables = "[{\"name\":\"v\",\"value\":\"40 + 2\"},{\"name\":\"s\",\"value\":\"'x' || @v\"}]";
+            final String variables = "@v := 40 + 2, @s := 'x' || @v";
             assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v, @s", variables);
             assertGet("{\"dml\":\"OK\"}", "WITH c AS (SELECT @v v) INSERT INTO t SELECT v, 'cte' FROM c", variables);
             assertGet(
@@ -188,29 +191,11 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
-    public void testInvalidVariablesParameter() throws Exception {
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            // the position is in the parameter's text; no variable is named
-            final Utf8StringSink sink = new Utf8StringSink();
-            Assert.assertEquals("400", testHttpClient.get("SELECT 1", "[{\"name\":\"1a\",\"value\":\"1\"}]", sink));
-            TestUtils.assertEquals(
-                    "{\"query\":\"SELECT 1\",\"error\":\"invalid variable name [name=1a]; a name starts with a letter or '_' and holds letters, digits and '_' only\",\"position\":9,\"errorSource\":\"variables\"}",
-                    sink.toString()
-            );
-            Assert.assertEquals("400", testHttpClient.get("SELECT 1", "{\"a\":1}", sink));
-            TestUtils.assertEquals(
-                    "{\"query\":\"SELECT 1\",\"error\":\"variables must be a JSON array of {\\\"name\\\": ..., \\\"value\\\": ...} objects\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sink.toString()
-            );
-        }));
-    }
-
-    @Test
     public void testInvalidUtf8InVariablesParameter() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
             final Utf8StringSink badUtf8 = new Utf8StringSink();
-            badUtf8.put("[").putAny((byte) 0xC3).putAny((byte) 0x28);
+            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
             params.put("variables", badUtf8);
             // this path sends the parameters as they are, unencoded
             final Utf8StringSink sql = new Utf8StringSink();
@@ -231,19 +216,25 @@ public class HttpQueryVariablesTest extends AbstractTest {
             assertGet(
                     "{\"query\":\"SELECT @from f, @to t\",\"columns\":[{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"2026-11-11T00:00:00.000000Z\",\"2026-11-12T00:00:00.000000Z\"]],\"count\":1}",
                     "SELECT @from f, @to t",
-                    "[{\"name\":\"from\",\"value\":\"'2026-11-11'::TIMESTAMP\"},{\"name\":\"to\",\"value\":\"dateadd('d', 1, @from)\"}]"
+                    "@from := '2026-11-11'::TIMESTAMP, @to := dateadd('d', 1, @from)"
             );
             // a value with a double quote and a line comment
             assertGet(
                     "{\"query\":\"SELECT @a x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"say \\\"hi\\\"\"]],\"count\":1}",
                     "SELECT @a x",
-                    "[{\"name\":\"a\",\"value\":\"'say \\\"hi\\\"' -- quoted\"}]"
+                    "@a := 'say \"hi\"' -- quoted"
             );
-            // an empty array declares nothing
+            // the characters URL encoding gives a meaning arrive as they were sent
+            assertGet(
+                    "{\"query\":\"SELECT @s x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"a&b?c=d+e#f%g h\"]],\"count\":1}",
+                    "SELECT @s x",
+                    "@s := 'a&b?c=d+e#f%g h'"
+            );
+            // an empty parameter declares nothing
             assertGet(
                     "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
                     "SELECT 1 x",
-                    "[]"
+                    ""
             );
         }));
     }
@@ -254,7 +245,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
         // answers as it does without the parameter.
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-            final String variables = "[{\"name\":\"a\",\"value\":\"1\"}]";
+            final String variables = "@a := 1";
             assertSameResponse("UPDATE t SET v = @a", variables);
             assertSameResponse("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", variables);
         }));

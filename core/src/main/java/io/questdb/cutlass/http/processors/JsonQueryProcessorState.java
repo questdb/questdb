@@ -44,7 +44,6 @@ import io.questdb.cutlass.http.HttpKeywords;
 import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.text.Utf8Exception;
-import io.questdb.griffin.QueryVariables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionOwner;
@@ -111,9 +110,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final CharSequence keepAliveHeader;
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
-    private final QueryVariables queryVariables = new QueryVariables();
     // the variables parameter, decoded, see parseQueryVariables()
-    private final StringSink queryVariablesText = new StringSink();
+    private final StringSink queryVariables = new StringSink();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -134,11 +132,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursor cursor;
     private boolean cursorHasRows;
     private int errorPosition;
-    // the index of the variable the error lies in, -1 for none; see storeError()
-    private int errorVariableIndex = -1;
     private long executeStartNanos;
     private boolean explain = false;
-    // whether the error lies in the variables parameter rather than in the query, see storeError()
+    // whether the error lies in the variables parameter rather than in the query, see locateError()
     private boolean isErrorInVariables;
     private boolean noMeta = false;
     // Operation is stored here to be retried
@@ -203,7 +199,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (recordCursorFactory != null) {
                 if (queryCacheable) {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, query, queryVariables.getDeclarations(), selectCacheKeySink),
+                            SelectCacheKey.of(selectCacheScope, query, queryVariables, selectCacheKeySink),
                             recordCursorFactory
                     );
                 } else {
@@ -214,7 +210,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             selectCacheScope = null;
             query.clear();
             queryVariables.clear();
-            queryVariablesText.clear();
             columnNameSink.clear();
             queryState = QUERY_SETUP_FIRST_RECORD;
             columnIndex = 0;
@@ -235,7 +230,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             containsSecret = false;
             errorMessage.clear();
             isErrorInVariables = false;
-            errorVariableIndex = -1;
             updateRecords = 0;
             clientWaitAccumNanos = 0;
             clientWaitStartNanos = -1;
@@ -274,7 +268,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             }
         }
         queryVariables.clear();
-        queryVariablesText.clear();
         this.skip = skip;
         this.stop = stop;
         count = 0L;
@@ -355,7 +348,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      */
     public CharSequence getSelectCacheKey(SecurityContext securityContext) {
         selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, query, queryVariables.getDeclarations(), selectCacheKeySink);
+        return SelectCacheKey.of(selectCacheScope, query, queryVariables, selectCacheKeySink);
     }
 
     public long getStatementTimeout() {
@@ -363,30 +356,25 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
-     * Returns the variables the client declared for the query, which hold none without the
-     * variables parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
+     * Returns the variables the client declared for the query: the assignments of a DECLARE
+     * block, see {@link SqlExecutionContext#getQueryVariables()}, empty without the variables
+     * parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
      */
-    public QueryVariables getQueryVariables() {
+    public CharSequence getQueryVariables() {
         return queryVariables;
     }
 
     /**
-     * Reads the variables parameter of the request, see {@link QueryVariables}. Without the
-     * parameter, the query has no variables. Throws with the position in the parameter's text of
-     * what it cannot read.
+     * Decodes the variables parameter of the request. The parser reads the text when it compiles
+     * the query.
      */
     public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
         queryVariables.clear();
-        queryVariablesText.clear();
         final DirectUtf8Sequence variables = request.getUrlParam(URL_PARAM_VARIABLES);
-        if (variables == null) {
-            return;
-        }
-        if (!Utf8s.utf8ToUtf16(variables.lo(), variables.hi(), queryVariablesText)) {
-            queryVariablesText.clear();
+        if (variables != null && !Utf8s.utf8ToUtf16(variables.lo(), variables.hi(), queryVariables)) {
+            queryVariables.clear();
             throw SqlException.$(0, "variables are not valid UTF-8");
         }
-        queryVariables.of(queryVariablesText);
     }
 
     public LogRecord info() {
@@ -540,9 +528,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     /**
      * Stores an error at a position in what the query was compiled from. A position past the
-     * query's text lies in the variables the client declared, which the parser reads after it,
-     * see {@link QueryVariables}: the error then reports the variable and the position in its
-     * value.
+     * query's text lies in the variables the client declared, which the parser reads after it:
+     * the error then reports the position in the variables parameter.
      */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
@@ -554,7 +541,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void storeError(CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
         this.isErrorInVariables = false;
-        this.errorVariableIndex = -1;
         this.errorPosition = Numbers.INT_NULL;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
@@ -566,7 +552,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void storeVariablesError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
         this.isErrorInVariables = true;
-        this.errorVariableIndex = -1;
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
@@ -1412,44 +1397,27 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     /**
      * Returns the position to report for an error at a position in what the query was compiled
-     * from, and remembers where the error lies. A position past the query's text lies in the
-     * variables the client declared, which the parser reads after the query's text and a newline,
-     * see {@link QueryVariables}: the error is then reported as one in the variable's value, at
-     * the position in the value.
+     * from, and remembers where the error lies. The parser reads the variables the client
+     * declared after the query's text and a newline, see
+     * {@link SqlExecutionContext#getQueryVariables()}, so a position past the query's text lies
+     * in them: the error is then reported at the position in the variables parameter.
      */
     private int locateError(int position) {
         isErrorInVariables = false;
-        errorVariableIndex = -1;
         final int offset = position - query.length() - 1;
-        // A position past the variables' text is no position in either text, such as the fixed
-        // one some runtime errors carry.
-        if (position == Numbers.INT_NULL || queryVariables.size() == 0 || offset < 0 || offset > queryVariables.getDeclarations().length()) {
+        // A position past the variables is no position in either text, such as the fixed one
+        // some runtime errors carry.
+        if (position == Numbers.INT_NULL || queryVariables.length() == 0 || offset < 0 || offset > queryVariables.length()) {
             return position;
         }
-        // the first assignment starts at offset 0
-        final int index = queryVariables.indexOf(offset);
-        assert index > -1;
         isErrorInVariables = true;
-        errorVariableIndex = index;
-        // an error in the name, or in the separator after the value, points at the value's ends
-        final int valueLo = queryVariables.getValueLo(index);
-        return Math.min(Math.max(offset, valueLo), queryVariables.getValueHi(index)) - valueLo;
+        return offset;
     }
 
     // tells an error in the variables parameter from one in the query, see locateError()
     private void putErrorSource(HttpChunkedResponse response) {
-        if (!isErrorInVariables) {
-            return;
-        }
-        response.putAscii(',').putAsciiQuoted("errorSource").putAscii(':').putAsciiQuoted("variables");
-        if (errorVariableIndex > -1) {
-            response.putAscii(',').putAsciiQuoted("variable").putAscii(':').putQuote()
-                    .escapeJsonStr(
-                            queryVariables.getDeclarations(),
-                            queryVariables.getNameLo(errorVariableIndex),
-                            queryVariables.getNameHi(errorVariableIndex)
-                    )
-                    .putQuote();
+        if (isErrorInVariables) {
+            response.putAscii(',').putAsciiQuoted("errorSource").putAscii(':').putAsciiQuoted("variables");
         }
     }
 

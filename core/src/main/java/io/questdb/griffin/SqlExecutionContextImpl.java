@@ -127,7 +127,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelWindowJoinEnabled;
     private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
-    private QueryVariables queryVariables;
+    private CharSequence queryVariables;
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
@@ -403,7 +403,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public @Nullable QueryVariables getQueryVariables() {
+    public @Nullable CharSequence getQueryVariables() {
         return queryVariables;
     }
 
@@ -781,10 +781,10 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     /**
      * Sets the variables the client declared for the statements this context compiles next, or
-     * {@code null} for none. The caller sets them around one compile and clears them after, so
-     * they never reach another statement on the connection.
+     * {@code null} for none, see {@link #getQueryVariables()}. The caller sets them around one
+     * compile and clears them after, so they never reach another statement on the connection.
      */
-    public void setQueryVariables(@Nullable QueryVariables queryVariables) {
+    public void setQueryVariables(@Nullable CharSequence queryVariables) {
         this.queryVariables = queryVariables;
     }
 

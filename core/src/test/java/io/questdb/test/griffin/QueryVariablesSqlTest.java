@@ -24,7 +24,6 @@
 
 package io.questdb.test.griffin;
 
-import io.questdb.griffin.QueryVariables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.StringSink;
@@ -33,8 +32,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
- * Variables a client declares outside the statement's text, see {@link QueryVariables}. The
- * statement reads them as a DECLARE block that opens it. Each expectation holds the result of
+ * Variables a client declares outside the statement's text, see
+ * {@link io.questdb.griffin.SqlExecutionContext#getQueryVariables()}: the assignments of a DECLARE
+ * block, which the statement reads as a DECLARE block that opens it. Each expectation holds the result of
  * the same statement with the variables written as that block, which the test also runs.
  */
 public class QueryVariablesSqlTest extends AbstractCairoTest {
@@ -45,7 +45,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             // The value is parsed from the statement's text, a newline and "@a := nope_fn()", so
             // its position lies past the statement: 10 + the 6 characters of "@a := ".
             final String sql = "SELECT @a";
-            withVariables("[{\"name\":\"a\",\"value\":\"nope_fn()\"}]", () -> assertQuery(sql)
+            withVariables("@a := nope_fn()", () -> assertQuery(sql)
                     .fails(sql.length() + 1 + 6, "unknown function name: nope_fn()"));
         });
     }
@@ -57,7 +57,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             final StringSink expected = new StringSink();
             printSql("EXPLAIN DECLARE @lim := 3 SELECT v FROM t WHERE v > @lim", expected);
             final StringSink actual = new StringSink();
-            withVariables("[{\"name\":\"lim\",\"value\":\"3\"}]", () -> printSql("EXPLAIN SELECT v FROM t WHERE v > @lim", actual));
+            withVariables("@lim := 3", () -> printSql("EXPLAIN SELECT v FROM t WHERE v > @lim", actual));
             TestUtils.assertContains(expected, "filter:");
             TestUtils.assertEquals(expected, actual);
         });
@@ -76,7 +76,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 final StringSink expected = new StringSink();
                 printSql(statement[0], expected);
                 final StringSink actual = new StringSink();
-                withVariables("[{\"name\":\"a\",\"value\":\"7\"}]", () -> printSql(statement[1], actual));
+                withVariables("@a := 7", () -> printSql(statement[1], actual));
                 TestUtils.assertEquals(expected, actual);
             }
         });
@@ -88,7 +88,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("CREATE TABLE t (v INT)");
             execute("INSERT INTO t VALUES (1)");
             drainWalQueue();
-            withVariables("[{\"name\":\"a\",\"value\":\"2\"}]", () -> {
+            withVariables("@a := 2", () -> {
                 // brackets inside a CTE body, and a list of CTEs
                 assertQuery("WITH c AS (SELECT ((@a)) x), d AS (SELECT x + 1 y FROM c) SELECT y FROM d").expectSize().returns("y\n3\n");
                 // an UPDATE after brackets and a list of CTEs still skips the variables
@@ -115,7 +115,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                     position = e.getPosition();
                     message = e.getFlyweightMessage().toString();
                 }
-                withVariables("[{\"name\":\"a\",\"value\":\"2\"}]", () -> assertExceptionNoLeakCheck(sql, position, message));
+                withVariables("@a := 2", () -> assertExceptionNoLeakCheck(sql, position, message));
             }
         });
     }
@@ -125,11 +125,11 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT, s VARCHAR)");
             withVariables(
-                    "[{\"name\":\"v\",\"value\":\"41 + 1\"},{\"name\":\"s\",\"value\":\"'x' || @v\"}]",
+                    "@v := 41 + 1, @s := 'x' || @v",
                     () -> execute("INSERT INTO t SELECT @v, @s")
             );
             withVariables(
-                    "[{\"name\":\"v\",\"value\":\"7\"}]",
+                    "@v := 7",
                     () -> execute("WITH c AS (SELECT @v v) INSERT INTO t SELECT v, 'cte' FROM c")
             );
             drainWalQueue();
@@ -142,10 +142,13 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNoVariablesWithEmptyArray() throws Exception {
-        assertMemoryLeak(() -> withVariables("[]", () -> assertQuery("SELECT @a")
-                // as SELECT @a without the variables
-                .fails(7, "Invalid column: @a")));
+    public void testNoAssignmentsDeclareNothing() throws Exception {
+        assertMemoryLeak(() -> {
+            // as SELECT @a without the variables
+            for (String variables : new String[]{"", "  \n\t", "-- no variables", "/* none */"}) {
+                withVariables(variables, () -> assertQuery("SELECT @a").fails(7, "Invalid column: @a"));
+            }
+        });
     }
 
     @Test
@@ -154,7 +157,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("CREATE TABLE t (v INT)");
             execute("INSERT INTO t VALUES (1), (2), (3)");
             drainWalQueue();
-            final String variables = "[{\"name\":\"a\",\"value\":\"2\"}]";
+            final String variables = "@a := 2";
             withVariables(variables, () -> {
                 // implicit SELECT
                 assertQuery("t WHERE v >= @a").returns("""
@@ -174,7 +177,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     @Test
     public void testStatementDeclarationReadsVariables() throws Exception {
         assertMemoryLeak(() -> withVariables(
-                "[{\"name\":\"a\",\"value\":\"1\"}]",
+                "@a := 1",
                 // the statement's own block reads the client's variables, as its own earlier
                 // declarations; DECLARE @a := 1, @b := @a + 10 SELECT @b
                 () -> assertQuery("DECLARE @b := @a + 10 SELECT @b b").expectSize().returns("b\n11\n")
@@ -184,7 +187,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     @Test
     public void testStatementDeclarationWins() throws Exception {
         assertMemoryLeak(() -> withVariables(
-                "[{\"name\":\"a\",\"value\":\"1\"},{\"name\":\"b\",\"value\":\"@a + 1\"}]",
+                "@a := 1, @b := @a + 1",
                 // DECLARE @a := 1, @b := @a + 1, @a := 5 SELECT @a, @b: the statement's @a is the
                 // last one declared, and @b keeps the value it was declared with
                 () -> assertQuery("DECLARE @a := 5 SELECT @a a, @b b").expectSize().returns("a\tb\n5\t2\n")
@@ -197,11 +200,11 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("CREATE TABLE t (v INT)");
             execute("INSERT INTO t VALUES (1), (2)");
             drainWalQueue();
-            withVariables("[{\"name\":\"q\",\"value\":\"(SELECT v FROM t WHERE v > 1)\"}]", () -> assertQuery("SELECT * FROM @q")
+            withVariables("@q := (SELECT v FROM t WHERE v > 1)", () -> assertQuery("SELECT * FROM @q")
                     .returns("v\n2\n"));
             // "@q := (SELECT * FROM nope)": nope sits 21 characters into the assignments
             final String sql = "SELECT * FROM @q";
-            withVariables("[{\"name\":\"q\",\"value\":\"(SELECT * FROM nope)\"}]", () -> assertQuery(sql)
+            withVariables("@q := (SELECT * FROM nope)", () -> assertQuery(sql)
                     .fails(sql.length() + 1 + 21, "table does not exist [table=nope]"));
         });
     }
@@ -212,7 +215,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
                 // Unlike the same value in the statement's own DECLARE block, a variable the
                 // statement does not read never reaches the compiler, so its sub-query may read a
                 // table that does not exist.
-                "[{\"name\":\"q\",\"value\":\"(SELECT * FROM nope)\"}]",
+                "@q := (SELECT * FROM nope)",
                 () -> assertQuery("SELECT 1 x").expectSize().returns("x\n1\n")
         ));
     }
@@ -222,7 +225,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // The WAL applies an UPDATE by parsing its text again, without the variables.
             execute("CREATE TABLE t (v INT)");
-            withVariables("[{\"name\":\"a\",\"value\":\"1\"}]", () -> {
+            withVariables("@a := 1", () -> {
                 // as without the variables
                 assertExceptionNoLeakCheck("UPDATE t SET v = @a", 17, "Invalid column: @a");
                 assertExceptionNoLeakCheck("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", 18, "Invalid column: @a");
@@ -233,18 +236,33 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     @Test
     public void testValueEndingWithLineComment() throws Exception {
         assertMemoryLeak(() -> withVariables(
-                "[{\"name\":\"a\",\"value\":\"1 -- one\"},{\"name\":\"b\",\"value\":\"2\"}]",
+                "@a := 1 -- one\n, @b := 2",
                 () -> assertQuery("SELECT @a + @b x").expectSize().returns("x\n3\n")
         ));
     }
 
     @Test
-    public void testValueMayNotHoldAnotherAssignment() throws Exception {
+    public void testOnlyAssignments() throws Exception {
         assertMemoryLeak(() -> {
             final String sql = "SELECT @a";
-            // "@a := 1, @z := 2": @z sits 9 characters into the assignments
-            withVariables("[{\"name\":\"a\",\"value\":\"1, @z := 2\"}]", () -> assertQuery(sql)
-                    .fails(sql.length() + 1 + 9, "a variable value must be a single expression"));
+            // Positions in the assignments, past the statement and a newline. Each case fails as
+            // the same assignments in DECLARE <assignments> SELECT 1 do, at the same place.
+            final Object[][] cases = {
+                    {"1", 0, "unexpected token [1]"},
+                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
+                    {"@a := 1,,", 8, "missing declaration"},
+                    {"@a := 1 @b := 2", 8, "',' expected"},
+                    {"@a 1", 3, "expected variable assignment operator `:=`"},
+                    // as DECLARE @a := at the end of a statement, 8 characters into it
+                    {"@a :=", 3, "too few arguments for ':=' [found=1,expected=2]"},
+                    {"OVERRIDABLE @a := 1", 12, "variables cannot be OVERRIDABLE"},
+                    {"@b := 1, OVERRIDABLE @a := 1", 21, "variables cannot be OVERRIDABLE"},
+                    {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
+                    {"@a := @b", 6, "tried to use undeclared variable `@b`"},
+            };
+            for (Object[] c : cases) {
+                withVariables((String) c[0], () -> assertQuery(sql).fails(sql.length() + 1 + (int) c[1], (String) c[2]));
+            }
         });
     }
 
@@ -253,7 +271,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String sql = "SELECT @a";
             // "@a := 1 SELECT 2": SELECT sits 8 characters into the assignments
-            withVariables("[{\"name\":\"a\",\"value\":\"1 SELECT 2\"}]", () -> assertQuery(sql)
+            withVariables("@a := 1 SELECT 2", () -> assertQuery(sql)
                     .fails(sql.length() + 1 + 8, "unexpected token [SELECT]"));
         });
     }
@@ -261,7 +279,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     @Test
     public void testVariablesReadEarlierVariables() throws Exception {
         assertMemoryLeak(() -> withVariables(
-                "[{\"name\":\"a\",\"value\":\"1\"},{\"name\":\"b\",\"value\":\"@a + 1\"},{\"name\":\"c\",\"value\":\"('x', 'y')\"}]",
+                "@a := 1, @b := @a + 1, @c := ('x', 'y')",
                 () -> {
                     assertQuery("SELECT @a a, @b b").expectSize().returns("a\tb\n1\t2\n");
                     assertQuery("SELECT 'x' IN @c a, 'z' IN @c b").expectSize().returns("a\tb\ntrue\tfalse\n");
@@ -278,7 +296,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             execute("CREATE VIEW v_fixed AS (DECLARE @lim := 2 SELECT l FROM k WHERE l <= @lim)");
             drainWalAndViewQueues();
             // as with DECLARE @lim := 1 SELECT * FROM v_ovl
-            withVariables("[{\"name\":\"lim\",\"value\":\"1\"}]", () -> {
+            withVariables("@lim := 1", () -> {
                 assertQuery("SELECT * FROM v_ovl").noLeakCheck().returns("l\n1\n");
                 // "@lim := 1": the error points at ":=", 5 characters into the assignments
                 assertQuery("SELECT * FROM v_fixed").noLeakCheck().fails("SELECT * FROM v_fixed".length() + 1 + 5, "variable is not overridable: @lim");
@@ -287,9 +305,7 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         });
     }
 
-    private static void withVariables(String json, VariablesCode code) throws Exception {
-        final QueryVariables variables = new QueryVariables();
-        variables.of(json);
+    private static void withVariables(String variables, VariablesCode code) throws Exception {
         final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
         context.setQueryVariables(variables);
         try {

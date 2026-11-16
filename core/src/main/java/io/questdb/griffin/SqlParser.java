@@ -993,19 +993,6 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
 
-    // whether the declared name, with its '@', names one of the client's variables
-    private static boolean isQueryVariable(QueryVariables variables, CharSequence declaredName) {
-        final CharSequence declarations = variables.getDeclarations();
-        for (int i = 0, n = variables.size(); i < n; i++) {
-            final int lo = variables.getNameLo(i);
-            final int hi = variables.getNameHi(i);
-            if (Chars.equalsIgnoreCase(declaredName, declarations, lo - 1, hi)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     // The name the row-expiry read filter resolves a table reference by: unquoted, without the no-rowid
     // marker. The marker only turns off random access, and the optimiser and the code generator strip it
     // before they open the table, so a reference spelled with it reads the same table as the bare name.
@@ -8144,30 +8131,42 @@ public class SqlParser {
 
     /**
      * Parses the variables the client declared for the statement outside its text, see
-     * {@link QueryVariables}, as the assignments of a DECLARE block that opens the statement.
-     * Returns null when the client declared none.
+     * {@link SqlExecutionContext#getQueryVariables()}: the assignments of a DECLARE block that
+     * opens the statement. Returns null when the client declared none.
      * <p>
      * The assignments are parsed from a text of their own: the statement's text, a newline, and
      * the assignments, read from past the newline. So everything parsed from them takes a
      * position past the statement's text, and an error in a value, which the code generator may
-     * report long after this parse, points past it too. The caller tells such a position apart
-     * by the length of the statement's text, see {@link QueryVariables#indexOf(int)}. The text
-     * outlives this parse, as the statement's does: a sub-query in a value is parsed again from
-     * it for each read past the first, see {@link #parseDeclaredQuery}.
+     * report long after this parse, points past it too: the caller tells such a position apart by
+     * the length of the statement's text. The text outlives this parse, as the statement's does:
+     * a sub-query in a value is parsed again from it for each read past the first, see
+     * {@link #parseDeclaredQuery}.
      */
     private @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> parseQueryVariables(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final QueryVariables variables = executionContext.getQueryVariables();
-        if (variables == null || variables.size() == 0) {
+        final CharSequence variables = executionContext.getQueryVariables();
+        if (variables == null || variables.length() == 0) {
             return null;
         }
         queryVariablesSource.clear();
         queryVariablesSource.put(lexer.getContent()).put('\n');
         final int assignmentsLo = queryVariablesSource.length();
-        queryVariablesSource.put(variables.getDeclarations());
+        queryVariablesSource.put(variables);
+        queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
+
+        CharSequence tok = optTok(queryVariablesLexer);
+        if (tok == null) {
+            // blank, or only comments
+            return null;
+        }
+        if (isDeclareKeyword(tok)) {
+            throw SqlException.$(queryVariablesLexer.lastTokenPosition(), "variables are the assignments of a DECLARE block, without the DECLARE keyword");
+        }
+        // parseDeclare() reads each variable from the lexer's position, which a token handed
+        // back would leave past it: start the lexer over instead
         queryVariablesLexer.of(queryVariablesSource, assignmentsLo, queryVariablesSource.length());
         recordStatementTextLength(queryVariablesLexer);
 
@@ -8177,27 +8176,26 @@ public class SqlParser {
         final LowerCaseCharSequenceObjHashMap<WithClauseModel> withScopeBefore = withScope;
         withScope = model.getWithClauses();
         try {
-            // not a top-level block: a value cannot mark a variable AUDITED
+            // not a top-level block: a variable cannot be marked AUDITED
             parseDeclare(queryVariablesLexer, model, sqlParserCallback, false);
         } finally {
             withScope = withScopeBefore;
         }
-        final CharSequence tok = optTok(queryVariablesLexer);
+        tok = optTok(queryVariablesLexer);
         if (tok != null) {
-            // a value ended early, as `1 SELECT 2` does
+            // not an assignment, or a value that ended early, as `1 SELECT 2` does
             throw SqlException.unexpectedToken(queryVariablesLexer.lastTokenPosition(), tok);
         }
 
         final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls = model.getDecls();
-        if (decls.size() != variables.size()) {
-            // A value held another assignment, as `1, @y := 2` does. Every variable declared its
-            // name, so the block holds a name no variable has: point at it.
-            final ObjList<CharSequence> keys = decls.keys();
-            int i = 0;
-            while (isQueryVariable(variables, keys.getQuick(i))) {
-                i++;
+        final LowerCaseCharSequenceHashSet overridableDecls = model.getOverridableDecls();
+        final ObjList<CharSequence> keys = decls.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            // OVERRIDABLE lets a view's caller set the view's variable; the client's variables
+            // are the caller's values, nothing overrides them
+            if (overridableDecls.contains(keys.getQuick(i))) {
+                throw SqlException.$(decls.get(keys.getQuick(i)).lhs.position, "variables cannot be OVERRIDABLE");
             }
-            throw SqlException.$(decls.get(keys.getQuick(i)).lhs.position, "a variable value must be a single expression");
         }
         queryVariableDecls = decls;
         return decls;
