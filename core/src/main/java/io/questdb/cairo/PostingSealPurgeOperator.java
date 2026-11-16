@@ -59,6 +59,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private int scanPartitionPathLen;
     private long scanRemovedCoverColumnNameTxn;
     private int scanRemovedCoverIncludeIdx;
+    // The posting column name txn as the scan reports it for a cover data file.
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
     private TxReader txReader;
@@ -289,7 +290,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         scanAllCoversRemoved = true;
         scanAnyCoverRemoved = false;
         scanTargetSealTxn = task.getSealTxn();
-        scanTargetPostingTxn = task.getPostingColumnNameTxn();
+        scanTargetPostingTxn = PostingIndexUtils.coverFilePostingColumnNameTxn(task.getPostingColumnNameTxn());
         scanColumnName = task.getIndexColumnName();
         scanPartitionPathLen = pathPartitionLen;
         path.trimTo(pathPartitionLen);
@@ -306,8 +307,8 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         // orphan and a later reuse re-created a fresh, still-present .pc): a republished
         // sealTxn recreates the whole .pc set via openSidecarFiles, so only "the removed
         // .pc is still gone AND head == sealTxn" means a live, non-recreated cover was
-        // unlinked. Losing a .pc is less severe than losing the .pv -- the reader falls
-        // back to the base column rather than hard-failing -- but it is still a silent
+        // unlinked. Losing a .pc is less severe than losing the .pv -- covered reads
+        // hard-fail but non-covered reads still work -- but it is still a silent
         // live-unlink, so surface the same REINDEX diagnostic. readSealTxnFromKeyFile
         // returns -1 on a missing/unreadable .pk, which never equals a valid sealTxn, so
         // a genuine orphan (no live .pk) does not trip this.

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -59,6 +60,8 @@ public class VacuumColumnVersions implements Closeable {
     private final static Log LOG = LogFactory.getLog(VacuumColumnVersions.class);
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final StringSink fileNameUtf16Sink = new StringSink();
+    private final PostingFileNameTxn postingFileNameTxn = new PostingFileNameTxn();
     private final ColumnPurgeTask purgeTask = new ColumnPurgeTask();
     private final CharSequenceIntHashMap rogueColumns = new CharSequenceIntHashMap();
     private StringSink columnNameSink;
@@ -290,6 +293,27 @@ public class VacuumColumnVersions implements Closeable {
                         }
                     }
 
+                    // A posting value or cover data file carries its seal txn after the column name txn, which the
+                    // parse above cannot tell apart.
+                    fileNameUtf16Sink.clear();
+                    Utf8s.utf8ToUtf16(fileNameSink, fileNameUtf16Sink);
+                    postingFileNameTxn.clear();
+                    PostingIndexUtils.parseSealedFileName(fileNameUtf16Sink, columnNameSink, postingFileNameTxn);
+                    if (postingFileNameTxn.isPostingFile) {
+                        columnVersion = postingFileNameTxn.columnNameTxn;
+                        if (postingFileNameTxn.isCoverDataFile && name2Index > -1) {
+                            // A cover data file name writes name txn 0 like no name txn: it is the live version's
+                            // when either is live.
+                            final long liveColumnNameTxn = tableReader.getColumnVersionReader().getColumnNameTxn(
+                                    partitionTimestamp,
+                                    tableReader.getMetadata().getWriterIndex(name2Index)
+                            );
+                            if (PostingIndexUtils.coverFilePostingColumnNameTxn(liveColumnNameTxn) == columnVersion) {
+                                columnVersion = liveColumnNameTxn;
+                            }
+                        }
+                    }
+
                     tableFiles.add(name2Index);
                     tableFiles.add(partitionTimestamp);
                     tableFiles.add(columnVersion);
@@ -340,6 +364,35 @@ public class VacuumColumnVersions implements Closeable {
             // Table root
             partitionTimestamp = PurgingOperator.TABLE_ROOT_PARTITION;
             visitTableFiles(pUtf8NameZ, type);
+        }
+    }
+
+    /**
+     * The posting column name txn of a posting value or cover data file, as {@link PostingIndexUtils#scanSealedFiles}
+     * reports it.
+     */
+    private static final class PostingFileNameTxn implements PostingIndexUtils.SealedFileVisitor {
+        private long columnNameTxn;
+        private boolean isCoverDataFile;
+        private boolean isPostingFile;
+
+        @Override
+        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+            columnNameTxn = postingColumnNameTxn;
+            isCoverDataFile = true;
+            isPostingFile = true;
+        }
+
+        @Override
+        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+            columnNameTxn = postingColumnNameTxn;
+            isPostingFile = true;
+        }
+
+        void clear() {
+            columnNameTxn = -1;
+            isCoverDataFile = false;
+            isPostingFile = false;
         }
     }
 }

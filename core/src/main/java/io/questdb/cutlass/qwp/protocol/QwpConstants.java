@@ -66,6 +66,11 @@ public final class QwpConstants {
     public static final int DEFAULT_MAX_TABLES_PER_CONNECTION = 10_000;
     public static final long DEFAULT_MAX_UNCOMMITTED_ROWS = 1_000_000;
     /**
+     * Default idle time (millis) after the last data frame before a keepalive
+     * PING returns the connection's idle WAL writers to the pool. 0 disables.
+     */
+    public static final long DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE = 30_000;
+    /**
      * Flag bit: defer WAL commit. The server appends rows to WAL writers
      * but does not commit them until a subsequent message without this flag.
      * Allows clients to split a logical batch across multiple messages that

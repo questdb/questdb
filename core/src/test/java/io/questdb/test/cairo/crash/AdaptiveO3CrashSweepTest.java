@@ -603,9 +603,9 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                                 + ", liveRows=" + txFile.getPartitionSize(front) + ']',
                         frontExtent > txFile.getPartitionSize(front));
                 frontNameTxn = txFile.getPartitionNameTxn(front);
-                // The range TableWriter.scanSquashRangeHolders checks for a target followed by its own sibling.
-                fromTxn = Math.max(0, frontNameTxn);
-                toTxn = Math.max(fromTxn + 1, txFile.getPartitionNameTxn(front + 1) + 1);
+                // The range TableWriter.scanPartitionTailHolders checks for a target followed by its own sibling.
+                fromTxn = frontNameTxn + 1;
+                toTxn = txFile.getPartitionNameTxn(front + 1) + 1;
             }
             dayRows = scalar("select count() from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'");
             daySum = scalar("select sum(i) from " + FOLD_TABLE + " where ts in '" + FOLD_DAY + "'");

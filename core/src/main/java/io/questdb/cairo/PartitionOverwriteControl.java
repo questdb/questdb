@@ -61,6 +61,9 @@ public class PartitionOverwriteControl {
                 for (int i = 0, n = usages.size(); i < n; i++) {
                     ReaderPartitionUsage existing = usages.get(i);
                     if (existing.owner == reader) {
+                        // the reader moved to another txn while active, e.g. goActiveAtTxn() on an active reader
+                        existing.partitionsList = partitions;
+                        existing.ownerTxn = readerPartitionUsage.ownerTxn;
                         return;
                     }
                 }

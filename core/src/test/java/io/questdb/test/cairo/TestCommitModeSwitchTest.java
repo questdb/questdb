@@ -44,6 +44,7 @@ public class TestCommitModeSwitchTest extends AbstractCairoTest {
 
     @Test
     public void testEveryConfigurationPathAgreesOnTheSuiteCommitMode() {
+        Assert.assertNull("only a fuzz test class draws its own commit mode", Overrides.getFuzzCommitMode());
         final int expected = CommitMode.fromString(Overrides.TEST_COMMIT_MODE);
         Assert.assertNotEquals(
                 "questdb.test.commit.mode must name a real commit mode, was: " + Overrides.TEST_COMMIT_MODE,

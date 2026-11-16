@@ -372,12 +372,20 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
             execute("insert into x select cast(x as int) i, timestamp_sequence('2024-02-01T00', 60 * 1_000_000L) ts from long_sequence(600)");
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
-            final String epochRows = snapshot();
-            dropEpochPinFromScoreboard(tt);
 
             execute("insert into x select cast(9000 + x as int) i, timestamp_sequence('2024-02-01T05:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();
             final long versionBeforeSquash = liveNameTxn(tt, FEB_1);
+            // The first squash can replace the day. Pin its current version before testing the next squash.
+            try (TableWriter writer = getWriter(tt)) {
+                writer.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+                Assert.assertEquals(writer.getTxn(), engine.getTableSequencerAPI().getTxnTracker(tt).getPinnedEpochTxn());
+            }
+            Assert.assertTrue("the save point must see the target partition version",
+                    engine.getTableSequencerAPI().getTxnTracker(tt).getPinnedEpochTxn() > versionBeforeSquash);
+            final String epochRows = snapshot();
+            dropEpochPinFromScoreboard(tt);
+
             // Splits the day again, and the squash that follows folds the split back into the day.
             execute("insert into x select cast(8000 + x as int) i, timestamp_sequence('2024-02-01T07:00', 1_000_000L) ts from long_sequence(50)");
             drainWalQueue();

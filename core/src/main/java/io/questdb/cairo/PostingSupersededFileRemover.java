@@ -48,7 +48,7 @@ final class PostingSupersededFileRemover implements PostingIndexUtils.SealedFile
 
     @Override
     public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-        if (postingColumnNameTxn == columnNameTxn && sealTxn != liveSealTxn) {
+        if (postingColumnNameTxn == PostingIndexUtils.coverFilePostingColumnNameTxn(columnNameTxn) && sealTxn != liveSealTxn) {
             ff.removeQuiet(PostingIndexUtils.coverDataFileName(
                     dir.trimTo(dirLen), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
             dir.trimTo(dirLen);

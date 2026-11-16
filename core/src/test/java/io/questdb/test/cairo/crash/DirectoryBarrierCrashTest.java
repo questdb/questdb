@@ -68,7 +68,9 @@ import java.util.function.BooleanSupplier;
  *   <li>SYNC fsyncs each partition directory in which ALTER COLUMN TYPE creates converted column files, and the
  *   partition directory a parquet conversion or the switch of a native partition to its parquet file creates and
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
- *   failed barrier does.</li>
+ *   failed barrier does. The same for each partition directory RENAME COLUMN, DROP INDEX or UPDATE adds names to:
+ *   the column files linked or written under a new name txn, the covering values of the indexes that INCLUDE
+ *   the column linked under it, and the index files UPDATE rebuilds.</li>
  *   <li>SYNC and ADAPTIVE fsync each column file ALTER COLUMN TYPE converts, data before aux, before the commit
  *   that publishes it, and each file a parquet conversion writes. A failed one poisons the engine too; under ASYNC
  *   it only fails the statement.</li>
@@ -81,6 +83,30 @@ import java.util.function.BooleanSupplier;
  * </ul>
  */
 public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
+    /**
+     * A POSTING index on {@code s} that INCLUDEs {@code k} and {@code v}, and a BITMAP index on {@code k}, so that
+     * DROP INDEX, RENAME COLUMN and UPDATE move a covered column to a new name txn.
+     */
+    private static final TestTable COVERED_COLUMN_TABLE = wal -> {
+        execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (k, v), k SYMBOL INDEX, v DOUBLE) "
+                + "TIMESTAMP(ts) PARTITION BY DAY " + (wal ? "WAL" : "BYPASS WAL"));
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0),
+                    ('2024-01-02T00:00:00.000000Z', 'b', 'q', 2.0),
+                    ('2024-01-03T00:00:00.000000Z', 'a', 'r', 3.0)
+                """);
+    };
+    private static final TestTable INDEXED_SYMBOL_TABLE = wal -> {
+        execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                + (wal ? "WAL" : "BYPASS WAL"));
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                    ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                    ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                """);
+    };
 
     @Test
     public void testAdaptiveAlterColumnTypeNonWalFailedFixedFsyncIsFailStop() throws Exception {
@@ -115,7 +141,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAdaptiveConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -212,7 +238,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
         // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
-        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -472,23 +498,23 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDirFsyncIsFailStop() throws Exception {
         Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 2, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 2, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedPmFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 1, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 1, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWriter", 0, true));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWithStorageVersionSync", 0, true));
     }
 
     @Test
@@ -523,7 +549,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -537,8 +563,48 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncDropIndexOnCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "ALTER TABLE x ALTER COLUMN k DROP INDEX");
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "ALTER TABLE x ALTER COLUMN k DROP INDEX", this::assertDroppedIndexOnCoveredColumn);
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "ALTER TABLE x ALTER COLUMN k DROP INDEX");
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "ALTER TABLE x ALTER COLUMN k DROP INDEX", this::assertDroppedIndexOnCoveredColumn);
+    }
+
+    @Test
     public void testSyncNewSequencerPartSurvivesCrash() throws Exception {
         assertNewSequencerPartSurvivesCrash("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "ALTER TABLE x RENAME COLUMN v TO w");
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "ALTER TABLE x RENAME COLUMN v TO w", this::assertRenamedCoveredColumn);
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "ALTER TABLE x RENAME COLUMN v TO w");
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "ALTER TABLE x RENAME COLUMN v TO w", this::assertRenamedCoveredColumn);
     }
 
     @Test
@@ -557,48 +623,47 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testSyncSwitchToParquetNonWalFailedBarrierIsFailStop() throws Exception {
-        assertSyncSchemaChangeBarrierFailureIsFailStop(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false, false, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenVacuumThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, true);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, true, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalSurvivesCrash() throws Exception {
-        assertSyncSchemaChangeSurvivesCrash(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetWalFailedBarrierIsFailStop() throws Exception {
-        assertSyncSchemaChangeBarrierFailureIsFailStop(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
-    }
-
-    @Test
-    public void testSyncSwitchToParquetWalSurvivesCrash() throws Exception {
-        assertSyncSchemaChangeSurvivesCrash(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
-    }
-
-    @Test
     public void testSyncTableConvertedToWalKeepsWalIdCounter() throws Exception {
         assertTableConvertedToWalKeepsWalIdCounter("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'");
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnNonWalFailedColumnMsyncFailsStatement() throws Exception {
+        // Off Linux the column flush must first write the mapped pages into the file. FilesFacadeImpl reports a
+        // failed async msync as a critical error, not a data-sync failure, so the UPDATE fails and rolls back
+        // before its commit, and the engine keeps taking writes.
+        assertSyncFailure("sync", false, COVERED_COLUMN_TABLE, null, () -> execute("UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'"),
+                new FsyncFailureFacade("syncUpdatedColumns", 0, true, true) {
+                    @Override
+                    public boolean isSyncfsFileSystemWide() {
+                        return false;
+                    }
+
+                    @Override
+                    CairoException msyncFailure() {
+                        return CairoException.critical(5).put("injected msync failure");
+                    }
+                }, false);
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", this::assertUpdatedCoveredColumn);
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'");
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", this::assertUpdatedCoveredColumn);
     }
 
     @Test
@@ -863,6 +928,30 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * Reads the dropped index's column through its new name txn, and through the covering values linked under it.
+     */
+    private void assertDroppedIndexOnCoveredColumn() throws Exception {
+        assertQuery("SELECT \"column\", indexed FROM table_columns('x') WHERE \"column\" = 'k'").noRandomAccess().returns("""
+                column\tindexed
+                k\tfalse
+                """);
+        assertQuery("SELECT ts FROM x WHERE k = 'p'").timestamp("ts").returns("""
+                ts
+                2024-01-01T00:00:00.000000Z
+                """);
+        assertQuery("SELECT s, k, v, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, v, ts")
+                .returns("""
+                        s\tk\tv\tts
+                        a\tp\t1.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
+    /**
      * Fails one fsync of a change, in the given commit mode: the engine must be poisoned.
      *
      * @param prepare   runs once the rows are inserted, before they are applied to a WAL table; null for none
@@ -1067,6 +1156,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         Assert.assertEquals("[_pm, data.parquet, s.k, s.v]", Arrays.toString(names));
     }
 
+    /**
+     * Reads the renamed column through its new name txn, and through the covering values linked under it.
+     */
+    private void assertRenamedCoveredColumn() throws Exception {
+        assertQuery("SELECT sum(w) FROM x").noRandomAccess().expectSize().returns("""
+                sum
+                6.0
+                """);
+        assertQuery("SELECT s, k, w, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, w, ts")
+                .returns("""
+                        s\tk\tw\tts
+                        a\tp\t1.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
     private void assertRows(String expected) throws Exception {
         assertQuery("SELECT ts, v FROM x").timestamp("ts").expectSize().returns(expected);
     }
@@ -1146,7 +1255,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
             @Override
             public void msync(long addr, long len, boolean async) {
-                if (isArmed && !async && isCalledFrom("commitTxWriter") && isCalledFrom(operation)) {
+                if (isArmed && !async && isCalledFrom("commitTxWithStorageVersionSync") && isCalledFrom(operation)) {
                     isArmed = false;
                     failureCount++;
                     // nothing of the new _txn reaches the device
@@ -1229,6 +1338,27 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * Under SYNC, the partition directory barrier of a change that links a covered column's files under a new
+     * name txn (DROP INDEX, RENAME COLUMN, UPDATE) fails. The engine must be poisoned, as for every other failed
+     * barrier.
+     */
+    private void assertSyncCoveredColumnChangeBarrierFailureIsFailStop(boolean wal, String sql) throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        assertSyncFailure("sync", wal, COVERED_COLUMN_TABLE, null, () -> execute(sql), new FsyncFailureFacade("fsyncPartitionDirUnderSync", 0, false), true);
+    }
+
+    /**
+     * A change that moves a covered column to a new name txn without rewriting its data (DROP INDEX, RENAME
+     * COLUMN) or rewrites it (UPDATE) returns under SYNC, then the power fails. Each name it added to the
+     * partition directories must survive: the column's files linked or written under the new name txn, the
+     * covering values of the index that INCLUDEs the column linked under it, and the index files UPDATE rebuilt.
+     * Otherwise the durable {@code _cv} and {@code _txn} name files that are gone.
+     */
+    private void assertSyncCoveredColumnChangeSurvivesCrash(boolean wal, String sql, TestUtils.LeakProneCode assertAfterCrash) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, COVERED_COLUMN_TABLE, null, () -> execute(sql), assertAfterCrash);
+    }
+
+    /**
      * Fails one data sync of a change, in the given commit mode. When it is fail-stop, the engine must be poisoned
      * and refuse the next write; a non-WAL statement must also fail with a data-sync {@link CairoError}, and a WAL
      * apply must not merely suspend the table while the engine keeps taking writes. Otherwise the statement fails
@@ -1247,16 +1377,24 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             FsyncFailureFacade ff,
             boolean isFailStop
     ) throws Exception {
+        assertSyncFailure(commitMode, wal, INDEXED_SYMBOL_TABLE, prepare, change, ff, isFailStop);
+    }
+
+    /**
+     * @param table the table to create and fill, {@link #INDEXED_SYMBOL_TABLE} or {@link #COVERED_COLUMN_TABLE}
+     */
+    private void assertSyncFailure(
+            String commitMode,
+            boolean wal,
+            TestTable table,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            FsyncFailureFacade ff,
+            boolean isFailStop
+    ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
+            table.create(wal);
             if (prepare != null) {
                 prepare.run();
             }
@@ -1364,16 +1502,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             TestUtils.LeakProneCode change,
             TestUtils.LeakProneCode assertAfterCrash
     ) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, INDEXED_SYMBOL_TABLE, prepare, change, assertAfterCrash);
+    }
+
+    /**
+     * @param table the table to create and fill, {@link #INDEXED_SYMBOL_TABLE} or {@link #COVERED_COLUMN_TABLE}
+     */
+    private void assertSyncSchemaChangeSurvivesCrash(
+            boolean wal,
+            TestTable table,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            TestUtils.LeakProneCode assertAfterCrash
+    ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
+            table.create(wal);
             if (prepare != null) {
                 prepare.run();
             }
@@ -1496,6 +1640,27 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * Reads the updated column through its new name txn, and the index rebuilt with the covering values of the
+     * updated column, both in the two partitions the update rewrote.
+     */
+    private void assertUpdatedCoveredColumn() throws Exception {
+        assertQuery("SELECT sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                sum
+                26.0
+                """);
+        assertQuery("SELECT s, k, v, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, v, ts")
+                .returns("""
+                        s\tk\tv\tts
+                        a\tp\t11.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
+    /**
      * A WAL writer created after the baseline writes three commits into three segments, and the power fails
      * before any of them is applied. Every commit was acknowledged (ADAPTIVE) or returned (SYNC), so all of
      * them must survive: {@code wal1} in the table directory, and each segment in {@code wal1}, have to be
@@ -1590,24 +1755,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Leaves the real {@code data.parquet} and {@code _pm} of the first partition in its native partition
-     * directory, so that the switched partition reads back: converts the partition to parquet, keeps both files
-     * and converts it back.
-     */
-    private void stageConvertedParquetForSwitch() throws Exception {
-        convertFirstPartitionToParquet();
-        final File stageDir = temp.newFolder();
-        final String[] names = {TableUtils.PARQUET_PARTITION_NAME, TableUtils.PARQUET_METADATA_FILE_NAME};
-        for (String name : names) {
-            java.nio.file.Files.copy(new File(firstPartitionDir(), name).toPath(), new File(stageDir, name).toPath());
-        }
-        execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-        for (String name : names) {
-            java.nio.file.Files.copy(new File(stageDir, name).toPath(), new File(firstPartitionDir(), name).toPath());
-        }
-    }
-
-    /**
      * Converts the first partition to parquet, detaches it and leaves it ready to attach without its {@code _pm},
      * which ATTACH then regenerates.
      */
@@ -1624,46 +1771,19 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Leaves {@code data.parquet} and {@code _pm} in the first, native partition, as the cold storage job does
-     * before it switches the partition to them. The switch only links them, so empty files do.
-     */
-    private void stageParquetForSwitch() throws Exception {
-        drainWalQueue();
-        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
-            path.of(root).concat(reader.getTableToken().getDirName());
-            TableUtils.setPathForNativePartition(
-                    path,
-                    reader.getMetadata().getTimestampType(),
-                    reader.getPartitionedBy(),
-                    reader.getPartitionTimestampByIndex(0),
-                    reader.getPartitionNameTxnByIndex(0)
-            );
-            final int partitionDirLen = path.size();
-            Assert.assertTrue(Files.touch(path.concat(TableUtils.PARQUET_PARTITION_NAME).$()));
-            Assert.assertTrue(Files.touch(path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$()));
-        }
-    }
-
-    /**
-     * Switches the first partition to its staged parquet file the way the cold storage job does: marks the file
-     * ready, then switches. The switch creates a new partition directory and links the parquet and index files
-     * into it.
-     */
-    private void switchFirstPartitionToParquet() {
-        try (TableWriter writer = getWriter("x")) {
-            final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
-            Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-            final long parquetFileSize = new File(firstPartitionDir(), TableUtils.PARQUET_PARTITION_NAME).length();
-            Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, parquetFileSize));
-        }
-    }
-
-    /**
      * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, or one synchronous
      * or asynchronous {@code msync} when {@code isMsync}, selected by {@code isAsyncMsync}. Fails the first after
      * {@code skipCount} such calls with a genuine data-sync failure, then behaves normally.
      */
-    private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
+    @FunctionalInterface
+    private interface TestTable {
+        /**
+         * Creates table {@code x}, WAL or not, and inserts its three rows, one per day from 2024-01-01.
+         */
+        void create(boolean wal) throws Exception;
+    }
+
+    private static class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
         private final boolean isAsyncMsync;
         private final boolean isMsync;
@@ -1703,9 +1823,13 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (isMsync && async == isAsyncMsync && isFailureDue()) {
-                throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
+                throw msyncFailure();
             }
             super.msync(addr, len, async);
+        }
+
+        CairoException msyncFailure() {
+            return CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
         }
 
         private boolean isFailureDue() {

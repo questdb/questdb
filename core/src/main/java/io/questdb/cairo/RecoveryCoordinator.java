@@ -326,7 +326,7 @@ public class RecoveryCoordinator {
         PostingIndexUtils.scanSealedFiles(ff, path, partitionLen, columnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn == columnNameTxn && namedSealTxns.indexOf(sealTxn) < 0
+                if (filePostingColumnNameTxn == PostingIndexUtils.coverFilePostingColumnNameTxn(columnNameTxn) && namedSealTxns.indexOf(sealTxn) < 0
                         && ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(partitionLen), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     removed[0]++;
                 }

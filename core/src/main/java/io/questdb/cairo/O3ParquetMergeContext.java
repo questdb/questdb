@@ -28,6 +28,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -49,6 +50,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private MemoryCARW rebaseAuxMem;
     private LongList rgO3Ranges;
     private LongList rowGroupBounds;
+    private LongList rowGroupIndexRowLos;
+    private IntList rowGroupOrder;
     private LongList srcPtrs;
 
     public O3ParquetMergeContext() {
@@ -62,6 +65,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rebaseAuxMem = Vm.getCARWInstance(REBASE_AUX_ARENA_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_O3);
         rgO3Ranges = new LongList();
         rowGroupBounds = new LongList();
+        rowGroupIndexRowLos = new LongList();
+        rowGroupOrder = new IntList();
         srcPtrs = new LongList();
     }
 
@@ -75,6 +80,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         nullBufs.clear();
         rgO3Ranges.clear();
         rowGroupBounds.clear();
+        rowGroupIndexRowLos.clear();
+        rowGroupOrder.clear();
         srcPtrs.clear();
     }
 
@@ -93,6 +100,8 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         rebaseAuxMem = Misc.free(rebaseAuxMem);
         rgO3Ranges = null;
         rowGroupBounds = null;
+        rowGroupIndexRowLos = null;
+        rowGroupOrder = null;
         srcPtrs = null;
         super.close();
     }
@@ -142,6 +151,14 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public LongList getRowGroupBounds() {
         return rowGroupBounds;
+    }
+
+    public LongList getRowGroupIndexRowLos() {
+        return rowGroupIndexRowLos;
+    }
+
+    public IntList getRowGroupOrder() {
+        return rowGroupOrder;
     }
 
     public LongList getSrcPtrs(int colCount) {
