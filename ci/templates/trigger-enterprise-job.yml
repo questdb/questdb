@@ -10,6 +10,9 @@
 #           the required check, so a PR merges only after a full enterprise run has passed.
 # A light trigger skips merge-queue builds: the macwin pipeline runs there and triggers the full
 # run, which is the one the queue gates on.
+# A full trigger is skipped when an Enterprise PR comes from a branch named like the OSS one: that
+# PR tests the pair with its own CI and runs the Enterprise Windows jobs in Enterprise macwin. The
+# trigger then sets enterprise-ci itself, pointing at that PR, so the OSS PR can still merge.
 parameters:
   - name: flavour
     type: string
@@ -74,6 +77,41 @@ jobs:
           if [ -z "$OSS_COMMIT" ]; then
             echo "##vso[task.logissue type=error]Could not resolve the OSS commit for PR #$OSS_PR_NUMBER"
             exit 1
+          fi
+
+          # Prints the number of an Enterprise PR from branch $1, as seen in the Enterprise PR builds of
+          # the last 30 days. Prints nothing when there is none or the lookup fails; the full run then
+          # goes ahead as usual.
+          tandem_ent_pr() {
+            local since
+            since=$(date -u -d '-30 days' +%Y-%m-%dT%H:%M:%SZ)
+            curl -sS --max-time 60 --retry 3 --retry-delay 2 -H "$AUTH_HEADER" \
+              "https://dev.azure.com/questdb/questdb-enterprise/_apis/build/builds?definitions=23&reasonFilter=pullRequest&minTime=$since&\$top=5000&api-version=7.1" \
+              | jq -r --arg b "$1" 'first(.value[]? | select(.triggerInfo["pr.sourceBranch"] == $b) | .triggerInfo["pr.number"]) // empty' 2>/dev/null \
+              || true
+          }
+
+          if [ "$ENT_FLAVOUR" = "full" ] && [ -n "$OSS_BRANCH" ]; then
+            ENT_PR=$(tandem_ent_pr "$OSS_BRANCH")
+            if [ -n "$ENT_PR" ]; then
+              echo "Enterprise PR #$ENT_PR comes from the same branch ($OSS_BRANCH); skipping the full enterprise run"
+              HTTP_CODE=$(curl -sS -o status.json -w "%{http_code}" --max-time 30 --retry 3 --retry-delay 2 -X POST \
+                -H "Authorization: token $GH_TOKEN" \
+                -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/questdb/questdb/statuses/$OSS_COMMIT" \
+                -d "$(jq -n --arg pr "$ENT_PR" '{state: "success", context: "enterprise-ci",
+                  description: ("Skipped: questdb-enterprise#" + $pr + " tests this branch"),
+                  target_url: ("https://github.com/questdb/questdb-enterprise/pull/" + $pr)}')")
+              if [ "$HTTP_CODE" != "201" ]; then
+                echo "Response: $(jq -r '.message // empty' status.json 2>/dev/null || true)"
+                echo "##vso[task.logissue type=error]Could not set enterprise-ci on $OSS_COMMIT (HTTP $HTTP_CODE)"
+                rm -f status.json
+                exit 1
+              fi
+              rm -f status.json
+              echo "Set enterprise-ci on $OSS_COMMIT: skipped, questdb-enterprise#$ENT_PR tests this branch"
+              exit 0
+            fi
           fi
 
           # Queue the enterprise run. $1: enterprise branch; $2: "with-flavour" to pass ossFlavour.
