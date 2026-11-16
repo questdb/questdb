@@ -27,9 +27,12 @@ package io.questdb.cutlass.parquet;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
@@ -62,6 +65,7 @@ import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 
 import java.io.Closeable;
 import java.io.File;
@@ -177,20 +181,19 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
             }
 
             if (createOp == null) {
-                // Direct table export. CopyExportFactory picked TABLE_READER on a reader it opened and closed at
-                // enqueue time, but this export reads a later snapshot: WAL apply may have turned a partition
-                // composite in between. A composite partition's live rows no longer span file rows [0, liveRows),
-                // so populateFromTableReader() would read the right NUMBER of rows from the wrong PLACE and the
-                // export would report success over stale data. Resolve the mode on the very reader that will be
-                // read, and materialize through a temp table when this snapshot is composite.
+                // Resolve direct exports on the reader snapshot the worker will use. Composite partitions need
+                // row reconciliation, and copying a Parquet file with an old schema would export dropped columns
+                // or omit added columns, renames and type conversions. Materialization applies the query reader's
+                // column mapping and conversions while preserving the source table's partitioning.
                 tableToken = cairoEngine.verifyTableName(exportTableName);
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
                 sourceReader = cairoEngine.getReader(tableToken);
-                if (sourceReader.getTxFile().hasCompositePartitions()) {
+                sourceReader.setScanProfile(ReaderScanProfile.SEQUENTIAL_EVICT);
+                if (sourceReader.getTxFile().hasCompositePartitions() || hasParquetSchemaChanges(sourceReader)) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);
                     exportTableName = tempTableName(task.getCopyID());
-                    LOG.info().$("table turned composite after the export was queued, materializing [id=")
+                    LOG.info().$("materializing table for parquet export [id=")
                             .$hexPadded(task.getCopyID()).$(", table=").$(tableToken)
                             .$(", tempTable=").$(exportTableName).$(']').$();
                     createOp = materializingOp(cairoEngine, task.getTableName(), exportTableName, sourcePartitionBy);
@@ -430,6 +433,12 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         return op;
     }
 
+    private static int normalizeParquetColumnType(int columnType) {
+        return ColumnType.isTimestamp(columnType)
+                ? ColumnType.setDesignatedTimestampBit(columnType, false)
+                : columnType;
+    }
+
     /**
      * The temp table name an export materializes into, spelled exactly as
      * {@link io.questdb.griffin.engine.ops.CopyExportFactory} spells it.
@@ -439,6 +448,45 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         sink.put("copy.");
         Numbers.appendHex(sink, copyID, true);
         return sink.toString();
+    }
+
+    private boolean hasParquetSchemaChanges(TableReader reader) {
+        if (!reader.hasParquetPartitions()) {
+            return false;
+        }
+        final TableReaderMetadata metadata = reader.getMetadata();
+        for (int partitionIndex = 0, n = reader.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (reader.getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET) {
+                continue;
+            }
+            if (circuitBreaker.checkIfTrippedOrYield()) {
+                throw CopyExportException.instance(CopyExportRequestTask.Phase.NONE, -1)
+                        .put("cancelled by user").setInterruption(true).setCancellation(true);
+            }
+            try {
+                if (reader.openPartition(partitionIndex) <= 0) {
+                    return true;
+                }
+                final ParquetMetaFileReader parquetMetadata = reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata();
+                if (parquetMetadata.getColumnCount() != metadata.getColumnCount()) {
+                    return true;
+                }
+                for (int columnIndex = 0, columnCount = metadata.getColumnCount(); columnIndex < columnCount; columnIndex++) {
+                    // Parquet partitions retain original writer ids across lazy type conversions. Preserve the full
+                    // type (array dimensions, decimal scale, timestamp precision), except the stored timestamp flag.
+                    if (parquetMetadata.getColumnId(columnIndex) != metadata.getOriginalWriterIndex(columnIndex)
+                            || !Utf8s.equalsUtf16(metadata.getColumnName(columnIndex), parquetMetadata.getColumnName(columnIndex))
+                            || normalizeParquetColumnType(parquetMetadata.getColumnType(columnIndex))
+                            != normalizeParquetColumnType(metadata.getColumnType(columnIndex))) {
+                        return true;
+                    }
+                }
+            } finally {
+                // The reader frees the decoder before unmapping the metadata it borrows.
+                reader.closePartitionByIndex(partitionIndex);
+            }
+        }
+        return false;
     }
 
     private void moveAndOverwriteFiles() {
