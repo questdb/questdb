@@ -110,8 +110,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final CharSequence keepAliveHeader;
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
-    // the variables parameter, decoded, see parseQueryVariables()
-    private final StringSink queryVariables = new StringSink();
+    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final StringSink selectCacheKeySink = new StringSink();
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -134,8 +133,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
-    // whether the error lies in the variables parameter rather than in the query, see locateError()
-    private boolean isErrorInVariables;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -199,7 +196,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             if (recordCursorFactory != null) {
                 if (queryCacheable) {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, query, queryVariables, selectCacheKeySink),
+                            SelectCacheKey.of(selectCacheScope, query, queryVariables.getText(), selectCacheKeySink),
                             recordCursorFactory
                     );
                 } else {
@@ -229,7 +226,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             stop = 0;
             containsSecret = false;
             errorMessage.clear();
-            isErrorInVariables = false;
             updateRecords = 0;
             clientWaitAccumNanos = 0;
             clientWaitStartNanos = -1;
@@ -348,7 +344,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      */
     public CharSequence getSelectCacheKey(SecurityContext securityContext) {
         selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, query, queryVariables, selectCacheKeySink);
+        return SelectCacheKey.of(selectCacheScope, query, queryVariables.getText(), selectCacheKeySink);
     }
 
     public long getStatementTimeout() {
@@ -361,7 +357,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      * parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
      */
     public CharSequence getQueryVariables() {
-        return queryVariables;
+        return queryVariables.getText();
     }
 
     /**
@@ -369,12 +365,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      * the query.
      */
     public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
-        queryVariables.clear();
-        final DirectUtf8Sequence variables = request.getUrlParam(URL_PARAM_VARIABLES);
-        if (variables != null && !Utf8s.utf8ToUtf16(variables.lo(), variables.hi(), queryVariables)) {
-            queryVariables.clear();
-            throw SqlException.$(0, "variables are not valid UTF-8");
-        }
+        queryVariables.of(request);
     }
 
     public LogRecord info() {
@@ -533,15 +524,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      */
     public void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.errorPosition = locateError(errorPosition);
+        this.errorPosition = queryVariables.locateError(errorPosition, query.length());
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
 
     public void storeError(CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.isErrorInVariables = false;
-        this.errorPosition = Numbers.INT_NULL;
+        this.errorPosition = queryVariables.locateError(Numbers.INT_NULL, query.length());
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
     }
@@ -551,7 +541,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
      */
     public void storeVariablesError(int errorPosition, CharSequence errorMessage) {
         this.queryState = QUERY_ERROR;
-        this.isErrorInVariables = true;
+        queryVariables.markError();
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
@@ -1387,38 +1377,12 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         if (errorPosition != Numbers.INT_NULL) {
             response.putAscii(',').putAsciiQuoted("position").putAscii(':').put(errorPosition);
         }
-        putErrorSource(response);
+        queryVariables.putErrorSource(response);
 
         response.putAscii('}');
         queryState = QUERY_DONE;
         readyForNextRequest(getHttpConnectionContext());
         response.sendChunk(true);
-    }
-
-    /**
-     * Returns the position to report for an error at a position in what the query was compiled
-     * from, and remembers where the error lies. The parser reads the variables the client
-     * declared after the query's text and a newline, see
-     * {@link SqlExecutionContext#getQueryVariables()}, so a position past the query's text lies
-     * in them: the error is then reported at the position in the variables parameter.
-     */
-    private int locateError(int position) {
-        isErrorInVariables = false;
-        final int offset = position - query.length() - 1;
-        // A position past the variables is no position in either text, such as the fixed one
-        // some runtime errors carry.
-        if (position == Numbers.INT_NULL || queryVariables.length() == 0 || offset < 0 || offset > queryVariables.length()) {
-            return position;
-        }
-        isErrorInVariables = true;
-        return offset;
-    }
-
-    // tells an error in the variables parameter from one in the query, see locateError()
-    private void putErrorSource(HttpChunkedResponse response) {
-        if (isErrorInVariables) {
-            response.putAscii(',').putAsciiQuoted("errorSource").putAscii(':').putAsciiQuoted("variables");
-        }
     }
 
     void querySuffixWithError(
@@ -1450,8 +1414,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 response.putAscii(',')
                         .putAsciiQuoted("error").putAscii(':')
                         .putQuote().escapeJsonStr(message != null ? message : "Internal server error").putQuote()
-                        .putAscii(", \"errorPos\"").putAscii(':').put(locateError(messagePosition));
-                putErrorSource(response);
+                        .putAscii(", \"errorPos\"").putAscii(':').put(queryVariables.locateError(messagePosition, query.length()));
+                queryVariables.putErrorSource(response);
             }
             if (timings) {
                 response.putAscii(',').putAsciiQuoted("timings").putAscii(':')

@@ -35,12 +35,14 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpRequestHeader;
 import io.questdb.cutlass.http.HttpResponseArrayWriteState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlExecutionOwner;
@@ -66,6 +68,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     final StringSink sqlText = new StringSink();
     private final CopyExportContext copyExportContext;
     private final StringSink errorMessage = new StringSink();
+    private final QueryVariablesParameter queryVariables = new QueryVariablesParameter();
     private final ExportModel exportModel = new ExportModel();
     private final HttpConnectionContext httpConnectionContext;
     private final StringSink selectCacheKeySink = new StringSink();
@@ -180,7 +183,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
             if (queryCacheable && !isClosing) {
                 try {
                     httpConnectionContext.getSelectCache().put(
-                            SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink),
+                            SelectCacheKey.of(selectCacheScope, sqlText, queryVariables.getText(), selectCacheKeySink),
                             recordCursorFactory
                     );
                 } catch (Throwable th) {
@@ -193,6 +196,7 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         queryCacheable = false;
         selectCacheScope = null;
         sqlText.clear();
+        queryVariables.clear();
         queryState = JsonQueryProcessorState.QUERY_SETUP_FIRST_RECORD;
         columnIndex = 0;
         skip = 0;
@@ -249,13 +253,21 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     }
 
     /**
+     * Returns the variables the client declared for the query, empty without the variables
+     * parameter, see {@link QueryVariablesParameter}.
+     */
+    public CharSequence getQueryVariables() {
+        return queryVariables.getText();
+    }
+
+    /**
      * Returns the select cache key of the query for the principal it runs for, and remembers the
      * principal's scope, so that clearing the state returns the factory to the same scope it came
      * from or was compiled in.
      */
     public CharSequence getSelectCacheKey(SecurityContext securityContext) {
         selectCacheScope = securityContext.getSelectCacheScope();
-        return SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink);
+        return SelectCacheKey.of(selectCacheScope, sqlText, queryVariables.getText(), selectCacheKeySink);
     }
 
     public boolean isQueryCacheable() {
@@ -369,8 +381,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         response.putAscii('{')
                 .putAsciiQuoted("query").putAscii(':').putQuote().escapeJsonStr(sqlText).putQuote().putAscii(',')
                 .putAsciiQuoted("error").putAscii(':').putQuote().escapeJsonStr(errorMessage).putQuote().putAscii(',')
-                .putAsciiQuoted("position").putAscii(':').put(errorPosition)
-                .putAscii('}');
+                .putAsciiQuoted("position").putAscii(':').put(errorPosition);
+        queryVariables.putErrorSource(response);
+        response.putAscii('}');
         queryState = ExportQueryProcessor.QUERY_DONE;
         response.sendChunk(true);
 
@@ -380,8 +393,30 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.queryCacheable = queryCacheable;
     }
 
+    /**
+     * Stores an error at a position in what the query was compiled from: a position past the
+     * query's text lies in the variables, see {@link QueryVariablesParameter#locateError}.
+     */
     void storeError(int errorPosition, CharSequence errorMessage) {
         this.queryState = ExportQueryProcessor.QUERY_SEND_ERROR;
+        this.errorPosition = queryVariables.locateError(errorPosition, sqlText.length());
+        this.errorMessage.clear();
+        this.errorMessage.put(errorMessage);
+    }
+
+    /**
+     * Decodes the variables parameter of the request.
+     */
+    void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
+    }
+
+    /**
+     * Stores an error in the variables parameter itself, at a position in its text.
+     */
+    void storeVariablesError(int errorPosition, CharSequence errorMessage) {
+        this.queryState = ExportQueryProcessor.QUERY_SEND_ERROR;
+        queryVariables.markError();
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);

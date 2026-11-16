@@ -251,10 +251,139 @@ public class HttpQueryVariablesTest extends AbstractTest {
         }));
     }
 
+    @Test
+    public void testExportCsvReadsVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // as the same query with the values written in it
+            assertSameExport(
+                    "SELECT 1 x, 'a&b?c=d+e#f%g' y FROM long_sequence(2)",
+                    "SELECT @a x, @b y FROM long_sequence(2)",
+                    "@a := 1, @b := 'a&b?c=d+e#f%g'",
+                    null
+            );
+            // the select cache keeps the variables apart
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
+            for (int i = 0; i < 2; i++) {
+                assertSameExport("SELECT v FROM t WHERE v > 1", "SELECT v FROM t WHERE v > @min", "@min := 1", null);
+                assertSameExport("SELECT v FROM t WHERE v > 2", "SELECT v FROM t WHERE v > @min", "@min := 2", null);
+            }
+        }));
+    }
+
+    @Test
+    public void testExportErrorInVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            final Utf8StringSink sink = new Utf8StringSink();
+            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT @a x FROM long_sequence(1)", "@a := nope_fn()", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT @a x FROM long_sequence(1)\",\"error\":\"unknown function name: nope_fn()\",\"position\":6,\"errorSource\":\"variables\"}",
+                    sink.toString()
+            );
+            // an error in the query keeps its position
+            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT @a x, nope_fn()", "@a := 1", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT @a x, nope_fn()\",\"error\":\"unknown function name: nope_fn()\",\"position\":13}",
+                    sink.toString()
+            );
+            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
+            final Utf8StringSink badUtf8 = new Utf8StringSink();
+            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
+            params.put("variables", badUtf8);
+            final Utf8StringSink sql = new Utf8StringSink();
+            sql.put("SELECT%201");
+            testHttpClient.assertGet(
+                    "/exp",
+                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
+                    sql,
+                    params
+            );
+        }));
+    }
+
+    @Test
+    public void testExportParquetReadsVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            final CharSequenceObjHashMap<String> parquet = new CharSequenceObjHashMap<>();
+            parquet.put("fmt", "parquet");
+            // streamed from the query's cursor
+            assertSameExport("SELECT 7 v FROM long_sequence(3)", "SELECT @a v FROM long_sequence(3)", "@a := 7", parquet);
+            // A computed BINARY column makes the export go through a temp table, which is
+            // CREATE TABLE AS on the query's text: the variables reach it too.
+            engine.execute("CREATE TABLE b AS (SELECT x, rnd_bin(4, 4, 0) bin FROM long_sequence(3))", sqlExecutionContext);
+            assertSameExport(
+                    "SELECT CASE WHEN x > 1 THEN bin END bin, 1 v FROM b",
+                    "SELECT CASE WHEN x > @a THEN bin END bin, @a v FROM b",
+                    "@a := 1",
+                    parquet
+            );
+        }));
+    }
+
+    @Test
+    public void testValidateReadsVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            final String url = "/api/v1/sql/validate";
+            final Utf8StringSink sink = new Utf8StringSink();
+            Assert.assertEquals("200", testHttpClient.get(url, "SELECT @a x, @b y", "@a := 1, @b := 'zz'", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT @a x, @b y\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"},{\"name\":\"y\",\"type\":\"STRING\"}],\"timestamp\":-1}",
+                    sink.toString()
+            );
+            // without them, the query reads no variables
+            Assert.assertEquals("400", testHttpClient.get(url, "SELECT @a x", null, null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT @a x\",\"error\":\"Invalid column: @a\",\"position\":7}",
+                    sink.toString()
+            );
+            // an error in the variables
+            Assert.assertEquals("400", testHttpClient.get(url, "SELECT @a x", "@a := nope_fn()", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT @a x\",\"error\":\"unknown function name: nope_fn()\",\"position\":6,\"errorSource\":\"variables\"}",
+                    sink.toString()
+            );
+            // an INSERT reads them; an UPDATE does not, as on /exec
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            Assert.assertEquals("200", testHttpClient.get(url, "INSERT INTO t SELECT @a", "@a := 1", null, sink));
+            TestUtils.assertEquals("{\"queryType\":\"INSERT AS SELECT\"}", sink.toString());
+            Assert.assertEquals("400", testHttpClient.get(url, "UPDATE t SET v = @a", "@a := 1", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"UPDATE t SET v = @a\",\"error\":\"Invalid column: @a\",\"position\":17}",
+                    sink.toString()
+            );
+            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
+            final Utf8StringSink badUtf8 = new Utf8StringSink();
+            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
+            params.put("variables", badUtf8);
+            final Utf8StringSink sql = new Utf8StringSink();
+            sql.put("SELECT%201");
+            testHttpClient.assertGet(
+                    url,
+                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
+                    sql,
+                    params
+            );
+        }));
+    }
+
     private static void assertGet(CharSequence expected, CharSequence sql, @Nullable String variables) {
         final Utf8StringSink sink = new Utf8StringSink();
         testHttpClient.get(sql, variables, sink);
         TestUtils.assertEquals(expected, sink.toString());
+    }
+
+    // the export of the query with the variables is the export of the reference without them
+    private static void assertSameExport(String reference, String sql, String variables, @Nullable CharSequenceObjHashMap<String> params) {
+        final Utf8StringSink expected = new Utf8StringSink();
+        Assert.assertEquals("200", testHttpClient.get("/exp", reference, null, params, expected));
+        final Utf8StringSink actual = new Utf8StringSink();
+        final String status = testHttpClient.get("/exp", sql, variables, params, actual);
+        if (!"200".equals(status)) {
+            Assert.fail("status " + status + ": " + Utf8s.toString(actual));
+        }
+        // a parquet file is binary, so compare the bytes
+        Assert.assertTrue(actual.size() > 0);
+        Assert.assertTrue(Utf8s.equals(expected, actual));
     }
 
     // the statement answers with the variables as it does without them
@@ -274,9 +403,13 @@ public class HttpQueryVariablesTest extends AbstractTest {
         }
 
         String get(CharSequence sql, @Nullable String variables, @Nullable CharSequenceObjHashMap<String> params, Utf8StringSink sink) {
+            return get("/query", sql, variables, params, sink);
+        }
+
+        String get(CharSequence url, CharSequence sql, @Nullable String variables, @Nullable CharSequenceObjHashMap<String> params, Utf8StringSink sink) {
             try {
                 final HttpClient.Request req = getHttpClient().newRequest("localhost", 9001);
-                req.GET().url("/query").query("query", sql);
+                req.GET().url(url).query("query", sql);
                 if (variables != null) {
                     req.query("variables", variables);
                 }
@@ -287,7 +420,7 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     }
                 }
                 final String status = reqToSink(req, sink, null, null, null, null);
-                Assert.assertTrue(Utf8s.toString(sink), sink.size() > 0);
+                Assert.assertTrue(sink.size() > 0);
                 return status;
             } finally {
                 disconnect();
