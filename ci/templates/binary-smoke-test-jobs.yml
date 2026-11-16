@@ -42,12 +42,13 @@ jobs:
       name: $(poolName)
     timeoutInMinutes: 60
     # IsFork is unset on merge-queue and scheduled runs, so test for 'true' only.
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       jdk: "1.25"
     steps:
       - checkout: self
         fetchDepth: 1
+        fetchTags: false
         lfs: false
         submodules: true
       # C++ glibc check: confirm the committed libquestdb.so loads on the oldest

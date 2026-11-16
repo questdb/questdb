@@ -300,6 +300,42 @@ public class O3PartitionReplaceRangeTouchingPiecesTest extends AbstractCairoTest
     }
 
     /**
+     * A REPLACE RANGE commit whose range ends just BELOW the shared boundary {@code V}. The high-edge cut
+     * splits the head piece {@code [.., V]} and leaves its upper half {@code [V, V]} above the range, so that
+     * half is kept - and it starts on the same timestamp as the touching piece {@code [V, ..]} after it. Two
+     * kept pieces with one {@code tsLo} cannot be published to the geometry, which suspended the table.
+     */
+    @Test
+    public void testReplaceRangeEndingJustBelowATouchedBoundaryKeepsTheBoundaryRows() throws Exception {
+        assertMemoryLeak(() -> {
+            final long v = buildTouchingPiecesFixture();
+            final long vUpper = v + TIE_GAP_MICROS;
+            // The base rows are 15 seconds apart, so the head piece holds a row at v - 15s and none between it and v.
+            final long lo = v - 15_000_000L;
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertEquals("fixture has no base row just below v: " + describePieces("x"), 1, countAt("x", lo));
+
+            // REPLACE RANGE [lo, v): covers the row at lo and ends one microsecond below the shared bound.
+            try (WalWriter ww = engine.getWalWriter(xt)) {
+                ww.commitWithParams(lo, v, WAL_DEDUP_MODE_REPLACE_RANGE);
+                ww.commit();
+            }
+            drainWalQueue();
+
+            Assert.assertFalse(
+                    "table suspended after replace: " + describePieces("x"),
+                    engine.getTableSequencerAPI().isSuspended(xt)
+            );
+            Assert.assertEquals("the row inside the range survived: " + describePieces("x"), 0, countAt("x", lo));
+            // Both rows at v - the head piece's and the touching piece's - sit above the range and stay.
+            assertQuery("SELECT i FROM x WHERE ts = " + v + "::TIMESTAMP ORDER BY i").returns("i\n-1\n20\n");
+            assertQuery("SELECT i FROM x WHERE ts = " + vUpper + "::TIMESTAMP").returns("i\n-2\n");
+            // 5_783 fixture rows, less the one at lo.
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns("c\n5782\n");
+        });
+    }
+
+    /**
      * The mat-view refresh shape on touching pieces: the REPLACE RANGE commit ending on the shared
      * boundary {@code V} also carries its own rows at {@code V}. Exactly those rows must remain there.
      * <p>

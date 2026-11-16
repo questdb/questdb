@@ -26,7 +26,9 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectBitSet;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -36,6 +38,25 @@ public class IndexFwdNullReaderTest {
     @Test
     public void testAlwaysOpen() {
         Assert.assertTrue(reader.isOpen());
+    }
+
+    @Test
+    public void testCollectDistinctKeys() throws Exception {
+        // The reader stands in for a partition without the column: every row reads as NULL, key 0
+        TestUtils.assertMemoryLeak(() -> {
+            try (DirectBitSet found = new DirectBitSet(64)) {
+                Assert.assertEquals(1, reader.collectDistinctKeys(found));
+                Assert.assertTrue(found.get(0));
+                Assert.assertEquals(0, reader.collectDistinctKeys(found));
+                Assert.assertEquals(0, reader.collectDistinctKeysInRange(found, 3, 7));
+
+                found.clear();
+                Assert.assertEquals(0, reader.collectDistinctKeysInRange(found, 7, 3));
+                Assert.assertFalse(found.get(0));
+                Assert.assertEquals(1, reader.collectDistinctKeysInRange(found, 3, 3));
+                Assert.assertTrue(found.get(0));
+            }
+        });
     }
 
     @Test

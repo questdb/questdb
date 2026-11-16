@@ -60,7 +60,10 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -1335,27 +1338,58 @@ public final class QueryRunner {
     }
 
     /**
+     * The cells of {@code line} that must match exactly: every cell outside
+     * {@code fpColumnMask}. Two rows that {@link #rowEqualsWithFpTolerance}
+     * accepts always share this key, so it narrows the candidates for a row
+     * without changing which rows match.
+     */
+    private static String exactCellsOf(String line, boolean[] fpColumnMask) {
+        final String[] tokens = line.split("\t", -1);
+        final StringBuilder key = new StringBuilder();
+        for (int i = 0; i < tokens.length; i++) {
+            if (i >= fpColumnMask.length || !fpColumnMask[i]) {
+                key.append(tokens[i]);
+            }
+            // Cells escape their tabs (see appendCell), so the separator is unambiguous.
+            key.append('\t');
+        }
+        return key.toString();
+    }
+
+    /**
      * Multiset comparison with floating-point tolerance: the two row sets
      * are equivalent iff each line in {@code a} can be paired with a
      * distinct line in {@code b} that matches under
      * {@link #rowEqualsWithFpTolerance(String, String, boolean[])}. Used after a
      * strict {@link #rowsetEquals} fails to absorb FP-reduction-order
      * drift in {@code SUM}/{@code AVG} aggregates whose last digits depend
-     * on the access path the planner picks. Greedy matching is O(n^2);
-     * fuzz queries produce small row sets so this is fine.
+     * on the access path the planner picks.
+     * <p>
+     * Each line of {@code a} takes the first unmatched line of {@code b} that
+     * matches it. Only lines with the same exact cells can match, so the
+     * lines of {@code b} are grouped by those cells and a line of {@code a}
+     * searches its own group alone. Comparing every line with every other
+     * took over a minute on a 125k-row result and stalled the concurrent test.
      */
-    private static boolean rowsetEqualsWithFpTolerance(StringSink a, StringSink b, boolean[] fpColumnMask) {
+    static boolean rowsetEqualsWithFpTolerance(CharSequence a, CharSequence b, boolean[] fpColumnMask) {
         String[] linesA = a.toString().split("\n", -1);
         String[] linesB = b.toString().split("\n", -1);
         if (linesA.length != linesB.length) {
             return false;
         }
-        boolean[] usedB = new boolean[linesB.length];
+        final HashMap<String, ArrayDeque<String>> unmatchedB = new HashMap<>();
+        for (String lineB : linesB) {
+            unmatchedB.computeIfAbsent(exactCellsOf(lineB, fpColumnMask), k -> new ArrayDeque<>()).add(lineB);
+        }
         for (String lineA : linesA) {
+            final ArrayDeque<String> candidates = unmatchedB.get(exactCellsOf(lineA, fpColumnMask));
+            if (candidates == null) {
+                return false;
+            }
             boolean matched = false;
-            for (int j = 0; j < linesB.length; j++) {
-                if (!usedB[j] && rowEqualsWithFpTolerance(lineA, linesB[j], fpColumnMask)) {
-                    usedB[j] = true;
+            for (Iterator<String> it = candidates.iterator(); it.hasNext(); ) {
+                if (rowEqualsWithFpTolerance(lineA, it.next(), fpColumnMask)) {
+                    it.remove();
                     matched = true;
                     break;
                 }
