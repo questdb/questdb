@@ -178,6 +178,16 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testNonPartitionedRepairKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
+        assertRepairSurvivesEveryKillPoint(false, true);
+    }
+
+    @Test
+    public void testNonPartitionedRepairSurvivesEveryKillPoint() throws Exception {
+        assertRepairSurvivesEveryKillPoint(false, false);
+    }
+
+    @Test
     public void testNonPartitionedSurvivesEveryKillPoint() throws Exception {
         assertTruncateSurvivesEveryKillPoint(false, false);
     }
@@ -194,12 +204,12 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
 
     @Test
     public void testRepairKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
-        assertRepairSurvivesEveryKillPoint(true);
+        assertRepairSurvivesEveryKillPoint(true, true);
     }
 
     @Test
     public void testRepairSurvivesEveryKillPoint() throws Exception {
-        assertRepairSurvivesEveryKillPoint(false);
+        assertRepairSurvivesEveryKillPoint(true, false);
     }
 
     @Test
@@ -214,7 +224,8 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
             final String table = "t";
             createPartitioned(table);
             engine.releaseAllReaders();
-            // KEEP SYMBOL MAPS leaves the symbol maps alone, so every kill point of the TRUNCATE comes after _todo_
+            // KEEP SYMBOL MAPS leaves the symbol maps alone, so every kill point of the TRUNCATE comes after _todo_. A
+            // non-partitioned table is covered by TruncateRepairOpenQueryTest.
             crashFf.armKillAt(crashFf.killPointCount() + 1, tableDir(table));
             execute(truncateSql(table, true));
             Assert.assertTrue(crashFf.isKillImageTaken());
@@ -391,16 +402,17 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
         Assert.assertEquals(2, countPartitionDirs(table));
     }
 
-    private void assertRepairSurvivesEveryKillPoint(boolean isKeepSymbolMaps) throws Exception {
+    private void assertRepairSurvivesEveryKillPoint(boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
         // A kill during the writer open that repairs the table: the open after it must finish the repair.
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
         runWithCrashFacade(() -> {
-            final int keepPoints = countTruncateKillPoints(true, true);
+            final int keepPoints = countTruncateKillPoints(isPartitioned, true);
             // the first kill point after TRUNCATE armed _todo_
-            final int point = isKeepSymbolMaps ? 1 : countTruncateKillPoints(true, false) - keepPoints + 1;
+            final int point = isKeepSymbolMaps ? 1 : countTruncateKillPoints(isPartitioned, false) - keepPoints + 1;
+            final int partitionBy = isPartitioned ? PartitionBy.DAY : PartitionBy.NONE;
 
             final String countTable = "count_repair";
-            interruptTruncate(countTable, point, isKeepSymbolMaps);
+            interruptTruncate(countTable, point, isPartitioned, isKeepSymbolMaps);
             final int before = crashFf.killPointCount();
             getWriter(countTable).close();
             final int repairPoints = crashFf.killPointCount() - before;
@@ -409,11 +421,11 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
 
             for (int k = 1; k <= repairPoints + 1; k++) {
                 final String table = "t_" + k;
-                final long txnBefore = interruptTruncate(table, point, isKeepSymbolMaps);
+                final long txnBefore = interruptTruncate(table, point, isPartitioned, isKeepSymbolMaps);
                 Assert.assertEquals(
                         "the kill must stop TRUNCATE before it publishes _txn",
                         txnBefore,
-                        readTxn(table, PartitionBy.DAY)
+                        readTxn(table, partitionBy)
                 );
                 if (k <= repairPoints) {
                     crashFf.armKillAt(crashFf.killPointCount() + k, tableDir(table));
@@ -426,10 +438,16 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
                 restoreKillImage(table);
                 try (TableWriter writer = getWriter(table)) {
                     Assert.assertEquals("kill point " + k, 0, writer.size());
+                    Assert.assertEquals("kill point " + k, txnBefore + 1, writer.getTxn());
                 }
                 assertSymbolCounts(table, isKeepSymbolMaps ? 3 : 0);
-                execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
-                assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+                if (isPartitioned) {
+                    execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+                    assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+                } else {
+                    execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
+                    assertNoneTable(table, NONE_EXPECTED_AFTER_INSERT);
+                }
                 assertSymbolCounts(table, isKeepSymbolMaps ? 4 : 2);
                 execute("DROP TABLE " + table);
             }
@@ -522,13 +540,13 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
     }
 
     /**
-     * Creates a partitioned table and kills TRUNCATE of it at {@code point}, after it armed _todo_ and before it
-     * published _txn. Returns the _txn txn before TRUNCATE.
+     * Creates a table and kills TRUNCATE of it at {@code point}, after it armed _todo_ and before it published _txn.
+     * Returns the _txn txn before TRUNCATE.
      */
-    private long interruptTruncate(String table, int point, boolean isKeepSymbolMaps) throws Exception {
-        createPartitioned(table);
+    private long interruptTruncate(String table, int point, boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
+        createTable(table, isPartitioned);
         engine.releaseAllReaders();
-        final long txnBefore = readTxn(table, PartitionBy.DAY);
+        final long txnBefore = readTxn(table, isPartitioned ? PartitionBy.DAY : PartitionBy.NONE);
         crashFf.armKillAt(crashFf.killPointCount() + point, tableDir(table));
         execute(truncateSql(table, isKeepSymbolMaps));
         Assert.assertTrue(crashFf.isKillImageTaken());

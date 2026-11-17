@@ -11024,6 +11024,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return Math.max(rowCount, getGeometry().getE(lastPartitionIndex));
     }
 
+    /**
+     * The lowest name txn among the column files of the partition, {@code Long.MAX_VALUE} when no column is live.
+     * {@link PartitionOverwriteControl} uses it to tell a mutation of new column versions from one of the files a
+     * reader maps.
+     */
+    private long getMinColumnNameTxn(long partitionTimestamp) {
+        long minColumnNameTxn = Long.MAX_VALUE;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                minColumnNameTxn = Math.min(minColumnNameTxn, columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
+            }
+        }
+        return minColumnNameTxn;
+    }
+
     private long getMoveTailFutureFloor() {
         long floor = Long.MAX_VALUE;
         if (walApplySeqTxn >= 0 && walTxnDetails != null) {
@@ -12794,6 +12809,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return Math.max(1, size / rowCount);
+    }
+
+    /**
+     * Moves every column of a non-partitioned table to a new file version for {@link #repairTruncate(boolean)}, the
+     * way UPDATE moves the columns it changes. TRUNCATE empties the files of the default partition in place, which it
+     * may do only while no query reads them. A query of the old rows may still map them during the repair, so the rows
+     * written after it go to new files, and the column purge removes the old files once no reader of the old rows is
+     * left. The truncated {@code _txn} publishes the new versions, which are named for the txn the repair starts from,
+     * as UPDATE names them.
+     * <p>
+     * Files that an operation rolled back at that txn left under the new version are removed first. One can be a hard
+     * link to the old rows, see {@code UpdateOperatorImpl}, and writing into it would change what their readers see.
+     */
+    private void moveColumnsToNewVersionForTruncateRepair() {
+        final long partitionTimestamp = txWriter.getLastPartitionTimestamp();
+        final long newColumnNameTxn = txWriter.getTxn();
+        final PurgingOperator purgingOperator = getPurgingOperator();
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, -1L);
+            final int partitionDirLen = other.size();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    final String columnName = metadata.getColumnName(i);
+                    final byte indexType = metadata.getColumnIndexType(i);
+                    final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+                    // _txn has published every version the table holds, and each was named for an earlier txn
+                    assert columnNameTxn < newColumnNameTxn : "column version is not older than the repair [column="
+                            + columnName + ", columnNameTxn=" + columnNameTxn + ", txn=" + newColumnNameTxn + ']';
+                    removeStaleColumnFileOrFail(dFile(other.trimTo(partitionDirLen), columnName, newColumnNameTxn));
+                    if (ColumnType.isVarSize(columnType)) {
+                        removeStaleColumnFileOrFail(iFile(other.trimTo(partitionDirLen), columnName, newColumnNameTxn));
+                    }
+                    if (IndexType.isIndexed(indexType)) {
+                        removeIndexFilesOrFail(partitionDirLen, columnName, newColumnNameTxn, indexType);
+                    }
+                    purgingOperator.add(i, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, -1L);
+                    columnVersionWriter.upsert(partitionTimestamp, i, newColumnNameTxn, 0);
+                }
+            }
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     private int moveTailCut(LongList bounds, O3CompositeMergeStrategy.Plan plan, long futureFloor) {
@@ -18816,6 +18874,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void removeStaleColumnFileOrFail(LPSZ file) {
+        // the writer lock keeps anyone else from creating the file in between
+        if (ff.exists(file) && !ff.removeQuiet(file)) {
+            throw CairoException.critical(ff.errno()).put("cannot remove stale column file [path=").put(file).put(']');
+        }
+    }
+
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
         // Symbol map files (.o, .c, .k, .v) in table root always use SYMBOL index format; sealTxn is BITMAP-ignored.
         try {
@@ -19027,11 +19092,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Completes a TRUNCATE that stopped after it armed its {@code _todo_} entry and before it published the empty
      * {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column tops. The
      * constructor calls it before it opens the columns and the symbol map writers.
+     * <p>
+     * TRUNCATE runs while {@link CairoEngine#lockReaders(TableToken)} keeps queries out of the table. The repair runs
+     * in whichever writer open comes first, and a query that opened the table after the TRUNCATE stopped still reads
+     * the old rows, so the rows written after the repair must not land in the files that query maps. A partitioned
+     * table leaves its old partitions to the partition purge and writes new rows to new partition versions. A
+     * non-partitioned table has a single partition directory, so its columns move to new file versions, see
+     * {@link #moveColumnsToNewVersionForTruncateRepair()}.
      */
     private void repairTruncate(boolean isKeepSymbolMaps) {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
                 .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
-        scheduleRemoveAllPartitions();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        if (isPartitioned) {
+            scheduleRemoveAllPartitions();
+        } else {
+            moveColumnsToNewVersionForTruncateRepair();
+        }
         columnVersionWriter.truncate();
         if (isKeepSymbolMaps) {
             // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old rows
@@ -19052,6 +19129,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         resetCompositePartitionTracking();
         clearTodoLog();
         processPartitionRemoveCandidates();
+        if (!isPartitioned) {
+            // _txn names the new column versions now: the old ones go at once, or to the column purge job when a
+            // reader of the old rows, or a checkpoint, may still map them
+            finishColumnPurge();
+        }
     }
 
     private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
@@ -20222,13 +20304,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void setAppendPosition(final long rowCount, boolean doubleAllocate) {
-        engine.getPartitionOverwriteControl().notifyPartitionMutates(
-                tableToken,
-                timestampType,
-                lastOpenPartitionTs,
-                lastOpenPartitionTxnName,
-                rowCount
-        );
+        final PartitionOverwriteControl overwriteControl = engine.getPartitionOverwriteControl();
+        if (overwriteControl.isEnabled()) {
+            overwriteControl.notifyPartitionMutates(
+                    tableToken,
+                    timestampType,
+                    lastOpenPartitionTs,
+                    lastOpenPartitionTxnName,
+                    rowCount,
+                    getMinColumnNameTxn(lastOpenPartitionTs)
+            );
+        }
 
         long recordLength = 0;
         for (int i = 0; i < columnCount; i++) {

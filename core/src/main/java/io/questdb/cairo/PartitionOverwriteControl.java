@@ -86,12 +86,36 @@ public class PartitionOverwriteControl {
         return errorCount.get();
     }
 
+    public boolean isEnabled() {
+        return enabled;
+    }
+
     public void notifyPartitionMutates(
             TableToken tableToken,
             int timestampType,
             long partitionTimestamp,
             long partitionNameTxn,
             long mutateFromRow
+    ) {
+        notifyPartitionMutates(tableToken, timestampType, partitionTimestamp, partitionNameTxn, mutateFromRow, Long.MIN_VALUE);
+    }
+
+    /**
+     * Fails when a reader sees rows at or past {@code mutateFromRow} in the same version of the partition.
+     *
+     * @param minColumnNameTxn the lowest name txn among the column files the writer mutates in the partition, or
+     *                         {@code Long.MIN_VALUE} when they are not known. The commit after the txn a column version
+     *                         is named for publishes it, so a reader at that txn or an earlier one maps none of these
+     *                         files: a truncate repair of a non-partitioned table moves every column to a new version
+     *                         and writes from row 0 while queries of the old rows still read the old files.
+     */
+    public void notifyPartitionMutates(
+            TableToken tableToken,
+            int timestampType,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long mutateFromRow,
+            long minColumnNameTxn
     ) {
         if (enabled) {
             ObjList<ReaderPartitionUsage> usages = readerPartitionUsageMap.get(tableToken.getDirName());
@@ -104,7 +128,9 @@ public class PartitionOverwriteControl {
                             long usedPartitionNameTxn = TxReader.getPartitionNameTxnByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
                             long visibleRows = TxReader.getPartitionSizeByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
 
-                            if (usedPartitionNameTxn == partitionNameTxn && visibleRows > mutateFromRow) {
+                            if (usedPartitionNameTxn == partitionNameTxn
+                                    && visibleRows > mutateFromRow
+                                    && readerPartitionUsage.ownerTxn > minColumnNameTxn) {
                                 errorCount.incrementAndGet();
                                 throw CairoException.critical(0).put("partition is overwritten while being in use by a reader [table=").put(tableToken.getTableName())
                                         .put(", partition=").ts(timestampType, partitionTimestamp)
