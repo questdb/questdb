@@ -57,8 +57,9 @@ import org.jetbrains.annotations.Nullable;
  *     {@link CreateMatViewOperationImpl#isPassthroughTimestampColumn}: refresh replaces the base table's intervals of
  *     that timestamp in the view;</li>
  *     <li>for an aggregating view, that timestamp bucketing the designated timestamp of the new definition's base table
- *     without other transformation, see {@link CreateMatViewOperationImpl#isBucketedBaseTimestampColumn}: refresh
- *     recomputes the buckets of the base table's intervals of that timestamp;</li>
+ *     without other transformation, as CREATE MATERIALIZED VIEW requires, see
+ *     {@link CreateMatViewOperationImpl#isBucketedBaseTimestampColumn}: refresh recomputes the buckets of the base
+ *     table's intervals of that timestamp;</li>
  *     <li>an implicit cast from every query column to the view column of its name, see
  *     {@link io.questdb.griffin.RecordToRowCopierUtils#isCopierConvertible(int, int)};</li>
  *     <li>no view column replaced by a differently named query column at its position, and, for a SQL that copies by

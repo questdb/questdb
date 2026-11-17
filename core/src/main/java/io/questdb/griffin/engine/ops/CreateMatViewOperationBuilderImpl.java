@@ -34,6 +34,7 @@ import io.questdb.griffin.model.CreateTableColumnModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
@@ -42,6 +43,8 @@ import org.jetbrains.annotations.Nullable;
 
 
 public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperationBuilder, Mutable {
+    // where each named column of the outermost SELECT starts in the statement
+    private final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private String baseTableName;
     private int baseTableNamePosition;
@@ -78,12 +81,14 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
-                periodDelayUnit
+                periodDelayUnit,
+                columnPositions
         );
     }
 
     @Override
     public void clear() {
+        columnPositions.clear();
         createTableOperationBuilder.clear();
         refreshType = -1;
         deferred = false;
@@ -99,6 +104,10 @@ public class CreateMatViewOperationBuilderImpl implements CreateMatViewOperation
         periodLengthUnit = 0;
         periodDelay = 0;
         periodDelayUnit = 0;
+    }
+
+    public LowerCaseCharSequenceIntHashMap getColumnPositions() {
+        return columnPositions;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {

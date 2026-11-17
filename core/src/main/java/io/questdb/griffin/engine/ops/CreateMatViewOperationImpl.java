@@ -55,6 +55,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -87,12 +88,17 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
-    // the error of the rule isBucketedBaseTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies
+    // the error of the rule isBucketedBaseTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies too
     public static final String AGGREGATING_TIMESTAMP_ERROR = "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation";
     // the error of the rule isPassthroughTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies too
     public static final String PASSTHROUGH_TIMESTAMP_ERROR = "passthrough materialized view timestamp must reference the base table designated timestamp without transformation";
     private final String baseTableName;
     private final int baseTableNamePosition;
+    // the names of the query columns that take the base table's designated timestamp as the view's kind requires: as
+    // it is, for a passthrough view, or bucketed, for an aggregating view
+    private final LowerCaseCharSequenceHashSet baseTimestampColumnNames = new LowerCaseCharSequenceHashSet();
+    // where each named column of the outermost SELECT starts in the statement, as the parser saw it
+    private final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     // Index definitions the CREATE statement declares. initColumnMetadata() replaces the create-table
@@ -103,7 +109,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     // derived partitioning into the create-table operation, so each pass restores this value first.
     private final int declaredPartitionBy;
     private final boolean deferred;
-    private final LowerCaseCharSequenceHashSet passthroughTimestampColumnNames = new LowerCaseCharSequenceHashSet();
+    // whether the statement declares the view's designated timestamp with TIMESTAMP(...) after the query
+    private final boolean isTimestampDeclared;
     private final int periodDelay;
     private final char periodDelayUnit;
     private final int refreshType;
@@ -143,13 +150,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int periodLength,
             char periodLengthUnit,
             int periodDelay,
-            char periodDelayUnit
+            char periodDelayUnit,
+            @NotNull LowerCaseCharSequenceIntHashMap columnPositions
     ) {
         this.configuration = configuration;
         this.sqlText = sqlText;
         this.createTableOperation = createTableOperation;
         declaredColumnMetadata.putAll(createTableOperation.getAugmentedColumnMetadata());
         this.declaredPartitionBy = createTableOperation.getPartitionBy();
+        this.isTimestampDeclared = createTableOperation.getTimestampColumnName() != null;
         this.refreshType = refreshType;
         this.deferred = deferred;
         this.baseTableName = baseTableName;
@@ -164,6 +173,11 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.periodLengthUnit = periodLengthUnit;
         this.periodDelay = periodDelay;
         this.periodDelayUnit = periodDelayUnit;
+        final ObjList<CharSequence> columnNames = columnPositions.keys();
+        for (int i = 0, n = columnNames.size(); i < n; i++) {
+            final CharSequence columnName = columnNames.getQuick(i);
+            this.columnPositions.put(columnName, columnPositions.get(columnName));
+        }
     }
 
     @Override
@@ -398,7 +412,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // We do not know types of columns at this stage.
         // Compiler must put table together using query metadata.
         createColumnModelMap.clear();
-        passthroughTimestampColumnNames.clear();
+        baseTimestampColumnNames.clear();
         passthrough = false;
         createTableOperation.setPartitionBy(declaredPartitionBy);
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -544,7 +558,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         passthroughColumnNames.setQuick(baseColumnIndex, columnName);
                     }
                     if (isPassthroughTimestampColumn(queryModel, column, baseTableName, baseTableMetadata)) {
-                        passthroughTimestampColumnNames.add(columnName);
+                        baseTimestampColumnNames.add(columnName);
+                    }
+                }
+            } else {
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn column = columns.getQuick(i);
+                    if (isBucketedBaseTimestampColumn(queryModel, column, baseTableName, baseTableMetadata)) {
+                        baseTimestampColumnNames.add(SqlUtil.toColumnName(column.getName()));
                     }
                 }
             }
@@ -631,18 +652,16 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
+        // Refresh recomputes the base table's intervals of its designated timestamp and replaces them in the view, so
+        // the view's designated timestamp must be that timestamp, unchanged for a passthrough view and bucketed for an
+        // aggregating view, through aliases and nested selects.
+        final String timestampName = createTableOperation.getTimestampColumnName() != null
+                ? createTableOperation.getTimestampColumnName()
+                : selectMetadata.getColumnName(selectMetadata.getTimestampIndex());
+        if (!baseTimestampColumnNames.contains(timestampName)) {
+            throw SqlException.$(getTimestampPosition(timestampName), passthrough ? PASSTHROUGH_TIMESTAMP_ERROR : AGGREGATING_TIMESTAMP_ERROR);
+        }
         if (passthrough) {
-            // Refresh uses base-table intervals as output replacement ranges, so the designated
-            // timestamp must pass through unchanged, including through aliases and nested selects.
-            final String timestampName = createTableOperation.getTimestampColumnName() != null
-                    ? createTableOperation.getTimestampColumnName()
-                    : selectMetadata.getColumnName(selectMetadata.getTimestampIndex());
-            if (!passthroughTimestampColumnNames.contains(timestampName)) {
-                final int timestampPosition = createTableOperation.getTimestampColumnName() != null
-                        ? createTableOperation.getTimestampColumnNamePosition()
-                        : selectTextPosition + createColumnModelMap.get(timestampName).getColumnNamePos();
-                throw SqlException.$(timestampPosition, PASSTHROUGH_TIMESTAMP_ERROR);
-            }
             setPassthroughChunkInterval();
         }
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType(), baseTableMetadata.getPartitionBy());
@@ -666,7 +685,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      * argument of timestamp_floor(), which SAMPLE BY lowers to, with no other transformation. Refresh recomputes the
      * buckets of the base table's intervals of that timestamp, so a view whose designated timestamp buckets another
      * column, as under TIMESTAMP(ts2), would miss rows while it reports valid. ALTER MATERIALIZED VIEW ... AS applies
-     * the rule to an aggregating view's new SQL.
+     * the rule as CREATE MATERIALIZED VIEW does.
      */
     public static boolean isBucketedBaseTimestampColumn(
             @NotNull IQueryModel queryModel,
@@ -872,7 +891,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     // As above, for a reference to a column of queryModel. The reference may carry the name of the model as a prefix,
-    // as the columns of the master model of a join do.
+    // as the columns of the master model of a join do, or the name of a model that queryModel joins.
     private static int resolveBaseColumnIndex(
             @NotNull CharSequence columnRef,
             @Nullable IQueryModel queryModel,
@@ -885,6 +904,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
         // null under the prefix of another model
         final CharSequence columnName = resolveColumnName(columnRef, queryModel);
+        if (columnName == null) {
+            final ObjList<IQueryModel> joinModels = queryModel.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (resolveColumnName(columnRef, joinModel) != null) {
+                    return resolveBaseColumnIndex(columnRef, joinModel, baseTableName, baseTableMetadata, isFloorFollowed);
+                }
+            }
+        }
         if (queryModel.getTableName() != null) {
             if (columnName != null && Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
                 return baseTableMetadata.getColumnIndexQuiet(columnName);
@@ -966,6 +994,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         return true;
+    }
+
+    // Where the view's designated timestamp is named in the statement: at TIMESTAMP(...) after the query, or at the
+    // query's column as the parser saw it. A column that only a wildcard of the outermost SELECT carries falls back to
+    // its column in the optimised query, which may be the column a nested SELECT names.
+    private int getTimestampPosition(CharSequence timestampName) {
+        if (isTimestampDeclared) {
+            return createTableOperation.getTimestampColumnNamePosition();
+        }
+        final int index = columnPositions.keyIndex(timestampName);
+        if (index < 0) {
+            return columnPositions.valueAt(index);
+        }
+        return createTableOperation.getSelectTextPosition() + createColumnModelMap.get(timestampName).getColumnNamePos();
     }
 
     private void setPassthroughChunkInterval() {

@@ -4733,6 +4733,18 @@ public class SqlParser {
         return queryModel;
     }
 
+    // Where each named column of the outermost SELECT of a materialized view's SQL starts in the statement, for the
+    // errors that the checks of the compile report, which see the optimised query. Wildcard columns have no entry.
+    private static void collectMatViewColumnPositions(IQueryModel queryModel, LowerCaseCharSequenceIntHashMap sink) {
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (!column.getAst().isWildcard()) {
+                sink.put(Chars.toString(SqlUtil.toColumnName(column.getAlias())), column.getAst().position);
+            }
+        }
+    }
+
     // The SAMPLE BY time zone, or offset, of a materialized view's SQL, as CREATE MATERIALIZED VIEW stores it, or null.
     private static @Nullable String getMatViewSampleBy(IQueryModel queryModel, boolean isTimeZone) {
         final ExpressionNode node = getMatViewSampleByNode(queryModel, isTimeZone);
@@ -4973,6 +4985,7 @@ public class SqlParser {
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
             validateMatViewQuery(queryModel, baseTableNameStr, !isMatViewExplicitNamesCheckSkipped);
+            collectMatViewColumnPositions(queryModel, mvOpBuilder.getColumnPositions());
 
             mvOpBuilder.setTimeZone(getMatViewSampleBy(queryModel, true));
             mvOpBuilder.setTimeZoneOffset(getMatViewSampleBy(queryModel, false));
@@ -10740,14 +10753,7 @@ public class SqlParser {
         result.timeZoneOffset = getMatViewSampleBy(queryModel, false);
         result.timeZonePosition = getMatViewSampleByPosition(queryModel, true, matViewQueryLo);
         result.timeZoneOffsetPosition = getMatViewSampleByPosition(queryModel, false, matViewQueryLo);
-        // Where each named column of the outermost SELECT starts, for the errors the compile's checks report.
-        final ObjList<QueryColumn> columns = queryModel.getColumns();
-        for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn column = columns.getQuick(i);
-            if (!column.getAst().isWildcard()) {
-                result.columnPositions.put(Chars.toString(SqlUtil.toColumnName(column.getAlias())), column.getAst().position);
-            }
-        }
+        collectMatViewColumnPositions(queryModel, result.columnPositions);
 
         if (isMatViewQueryEnclosed) {
             expectTok(lexer, ')');

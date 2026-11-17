@@ -1312,6 +1312,52 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewRejectsTimestampNotBucketingBaseTimestamp() throws Exception {
+        // Refresh recomputes the base table's intervals of its designated timestamp, so CREATE refuses a view whose
+        // SAMPLE BY or timestamp_floor() buckets another column or a shifted timestamp (questdb/questdb#6052): such a
+        // view would miss rows while it reports valid. The error points at the query's timestamp column, at the
+        // wildcard that carries it, or at TIMESTAMP(...) after the query when the statement names the timestamp there,
+        // and no view is left behind. The same SQL over the designated timestamp creates the view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (x1 INT, s SYMBOL, ts1 TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts1) PARTITION BY DAY WAL");
+            final String[][] refused = {
+                    // the example of questdb/questdb#6052
+                    {"create materialized view y_view as (select ts2, sum(x1) as sum_x1 from y timestamp(ts2) sample by 2s)", "ts2,"},
+                    {"CREATE MATERIALIZED VIEW y_view AS (SELECT ts2 AS ts1, s, sum(x1) AS sum_x1 FROM y TIMESTAMP(ts2) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') PARTITION BY DAY", "ts2 AS ts1"},
+                    {"CREATE MATERIALIZED VIEW y_view AS (SELECT timestamp_floor('1h', ts2) AS ts, s, sum(x1) AS sum_x1 FROM y TIMESTAMP(ts2) ORDER BY ts) PARTITION BY DAY", "timestamp_floor"},
+                    {"CREATE MATERIALIZED VIEW y_view AS (SELECT ts, s, sum(x1) AS sum_x1 FROM (SELECT dateadd('m', 5, ts1) AS ts, s, x1 FROM y) TIMESTAMP(ts) SAMPLE BY 1h) PARTITION BY DAY", "ts, s, sum"},
+                    {"CREATE MATERIALIZED VIEW y_view AS (SELECT * FROM (SELECT ts2, s, sum(x1) AS sum_x1 FROM y TIMESTAMP(ts2) SAMPLE BY 1h)) PARTITION BY DAY", "*"},
+                    {"CREATE MATERIALIZED VIEW y_view AS (SELECT ts2 AS ts, s, sum(x1) AS sum_x1 FROM y TIMESTAMP(ts2) SAMPLE BY 1h) TIMESTAMP(ts) PARTITION BY DAY", "ts) PARTITION"}
+            };
+            for (String[] shape : refused) {
+                final String sql = shape[0];
+                Assert.assertEquals("the token must be unique", sql.indexOf(shape[1]), sql.lastIndexOf(shape[1]));
+                assertQuery(sql).noLeakCheck().fails(
+                        sql.indexOf(shape[1]),
+                        "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation"
+                );
+                assertNull(engine.getTableTokenIfExists("y_view"));
+                assertNull(getMatViewDefinition("y_view"));
+            }
+
+            execute("CREATE MATERIALIZED VIEW y_view AS (SELECT ts1, sum(x1) AS sum_x1 FROM y SAMPLE BY 2s) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, 'a', '2024-01-01T00:00:00.500000Z', '2024-01-01T00:00:03.000000Z'),
+                    (2, 'a', '2024-01-01T00:00:01.500000Z', '2024-01-01T00:00:01.000000Z'),
+                    (4, 'b', '2024-01-01T00:00:02.100000Z', '2024-01-01T00:00:00.000000Z')
+                    """);
+            drainQueues();
+            // bucketed by ts1; buckets of ts2 would hold 6 at 00:00 and 1 at 00:02
+            assertQuery("y_view").timestamp("ts1").expectSize().noLeakCheck().returns("""
+                    ts1\tsum_x1
+                    2024-01-01T00:00:00.000000Z\t3
+                    2024-01-01T00:00:02.000000Z\t4
+                    """);
+        });
+    }
+
+    @Test
     public void testCreateMatViewRewrittenSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1544,6 +1590,52 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (select ts, av from (select ts, avg(v) av from " + TABLE1 + " sample by 1h subsample uniform(2))) partition by day")
                     .noLeakCheck()
                     .fails(100, "SUBSAMPLE on base table is not supported for materialized views: " + TABLE1);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewTimestampOfJoinedBaseTable() throws Exception {
+        // A view may read its base table on either side of a join, also as the last of three tables, and the timestamp
+        // rule follows the view's timestamp to the base table under its alias. A timestamp of another table of the join
+        // is refused.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE plants (ts TIMESTAMP, sym SYMBOL, weight DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE regions (sym SYMBOL, region SYMBOL)");
+            execute("INSERT INTO plants VALUES ('2023-01-01T00:00:00.000000Z', 'a', 1.0)");
+            execute("INSERT INTO regions VALUES ('a', 'eu')");
+            final String head = "CREATE MATERIALIZED VIEW mv2 WITH BASE trades AS (";
+            final String otherTimestamp = "SELECT timestamp_floor('1h', p.ts) AS ts, sum(t.price) AS price FROM plants p RIGHT JOIN trades t ON (sym) ORDER BY ts";
+            assertQuery(head + otherTimestamp + ") PARTITION BY DAY").noLeakCheck().fails(
+                    head.length() + otherTimestamp.indexOf("timestamp_floor"),
+                    "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation"
+            );
+            assertNull(engine.getTableTokenIfExists("mv2"));
+
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (SELECT timestamp_floor('1h', t.ts) AS ts, sum(t.price) AS price FROM plants p RIGHT JOIN trades t ON (sym) ORDER BY ts) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv3 WITH BASE trades AS (SELECT timestamp_floor('1h', t.ts) AS ts, sum(t.price) AS price "
+                    + "FROM plants p JOIN regions r ON (sym) RIGHT JOIN trades t ON (sym) ORDER BY ts) PARTITION BY DAY");
+            execute("INSERT INTO trades VALUES ('2024-01-01T00:10:00.000000Z', 'a', 1.0), ('2024-01-01T00:20:00.000000Z', 'b', 2.0), ('2024-01-01T01:10:00.000000Z', 'a', 4.0)");
+            drainQueues();
+            // RIGHT JOIN keeps every trade
+            final String expected = """
+                    ts\tprice
+                    2024-01-01T00:00:00.000000Z\t3.0
+                    2024-01-01T01:00:00.000000Z\t4.0
+                    """;
+            assertQuery("mv").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+            assertQuery("mv3").timestamp("ts").expectSize().noLeakCheck().returns(expected);
+
+            // the base under a quoted alias, as a subquery, and under its own name
+            final String[] accepted = {
+                    "SELECT timestamp_floor('1h', \"my t\".ts) AS ts, sum(\"my t\".price) AS price FROM plants p RIGHT JOIN trades \"my t\" ON (sym) ORDER BY ts",
+                    "SELECT timestamp_floor('1h', t.ts) AS ts, sum(t.price) AS price FROM (SELECT * FROM plants) p RIGHT JOIN (SELECT * FROM trades WHERE price > 0) t ON (sym) ORDER BY ts",
+                    "SELECT trades.ts, trades.sym, sum(plants.weight) AS weight FROM trades JOIN plants ON (sym) SAMPLE BY 1h"
+            };
+            for (String query : accepted) {
+                execute(head + query + ") PARTITION BY DAY");
+                execute("DROP MATERIALIZED VIEW mv2");
+            }
         });
     }
 

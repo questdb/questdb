@@ -1406,10 +1406,11 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
 
     @Test
     public void testAggregatingAlterKeepsBucketedBaseTimestamp() throws Exception {
-        // ALTER ... AS takes a SQL whose designated timestamp buckets the base table's designated timestamp, by SAMPLE BY
-        // or timestamp_floor(), under any spelling, table alias, alias chain, subquery, CTE or regular view, as the master
-        // of a join, under a subquery's own alias too, with filters and other columns. A FULL refresh and the incremental
-        // refresh of a later insert then give the SQL's rows over the base: one row a round, an hour later each round.
+        // ALTER ... AS takes, as CREATE does, a SQL whose designated timestamp buckets the base table's designated
+        // timestamp, by SAMPLE BY or timestamp_floor(), under any spelling, table alias, alias chain, subquery, CTE or
+        // regular view, as the master of a join, under a subquery's own alias too, with filters and other columns. A FULL
+        // refresh and the incremental refresh of a later insert then give the SQL's rows over the base: one row a round,
+        // an hour later each round.
         assertMemoryLeak(() -> {
             createAggregatingView();
             createPassthroughRegularViews();
@@ -1436,6 +1437,9 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             expected.put(AGGREGATING_VIEW_ROWS);
             for (int i = 0; i < accepted.length; i++) {
                 final String query = accepted[i];
+                execute("CREATE MATERIALIZED VIEW parity WITH BASE base AS (" + query + ") PARTITION BY DAY");
+                execute("DROP MATERIALIZED VIEW parity");
+
                 execute("ALTER MATERIALIZED VIEW av AS (" + query + ")");
                 assertMappingColumns("av", "", query.contains("last_ts2") ? "last_ts2" : "");
                 drainWalQueue();
@@ -1514,7 +1518,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         // timestamp, so ALTER ... AS refuses a SQL whose designated timestamp buckets anything else: another column under
         // TIMESTAMP(ts2), a shifted timestamp, either through a subquery, a CTE, a regular view or the master of a join,
         // or the timestamp of a joined table. The error points at the query column, or at the SQL under a wildcard.
-        // CREATE still takes such a SQL (questdb/questdb#6052). The view keeps refreshing with its SQL.
+        // CREATE refuses such a SQL with the same error (questdb/questdb#6052). The view keeps refreshing with its SQL.
         assertMemoryLeak(() -> {
             createAggregatingView();
             createPassthroughRegularViews();
@@ -1534,6 +1538,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             };
             for (String[] shape : refused) {
                 assertAggregatingAlterRefused("av", shape[0], shape[1]);
+                // CREATE points at the wildcard that carries the timestamp up, ALTER at the SQL's start
+                assertCreateRefusesAggregatingTimestamp(shape[0], shape[1] != null ? shape[1] : "*");
             }
             execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
             drainWalAndMatViewQueues();
@@ -2794,6 +2800,23 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         failingPart.put(viewToken.getDirName()).put(Files.SEPARATOR).put(WalUtils.SEQ_DIR).put(Files.SEPARATOR)
                 .put(WalUtils.TXNLOG_PARTS_DIR).put(Files.SEPARATOR).put(seqTxn + txnsAhead);
         isFailArmed.set(true);
+    }
+
+    // CREATE MATERIALIZED VIEW refuses the query with the error of the aggregating timestamp rule at the token of the
+    // query, which must be unique, and creates no view.
+    private static void assertCreateRefusesAggregatingTimestamp(String query, String token) {
+        final String head = "CREATE MATERIALIZED VIEW parity WITH BASE base AS (";
+        final int tokenIndex = query.indexOf(token);
+        Assert.assertTrue(tokenIndex > -1);
+        Assert.assertEquals("the token must be unique", tokenIndex, query.lastIndexOf(token));
+        try {
+            execute(head + query + ") PARTITION BY DAY");
+            Assert.fail("CREATE must refuse: " + query);
+        } catch (SqlException e) {
+            TestUtils.assertEquals(AGGREGATING_TIMESTAMP_ERROR, e.getFlyweightMessage());
+            Assert.assertEquals(query, head.length() + tokenIndex, e.getPosition());
+        }
+        Assert.assertNull(engine.getTableTokenIfExists("parity"));
     }
 
     // CREATE MATERIALIZED VIEW refuses the query as the SQL of a passthrough view, with the error of the passthrough
