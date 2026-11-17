@@ -146,7 +146,9 @@ import java.util.concurrent.locks.LockSupport;
  *       rows that match, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
  *       table's first 39,062 and 39,063 rows, one key each, either side of the 256 texts per probe row
  *       below which the join translates the key through each worker's own cache rather than a cache
- *       that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row.
+ *       that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row. {@code SYMBOL_10M_PREFIX_D1K}
+ *       and {@code SYMBOL_10M_PREFIX_D50K} join the table's first {@code probeRows} rows, one key
+ *       each, with either dimension.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
@@ -166,7 +168,7 @@ import java.util.concurrent.locks.LockSupport;
  *   <li>{@code freshCompile}: true compiles the query in every operation, so that each operation
  *       runs a factory of its own, whose per-factory classes start cold.</li>
  *   <li>{@code probeRows}: the fact rows that the {@code SMALL_*} and {@code PARQUET_VAR_BUILD_*}
- *       shapes join.</li>
+ *       shapes join, and the fsym rows that the {@code SYMBOL_10M_PREFIX_*} shapes join.</li>
  *   <li>{@code parquetCacheSize}: {@code cairo.sql.parquet.cache.memory.size} in bytes, the Parquet
  *       decode cache budget; -1 keeps the default.</li>
  *   <li>{@code warmUpRows}: the probe rows after which a factory switches from the shared stepper
@@ -213,6 +215,8 @@ public class ParallelHashJoinBenchmark {
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
     // The SYMBOL_10M_* shapes' join over the table of 10,000,000 SYMBOL texts.
     private static final String SYMBOL_10M_JOIN = "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d1k d ON f.sym = d.sym";
+    // fsym's first timestamp, 2024-01-01T00:00:00Z.
+    private static final long SYMBOL_10M_START_MICROS = 1_704_067_200_000_000L;
     private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k"};
 
     @Param({"10000000"})
@@ -270,7 +274,8 @@ public class ParallelHashJoinBenchmark {
             "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
             "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE",
             "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10",
-            "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL"
+            "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL",
+            "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K"
     })
     public String shape;
 
@@ -491,6 +496,15 @@ public class ParallelHashJoinBenchmark {
         engine.execute("INSERT INTO fsym SELECT 'k' || ((x - 1) % 1_000 + 1), x, timestamp_sequence('2024-03-01', 1_200_000) FROM long_sequence(3_000)", ctx);
         engine.execute("CREATE TABLE d1k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(1_000))", ctx);
         engine.execute("CREATE TABLE d50k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(50_000))", ctx);
+    }
+
+    // The timestamp before which fsym holds the given number of rows, quoted.
+    private static String symbol10mPrefixBound(long rows) {
+        final StringSink sink = new StringSink();
+        sink.put('\'');
+        MicrosFormatUtils.appendDateTimeUSec(sink, SYMBOL_10M_START_MICROS + rows * 500_000);
+        sink.put('\'');
+        return sink.toString();
     }
 
     /**
@@ -833,6 +847,10 @@ public class ParallelHashJoinBenchmark {
                     SYMBOL_10M_JOIN + symbol10mPredicate(shape);
             case "SYMBOL_10M_INTERVAL_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
             case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
+            // fsym's first probeRows rows, whose timestamps step by half a second from 2024-01-01.
+            case "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN "
+                    + (shape.endsWith("D1K") ? "d1k" : "d50k") + " d ON f.sym = d.sym WHERE f.ts < "
+                    + symbol10mPrefixBound(probeRows);
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };
     }
