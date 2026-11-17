@@ -1376,7 +1376,12 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
     // Points the probe side at the orientation: the probe input's scan order and filter, the first
     // stage's stepper, and the key source of every later stage: the probe record, or, swapped, the
-    // first stage's payload, whose columns sit elsewhere.
+    // first stage's payload. The payload holds the left input's columns as compiled, and the probe
+    // frames hold them where the left input's column map says. SqlCodeGenerator lets a join swap
+    // only an unfiltered left input, whose frames hold its compiled columns in order, so a later
+    // stage's INT or SYMBOL key reads the same column in both orientations there. The key column
+    // follows the orientation all the same, for a spec over a left input that maps its columns onto
+    // other frame columns, such as AsyncHashJoinStackSwapTest builds by hand.
     private void ofOrientation0(boolean isSwapped) {
         this.isSwapped = isSwapped;
         executionStages.setQuick(0, isSwapped ? swapStage : stages.getQuick(0));

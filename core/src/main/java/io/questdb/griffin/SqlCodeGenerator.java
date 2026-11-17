@@ -2309,6 +2309,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * the order in which they lead the master's columns. The keys therefore address the master's
      * columns themselves, where the keys of the query's orientation address the frame columns that
      * hold them; see {@link #newParallelHashJoinKeys(RecordMetadata, IntList, ListColumnFilter, RecordCursorFactory, ListColumnFilter)}.
+     * A join swaps only an unfiltered left input, see {@link #isParallelHashJoinSwapPossible}, whose
+     * frames hold its columns as compiled, since a projection over a scan projects its frames too,
+     * so the two address the same columns; the operator does not rely on it.
      * <p>
      * They never fail where those keys did not: the build side is the same, each probe column has the
      * same type, and two keys that read one master column read one frame column too, so the keys
