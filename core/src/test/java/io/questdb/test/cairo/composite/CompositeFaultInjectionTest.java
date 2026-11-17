@@ -28,6 +28,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -141,7 +142,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             execute("CREATE TABLE cx AS (SELECT x::INT i, timestamp_sequence(0, 15 * 1_000_000L) ts FROM long_sequence(400))" +
                     " TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(plainStorageVersion(), metaStorageVersion());
 
             // the upgrade lands in _meta, then its fsync fails before _txn publishes the composite partition
             execute("INSERT INTO cx SELECT x::INT + 70_000 i, timestamp_sequence('1970-01-01T00:20:07', 1_000_000L) ts FROM long_sequence(3)");
@@ -150,8 +151,8 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             Assert.assertFalse("fault did not fire", armed.get());
             final TableToken tableToken = engine.verifyTableName("cx");
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, writerStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), writerStorageVersion());
 
             execute("ALTER TABLE cx RESUME WAL");
             drainWalQueue();
@@ -159,8 +160,8 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader(tableToken)) {
                 Assert.assertTrue("fixture produced no composite partition", reader.getTxFile().isPartitionComposite(0));
             }
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, writerStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), writerStorageVersion());
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n403\n");
         });
     }
@@ -265,7 +266,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             }
             Assert.assertFalse("fault did not fire", armed.get());
             // the downgrade landed in _meta before its fsync failed
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(plainStorageVersion(), metaStorageVersion());
 
             // a composite partition again: _meta has to be raised before _txn publishes it
             execute("INSERT INTO cx SELECT x::INT + 90_000 i, timestamp_sequence('1970-01-01T00:20:08', 1_000_000L) ts FROM long_sequence(3)");
@@ -275,8 +276,8 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader(tableToken)) {
                 Assert.assertTrue("fixture produced no composite partition", reader.getTxFile().isPartitionComposite(0));
             }
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, writerStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), writerStorageVersion());
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n456\n");
         });
     }
@@ -324,12 +325,12 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
                 job.run();
             }
             Assert.assertFalse("fault did not fire", armed.get());
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
 
             // the full _meta rewrite stamps the plain version, the table holding no composite partition
             execute("ALTER TABLE cx ADD COLUMN extra INT");
             drainWalQueue();
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(plainStorageVersion(), metaStorageVersion());
 
             // a composite partition again: _meta has to be raised before _txn publishes it
             execute("INSERT INTO cx (i, ts) SELECT x::INT + 90_000 i, timestamp_sequence('1970-01-01T00:20:08', 1_000_000L) ts FROM long_sequence(3)");
@@ -339,7 +340,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader(tableToken)) {
                 Assert.assertTrue("fixture produced no composite partition", reader.getTxFile().isPartitionComposite(0));
             }
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n456\n");
         });
     }
@@ -350,7 +351,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
      */
     private void assertSwapCommittedAndNextCommitSucceeds() throws Exception {
         final TableToken tableToken = engine.verifyTableName("cx");
-        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+        Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
         try (TableReader reader = engine.getReader(tableToken)) {
             Assert.assertFalse(reader.getTxFile().isPartitionComposite(0));
         }
@@ -364,7 +365,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
         execute("INSERT INTO cx SELECT x::INT + 90_000 i, timestamp_sequence('1970-01-02T01:00:00', 1_000_000L) ts FROM long_sequence(5)");
         drainWalQueue();
         Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-        Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+        Assert.assertEquals(plainStorageVersion(), metaStorageVersion());
         assertQuery("SELECT count() c, sum(i) s FROM cx").noRandomAccess().expectSize().returns("c\ts\n458\t4741496\n");
     }
 
@@ -380,7 +381,7 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
         drainWalQueue();
         execute("INSERT INTO cx SELECT x::INT + 80_000 i, timestamp_sequence('1970-01-02T00:00:10', 1_000_000L) ts FROM long_sequence(50)");
         drainWalQueue();
-        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+        Assert.assertEquals(compositeStorageVersion(), metaStorageVersion());
 
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
         setCurrentMicros(MicrosFormatUtils.parseTimestamp("1970-01-05T00:00:00.000000Z"));
@@ -429,6 +430,13 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
     /**
      * Reads the storage version straight off the {@code _meta} file on disk, not the writer's cached copy.
      */
+
+    // The storage version a composite table carries under the test's commit mode: every mode but NOSYNC also
+    // downgrade-locks the table (ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION).
+    private static int compositeStorageVersion() {
+        return ColumnType.storageVersion(true, CommitMode.writesChecksums(configuration.getCommitMode()));
+    }
+
     private static int metaStorageVersion() {
         try (
                 MemoryMR mem = Vm.getCMRInstance();
@@ -447,6 +455,13 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
     /**
      * The storage version the pooled writer caches, which decides whether its next commit rewrites {@code _meta}.
      */
+
+    // The storage version a plain table carries under the test's commit mode: every mode but NOSYNC
+    // downgrade-locks the table (ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION).
+    private static int plainStorageVersion() {
+        return ColumnType.storageVersion(false, CommitMode.writesChecksums(configuration.getCommitMode()));
+    }
+
     private static int writerStorageVersion() {
         try (TableWriter writer = engine.getWriter(engine.verifyTableName("cx"), "test")) {
             return ((TableWriterMetadata) writer.getMetadata()).getStorageVersion();

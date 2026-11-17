@@ -334,6 +334,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // finishPendingDetaches() removes each one it names.
     private final LongList detachesAfterSavePoint = new LongList();
     private final DirectUtf8String directUtf8String = new DirectUtf8String();
+    // Whether this instance writes _cv checksum trailers (every mode but NOSYNC), and so stamps the table
+    // downgrade-locked in _meta: see ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION. Taken from the instance mode,
+    // as ColumnVersionWriter takes its trailer decision, so the two cannot disagree.
+    private final boolean downgradeLocked;
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final int fileOperationRetryCount;
@@ -690,6 +694,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
+        this.downgradeLocked = CommitMode.writesChecksums(configuration.getCommitMode());
         this.engine = cairoEngine;
         final int frameCacheSize = configuration.getO3PartitionMergeAppendFrameCacheSize();
         this.compositeFrameCache = frameCacheSize > 0
@@ -767,6 +772,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.partitionBy = metadata.getPartitionBy();
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
             recountCompositePartitions();
+            // Lock the table against an older release before the first _cv write, which may be the rollback
+            // below (rollbackColumnVersionToTxn), not a commit: once a trailer is in _cv, an older binary must
+            // not open the table.
+            maybeUpgradeStorageVersion();
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
@@ -7731,7 +7740,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Commits {@code _txn} and keeps the on-disk {@code _meta} storage version in step with whether the
-     * table holds composite partitions. An upgrade to {@link ColumnType#MAX_STORAGE_VERSION} runs BEFORE
+     * table holds composite partitions (the downgrade lock, the other marker, is fixed for the writer's
+     * life and stamped at open). An upgrade to {@link ColumnType#COMPOSITE_STORAGE_VERSION} runs BEFORE
      * the commit, so a downgrade binary - which rejects an unknown {@code _meta} version - never sees a
      * composite {@code _txn} and misreads it as flat. A downgrade back to {@link ColumnType#VERSION} runs
      * AFTER the commit, once the last composite flag has been cleared from {@code _txn}. A crash between
@@ -7771,19 +7781,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Drops the on-disk {@code _meta} storage version back to {@link ColumnType#VERSION} once the table no
-     * longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit that cleared
-     * the last composite flag, so the version never claims plain data while {@code _txn} still points at a
-     * composite piece. Reads the in-memory count, never scans.
+     * Drops the on-disk {@code _meta} storage version back to {@link #storageVersionForCurrentState()} once
+     * the table no longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit
+     * that cleared the last composite flag, so the version never claims plain data while {@code _txn} still
+     * points at a composite piece. Reads the in-memory count, never scans. Never drops the downgrade lock:
+     * only a NOSYNC start does, after it removed the {@code _cv} trailers.
      * <p>
      * Best effort: the {@code _txn} commit is already durable, so a failure here must not surface as a failed
      * commit or skip the caller's post-commit steps. The cached version follows whatever reached {@code _meta}:
      * a failure before the write leaves both conservatively high, and the next commit tries again.
      */
     private void maybeDowngradeStorageVersion() {
-        if (compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
+        final int target = storageVersionForCurrentState();
+        if (metadata.getStorageVersion() > target) {
             try {
-                writeStorageVersionToMeta(ColumnType.VERSION);
+                writeStorageVersionToMeta(target);
             } catch (Throwable th) {
                 LOG.critical().$("could not downgrade storage version in _meta [table=")
                         .$(tableToken)
@@ -7794,13 +7806,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Raises the on-disk {@code _meta} storage version to {@link ColumnType#MAX_STORAGE_VERSION} as soon as
-     * the table gains its first composite partition. The caller runs this BEFORE the {@code _txn} commit that
-     * publishes the composite flag. Reads the in-memory count, never scans.
+     * Raises the on-disk {@code _meta} storage version to {@link #storageVersionForCurrentState()} as soon as
+     * the table gains its first composite partition, and at open for the downgrade lock. The caller runs this
+     * BEFORE the {@code _txn} commit that publishes the composite flag. Reads the in-memory count, never scans.
      */
     private void maybeUpgradeStorageVersion() {
-        if (compositePartitionCount > 0 && metadata.getStorageVersion() < ColumnType.MAX_STORAGE_VERSION) {
-            writeStorageVersionToMeta(ColumnType.MAX_STORAGE_VERSION);
+        final int target = storageVersionForCurrentState();
+        if (metadata.getStorageVersion() < target) {
+            writeStorageVersionToMeta(target);
         }
     }
 
@@ -7943,12 +7956,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The storage version that {@code _meta} should carry for the table's current shape:
-     * {@link ColumnType#MAX_STORAGE_VERSION} while it holds composite partitions, otherwise
-     * {@link ColumnType#VERSION}. Used when a full meta rewrite must reproduce the elevated version.
+     * The storage version that {@code _meta} should carry for the table's current shape: raised by the
+     * composite marker while it holds composite partitions, and by the downgrade lock while this instance
+     * writes {@code _cv} checksum trailers or {@code _meta} already carries the lock (a NOSYNC writer keeps
+     * it: the trailers it stands for are still in {@code _cv} until a NOSYNC start removes them). See
+     * {@link ColumnType#storageVersion(boolean, boolean)}. Used when a full meta rewrite must reproduce the
+     * elevated version.
      */
     private int storageVersionForCurrentState() {
-        return compositePartitionCount > 0 ? ColumnType.MAX_STORAGE_VERSION : ColumnType.VERSION;
+        return ColumnType.storageVersion(
+                compositePartitionCount > 0,
+                downgradeLocked || ColumnType.isDowngradeLockedStorageVersion(metadata.getStorageVersion())
+        );
     }
 
     /**

@@ -42,6 +42,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 
@@ -170,7 +171,45 @@ public class RecoveryCoordinator {
                     throw e;
                 }
             }
+
+            // After the restores and exits above, since a save point ships a checksummed _cv: a NOSYNC start
+            // leaves every table in a shape an older release may write, which is the documented way down.
+            if (!CommitMode.writesChecksums(configuration.getCommitMode())) {
+                unlockTablesForDowngrade(tokens, dir);
+            }
         }
+    }
+
+    // Zeroes the 16-byte [magic][checksum] trailer after each _cv area the header names, where the file holds
+    // one, and makes that durable. The data and the header are not touched: a reader finds no magic and loads
+    // the area unverified, as it loads a file an older release wrote.
+    private void clearColumnVersionTrailers(Path cvPath, long tempMem8b) {
+        final long fd = TableUtils.openRW(ff, cvPath.$(), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            final long fileLen = ff.length(fd);
+            if (fileLen < ColumnVersionReader.HEADER_SIZE) {
+                return;
+            }
+            clearColumnVersionTrailer(fd, cvPath, tempMem8b, fileLen, ColumnVersionReader.OFFSET_OFFSET_A_64, ColumnVersionReader.OFFSET_SIZE_A_64);
+            clearColumnVersionTrailer(fd, cvPath, tempMem8b, fileLen, ColumnVersionReader.OFFSET_OFFSET_B_64, ColumnVersionReader.OFFSET_SIZE_B_64);
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private void clearColumnVersionTrailer(long fd, Path cvPath, long tempMem8b, long fileLen, int offsetField, int sizeField) {
+        final long offset = TableUtils.readLongOrFail(ff, fd, offsetField, tempMem8b, cvPath.$());
+        final long size = TableUtils.readLongOrFail(ff, fd, sizeField, tempMem8b, cvPath.$());
+        // An area that was never written names offset 0; its trailer slot would be the header.
+        if (offset < ColumnVersionReader.HEADER_SIZE || size < 0 || offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE > fileLen) {
+            return;
+        }
+        if (TableUtils.readLongOrFail(ff, fd, offset + size, tempMem8b, cvPath.$()) != TableUtils.CV_CHECKSUM_MAGIC) {
+            return;
+        }
+        TableUtils.writeLongOrFail(ff, fd, offset + size, 0L, tempMem8b, cvPath);
+        TableUtils.writeLongOrFail(ff, fd, offset + size + Long.BYTES, 0L, tempMem8b, cvPath);
     }
 
     private void failIfRecoveryDisabled(TableToken token) {
@@ -939,6 +978,75 @@ public class RecoveryCoordinator {
 
     private Path tablePath(Path p, TableToken token) {
         return p.of(configuration.getDbRoot()).concat(token);
+    }
+
+    private void unlockTableForDowngrade(TableToken token, Path path, int tableRootLen, long tempMem8b) {
+        // One open, one read and one close per table on the healthy path. A missing or short _meta is left to the
+        // writer, which repairs or refuses it on open; this pass has nothing to unlock there.
+        path.concat(TableUtils.META_FILE_NAME);
+        final long roFd = ff.openRO(path.$());
+        if (roFd < 0) {
+            return;
+        }
+        final int storageVersion;
+        try {
+            if (ff.read(roFd, tempMem8b, Integer.BYTES, TableUtils.META_OFFSET_VERSION) != Integer.BYTES) {
+                return;
+            }
+            storageVersion = Unsafe.getInt(tempMem8b);
+        } finally {
+            ff.close(roFd);
+        }
+        if (!ColumnType.isDowngradeLockedStorageVersion(storageVersion)) {
+            return;
+        }
+        path.trimTo(tableRootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+        if (ff.exists(path.$())) {
+            clearColumnVersionTrailers(path, tempMem8b);
+        }
+        path.trimTo(tableRootLen).concat(TableUtils.META_FILE_NAME);
+        final long metaFd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            final int unlocked = ColumnType.storageVersion(ColumnType.isCompositeStorageVersion(storageVersion), false);
+            TableUtils.writeIntOrFail(ff, metaFd, TableUtils.META_OFFSET_VERSION, unlocked, tempMem8b, path);
+            ff.fsync(metaFd);
+            LOG.info().$("table unlocked for downgrade, its _cv checksums are removed [table=").$(token)
+                    .$(", storageVersion=").$(unlocked).I$();
+        } finally {
+            ff.close(metaFd);
+        }
+    }
+
+    /**
+     * The way back to an older release. For every table whose {@code _meta} carries the downgrade lock
+     * ({@link ColumnType#isDowngradeLockedStorageVersion}): clears the {@code _cv} checksum trailers of both
+     * areas, so an older binary that rewrites an area in place leaves no magic next to data it never
+     * checksummed, then drops the lock from {@code _meta}, so the older binary opens the table. Trailers
+     * first and durable, lock last: a crash in between leaves the table locked, and the next NOSYNC start
+     * repeats this. Runs before any writer opens, on a NOSYNC start only, which writes no trailer itself.
+     */
+    private void unlockTablesForDowngrade(ObjHashSet<TableToken> tokens, Path path) {
+        final long tempMem8b = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0, n = tokens.size(); i < n; i++) {
+                final TableToken token = tokens.get(i);
+                // A regular view has no _meta on disk; a materialized view (isView()==false) has one.
+                if (token.isView()) {
+                    continue;
+                }
+                final int tableRootLen = tablePath(path, token).size();
+                try {
+                    unlockTableForDowngrade(token, path, tableRootLen, tempMem8b);
+                } catch (CairoException | CairoError e) {
+                    engine.handleDataSyncFailure(e);
+                    throw e;
+                } finally {
+                    path.trimTo(tableRootLen);
+                }
+            }
+        } finally {
+            Unsafe.free(tempMem8b, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     /**

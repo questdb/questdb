@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -119,6 +120,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalTornColumnVersionRefusedWhenPreviousColumnFilesAreGone() throws Exception {
+        assumeColumnVersionChecksummed();
         assertMemoryLeak(() -> {
             configureCommitMode();
             final String dir = createTable(false);
@@ -153,6 +155,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     @Test
     public void testNonWalTornColumnVersionRollsBackOnFirstRead() throws Exception {
+        assumeColumnVersionChecksummed();
         final TxnFsyncCountingFacade ff = new TxnFsyncCountingFacade();
         assertMemoryLeak(ff, () -> {
             configureCommitMode();
@@ -291,6 +294,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableIngestsAndReplaysOverTornColumnVersion() throws Exception {
+        assumeColumnVersionChecksummed();
         assertMemoryLeak(() -> {
             configureCommitMode();
             final String dir = createTable(true);
@@ -324,6 +328,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableReadRepairsTornColumnVersion() throws Exception {
+        assumeColumnVersionChecksummed();
         assertMemoryLeak(() -> {
             configureCommitMode();
             final String dir = createTable(true);
@@ -356,6 +361,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTableSuspendsOnTornColumnVersionItCannotRollBack() throws Exception {
+        assumeColumnVersionChecksummed();
         Assume.assumeFalse("adaptive recovery restores enrolled tables", "adaptive".equals(commitMode));
         assertMemoryLeak(() -> {
             configureCommitMode();
@@ -490,8 +496,12 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             if (isTxnAreaVerified(image, version) || !isTxnAreaVerified(image, version - 1)) {
                 continue;
             }
-            // The torn commit is an UPDATE: _cv holds its column version intact.
-            Assert.assertTrue(isCvAreaVerified(commits.cv(n), cvVersion(commits.cv(n))));
+            // The torn commit is an UPDATE: _cv holds its column version intact. NOSYNC stores no _cv checksum
+            // (CommitMode.writesChecksums), so there the area is intact but unverified.
+            Assert.assertEquals(
+                    CommitMode.writesChecksums(configuration.getCommitMode()),
+                    isCvAreaVerified(commits.cv(n), cvVersion(commits.cv(n)))
+            );
             writeFile(dir + TXN_FILE_NAME, image);
             writeFile(dir + COLUMN_VERSION_FILE_NAME, commits.cv(n));
             return torn;
@@ -706,6 +716,12 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
         assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables()")
                 .withEngine(restarted).withContext(ctx).noLeakCheck().noRandomAccess()
                 .returns("suspended\tcaught_up\nfalse\ttrue\n");
+    }
+
+    // NOSYNC stores no _cv checksum trailer (CommitMode.writesChecksums), so a torn _cv area is not detected there,
+    // as before the trailer existed; only the checksummed modes promise the detection these tests exercise.
+    private void assumeColumnVersionChecksummed() {
+        Assume.assumeTrue("NOSYNC stores no _cv checksum", CommitMode.writesChecksums(CommitMode.fromString(commitMode)));
     }
 
     private void configureCommitMode() {

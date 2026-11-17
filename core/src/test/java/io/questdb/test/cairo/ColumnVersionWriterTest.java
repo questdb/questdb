@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -48,6 +50,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Formatter;
@@ -68,6 +71,16 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
 
     // Representative area for the helper unit tests: 3 entries * 32 bytes = 96 bytes.
     private static final long CV_AREA_SIZE = 3L * BLOCK_SIZE_BYTES;
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // The checksum tests need a mode that stores the _cv trailer; NOSYNC does not (CommitMode.writesChecksums).
+        if (!CommitMode.writesChecksums(configuration.getCommitMode())) {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        }
+    }
 
     @Test
     public void testCvReaderCopiedSnapshotStillVerifies() throws Exception {

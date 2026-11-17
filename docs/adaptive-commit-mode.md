@@ -193,18 +193,26 @@ These hold for WAL tables on an instance in `adaptive` mode. On QuestDB Enterpri
 
 ### 7.1 Downgrade, write with the older release, then upgrade again
 
-Not supported. Running this version, going back to an older release, writing with it, and then running this
-version again has undefined results: the older release does not maintain the checksums and save points this
-version relies on.
+Every mode but `nosync` stores a checksum after each `_cv` area, and an older release does not maintain it: it
+rewrites the area in place and leaves the checksum next to data it never covered, which this version would then
+read as damage. So every table written under `sync`, `async` or `adaptive` is **locked against an older release**:
+its `_meta` carries a storage version the older release refuses on open (`metadata version does not match runtime
+version`), for reading and for writing. The lock costs one write of `_meta` the first time a writer opens the
+table, and nothing after.
 
-**The safe way back to an older release:**
+**The way back to an older release:**
 
 1. Set `cairo.commit.mode=nosync` (the default) and restart this version once. Let the start finish: it makes
-   every enrolled table durable and removes its save point files.
+   every enrolled table durable, removes its save point files, removes the `_cv` checksums of every locked table
+   and unlocks it (`table unlocked for downgrade, its _cv checksums are removed [table=...]` in the log). Under
+   `nosync` no new checksum is written, so the database stays in this shape.
 2. Stop QuestDB cleanly.
 3. Install the older release.
 
-Do not come back to this version after the older release has written to the database.
+After these steps the older release may write to the database, and this version may be installed again later: a
+table it finds without checksums reads as unverified, as any table from an older release does. Installing the
+older release without step 1 is safe too, it refuses the locked tables rather than damaging them; run step 1 with
+this version to get them back.
 
 ### 7.2 The old UDP line protocol receiver into WAL tables
 
