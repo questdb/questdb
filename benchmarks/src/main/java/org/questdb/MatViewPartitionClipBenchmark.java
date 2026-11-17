@@ -227,7 +227,7 @@ public class MatViewPartitionClipBenchmark {
         // the rows of a populated hour: one a minute, or one per key and at least one a minute without keys
         final long rowsPerHour = symbols > 0 ? symbols : ROWS_PER_POPULATED_HOUR;
         final long rowMicros = HOUR_MICROS / rowsPerHour;
-        final String keyExpr = symbols > 0 ? "concat('s', (x - 1) % " + symbols + "), " : "";
+        final String keyExpr = symbols > 0 ? "concat('s', (x - 1) % " + symbols + ") sym, " : "";
         if ("HOUR".equals(base)) {
             final long baseRows = (long) DAYS * 24 / HOUR_BASE_POPULATED_HOUR_STEP * rowsPerHour;
             // row x lands in populated hour (x - 1) / rowsPerHour, every HOUR_BASE_POPULATED_HOUR_STEP hours
