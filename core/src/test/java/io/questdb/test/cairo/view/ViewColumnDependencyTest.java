@@ -1057,6 +1057,24 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testRenamedOutputFilteredAboveLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A read that filters on the output a keeps the filter above LATEST ON, where it filters the output, which
+            // reads b. The read scans no column a of x, which no output of the view reads, so a principal with SELECT
+            // on the view only runs it.
+            for (String source : new String[]{"x", "(SELECT ts, k, a, b FROM x)", "(SELECT * FROM x)"}) {
+                assertReads(
+                        "SELECT ts, k, b AS a FROM " + source + " LATEST ON ts PARTITION BY k",
+                        "{x=[b, k, ts]}",
+                        "SELECT * FROM v WHERE a = 4",
+                        "SELECT a FROM v WHERE a IS NOT NULL"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTables();

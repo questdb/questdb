@@ -463,6 +463,111 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnRenamedColumnAboveLatestOn() throws Exception {
+        // A filter cannot move below LATEST ON, so it stays with the SELECT above it and filters the output of that
+        // SELECT: a is the output that reads b. The scan reads b for it, and not the column a, which no output reads.
+        assertMemoryLeak(() -> {
+            for (String index : new String[]{"", ", INDEX(k)"}) {
+                execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a INT, b INT)" + index + " TIMESTAMP(ts) PARTITION BY DAY");
+                // the latest row of k1 has a = 2 and b = 1, that of k2 a = 1 and b = 2
+                execute("INSERT INTO x VALUES (0, 'k1', 1, 2), (3_600_000_000, 'k1', 2, 1), (0, 'k2', 2, 1), (3_600_000_000, 'k2', 1, 2)");
+
+                final String query = "SELECT * FROM (SELECT ts, k, b AS a FROM x LATEST ON ts PARTITION BY k) WHERE a = 1";
+                assertQuery(
+                        "select-choose ts, k, a from (select-choose [ts, k, b a] ts, k, b a from (select [ts, k, b] from x latest on ts partition by k) where a = 1)",
+                        query
+                );
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tk\ta
+                                1970-01-01T01:00:00.000000Z\tk1\t1
+                                """);
+
+                final String subQueryQuery = "SELECT * FROM (SELECT ts, k, b AS a FROM (SELECT ts, k, a, b FROM x) s LATEST ON ts PARTITION BY k) WHERE a = 1";
+                assertQuery(
+                        "select-choose ts, k, a from (select-choose [ts, k, b a] ts, k, b a from (select [ts, k, b] from (select-choose [ts, k, b] ts, k, a, b from (select [ts, k, b] from x timestamp (ts))) s latest on ts partition by k) s where a = 1)",
+                        subQueryQuery
+                );
+                // LATEST ON over a sub-query keeps no designated timestamp
+                assertQuery(subQueryQuery)
+                        .noLeakCheck()
+                        .returns("""
+                                ts\tk\ta
+                                1970-01-01T01:00:00.000000Z\tk1\t1
+                                """);
+
+                // The filter also names k, which the SELECT takes from the column of the same name, so the scan reads k
+                // first, for the filter.
+                final String keyQuery = "SELECT * FROM (SELECT ts, k, b AS a FROM x LATEST ON ts PARTITION BY k) WHERE a = 1 OR k = 'k2' ORDER BY k";
+                assertQuery(
+                        "select-choose ts, k, a from (select-choose [ts, k, b a] ts, k, b a from (select [k, ts, b] from x latest on ts partition by k) where a = 1 or k = 'k2') order by k",
+                        keyQuery
+                );
+                assertQuery(keyQuery)
+                        .noLeakCheck()
+                        .returns("""
+                                ts\tk\ta
+                                1970-01-01T01:00:00.000000Z\tk1\t1
+                                1970-01-01T01:00:00.000000Z\tk2\t2
+                                """);
+
+                // A filter that a LIMIT keeps out of the SELECT stays with the model above it, which does not project:
+                // the filter names the columns of the SELECT, which takes a, the first, from b of its own model.
+                final String limitQuery = "SELECT * FROM (SELECT ts, k, b AS a FROM x LATEST ON ts PARTITION BY k LIMIT 10) l WHERE a = 1";
+                assertQuery(
+                        "select-choose ts, k, a from (select [ts, k, a] from (select-choose [b a, ts, k] ts, k, b a from (select [b, ts, k] from x latest on ts partition by k) limit 10) l where a = 1) l",
+                        limitQuery
+                );
+                assertQuery(limitQuery)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tk\ta
+                                1970-01-01T01:00:00.000000Z\tk1\t1
+                                """);
+
+                // An output the SELECT computes still gives the model under it the column of its name. The dependencies
+                // of a view account for that column, see SqlUtil.isComputedColumnNamedLikeUnreadColumn().
+                final String computedQuery = "SELECT * FROM (SELECT ts, k, b + 0 AS a FROM x LATEST ON ts PARTITION BY k) WHERE a = 1";
+                assertQuery(
+                        "select-choose ts, k, a from (select-virtual [ts, k, b + 0 a] ts, k, b + 0 a from (select [a, ts, k, b] from x latest on ts partition by k) where a = 1)",
+                        computedQuery
+                );
+                assertQuery(computedQuery)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tk\ta
+                                1970-01-01T01:00:00.000000Z\tk1\t1
+                                """);
+
+                // the output a reads b and the output b reads a: the filter reads the output a, so only k1 passes
+                assertQuery("SELECT * FROM (SELECT ts, k, b AS a, a AS b FROM x LATEST ON ts PARTITION BY k) WHERE a = 1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tk\ta\tb
+                                1970-01-01T01:00:00.000000Z\tk1\t1\t2
+                                """);
+                final String cteQuery = "WITH l AS (SELECT ts, k, b AS a FROM x LATEST ON ts PARTITION BY k) SELECT k, a FROM l WHERE a = 2";
+                assertQuery(
+                        "select-choose k, a from (select-choose [k, b a] ts, k, b a from (select [k, b] from x latest on ts partition by k) where a = 2) l",
+                        cteQuery
+                );
+                assertQuery(cteQuery)
+                        .noLeakCheck()
+                        .returns("""
+                                k\ta
+                                k2\t2
+                                """);
+                execute("DROP TABLE x");
+            }
+        });
+    }
+
+    @Test
     public void testFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");

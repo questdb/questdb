@@ -270,10 +270,10 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                     Assert.fail("expected table renames to exhaust the compilation retry budget");
                 } catch (SqlException e) {
                     Assert.assertEquals(0, e.getPosition());
+                    // the plan was built on another table than the one the name takes now, whatever their versions
                     TestUtils.assertEquals(
                             "too many cached query plan cannot be used because table schema has changed "
-                                    + "[table=t1', expectedTableId=" + expectedId + ", actualTableId=" + actualId
-                                    + ", expectedMetadataVersion=0, actualMetadataVersion=0]",
+                                    + "[table=t1', expectedTableId=" + expectedId + ", actualTableId=" + actualId + ']',
                             e.getFlyweightMessage()
                     );
                 }

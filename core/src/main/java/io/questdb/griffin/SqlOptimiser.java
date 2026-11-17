@@ -1007,6 +1007,18 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
+    // Whether the projection takes its column alias from a column of another name of its nested model, as SELECT b a
+    // takes a from b, rather than computes it or takes it from the column of the same name, which the projection of a
+    // join names with the alias of its table, as t.a.
+    private static boolean isRenamedColumn(IQueryModel projection, CharSequence alias) {
+        final QueryColumn column = projection.getAliasToColumnMap().get(alias);
+        if (column == null || column.getAst().type != LITERAL) {
+            return false;
+        }
+        final CharSequence token = column.getAst().token;
+        return !Chars.equalsIgnoreCase(alias, token, Chars.indexOfLastUnquoted(token, '.') + 1, token.length());
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -2265,6 +2277,15 @@ public class SqlOptimiser implements Mutable {
                 recordKeptWholeOrigins(m, columnName, keptWholeEmittedOrigins);
                 break;
             }
+        }
+    }
+
+    // Adds the column the literal names to the top-down columns of the model, unless the projection, if any, takes that
+    // column from a column of another name, see emitLiteralsTopDown(). The nodes of an expression a projection comes
+    // with, its WHERE clause, are not null.
+    private void addTopDownColumn(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
+        if (projection == null || node.type != LITERAL || !isRenamedColumn(projection, node.token)) {
+            addTopDownColumn(node, model);
         }
     }
 
@@ -5329,34 +5350,41 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void emitLiteralsTopDown(@Transient ExpressionNode node, IQueryModel model) {
+        emitLiteralsTopDown(node, model, null);
+    }
+
+    // Emits the literals of the expression to the model as top-down columns. Given a projection, the expression is the
+    // WHERE clause of the projection and the model is its nested model, and a literal that names a column the
+    // projection renames is not emitted, see propagateTopDownColumns0().
+    private void emitLiteralsTopDown(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        addTopDownColumn(node, model);
+        addTopDownColumn(node, model, projection);
 
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        addTopDownColumn(node.rhs, model);
+                        addTopDownColumn(node.rhs, model, projection);
                         sqlNodeStack.push(node.rhs);
                     }
 
                     if (node.lhs != null) {
-                        addTopDownColumn(node.lhs, model);
+                        addTopDownColumn(node.lhs, model, projection);
                     }
                     node = node.lhs;
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        addTopDownColumn(e, model);
+                        addTopDownColumn(e, model, projection);
                         sqlNodeStack.push(e);
                     }
 
                     final ExpressionNode e = node.args.getQuick(0);
-                    addTopDownColumn(e, model);
+                    addTopDownColumn(e, model, projection);
                     node = e;
                 }
             } else {
@@ -9530,7 +9558,14 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(model.getWhereClause(), model);
             }
             if (nestedAllowsColumnChange) {
-                emitLiteralsTopDown(model.getWhereClause(), nested);
+                // A model that projects applies its WHERE clause to the output of its projection, see
+                // SqlCodeGenerator.generateQuery0Inner(), so the literals of the clause name columns of the projection,
+                // and the projection gives the nested model what those columns read, see emitColumnLiteralsTopDown()
+                // below. A column the projection takes from a column of another name, such as a in SELECT b a, which a
+                // filter that stays above LATEST ON names, reads b: the column a of the nested model is one the query
+                // does not read, so the clause does not give it to the nested model.
+                final IQueryModel projection = model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE ? model : null;
+                emitLiteralsTopDown(model.getWhereClause(), nested, projection);
                 // Don't emit to nested union models by name here. In UNION, columns are matched
                 // by position, not name. Name-based resolution can map to a wrong column index
                 // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)

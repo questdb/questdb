@@ -1617,13 +1617,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static void checkTableOfModel(IQueryModel model, TableToken tableToken) {
         final int tableId = model.getTableId();
         if (tableId > -1 && tableId != tableToken.getTableId()) {
-            throw TableReferenceOutOfDateException.of(
-                    tableToken,
-                    tableId,
-                    tableToken.getTableId(),
-                    model.getMetadataVersion(),
-                    model.getMetadataVersion()
-            );
+            throw TableReferenceOutOfDateException.ofReplacedTable(tableToken, tableId, tableToken.getTableId());
         }
     }
 
