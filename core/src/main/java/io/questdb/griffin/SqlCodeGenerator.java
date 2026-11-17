@@ -8978,8 +8978,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // first only the probe rows the LIMIT may need. The LIMIT itself stays above it. The
                 // model that states the LIMIT hands it over from generateLimit(), once the SELECT
                 // lists above the join compiled: parsing it here would type its bind variables
-                // before the SELECT lists do.
-                join.ofLimitAdvice(getLimitAdviceLoOnly(model));
+                // before the SELECT lists do. The LIMIT only narrows the join's first window, and
+                // never changes its rows.
+                join.ofLimitAdvice(model.getLimitAdviceLo(), model.getLimitAdviceHi());
             }
             return master;
         } catch (Throwable e) {
@@ -9473,18 +9474,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
-            if (limitLo != null && limitHi == null) {
-                // The parallel hash join that the optimiser advised this very LIMIT takes a parse of
-                // its own, see generateJoins(). The parse above typed the LIMIT's bind variables,
-                // after the SELECT lists of this model and of the models below it, so this one
-                // types none.
-                for (RecordCursorFactory base = factory; base != null; base = base.getBaseFactory()) {
-                    if (base instanceof AsyncHashJoinRecordCursorFactory join) {
-                        if (join.getLimitAdvice() == limitLo) {
-                            join.ofLimit(getLoFunction(model, executionContext));
-                        }
-                        break;
+            // The parallel hash join that the optimiser advised this very LIMIT takes a parse of its
+            // own, see generateJoins(). The parse above typed the LIMIT's bind variables, after the
+            // SELECT lists of this model and of the models below it, so this one types none.
+            for (RecordCursorFactory base = factory; base != null; base = base.getBaseFactory()) {
+                if (base instanceof AsyncHashJoinRecordCursorFactory join) {
+                    if (join.isLimitAdvised(limitLo, limitHi)) {
+                        join.ofLimit(getLoFunction(model, executionContext));
+                        // The join owns the lower bound, and frees it with itself should this fail.
+                        join.ofLimitHi(getHiFunction(model, executionContext));
                     }
+                    break;
                 }
             }
             final Function adoptedLoFunc = loFunc;

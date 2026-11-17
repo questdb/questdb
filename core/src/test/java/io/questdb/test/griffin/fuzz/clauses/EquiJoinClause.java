@@ -54,7 +54,7 @@ import org.jetbrains.annotations.Nullable;
  *   [(JOIN | LEFT JOIN) input r2 ON key [AND (residual)] ...]
  * [WHERE conjunct [AND ...]]
  * [ORDER BY ...]
- * [LIMIT N | LIMIT -N]
+ * [LIMIT [lo, ]N | LIMIT [lo, ]-N]
  * </pre>
  * The first join is the one {@link #generate(Rnd, FuzzTable, FuzzTable, BindContext, boolean)}
  * draws alone. {@link #generate(Rnd, FuzzTable, FuzzTable, ObjList, BindContext, boolean)}, which
@@ -103,8 +103,11 @@ import org.jetbrains.annotations.Nullable;
  * shadow that reads an index may change, so a window function marks the query non-deterministic for
  * the multiset axes, as a {@code LIMIT} without a total order does.
  * <p>
- * A query with a {@code LIMIT} and a projection list projects the left input's INT key plus the
- * {@code LIMIT}'s value last. The bind form reads both through the positional {@code $1}, see
+ * A third of the {@code LIMIT}s are ranges, whose literal lower bound comes before the value: a
+ * positive range reads at most its larger bound's rows, which the parallel hash join narrows its
+ * first window to, and one whose upper bound is negative counts rows from the end. A query with a
+ * {@code LIMIT} and a projection list projects the left input's INT key plus the {@code LIMIT}'s
+ * value last. The bind form reads both through the positional {@code $1}, see
  * {@link BindContext#bindLimit(String)}, which the runner leaves undefined at compile: the SELECT
  * list types it INT before the {@code LIMIT} reads it, whichever plan runs, as a PostgreSQL client
  * that sends untyped parameters relies on.
@@ -389,12 +392,13 @@ public final class EquiJoinClause {
             }
             final String sign = rnd.nextBoolean() ? "" : "-";
             final String value = Integer.toString(1 + rnd.nextInt(30));
+            final String lowerBound = rnd.nextInt(3) == 0 ? rnd.nextInt(10) + ", " : "";
             if (isSelectStar) {
-                sql.put(" LIMIT ").put(sign).put(value);
+                sql.put(" LIMIT ").put(lowerBound).put(sign).put(value);
             } else {
                 // The projection reuses the LIMIT's value, which the bind form reads as $1.
                 final String limit = ctx != null ? ctx.bindLimit(value) : value;
-                sql.put(" LIMIT ").put(sign).put(limit);
+                sql.put(" LIMIT ").put(lowerBound).put(sign).put(limit);
                 limitReuse = ", " + LEFT_ALIAS + '.' + l.name(INT_KEY) + " + " + limit + " AS c" + (projected + windows);
             }
         }

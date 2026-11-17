@@ -86,7 +86,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         int orderedOverFilteredLeft = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
             final String sql = EquiJoinClause.generate(rnd, tables.getQuick(0), tables.getQuick(1), tables, null, false).sql();
-            if (!Pattern.compile(" LIMIT -?\\d+$").matcher(sql).find()) {
+            if (!Pattern.compile(" LIMIT (?:\\d+, )?-?\\d+$").matcher(sql).find()) {
                 continue;
             }
             final Query query = new Query(sql);
@@ -208,6 +208,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         // Limits over stars.
         assertCorpusHas(corpus, "a LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && !q.limit.startsWith("-"));
         assertCorpusHas(corpus, "a negative LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && q.limit.startsWith("-"));
+        assertCorpusHas(corpus, "a range LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && q.limit.contains(", "));
     }
 
     @Test

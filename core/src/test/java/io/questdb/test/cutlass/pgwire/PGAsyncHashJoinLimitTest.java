@@ -47,9 +47,10 @@ import java.sql.Types;
 
 /**
  * Drives the parallel hash join under a bound LIMIT through PG wire with the real pgjdbc driver:
- * named statements whose LIMIT, and a value of the join's ON residual, are bind variables, executed
- * many times with new values, positive, larger than the table, zero and negative, in text and binary
- * transfer, against a server whose connections run the operator and one whose connections run the
+ * named statements whose LIMIT, or both bounds of a range LIMIT, and a value of the join's ON
+ * residual, are bind variables, executed many times with new values, positive, larger than the
+ * table, zero and negative, in text and binary transfer, against a server whose connections run
+ * the operator and one whose connections run the
  * ordinary plan. Each execution of the cached statement reads its own LIMIT, and the two servers
  * return the same rows in the same order. A parameter that the SELECT list and the LIMIT share, sent
  * without a type, takes the type of its first use, in the SELECT list, on both servers.
@@ -64,6 +65,9 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
             // d repeats its keys, and the WHERE reads d alone, so the build filters d and the stage hands
             // its chains on: a negative LIMIT counts them.
             "SELECT f.k, f.v, d.w FROM f JOIN d ON f.k = d.k WHERE d.w > ? LIMIT ?",
+            // A range whose bounds are the bind values: swapped, positive, with a negative upper bound
+            // that counts from the end, and from zero.
+            "SELECT f.ts, f.k, f.v, d.w FROM f LEFT JOIN d ON f.k = d.k LIMIT ?, ?",
     };
     // One JDBC placeholder and a literal $1 that reuses it, which pgjdbc leaves to the server.
     private static final String[] UNTYPED_QUERIES = {

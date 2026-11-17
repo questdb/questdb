@@ -87,8 +87,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * of a cached factory decides again, from the sizes of its own open scans.
  * <p>
  * A query whose LIMIT applies to the join's rows gives the join that LIMIT, see {@link #ofLimit}:
- * an execution under a positive LIMIT first joins only the probe rows that the LIMIT may need, see
- * {@link AsyncHashJoinRecordCursor}. The LIMIT itself stays with its own factory over the join.
+ * an execution under a LIMIT that reads at most so many rows, a positive {@code LIMIT n} or a
+ * {@code LIMIT lo, hi} of no negative bound, first joins only the probe rows that the LIMIT may
+ * need, see {@link AsyncHashJoinRecordCursor}. The LIMIT itself stays with its own factory over the
+ * join.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
@@ -101,10 +103,15 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     private AsyncHashJoinRecordCursor cursor;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
-    // The LIMIT that the optimiser advised the join's model, until the planner hands it over, see
-    // ofLimit(); a planning-time reference to a pooled node, which the factory does not own.
+    // The LIMIT that the optimiser advised the join's model, its lower bound and its upper bound,
+    // until the planner hands it over, see ofLimit(); planning-time references to pooled nodes,
+    // which the factory does not own. Both null without advice; the upper bound is null for a LIMIT
+    // of one bound.
     private ExpressionNode limitAdvice;
-    // The LIMIT of the query over the join, null when it states none.
+    private ExpressionNode limitAdviceHi;
+    // The upper bound of the LIMIT of the query over the join, null when it states none.
+    private Function limitHiFunction;
+    // The LIMIT of the query over the join, or its lower bound, null when it states none.
     private Function limitLoFunction;
     private AsyncHashJoinSpec spec;
 
@@ -267,9 +274,10 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * The lo-only LIMIT that the optimiser advised the join's model, as {@link #ofLimitAdvice} took
-     * it, or null once {@link #ofLimit} took the LIMIT.
+     * The LIMIT, or its lower bound, that the optimiser advised the join's model, as
+     * {@link #ofLimitAdvice} took it, or null once {@link #ofLimit} took the LIMIT.
      */
+    @TestOnly
     @Nullable
     public ExpressionNode getLimitAdvice() {
         return limitAdvice;
@@ -338,7 +346,20 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         // The LIMIT belongs to this join's rows, not to the spec's.
         failure = Misc.freeBestEffort(failure, limitLoFunction);
         limitLoFunction = null;
+        failure = Misc.freeBestEffort(failure, limitHiFunction);
+        limitHiFunction = null;
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * True when the optimiser advised the join's model the LIMIT of these bounds, and the planner
+     * has not yet handed one over: the LIMIT of the model that states it, which applies to the
+     * join's rows, see {@link #ofLimitAdvice}. The bounds are the model's own nodes, of which the
+     * LIMIT states at least one. The optimiser advises a model's two bounds together, so its lower
+     * bound, or its upper one when it states no other, tells the model.
+     */
+    public boolean isLimitAdvised(@Nullable ExpressionNode limitLo, @Nullable ExpressionNode limitHi) {
+        return limitLo != null ? limitLo == limitAdvice : limitHi == limitAdviceHi;
     }
 
     /**
@@ -346,25 +367,44 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
      * {@code AsyncFilteredRecordCursorFactory} takes the LIMIT of a query over its filter. The
      * planner hands it over from the model that states the LIMIT, once that model's SELECT list
      * compiled, to the join that the optimiser advised that LIMIT, see {@link #ofLimitAdvice}, and
-     * the advice is then spent. Each execution reads the LIMIT once; a positive LIMIT narrows the
-     * execution's first window, see {@link AsyncHashJoinRecordCursor}, and any other leaves the
-     * execution as it is. The LIMIT itself stays with its own factory, so the join returns its rows
-     * whatever the LIMIT reads.
+     * the advice is then spent. Each execution reads the LIMIT once: one that reads at most so many
+     * of the join's rows narrows the execution's first window to them, see
+     * {@link AsyncHashJoinRecordCursor}, and any other leaves the execution as it is. The LIMIT
+     * itself stays with its own factory, so the join returns its rows whatever the LIMIT reads. A
+     * LIMIT of two bounds hands its upper one over next, see {@link #ofLimitHi}.
+     *
+     * @param limitLoFunction the LIMIT, or its lower bound, which reads 0 when the LIMIT states
+     *                        only its upper one
      */
-    public void ofLimit(@Nullable Function limitLoFunction) {
+    public void ofLimit(Function limitLoFunction) {
         assert this.limitLoFunction == null;
         this.limitLoFunction = limitLoFunction;
         limitAdvice = null;
+        limitAdviceHi = null;
     }
 
     /**
-     * Takes the lo-only LIMIT that the optimiser advised the join's model, once the join is final:
-     * the LIMIT of the model that states it, which applies to the join's rows. The planner hands the
+     * Takes the LIMIT that the optimiser advised the join's model, once the join is final: the
+     * LIMIT of the model that states it, which applies to the join's rows. The planner hands the
      * LIMIT over, see {@link #ofLimit}, only when it parses the LIMIT of that very model, after its
-     * SELECT list, so that the LIMIT reads its bind variables as the SELECT list typed them.
+     * SELECT list, so that the LIMIT reads its bind variables as the SELECT list typed them; see
+     * {@link #isLimitAdvised}.
+     *
+     * @param limitAdvice   the LIMIT's lower bound, or its only one
+     * @param limitAdviceHi the LIMIT's upper bound, null for a LIMIT of one bound
      */
-    public void ofLimitAdvice(@Nullable ExpressionNode limitAdvice) {
+    public void ofLimitAdvice(@Nullable ExpressionNode limitAdvice, @Nullable ExpressionNode limitAdviceHi) {
         this.limitAdvice = limitAdvice;
+        this.limitAdviceHi = limitAdviceHi;
+    }
+
+    /**
+     * Takes the upper bound of the LIMIT whose lower bound {@link #ofLimit} took, which the factory
+     * then owns; null for a LIMIT of one bound.
+     */
+    public void ofLimitHi(@Nullable Function limitHiFunction) {
+        assert this.limitLoFunction != null && this.limitHiFunction == null;
+        this.limitHiFunction = limitHiFunction;
     }
 
     @Override
@@ -490,14 +530,22 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    // The rows of the query's LIMIT for an execution, Long.MAX_VALUE without a positive one: a NULL,
-    // zero or negative LIMIT leaves the execution as it is.
+    // The most rows of the join that the query's LIMIT reads in an execution, Long.MAX_VALUE when it
+    // cannot tell. LIMIT n reads n rows when n is positive; a NULL, zero or negative one leaves the
+    // execution as it is. LIMIT lo, hi returns the rows from lo to hi, its bounds swapped when lo is
+    // the larger, see LimitRecordCursorFactory, so it reads at most the larger bound when neither is
+    // negative; a negative bound, NULL included, counts rows from the end, which takes them all.
     private long getLimitRows(SqlExecutionContext executionContext) throws SqlException {
         if (limitLoFunction == null) {
             return Long.MAX_VALUE;
         }
         limitLoFunction.init(null, executionContext);
-        final long limitRows = limitLoFunction.getLong(null);
+        long limitRows = limitLoFunction.getLong(null);
+        if (limitHiFunction != null) {
+            limitHiFunction.init(null, executionContext);
+            final long hi = limitHiFunction.getLong(null);
+            limitRows = limitRows < 0 || hi < 0 ? -1 : Math.max(limitRows, hi);
+        }
         return limitRows > 0 ? limitRows : Long.MAX_VALUE;
     }
 
@@ -511,6 +559,8 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         buildRounds = null;
         failure = Misc.freeBestEffort(failure, limitLoFunction);
         limitLoFunction = null;
+        failure = Misc.freeBestEffort(failure, limitHiFunction);
+        limitHiFunction = null;
         // The atoms borrowed the spec's inputs, which go last.
         failure = Misc.freeBestEffort(failure, spec);
         spec = null;

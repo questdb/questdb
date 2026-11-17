@@ -57,8 +57,10 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * execution under a positive one first dispatches only the leading probe frames whose rows reach
  * it, the last of them joining only the rows the LIMIT still needs; the consumer continues that
  * frame itself, in chunks that double, if it reads further, and only then opens the full window. The
- * rows always equal the ordinary plan's, in order: the LIMIT stays with its own factory. A NULL, zero
- * or negative LIMIT, or one with an upper bound, leaves the execution as it was. The join reads the
+ * rows always equal the ordinary plan's, in order: the LIMIT stays with its own factory. A range
+ * {@code LIMIT lo, hi} of no negative bound reads at most the larger bound's rows, and narrows the
+ * first window to them as a positive LIMIT of as many rows does. A NULL, zero or negative LIMIT, or a
+ * range with a negative bound, leaves the execution as it was. The join reads the
  * LIMIT once the SELECT list compiled, so an untyped bind variable that both use takes the type that
  * the SELECT list gives it, as on the ordinary plan.
  * <p>
@@ -400,11 +402,24 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             Assert.assertEquals(nested, "9", joinModelLimitAdvice(nested));
             assertFirstWindow(nested, 3);
             assertParallelHashJoin(nested, sqlExecutionContext);
-            // A LIMIT with an upper bound alone is a range, of which the join takes nothing: its
-            // first row comes with the full window.
+            // A LIMIT with an upper bound alone reads the first five rows: the join's first row comes
+            // with the first two frames, those that five rows need.
             final String upperBound = "SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT , 5";
-            assertFirstWindow(upperBound, FRAME_COUNT);
+            Assert.assertEquals(upperBound, "null, 5", joinModelLimitAdvice(upperBound));
+            assertFirstWindow(upperBound, 2);
             assertParallelHashJoin(upperBound, sqlExecutionContext);
+            // A range in a sub-query reaches the join; the outer LIMIT does not, whether it states
+            // a lower bound or only an upper one.
+            for (String outer : new String[]{" LIMIT 1", " LIMIT , 1"}) {
+                final String nestedRange = "SELECT * FROM (SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT 2, 9)" + outer;
+                Assert.assertEquals(nestedRange, "2, 9", joinModelLimitAdvice(nestedRange));
+                assertFirstWindow(nestedRange, 3);
+                assertParallelHashJoin(nestedRange, sqlExecutionContext);
+                final String nestedUpperBound = "SELECT * FROM (SELECT t.v, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT , 9)" + outer;
+                Assert.assertEquals(nestedUpperBound, "null, 9", joinModelLimitAdvice(nestedUpperBound));
+                assertFirstWindow(nestedUpperBound, 3);
+                assertParallelHashJoin(nestedUpperBound, sqlExecutionContext);
+            }
         });
     }
 
@@ -451,11 +466,16 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNegativeZeroAndRangeLimitsUnchanged() throws Exception {
+    public void testNegativeAndZeroLimitsUnchanged() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             for (String star : STARS) {
-                for (String limit : new String[]{" LIMIT -1", " LIMIT -3", " LIMIT -100", " LIMIT 0", " LIMIT 2, 5", " LIMIT -5, -2"}) {
+                // A negative bound counts rows from the end, which takes every row; a range whose
+                // bounds are both zero, or equal, returns none.
+                for (String limit : new String[]{
+                        " LIMIT -1", " LIMIT -3", " LIMIT -100", " LIMIT 0",
+                        " LIMIT -5, -2", " LIMIT -3, 0", " LIMIT 2, -1", " LIMIT 0, -60", " LIMIT 0, 0", " LIMIT , 0"
+                }) {
                     final String sql = star + limit;
                     assertParallelHashJoin(sql, sqlExecutionContext);
                     try (RecordCursorFactory factory = select(sql)) {
@@ -488,6 +508,103 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testRangeLimitDispatchesTheFirstWindowOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A range reads at most its larger bound's rows, the bounds swapped when the lower one is
+            // the larger, so its first window holds the frames of four rows that those rows need,
+            // the last of them capped at the rows still needed, and a bound past a full window's
+            // rows dispatches the full window. Each range and the positive LIMIT of its larger bound
+            // dispatch the same frames.
+            final String[] ranges = {" LIMIT 2, 5", " LIMIT 5, 2", " LIMIT , 5", " LIMIT 0, 3", " LIMIT 3, 3", " LIMIT 8, 12", " LIMIT 60, 70", " LIMIT 100, 10"};
+            final String[] limits = {" LIMIT 5", " LIMIT 5", " LIMIT 5", " LIMIT 3", " LIMIT 3", " LIMIT 12", " LIMIT 70", " LIMIT 100"};
+            final int[] firstWindows = {2, 2, 2, 1, 1, 3, FRAME_COUNT, FRAME_COUNT};
+            // Whether the first window's last frame stops short of its end: 5 and 3 rows end inside a
+            // frame, 12 rows at the end of the third.
+            final boolean[] isCapped = {true, true, true, true, true, false, false, false};
+            for (String star : STARS) {
+                for (int i = 0; i < ranges.length; i++) {
+                    final String sql = star + ranges[i];
+                    assertParallelHashJoin(sql, sqlExecutionContext);
+                    for (String query : new String[]{sql, star + limits[i]}) {
+                        try (RecordCursorFactory factory = select(query)) {
+                            final AsyncHashJoinRecordCursorFactory join = find(factory);
+                            Assert.assertNotNull(query, join);
+                            Assert.assertNull(query, join.getLimitAdvice());
+                            // The join's own cursor returns its first row with the first window in
+                            // flight, and goes on to read every row, through the capped frame's
+                            // continuation, if any.
+                            try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                                Assert.assertTrue(query, cursor.hasNext());
+                                Assert.assertEquals(query, firstWindows[i], join.getDispatchedFrameCount());
+                                if (firstWindows[i] == 1) {
+                                    // The first frame's task joined the rows that the LIMIT needs.
+                                    Assert.assertEquals(query, 3, join.getAtom().getJoinedProbeRowCount());
+                                }
+                                int rows = 1;
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.assertEquals(query, countLines(ordinaryJoinRows(query)), rows);
+                                Assert.assertEquals(query, isCapped[i], join.getAtom().getContinuationCount() > 0);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRangeLimitPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String sql = STARS[0] + " LIMIT :lo, :hi";
+            bindVariableService.setLong("lo", 0);
+            bindVariableService.setLong("hi", 1);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // One factory, executed under each pair of bounds: the first window follows each
+                // execution's larger bound, unless one bound is negative or NULL, or both are zero.
+                final long[][] bounds = {
+                        {2, 5}, {-5, -2}, {5, 2}, {0, 0}, {2, -1}, {0, 9}, {2, Numbers.LONG_NULL}, {Numbers.LONG_NULL, Numbers.LONG_NULL},
+                        {4, 4}, {0, Long.MAX_VALUE}, {Numbers.LONG_NULL, -1}, {1, 2}
+                };
+                final int[] firstWindows = {2, FRAME_COUNT, 2, FRAME_COUNT, FRAME_COUNT, 3, FRAME_COUNT, FRAME_COUNT, 1, FRAME_COUNT, FRAME_COUNT, 1};
+                for (int i = 0; i < bounds.length; i++) {
+                    bindVariableService.setLong("lo", bounds[i][0]);
+                    bindVariableService.setLong("hi", bounds[i][1]);
+                    final String label = "LIMIT " + bounds[i][0] + ", " + bounds[i][1];
+                    final String expected = ordinaryRows(sql);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertEquals(label, expected, printRows(cursor, factory.getMetadata()));
+                        cursor.toTop();
+                        Assert.assertEquals(label, expected, printRows(cursor, factory.getMetadata()));
+                    }
+                    try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(label, firstWindows[i], join.getDispatchedFrameCount());
+                    }
+                }
+            } finally {
+                bindVariableService.clear();
+            }
+            // An untyped $1 that the SELECT list makes an INT reads as one in the range's upper bound,
+            // on both plans, and the join takes the range.
+            final String untyped = "SELECT t.k + $1 y, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT 0, $1";
+            assertUntypedBindVariable(untyped, true, "$1 INT: y INT, w LONG");
+            assertUntypedLimitPerExecution(
+                    untyped,
+                    ColumnType.INT,
+                    new long[]{1, FRAME_ROWS, 5, 0, -2, Numbers.INT_NULL},
+                    new int[]{1, 1, 2, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT},
+                    new boolean[]{true, false, true, false, false, false}
+            );
         });
     }
 
@@ -702,6 +819,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             for (String suffix : new String[]{
                     " LIMIT 1", " LIMIT 2", " LIMIT 5", " LIMIT 17", " LIMIT 63", " LIMIT 64", " LIMIT 65", " LIMIT 1000",
                     " ORDER BY t.ts DESC LIMIT 3", " ORDER BY ts DESC LIMIT 3", " ORDER BY ts DESC LIMIT 9", " ORDER BY ts LIMIT 7",
+                    " LIMIT 2, 5", " LIMIT 5, 2", " LIMIT , 5", " LIMIT 0, 1", " LIMIT 3, 3", " LIMIT 16, 17", " LIMIT 63, 64",
+                    " LIMIT 64, 65", " LIMIT 60, 1000", " ORDER BY ts DESC LIMIT 2, 5", " ORDER BY ts LIMIT 4, 9",
             }) {
                 final String sql = star + suffix;
                 assertParallelHashJoin(sql, sqlExecutionContext);
@@ -840,7 +959,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
         }
     }
 
-    // The lo-only LIMIT advice that the optimiser gives the query's join model, or null.
+    // The LIMIT advice that the optimiser gives the query's join model: its one bound, "lo, hi" for a
+    // range, or null.
     private static String joinModelLimitAdvice(String sql) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
@@ -848,9 +968,12 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 model = model.getNestedModel();
                 Assert.assertNotNull(sql, model);
             }
-            Assert.assertNull(sql, model.getLimitAdviceHi());
-            final ExpressionNode advice = model.getLimitAdviceLo();
-            return advice != null ? Chars.toString(advice.token) : null;
+            final ExpressionNode lo = model.getLimitAdviceLo();
+            final ExpressionNode hi = model.getLimitAdviceHi();
+            if (hi == null) {
+                return lo != null ? Chars.toString(lo.token) : null;
+            }
+            return (lo != null ? Chars.toString(lo.token) : "null") + ", " + Chars.toString(hi.token);
         }
     }
 

@@ -111,7 +111,7 @@ public class EquiJoinShapeCoverageTest {
         int orderedOverFilteredLeft = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
             final String sql = EquiJoinClause.generate(rnd, left, right, null, false).sql();
-            if (!Pattern.compile(" LIMIT -?\\d+$").matcher(sql).find()) {
+            if (!Pattern.compile(" LIMIT (?:\\d+, )?-?\\d+$").matcher(sql).find()) {
                 continue;
             }
             final boolean isLeftJoin = sql.contains(" l LEFT JOIN ");
@@ -166,9 +166,10 @@ public class EquiJoinShapeCoverageTest {
         final FuzzTable right = table("t1");
         final Rnd literalRnd = new Rnd(0x5eed, 0x9507);
         final Rnd bindRnd = new Rnd(0x5eed, 0x9507);
-        final Pattern limit = Pattern.compile(" LIMIT (-?)(\\d+)$");
+        final Pattern limit = Pattern.compile(" LIMIT ((?:\\d+, )?-?)(\\d+)$");
         int positive = 0;
         int negative = 0;
+        int ranges = 0;
         int selectStar = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
             final GeneratedQuery literal = EquiJoinClause.generate(literalRnd, left, right, null, false);
@@ -182,17 +183,20 @@ public class EquiJoinShapeCoverageTest {
                 Assert.assertFalse(bind.sql(), bind.sql().contains("$1"));
                 continue;
             }
+            // The range's lower bound, if any, and the sign.
             final String sign = matcher.group(1);
             final String value = matcher.group(2);
             Assert.assertTrue(literal.sql(), Pattern.compile(", l\\.k(?:_v)? \\+ " + value + " AS c\\d+ FROM ").matcher(literal.sql()).find());
             Assert.assertTrue(bind.sql(), Pattern.compile(", l\\.k(?:_v)? \\+ \\$1 AS c\\d+ FROM ").matcher(bind.sql()).find());
             Assert.assertTrue(bind.sql(), bind.sql().endsWith(" LIMIT " + sign + "$1"));
             Assert.assertEquals(bind.sql(), value, ctx.getLimitValue());
-            positive += sign.isEmpty() ? 1 : 0;
-            negative += sign.isEmpty() ? 0 : 1;
+            positive += sign.endsWith("-") ? 0 : 1;
+            negative += sign.endsWith("-") ? 1 : 0;
+            ranges += sign.contains(", ") ? 1 : 0;
         }
         Assert.assertTrue("bound LIMITs: " + positive, positive > 0);
         Assert.assertTrue("bound negative LIMITs: " + negative, negative > 0);
+        Assert.assertTrue("bound range LIMITs: " + ranges, ranges > 0);
         Assert.assertTrue("literal LIMITs under SELECT *: " + selectStar, selectStar > 0);
     }
 
@@ -206,7 +210,7 @@ public class EquiJoinShapeCoverageTest {
         assertCorpusMatches(
                 corpus,
                 "an INNER join without a pair filter",
-                Pattern.compile("^SELECT [^\\n]*[a-z0-9_)] l JOIN [^\\n]* ON [lr]\\.\\w+ = [lr]\\.\\w+(?: AND [lr]\\.\\w+ = [lr]\\.\\w+)*(?: ORDER BY [^\\n()]*)?(?: LIMIT -?\\d+)?$", Pattern.MULTILINE)
+                Pattern.compile("^SELECT [^\\n]*[a-z0-9_)] l JOIN [^\\n]* ON [lr]\\.\\w+ = [lr]\\.\\w+(?: AND [lr]\\.\\w+ = [lr]\\.\\w+)*(?: ORDER BY [^\\n()]*)?(?: LIMIT (?:\\d+, )?-?\\d+)?$", Pattern.MULTILINE)
         );
         assertCorpusMatches(corpus, "a LEFT join", Pattern.compile(" l LEFT JOIN "));
         assertCorpusMatches(corpus, "an INT key", Pattern.compile("ON (?:l\\.k = r\\.k|r\\.k = l\\.k)"));
@@ -234,6 +238,8 @@ public class EquiJoinShapeCoverageTest {
         assertCorpusMatches(corpus, "an ORDER BY over a projected column", Pattern.compile(" ORDER BY c\\d"));
         assertCorpusMatches(corpus, "a LIMIT", Pattern.compile(" LIMIT \\d+$", Pattern.MULTILINE));
         assertCorpusMatches(corpus, "a negative LIMIT", Pattern.compile(" LIMIT -\\d+$", Pattern.MULTILINE));
+        assertCorpusMatches(corpus, "a range LIMIT", Pattern.compile(" LIMIT \\d+, \\d+$", Pattern.MULTILINE));
+        assertCorpusMatches(corpus, "a range LIMIT counting from the end", Pattern.compile(" LIMIT \\d+, -\\d+$", Pattern.MULTILINE));
         assertCorpusMatches(corpus, "the fault function", Pattern.compile(" WHERE test_fault\\(\\)"));
     }
 
@@ -356,7 +362,7 @@ public class EquiJoinShapeCoverageTest {
         int limits = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
             final GeneratedQuery query = EquiJoinClause.generate(rnd, left, right, null, false);
-            final boolean hasLimit = Pattern.compile(" LIMIT -?\\d+$").matcher(query.sql()).find();
+            final boolean hasLimit = Pattern.compile(" LIMIT (?:\\d+, )?-?\\d+$").matcher(query.sql()).find();
             Assert.assertEquals(query.sql(), !hasLimit, query.deterministic());
             limits += hasLimit ? 1 : 0;
         }
