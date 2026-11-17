@@ -790,7 +790,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // seed's probes have more frames than the ring has entries, and the frames of duplicate matches
     // narrow the window, down to one frame. A cap of one tuple per task leaves frames to
     // continuations, and the partial reads of the cursor-verify axis then meet stacked, swapped and
-    // continued executions.
+    // continued executions. A third of the queries run the stages' stepper copies from the first
+    // task, and another third switch to them once their first execution collected a frame.
     @Test
     public void testParallelJoinFramePressureAxis() throws Exception {
         withSystemProperties(
@@ -811,13 +812,17 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             + ", partial reads " + runner.getParallelJoinPartialReadChecks()
                             + " (stacked " + runner.getParallelJoinPartialReadStacked()
                             + ", swapped " + runner.getParallelJoinPartialReadSwapped()
-                            + ", continued " + runner.getParallelJoinPartialReadContinued() + ")";
+                            + ", continued " + runner.getParallelJoinPartialReadContinued() + ")"
+                            + ", stepper copies " + runner.getParallelJoinStepperCopyRuns()
+                            + " (switched " + runner.getParallelJoinStepperSwitchRuns() + ")";
                     Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinNarrowedWindowRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadStacked() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadSwapped() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchRuns() > 0);
                 })
         );
     }
@@ -1528,7 +1533,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
-                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first")
+                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first; ")
+                .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies, ")
+                .$(runner.getParallelJoinStepperSwitchRuns()).$(" of them defined after the compile")
                 .$();
         LOG.info().$("fuzz parallel join storage: ").$(runner.getParallelJoinOverColumnTopKeys()).$(" executions over a column top join key, ")
                 .$(runner.getParallelJoinOverParquetColumnTops()).$(" over column tops in Parquet tables, ")

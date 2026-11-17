@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinTupleRing;
@@ -278,6 +279,10 @@ public final class QueryRunner {
     private int parallelJoinFirstReadRuns;
     // Executions of the parallel hash join, on any axis, that ended with a window of one frame.
     private int parallelJoinSingleFrameWindowRuns;
+    // Queries whose parallel hash join's last execution ran the stages' hidden stepper copies, and
+    // those of them whose factory defined the copies while it ran; see stepperWarmUpRows().
+    private int parallelJoinStepperCopyRuns;
+    private int parallelJoinStepperSwitchRuns;
     // Executions of the parallel hash join, on any axis, whose window ended narrower than it was when
     // the cursor returned its first row.
     private int parallelJoinNarrowedWindowRuns;
@@ -618,6 +623,22 @@ public final class QueryRunner {
      */
     public int getParallelJoinPartialReadSwapped() {
         return parallelJoinPartialReadSwapped;
+    }
+
+    /**
+     * Queries whose parallel hash join's last execution ran the stages' hidden stepper copies, see
+     * {@link #stepperWarmUpRows(String)}.
+     */
+    public int getParallelJoinStepperCopyRuns() {
+        return parallelJoinStepperCopyRuns;
+    }
+
+    /**
+     * Queries whose parallel hash join switched from the shared stepper template to the stages'
+     * hidden copies, which its factory defined while it ran, after it compiled.
+     */
+    public int getParallelJoinStepperSwitchRuns() {
+        return parallelJoinStepperSwitchRuns;
     }
 
     /**
@@ -1647,19 +1668,6 @@ public final class QueryRunner {
     }
 
     /**
-     * Reads a parallel hash join's cursor, which the first pass exhausted, part of the way, in three
-     * pairs of positions that the SQL text picks, so that a replayed seed reads the same ones:
-     * {@code calculateSize()} after k rows must count the rows the first pass read after them and
-     * leave {@link RecordCursor#hasNext()} false, the way HTTP's {@code count=true} counts after a
-     * page, and a {@code toTop()} taken j rows in must read the first pass again, in order. The
-     * operator's order is deterministic, so the rows must come back in the first pass's order, unless
-     * the query is not deterministic, whose row count alone must match. The count meets the rest of
-     * a held frame, a consumer's pending chains, a continuation that it counts rather than joins and
-     * tasks that the cursor dispatched before the count began. A violation is a real bug and throws
-     * {@link CursorCheckException}; a per-row runtime error that the first pass did not raise is
-     * tolerated, as the other cursor checks tolerate it. Leaves the cursor exhausted.
-     */
-    /**
      * The rows that a protocol's client reads first, under which {@link #runOnce} opens the cursor of
      * half of the queries: one row, a few, or up to a page of 2,000, drawn from the query's text, so
      * that a replay draws them again without a draw from the fuzzer's generator. Long.MAX_VALUE for
@@ -1675,6 +1683,44 @@ public final class QueryRunner {
         };
     }
 
+    // The frames and chunks of the join's last execution that ran the shared stepper template, or,
+    // isCopy, the stages' hidden copies, every kind together.
+    private static long stepperRuns(AsyncHashJoinAtom atom, boolean isCopy) {
+        return atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_TASK, isCopy)
+                + atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, isCopy)
+                + atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_CONTINUATION, isCopy)
+                + atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNTED_REST, isCopy);
+    }
+
+    /**
+     * The probe rows after which the parallel hash joins that {@link #runOnce} compiles switch from
+     * the shared stepper template to their stages' hidden copies, which they define then: none, so
+     * that they define the copies as they compile, a few rows, so that the first execution defines
+     * them once it collects its first frame, or the server default, which no fuzz query reaches. Drawn from the
+     * query's text, as {@link #firstReadRows(String)} draws its rows.
+     */
+    private static long stepperWarmUpRows(String sql) {
+        final int hash = sql.hashCode() & 0x7fff_ffff;
+        return switch ((hash >>> 7) % 3) {
+            case 0 -> 0;
+            case 1 -> 1 + (hash >>> 9) % 4;
+            default -> AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS;
+        };
+    }
+
+    /**
+     * Reads a parallel hash join's cursor, which the first pass exhausted, part of the way, in three
+     * pairs of positions that the SQL text picks, so that a replayed seed reads the same ones:
+     * {@code calculateSize()} after k rows must count the rows the first pass read after them and
+     * leave {@link RecordCursor#hasNext()} false, the way HTTP's {@code count=true} counts after a
+     * page, and a {@code toTop()} taken j rows in must read the first pass again, in order. The
+     * operator's order is deterministic, so the rows must come back in the first pass's order, unless
+     * the query is not deterministic, whose row count alone must match. The count meets the rest of
+     * a held frame, a consumer's pending chains, a continuation that it counts rather than joins and
+     * tasks that the cursor dispatched before the count began. A violation is a real bug and throws
+     * {@link CursorCheckException}; a per-row runtime error that the first pass did not raise is
+     * tolerated, as the other cursor checks tolerate it. Leaves the cursor exhausted.
+     */
     private void checkParallelJoinPartialReads(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount,
                                                StringSink firstPass, int firstRowsRead, boolean deterministic,
                                                AsyncHashJoinRecordCursorFactory join) {
@@ -2326,6 +2372,17 @@ public final class QueryRunner {
         bvs.setStr(0, limitValue);
     }
 
+    // Compiles the query, its parallel hash joins under the stepper warm-up that stepperWarmUpRows()
+    // draws, which each join reads as it compiles.
+    private RecordCursorFactory selectUnderStepperWarmUp(String sql) throws SqlException {
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(stepperWarmUpRows(sql));
+        try {
+            return engine.select(sql, executionContext);
+        } finally {
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+        }
+    }
+
     // Clears the bind variables and sets the bind form's named ones, which leaves its positional $1,
     // if any, undefined for the compile.
     private void setNamedBindVariables(GeneratedQuery query) throws SqlException {
@@ -2359,10 +2416,12 @@ public final class QueryRunner {
             @Nullable StringSink types
     ) {
         rows.clear();
-        try (RecordCursorFactory factory = engine.select(sql, executionContext)) {
+        try (RecordCursorFactory factory = selectUnderStepperWarmUp(sql)) {
             if (limitValue != null) {
                 bindUntypedLimit(factory.getMetadata(), limitValue, types);
             }
+            final AsyncHashJoinRecordCursorFactory compiledJoin = ParallelHashJoinTestUtils.find(factory);
+            final int stepperCopiesAtCompile = compiledJoin != null ? compiledJoin.getAtom().getStepperCopyCount() : 0;
             int rowsRead;
             boolean[] fpColumnMask;
             // The cursor opens as an HTTP page or a PostgreSQL Execute's row limit opens it, under
@@ -2405,6 +2464,12 @@ public final class QueryRunner {
                     if (join != null && rowsRead > 0) {
                         checkParallelJoinPartialReads(sql, cursor, metadata, columnCount, rows, rowsRead, deterministic, join);
                     }
+                }
+            }
+            if (compiledJoin != null && stepperRuns(compiledJoin.getAtom(), true) > 0) {
+                parallelJoinStepperCopyRuns++;
+                if (stepperCopiesAtCompile == 0) {
+                    parallelJoinStepperSwitchRuns++;
                 }
             }
             planSink.of(factory, executionContext);
