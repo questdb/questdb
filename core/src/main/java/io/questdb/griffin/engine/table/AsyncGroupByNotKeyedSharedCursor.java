@@ -35,12 +35,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SharedCursorOwnership;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {
     private final ObjList<Function> groupByFunctions;
+    private final SharedCursorOwnership.Holder ownerHolder;
     private final AsyncGroupByNotKeyedRecordCursor primaryCursor;
     private final VirtualRecord record;
     private boolean isExhausted;
@@ -48,8 +50,10 @@ public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCur
     AsyncGroupByNotKeyedSharedCursor(
             AsyncGroupByNotKeyedRecordCursor cursor,
             ObjList<Function> functions,
-            SimpleMapValue mapValue
+            SimpleMapValue mapValue,
+            SharedCursorOwnership.Holder ownerHolder
     ) {
+        this.ownerHolder = ownerHolder;
         this.primaryCursor = cursor;
         this.groupByFunctions = functions;
         this.record = new VirtualRecord(functions);
@@ -67,6 +71,7 @@ public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCur
     @Override
     public void close() {
         Misc.clearObjList(groupByFunctions);
+        ownerHolder.release();
     }
 
     @Override
@@ -113,5 +118,6 @@ public class AsyncGroupByNotKeyedSharedCursor implements NoRandomAccessRecordCur
     void of(SqlExecutionContext executionContext, UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence) throws SqlException {
         Function.init(groupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
         isExhausted = false;
+        ownerHolder.hold();
     }
 }

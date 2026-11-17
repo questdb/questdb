@@ -630,6 +630,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean sqlOrderBySortEnabled;
     private final int sqlPageFrameMaxRows;
     private final int sqlPageFrameMinRows;
+    private final int sqlPageFrameRampStartRows;
     private final int sqlParallelFilterDispatchLimit;
     private final boolean sqlParallelFilterEnabled;
     private final double sqlParallelFilterPreTouchThreshold;
@@ -2005,6 +2006,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
+            // 0 gives every page frame its regular size, and a count above that size changes no frame.
+            this.sqlPageFrameRampStartRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS, 1_000);
+            if (sqlPageFrameRampStartRows < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PAGE_FRAME_RAMP_START_ROWS.getPropertyPath() + " must not be negative");
+            }
 
             this.sqlJitMode = getSqlJitMode(properties, env);
             this.sqlJitIRMemoryPageSize = getIntSize(properties, env, PropertyKey.CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE, 8 * 1024);
@@ -5725,6 +5731,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlPageFrameMinRows() {
             return sqlPageFrameMinRows;
+        }
+
+        @Override
+        public int getSqlPageFrameRampStartRows() {
+            return sqlPageFrameRampStartRows;
         }
 
         @Override

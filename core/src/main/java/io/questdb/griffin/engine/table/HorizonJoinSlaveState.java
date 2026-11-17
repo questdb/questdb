@@ -51,6 +51,7 @@ public class HorizonJoinSlaveState implements QuietCloseable {
     private final int masterColumnCount;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final long masterTsScale;
+    private final @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate;
     private final @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate;
     private final int @Nullable [] slaveSymbolKeyColumnIndices;
     private final long slaveTsScale;
@@ -78,8 +79,10 @@ public class HorizonJoinSlaveState implements QuietCloseable {
             @Nullable RecordSinkTemplate slaveAsOfJoinMapSinkTemplate,
             int masterColumnCount,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable HorizonJoinSharedKeyCheckTemplate sharedKeyCheckTemplate
     ) {
+        this.sharedKeyCheckTemplate = sharedKeyCheckTemplate;
         this.factory = factory;
         this.masterTsScale = masterTsScale;
         this.slaveTsScale = slaveTsScale;
@@ -149,12 +152,24 @@ public class HorizonJoinSlaveState implements QuietCloseable {
         return perWorkerFilters;
     }
 
+    /**
+     * Returns the template of the master key check, or null unless two key positions compare the
+     * same slave column. Each lookup helper creates its own check from it.
+     */
+    public @Nullable HorizonJoinSharedKeyCheckTemplate getSharedKeyCheckTemplate() {
+        return sharedKeyCheckTemplate;
+    }
+
     public int @Nullable [] getSlaveSymbolKeyColumnIndices() {
         return slaveSymbolKeyColumnIndices;
     }
 
     public long getSlaveTsScale() {
         return slaveTsScale;
+    }
+
+    public boolean hasSharedKeyCheck() {
+        return sharedKeyCheckTemplate != null;
     }
 
     public boolean isKeyed() {

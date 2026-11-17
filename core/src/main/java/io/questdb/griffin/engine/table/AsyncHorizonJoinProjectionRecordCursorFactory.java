@@ -238,6 +238,15 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         }
     }
 
+    /**
+     * Returns the number of page frame tasks that the open cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getDispatchLimit() {
+        return cursor.getDispatchLimit();
+    }
+
     @Override
     public int getScanDirection() {
         // Rows follow the master in ascending timestamp order, one row per offset.
@@ -264,6 +273,9 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final Function slaveFilter = slaveStates.getQuick(i).getFilter();
             if (slaveFilter != null) {
                 sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
+            }
+            if (slaveStates.getQuick(i).hasSharedKeyCheck()) {
+                sink.attr("sharedKeyCheck").val(true);
             }
             sink.child(slaveFactories.getQuick(i));
         }

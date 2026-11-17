@@ -91,6 +91,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean isKnownEmpty() {
+        return baseCursor.isKnownEmpty();
+    }
+
+    @Override
     public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         baseCursor.longTopK(list, columnCrossIndex.getQuick(columnIndex));
     }

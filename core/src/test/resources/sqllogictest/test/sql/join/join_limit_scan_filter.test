@@ -1,0 +1,148 @@
+# A LIMIT over joins must not stop the scan of the first table at the LIMIT when a join drops rows of
+# that table, or a filter after the joins drops joined rows. The first rows of l0 that pass the WHERE,
+# rn 1, 2 and 3, and the last ones, rn 9 and 10, match no l1 row and hold no array element in la.
+# The expected rows come from DuckDB. QuestDB differs from it in these places:
+# - A LIMIT without ORDER BY may return any rows of the query, so the LIMIT queries count their rows.
+#   QuestDB's negative LIMIT and LIMIT lo, hi have no DuckDB counterpart.
+# - QuestDB's ASOF and LT joins have no DuckDB counterpart, so this file does not cover them.
+# - DuckDB writes the array literals as lists, [4.0, 4.5] and []::DOUBLE[].
+# The tables bypass WAL, so inserted rows are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS l0
+
+statement ok
+DROP TABLE IF EXISTS l1
+
+statement ok
+DROP TABLE IF EXISTS la
+
+statement ok
+CREATE TABLE l0 (rn INT, k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+CREATE TABLE l1 (k INT)
+
+statement ok
+CREATE TABLE la (rn INT, x INT, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+
+statement ok
+INSERT INTO l0 VALUES (1, 1, 5, '2024-01-05T01:00:00.000000Z'), (2, 2, 6, '2024-01-05T02:00:00.000000Z'), (3, 3, 7, '2024-01-05T03:00:00.000000Z'), (4, 10, 8, '2024-01-05T04:00:00.000000Z'), (5, 11, 0, '2024-01-05T05:00:00.000000Z'), (6, 11, 9, '2024-01-06T01:00:00.000000Z'), (7, 10, 10, '2024-01-06T02:00:00.000000Z'), (8, 12, 11, '2024-01-06T03:00:00.000000Z'), (9, 99, 12, '2024-01-07T01:00:00.000000Z'), (10, 99, 13, '2024-01-07T02:00:00.000000Z')
+
+statement ok
+INSERT INTO l1 VALUES (10), (11), (12), (13)
+
+statement ok
+INSERT INTO la VALUES (1, 5, ARRAY[]::DOUBLE[], '2024-01-05T01:00:00.000000Z'), (2, 6, ARRAY[]::DOUBLE[], '2024-01-05T02:00:00.000000Z'), (3, 7, ARRAY[]::DOUBLE[], '2024-01-05T03:00:00.000000Z'), (4, 8, ARRAY[4.0, 4.5], '2024-01-05T04:00:00.000000Z'), (5, 0, ARRAY[5.0, 5.5], '2024-01-05T05:00:00.000000Z'), (6, 9, ARRAY[6.0, 6.5], '2024-01-06T01:00:00.000000Z'), (7, 10, ARRAY[7.0, 7.5], '2024-01-06T02:00:00.000000Z'), (8, 11, ARRAY[8.0, 8.5], '2024-01-06T03:00:00.000000Z'), (9, 12, NULL, '2024-01-07T01:00:00.000000Z'), (10, 13, ARRAY[]::DOUBLE[], '2024-01-07T02:00:00.000000Z')
+
+# an INNER join drops the rows of l0 that match no l1 row
+query II rowsort
+SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k WHERE l0.x > 1
+----
+4	10
+6	11
+7	10
+8	12
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 1)
+----
+1
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 2)
+----
+2
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 10)
+----
+4
+
+# the ON conjunct on l0 filters the scan of l0
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k AND l0.x > 1 LIMIT 2)
+----
+2
+
+# the WHERE of the comma join holds the join key
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0, l1 WHERE l0.k = l1.k AND l0.x > 1 LIMIT 2)
+----
+2
+
+# OR makes the ON clause non-equi
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k OR l0.k = l1.k + 1000 WHERE l0.x > 1 LIMIT 2)
+----
+2
+
+# an INNER join after a LEFT join
+query I
+SELECT count(*) FROM (SELECT l0.rn FROM l0 LEFT JOIN l1 a ON l0.k = a.k JOIN l1 b ON l0.k = b.k WHERE l0.x > 1 LIMIT 3)
+----
+3
+
+# an INNER LATERAL join
+query I
+SELECT count(*) FROM (SELECT l0.rn, l.k FROM l0 JOIN LATERAL (SELECT l1.k FROM l1 WHERE l1.k = l0.k) l ON true WHERE l0.x > 1 LIMIT 2)
+----
+2
+
+# a LIMIT over a sub-query whose own LIMIT reads the joins
+query I
+SELECT count(*) FROM (SELECT * FROM (SELECT l0.rn, l1.k FROM l0 JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 2) LIMIT 1)
+----
+1
+
+# the WHERE on l1 filters after the LEFT join, which NULL-extends the rows of l0 that match no l1 row
+query II rowsort
+SELECT l0.rn, l1.k FROM l0 LEFT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 AND l1.k > 0
+----
+4	10
+6	11
+7	10
+8	12
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 LEFT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 AND l1.k > 0 LIMIT 3)
+----
+3
+
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 LEFT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 AND l1.k IS NOT NULL LIMIT 3)
+----
+3
+
+# without a WHERE on l1, the LEFT join keeps every row of l0
+query I
+SELECT count(*) FROM (SELECT l0.rn, l1.k FROM l0 LEFT JOIN l1 ON l0.k = l1.k WHERE l0.x > 1 LIMIT 3)
+----
+3
+
+# UNNEST returns no row for an empty or a NULL array
+query II rowsort
+SELECT la.rn, (u.val * 10)::INT FROM la, UNNEST(la.arr) u(val) WHERE la.x > 1
+----
+4	40
+4	45
+6	60
+6	65
+7	70
+7	75
+8	80
+8	85
+
+query I
+SELECT count(*) FROM (SELECT la.rn, u.val FROM la, UNNEST(la.arr) u(val) WHERE la.x > 1 LIMIT 3)
+----
+3
+
+statement ok
+DROP TABLE l0
+
+statement ok
+DROP TABLE l1
+
+statement ok
+DROP TABLE la

@@ -1184,6 +1184,14 @@ public interface CairoConfiguration {
 
     int getSqlPageFrameMinRows();
 
+    /**
+     * Returns the rows of the first page frame of a parallel filter that a LIMIT above may stop
+     * early, such as the filter ahead of a RIGHT or FULL join. Its frames ramp up to the regular
+     * size, see {@link io.questdb.cairo.sql.PageFrameCursor#rampUpFrameSizes(int)}; 0 gives every
+     * frame the regular size.
+     */
+    int getSqlPageFrameRampStartRows();
+
     int getSqlParallelFilterDispatchLimit();
 
     double getSqlParallelFilterPreTouchThreshold();

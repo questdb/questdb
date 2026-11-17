@@ -44,16 +44,24 @@ import static io.questdb.cairo.VarcharTypeDriver.VARCHAR_INLINED_PREFIX_MASK;
  * +---------------------+-------------------+----------+------------+
  * |       4 bytes       |      4 bytes      | 1 byte   |  payload   |
  * +---------------------+-------------------+----------+------------+
+ *                                                      ^
+ *                                                     ptr
  * </pre>
+ * The sink addresses the buffer by its payload, so {@link #ptr()} is the address of the first byte, as
+ * {@link Utf8Sequence#ptr()} promises to the hash maps and other consumers that copy the bytes from it,
+ * and also the value to store and to restore the sink from with {@link #of(long)}.
  */
 public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
-    private static final long HEADER_SIZE = 2 * Integer.BYTES + Byte.BYTES;
-    private static final long IS_ASCII_OFFSET = 2 * Integer.BYTES;
+    // the header precedes the payload, so its fields sit at negative offsets from ptr
+    private static final long CAPACITY_OFFSET = -2 * Integer.BYTES - Byte.BYTES;
+    private static final long HEADER_SIZE = -CAPACITY_OFFSET;
+    private static final long IS_ASCII_OFFSET = -Byte.BYTES;
     // Must be at least 8 bytes, so that zeroPaddedSixPrefix can safely read long.
     private static final int MIN_CAPACITY = 8;
-    private static final long SIZE_OFFSET = Integer.BYTES;
+    private static final long SIZE_OFFSET = CAPACITY_OFFSET + Integer.BYTES;
     private GroupByAllocator allocator;
     private AsciiCharSequence asciiCharSequence;
+    // address of the payload, 0 when the sink has no buffer
     private long ptr;
     private int[] ryuE10;
 
@@ -68,11 +76,11 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public byte byteAt(int index) {
-        return Unsafe.getByte(ptr + HEADER_SIZE + index);
+        return Unsafe.getByte(ptr + index);
     }
 
     public int capacity() {
-        return ptr != 0 ? Unsafe.getInt(ptr) : 0;
+        return ptr != 0 ? Unsafe.getInt(ptr + CAPACITY_OFFSET) : 0;
     }
 
     public void clear() {
@@ -80,13 +88,13 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.putBoolean(null, ptr + IS_ASCII_OFFSET, true);
             // zero first 8 bytes for zeroPaddedSixPrefix
-            Unsafe.putLong(ptr + HEADER_SIZE, 0);
+            Unsafe.putLong(ptr, 0);
         }
     }
 
     @Override
     public int intAt(int offset) {
-        return Unsafe.getInt(ptr + HEADER_SIZE + offset);
+        return Unsafe.getInt(ptr + offset);
     }
 
     @Override
@@ -96,14 +104,25 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
 
     @Override
     public long longAt(int offset) {
-        return Unsafe.getLong(ptr + HEADER_SIZE + offset);
+        return Unsafe.getLong(ptr + offset);
     }
 
+    /**
+     * Points the sink at a buffer.
+     *
+     * @param ptr a value {@link #ptr()} returned, or 0 to start a new buffer on the next write
+     * @return this sink
+     */
     public GroupByUtf8Sink of(long ptr) {
         this.ptr = ptr;
         return this;
     }
 
+    /**
+     * Returns the address of the first byte of the value, or 0 when the sink has no buffer. The
+     * address also identifies the buffer: {@link #of(long)} takes it back.
+     */
+    @Override
     public long ptr() {
         return ptr;
     }
@@ -116,7 +135,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         int thatSize = seq.size();
         checkCapacity(thatSize);
         int thisSize = size();
-        long lo = ptr + HEADER_SIZE + thisSize;
+        long lo = ptr + thisSize;
         seq.writeTo(lo, 0, thatSize);
         Unsafe.putInt(ptr + SIZE_OFFSET, thisSize + thatSize);
         Unsafe.putBoolean(null, ptr + IS_ASCII_OFFSET, seq.isAscii() && isAscii());
@@ -126,7 +145,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     @Override
     public Utf8Sink put(byte b) {
         checkCapacity(1);
-        Unsafe.putByte(ptr + HEADER_SIZE + size(), b);
+        Unsafe.putByte(ptr + size(), b);
         Unsafe.putInt(ptr + SIZE_OFFSET, size() + 1);
         Unsafe.putBoolean(null, ptr + IS_ASCII_OFFSET, false);
         return this;
@@ -164,7 +183,7 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
     @Override
     public long zeroPaddedSixPrefix() {
         // MIN_CAPACITY is 8, so it's safe to read 8 bytes even for short varchars.
-        return ptr != 0 ? Unsafe.getLong(ptr + HEADER_SIZE) & VARCHAR_INLINED_PREFIX_MASK : 0;
+        return ptr != 0 ? Unsafe.getLong(ptr) & VARCHAR_INLINED_PREFIX_MASK : 0;
     }
 
     private void checkCapacity(int bytes) {
@@ -180,15 +199,16 @@ public final class GroupByUtf8Sink implements Utf8Sink, Utf8Sequence {
         }
         long newSize = newCapacity + HEADER_SIZE;
         if (ptr == 0) {
-            ptr = allocator.malloc(newSize);
-            Unsafe.putInt(ptr, newCapacity);
+            ptr = allocator.malloc(newSize) + HEADER_SIZE;
+            Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
             Unsafe.putInt(ptr + SIZE_OFFSET, 0);
             Unsafe.putBoolean(null, ptr + IS_ASCII_OFFSET, true);
             // zero first 8 bytes for zeroPaddedSixPrefix
-            Unsafe.putLong(ptr + HEADER_SIZE, 0);
+            Unsafe.putLong(ptr, 0);
         } else {
-            ptr = allocator.realloc(ptr, capacity + HEADER_SIZE, newSize);
-            Unsafe.putInt(ptr, newCapacity);
+            // the allocator knows the buffer by the address it returned: that of the header
+            ptr = allocator.realloc(ptr - HEADER_SIZE, capacity + HEADER_SIZE, newSize) + HEADER_SIZE;
+            Unsafe.putInt(ptr + CAPACITY_OFFSET, newCapacity);
         }
     }
 }

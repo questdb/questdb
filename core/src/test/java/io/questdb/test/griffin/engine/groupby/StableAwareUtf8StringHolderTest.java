@@ -158,6 +158,50 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPtrAddressesFirstByte() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB);
+                    DirectUtf8Sink directSink = new DirectUtf8Sink(16)
+            ) {
+                directSink.put("żółw and more than a header");
+                TestDirectUtf8String stableDirectString = new TestDirectUtf8String(true);
+                stableDirectString.of(directSink.lo(), directSink.hi());
+                StableAwareUtf8StringHolder holder = new StableAwareUtf8StringHolder();
+                holder.setAllocator(allocator);
+
+                // no buffer yet
+                Assert.assertEquals(0, holder.ptr());
+                Assert.assertEquals(0, holder.size());
+
+                // a direct holder keeps the pointer it was given; ptr() hands it out unchanged
+                holder.of(0).clearAndSet(stableDirectString);
+                Assert.assertEquals(directSink.lo(), holder.ptr());
+                TestUtils.assertPtrCompliance(holder);
+                final long directPtr = holder.colouredPtr();
+
+                // a copying holder hands out its own copy, the same one after of() restores the holder
+                holder.of(0).clearAndSet(new Utf8String("foobar"));
+                final long copyPtr = holder.ptr();
+                Assert.assertNotEquals(directSink.lo(), copyPtr);
+                TestUtils.assertPtrCompliance(holder);
+                final long copy = holder.colouredPtr();
+
+                holder.of(directPtr);
+                Assert.assertEquals(directSink.lo(), holder.ptr());
+                holder.of(copy);
+                Assert.assertEquals(copyPtr, holder.ptr());
+                TestUtils.assertEquals("foobar", holder);
+
+                // an empty copy has nothing to address, but must not report a coloured pointer
+                holder.of(0).clearAndSet(Utf8String.EMPTY);
+                Assert.assertTrue(holder.ptr() > 0);
+                Assert.assertEquals(0, holder.size());
+            }
+        });
+    }
+
+    @Test
     public void testPutSplitString() throws Exception {
         assertMemoryLeak(() -> {
             try (
@@ -208,6 +252,8 @@ public class StableAwareUtf8StringHolderTest extends AbstractCairoTest {
     private static void assertPointerColorIsNotLeaking(StableAwareUtf8StringHolder holder) {
         long ptr = holder.ptr();
         if (ptr > 0) {
+            // not coloured, and the address of the first byte: the holder's own copy or the direct sequence
+            TestUtils.assertPtrCompliance(holder);
             return;
         }
 

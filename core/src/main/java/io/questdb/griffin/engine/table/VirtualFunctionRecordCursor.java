@@ -137,6 +137,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean isKnownEmpty() {
+        return baseCursor.isKnownEmpty();
+    }
+
+    @Override
     public void longTopK(DirectLongLongSortedList list, int columnIndex) {
         final int baseColumnIndex = getLongTopKColumnIndex(columnIndex);
         assert baseColumnIndex != -1;

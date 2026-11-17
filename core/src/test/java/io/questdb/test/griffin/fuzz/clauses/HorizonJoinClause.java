@@ -68,6 +68,10 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * routes the join through an index-driven slave scan, which the shadow
  * differential exercises against the non-indexed sibling.
  * <p>
+ * A quarter of the keyed joins repeat the key in a form that means the same, see
+ * {@link #REDUNDANT_KEY_ON_CLAUSES}, and carry the query with the single key as their
+ * reference, which must return the same rows.
+ * <p>
  * A third of the draws emit a HORIZON JOIN without aggregation instead, which returns one row
  * per master row and offset (see {@link #generateProjection}).
  */
@@ -79,6 +83,18 @@ public final class HorizonJoinClause {
     // slave row, and are kept to a minority of draws rather than a quarter of them.
     private static final char[] HORIZON_UNITS = {'m', 'm', 'h', 'h', 's'};
     private static final String MASTER_ALIAS = "t";
+    // ON clauses that repeat the key t.sym = p.sym, spelled with MASTER_ALIAS and SLAVE_ALIAS: with the
+    // sides swapped, which the optimiser drops as a duplicate, or with a column name in upper case, which
+    // SqlOptimiser.mergeContexts() tells apart from the lower case one. An upper case master column leaves
+    // one master column at two key positions, and an upper case slave column turns into the slave filter
+    // sym = SYM. Each means the same as the single key.
+    private static final String[] REDUNDANT_KEY_ON_CLAUSES = {
+            " ON (t.sym = p.sym AND p.sym = t.sym)",
+            " ON (t.sym = p.sym AND t.SYM = p.sym)",
+            " ON (t.sym = p.sym AND t.sym = p.SYM)",
+            " ON (p.SYM = t.SYM AND t.sym = p.sym)"
+    };
+    private static final String SINGLE_KEY_ON_CLAUSE = " ON (t.sym = p.sym)";
     private static final String SLAVE_ALIAS = "p";
 
     private HorizonJoinClause() {
@@ -132,9 +148,9 @@ public final class HorizonJoinClause {
 
         sql.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
         sql.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
-        if (keyed) {
-            sql.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
-        }
+        final int onLo = sql.length();
+        final boolean isRedundantKey = keyed && appendOnClause(sql, rnd);
+        final int onHi = sql.length();
         appendHorizonSpec(sql, rnd, useList);
 
         // WHERE may reference master columns only.
@@ -163,7 +179,8 @@ public final class HorizonJoinClause {
         if (hasLimit) {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(50));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        final GeneratedQuery query = new GeneratedQuery(sql.toString(), !hasLimit);
+        return isRedundantKey ? query.withReference(withSingleKey(sql, onLo, onHi)) : query;
     }
 
     private static void appendHorizonSpec(StringSink sql, Rnd rnd, boolean useList) {
@@ -190,6 +207,17 @@ public final class HorizonJoinClause {
                     .put(" TO ").put(step * after).put(unit)
                     .put(" STEP ").put(step).put(unit).put(" AS h");
         }
+    }
+
+    // Appends the ON clause of a keyed join and returns true when it repeats the key, see
+    // REDUNDANT_KEY_ON_CLAUSES.
+    private static boolean appendOnClause(StringSink sql, Rnd rnd) {
+        if (rnd.nextInt(4) == 0) {
+            sql.put(REDUNDANT_KEY_ON_CLAUSES[rnd.nextInt(REDUNDANT_KEY_ON_CLAUSES.length)]);
+            return true;
+        }
+        sql.put(SINGLE_KEY_ON_CLAUSE);
+        return false;
     }
 
     /**
@@ -237,9 +265,9 @@ public final class HorizonJoinClause {
         }
         rows.put(" FROM ").put(master.getName()).put(' ').put(MASTER_ALIAS);
         rows.put(" HORIZON JOIN ").put(slave.getName()).put(' ').put(SLAVE_ALIAS);
-        if (isKeyed) {
-            rows.put(" ON (").put(MASTER_ALIAS).put(".sym = ").put(SLAVE_ALIAS).put(".sym)");
-        }
+        final int onLo = rows.length();
+        final boolean isRedundantKey = isKeyed && appendOnClause(rows, rnd);
+        final int onHi = rows.length();
         appendHorizonSpec(rows, rnd, isListSpec);
         // WHERE may reference master columns only.
         PredicateGenerator.appendWhere(rows, rnd, master.getColumns(), MASTER_ALIAS, 1, ctx, injectFaultFn);
@@ -271,7 +299,8 @@ public final class HorizonJoinClause {
             if (hasLimit) {
                 rows.put(" LIMIT ").put(1 + rnd.nextInt(100));
             }
-            return new GeneratedQuery(rows.toString(), !hasLimit);
+            final GeneratedQuery query = new GeneratedQuery(rows.toString(), !hasLimit);
+            return isRedundantKey ? query.withReference(withSingleKey(rows, onLo, onHi)) : query;
         }
 
         final StringSink sql = new StringSink();
@@ -286,7 +315,9 @@ public final class HorizonJoinClause {
                 sql.put(", sum(s").put(i).put(") AS a").put(aggCount++);
             }
         }
-        sql.put(" FROM (").put(rows).put(')');
+        sql.put(" FROM (");
+        final int rowsLo = sql.length();
+        sql.put(rows).put(')');
         if (rnd.nextBoolean()) {
             sql.put(" GROUP BY e0");
         }
@@ -297,7 +328,8 @@ public final class HorizonJoinClause {
         if (hasLimit) {
             sql.put(" LIMIT ").put(1 + rnd.nextInt(5));
         }
-        return new GeneratedQuery(sql.toString(), !hasLimit);
+        final GeneratedQuery query = new GeneratedQuery(sql.toString(), !hasLimit);
+        return isRedundantKey ? query.withReference(withSingleKey(sql, rowsLo + onLo, rowsLo + onHi)) : query;
     }
 
     // count() takes neither BOOLEAN nor CHAR.
@@ -331,6 +363,12 @@ public final class HorizonJoinClause {
             case 'm' -> 30 * (1 + rnd.nextInt(3));
             default -> 1 + rnd.nextInt(3);
         };
+    }
+
+    // The query with its ON clause, which spans onLo to onHi, replaced by the single key.
+    private static String withSingleKey(CharSequence sql, int onLo, int onHi) {
+        final String query = sql.toString();
+        return query.substring(0, onLo) + SINGLE_KEY_ON_CLAUSE + query.substring(onHi);
     }
 
 }

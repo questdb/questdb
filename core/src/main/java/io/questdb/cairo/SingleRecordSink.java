@@ -57,6 +57,7 @@ public final class SingleRecordSink implements RecordSinkSPI, Mutable, Reopenabl
                     + " or " + PropertyKey.CAIRO_SQL_WINDOW_STORE_MAX_PAGES.getPropertyPath();
     public static final String OWNER_ASOF_JOIN = "ASOF join";
     public static final String OWNER_DENSE_RANK_WINDOW_FUNCTION = "DENSE_RANK() window function";
+    public static final String OWNER_HORIZON_JOIN = "HORIZON join";
     public static final String OWNER_RANK_WINDOW_FUNCTION = "RANK() window function";
     private static final int INITIAL_CAPACITY_BYTES = 8;
     // Property to raise when the budget is exceeded. Null when the owner has no single knob.

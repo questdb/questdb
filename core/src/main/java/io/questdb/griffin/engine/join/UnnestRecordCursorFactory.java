@@ -172,6 +172,13 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         @Override
+        public void expectLimitedIteration() {
+            // UNNEST reads its base as it returns rows, as a join reads its master, and skips the rows of
+            // an empty array: the cap limits how far the tasks of the base run ahead, never the rows it returns
+            baseCursor.expectLimitedIteration();
+        }
+
+        @Override
         public Record getRecord() {
             return record;
         }

@@ -28,8 +28,12 @@ import io.questdb.std.Os;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +44,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.junit.Assert.assertTrue;
 
 public class OsTest {
+    @Rule
+    public TemporaryFolder temp = new TemporaryFolder();
 
     @Test
     public void rustSmokeTest() {
@@ -101,6 +107,19 @@ public class OsTest {
     @Test
     public void testGetRss() {
         Assert.assertNotEquals(0, Os.getRss());
+    }
+
+    @Test
+    public void testLoadLibFromDottedDirectory() throws Exception {
+        File dir = temp.newFolder("dotted.dir");
+        String lib = new File(dir, "libnotalib.so").getAbsolutePath();
+        try {
+            Os.loadLib(lib, new ByteArrayInputStream(new byte[]{1, 2, 3}));
+            Assert.fail();
+        } catch (UnsatisfiedLinkError e) {
+            // loadLib unpacked the stream to a temp file named after the library, and System.load rejected the junk bytes
+            TestUtils.assertContains(e.getMessage(), "libnotalib");
+        }
     }
 
     /**

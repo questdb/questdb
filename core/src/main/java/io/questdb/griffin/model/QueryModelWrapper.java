@@ -928,6 +928,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isMovableAfterOuterJoins() {
+        return delegate.isMovableAfterOuterJoins();
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return delegate.isNestedModelIsSubQuery();
     }
@@ -940,6 +945,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return delegate.isOrderDescendingByDesignatedTimestampOnly();
+    }
+
+    @Override
+    public boolean isOuterRefJoinChecked() {
+        return delegate.isOuterRefJoinChecked();
     }
 
     @Override
@@ -1293,6 +1303,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public void setMovableAfterOuterJoins(boolean movableAfterOuterJoins) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public void setNestedModel(IQueryModel nestedModel) {
         throw new UnsupportedOperationException();
     }
@@ -1329,6 +1344,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOuterRefJoinChecked(boolean isOuterRefJoinChecked) {
         throw new UnsupportedOperationException();
     }
 
@@ -1484,7 +1504,9 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setViewNameExpr(ExpressionNode viewNameExpr) {
-        throw new UnsupportedOperationException();
+        // A model passes the name of its view down to its nested, union and join models, and so
+        // reaches a wrapper. The wrapper only refers to the shared model, which the tree holds itself
+        // where it takes the name.
     }
 
     @Override

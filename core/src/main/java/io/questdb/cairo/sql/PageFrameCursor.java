@@ -161,6 +161,23 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     @Nullable
     PageFrame next(long skipTarget);
 
+    /**
+     * Makes the page frames of the walks from the top ramp up to their regular size, for a reader
+     * that may stop after its first rows: the first frame holds at most {@code firstFrameRowCount}
+     * rows, and every frame after it at most the rows of the frames before it divided by the shared
+     * query worker count, until frames reach the size that they take without the ramp-up. A reader
+     * that stops early then waits only for small frames, while the frames of a long read grow
+     * geometrically to their regular size. A frame never holds more rows than it would without the
+     * ramp-up. Frames of Parquet partitions keep their row groups, and their rows count among the
+     * rows before. Opening the cursor again drops the ramp-up. Cursors that cannot split their
+     * frames ignore the call.
+     *
+     * @param firstFrameRowCount the rows of the first frame, greater than zero
+     */
+    default void rampUpFrameSizes(int firstFrameRowCount) {
+        // no-op by default
+    }
+
     default void releaseOpenPartitions() {
         // no-op by default
     }

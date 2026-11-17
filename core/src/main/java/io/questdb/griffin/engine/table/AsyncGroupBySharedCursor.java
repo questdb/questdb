@@ -34,11 +34,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.SharedCursorOwnership;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AsyncGroupBySharedCursor implements RecordCursor {
+    private final SharedCursorOwnership.Holder ownerHolder;
     private final VirtualRecord record;
     private final VirtualRecord recordB;
     private final ObjList<Function> recordFunctions;
@@ -47,7 +49,8 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
     private MapRecordCursor nonShardedMapCursor;
     private AsyncGroupByRecordCursor primaryCursor;
 
-    public AsyncGroupBySharedCursor(ObjList<Function> recordFunctions) {
+    public AsyncGroupBySharedCursor(ObjList<Function> recordFunctions, SharedCursorOwnership.Holder ownerHolder) {
+        this.ownerHolder = ownerHolder;
         this.recordFunctions = recordFunctions;
         this.record = new VirtualRecord(recordFunctions);
         this.recordB = new VirtualRecord(recordFunctions);
@@ -62,6 +65,7 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
     @Override
     public void close() {
         mapCursor = Misc.free(mapCursor);
+        ownerHolder.release();
     }
 
     @Override
@@ -135,5 +139,6 @@ public class AsyncGroupBySharedCursor implements RecordCursor {
 
     void of(AsyncGroupByRecordCursor primaryCursor) {
         this.primaryCursor = primaryCursor;
+        ownerHolder.hold();
     }
 }

@@ -45,6 +45,13 @@ public abstract class AbstractJoinCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public void expectLimitedIteration() {
+        // A join reads its master as it returns rows. A join that drops master rows reads more of them
+        // than it returns: the cap limits how far the master's tasks run ahead, never the rows it returns.
+        masterCursor.expectLimitedIteration();
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         if (columnIndex < columnSplit) {
             return masterCursor.getSymbolTable(columnIndex);

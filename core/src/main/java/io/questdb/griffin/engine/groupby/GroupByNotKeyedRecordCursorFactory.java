@@ -53,6 +53,8 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
     private RecordCursorFactory base;
     private GroupByNotKeyedRecordCursor cursor;
     private ObjList<GroupByFunction> groupByFunctions;
+    // who holds the owner state that a shared cursor opened, created with the first shared cursor
+    private SharedCursorOwnership sharedCursorOwnership;
     private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private SimpleMapValue value;
     private final VirtualRecord virtualRecordA;
@@ -135,6 +137,10 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         // reopens the allocator and then runs Function.init, which can throw; guard it so the reopened
         // allocator is freed under the current per-query tracker instead of being deferred to factory
         // close, by which point the tracker may have been recycled to another query.
+        if (sharedCursorOwnership != null) {
+            // the primary takes over the owner state and releases it when it closes
+            sharedCursorOwnership.claim();
+        }
         try {
             return cursor.of(cursor.baseCursor, executionContext);
         } catch (Throwable th) {
@@ -151,17 +157,19 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
+            sharedCursorOwnership = new SharedCursorOwnership(cursor);
         }
         int idx = sharedId - 1;
         GroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
             assert idx < sharedRecordFunctions.size();
-            shared = new GroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), value);
+            shared = new GroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), value, sharedCursorOwnership.newHolder());
             sharedCursors.extendAndSet(idx, shared);
         }
         boolean isNewCursor = cursor.baseCursor == null;
         if (isNewCursor) {
             cursor.baseCursor = base.getCursor(executionContext);
+            sharedCursorOwnership.markOpenedBySharedCursor();
         }
         try {
             // The owner group-by functions must initialize before any shared consumer's clones,
@@ -190,7 +198,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
                 // areFunctionsInitialized - so the next execution of this cached factory
                 // re-initializes the functions instead of serving stale state. When the primary
                 // opened the base cursor, its owner closes it.
-                cursor.close();
+                sharedCursorOwnership.releaseUnclaimed();
             }
             throw e;
         }
@@ -250,6 +258,9 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         this.sharedRecordFunctions = null;
         final SimpleMapValue value = this.value;
         this.value = null;
+        if (sharedCursorOwnership != null) {
+            sharedCursorOwnership.clear();
+        }
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, value);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
@@ -266,11 +277,18 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
 
     private static class GroupByNotKeyedSharedCursor implements NoRandomAccessRecordCursor {
         private final ObjList<Function> groupByFunctions;
+        private final SharedCursorOwnership.Holder ownerHolder;
         private final GroupByNotKeyedRecordCursor primaryCursor;
         private final VirtualRecord record;
         private boolean isExhausted;
 
-        GroupByNotKeyedSharedCursor(GroupByNotKeyedRecordCursor cursor, ObjList<Function> functions, SimpleMapValue value) {
+        GroupByNotKeyedSharedCursor(
+                GroupByNotKeyedRecordCursor cursor,
+                ObjList<Function> functions,
+                SimpleMapValue value,
+                SharedCursorOwnership.Holder ownerHolder
+        ) {
+            this.ownerHolder = ownerHolder;
             this.primaryCursor = cursor;
             this.groupByFunctions = functions;
             this.record = new VirtualRecordNoRowid(functions);
@@ -288,6 +306,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         @Override
         public void close() {
             Misc.clearObjList(groupByFunctions);
+            ownerHolder.release();
         }
 
         @Override
@@ -334,6 +353,7 @@ public class GroupByNotKeyedRecordCursorFactory extends AbstractRecordCursorFact
         void of(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
             Function.init(groupByFunctions, baseCursor, executionContext, null);
             isExhausted = false;
+            ownerHolder.hold();
         }
 
     }

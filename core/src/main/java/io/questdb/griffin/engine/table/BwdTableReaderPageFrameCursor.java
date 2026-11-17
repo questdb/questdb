@@ -74,6 +74,10 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int pageFrameMaxRows;
     private int pageFrameMinRows;
     private PartitionFrameCursor partitionFrameCursor;
+    // The rows of the first frame of a ramp-up, 0 when every frame takes its regular size.
+    private int rampFirstFrameRowCount;
+    // The rows of the readable frames walked since the top, which size the frames of a ramp-up.
+    private long rampRowCount;
     private TableReader reader;
     private long reenterPageFrameRowLimit;
     private ParquetPartitionDecoder reenterParquetDecoder;
@@ -224,6 +228,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
         this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.rampFirstFrameRowCount = 0;
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -231,6 +236,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         }
         toTop();
         return this;
+    }
+
+    @Override
+    public void rampUpFrameSizes(int firstFrameRowCount) {
+        assert firstFrameRowCount > 0;
+        this.rampFirstFrameRowCount = firstFrameRowCount;
     }
 
     @Override
@@ -261,6 +272,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     @Override
     public void toTop() {
         partitionFrameCursor.toTop();
+        rampRowCount = 0;
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
         highestOpenPartitionIndex = -1;
@@ -285,7 +297,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         // we may need to split this partition frame either along "top" lines, or along
         // max page frame sizes; to do this, we calculate min top value from given position
-        long adjustedLo = Math.max(partitionLo, partitionHi - reenterPageFrameRowLimit);
+        long adjustedLo = Math.max(partitionLo, partitionHi - getNativeFrameRowLimit());
 
         // A COMPOSITE partition is several PIECES over one set of column files, each sitting at its own place in them,
         // so a frame is cut at piece boundaries and carries that piece's SHIFT - the term that turns a partition row.
@@ -373,6 +385,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         // remaining rows in the partition = max row number in the frame - min row number of the partition 
         remainingRowsInInterval = adjustedLo - partitionLo;
+        rampRowCount += partitionHi - adjustedLo;
 
         frame.partitionLo = adjustedLo;
         frame.partitionHi = partitionHi;
@@ -523,6 +536,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             }
 
             remainingRowsInInterval = adjustedLo - partitionLo;
+            rampRowCount += partitionHi - adjustedLo;
 
             frame.partitionLo = adjustedLo;
             frame.partitionHi = partitionHi;
@@ -543,6 +557,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         // All row groups were skipped
         this.reenterPartitionFrame = false;
         return null;
+    }
+
+    // The rows that the next native frame may hold: its regular size, and while frames ramp up, the
+    // rows of the frames before it divided by the workers, but no fewer than the first frame holds.
+    private long getNativeFrameRowLimit() {
+        if (rampFirstFrameRowCount > 0) {
+            final long rampRowLimit = Math.max(rampFirstFrameRowCount, rampRowCount / Math.max(sharedQueryWorkerCount, 1));
+            return Math.min(reenterPageFrameRowLimit, rampRowLimit);
+        }
+        return reenterPageFrameRowLimit;
     }
 
     private @Nullable TableReaderPageFrame nextSlow(PartitionFrame partitionFrame, long lo, long hi, long skipTarget) {

@@ -28,8 +28,14 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
+import io.questdb.std.str.AsciiCharSequence;
+import io.questdb.std.str.DirectUtf8String;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
+import org.jetbrains.annotations.NotNull;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -52,6 +58,61 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 AssertionError.class,
                 () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
         );
+    }
+
+    @Test
+    public void testAssertPtrCompliance() throws Exception {
+        assertMemoryLeak(() -> {
+            TestUtils.assertPtrCompliance(null);
+            // on-heap: ptr() is -1, nothing to check
+            TestUtils.assertPtrCompliance(new Utf8String("abc"));
+
+            final int size = 4;
+            // one spare byte in front, so a sequence can point one byte before its content
+            final long mem = Unsafe.malloc(size + 1, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i <= size; i++) {
+                    Unsafe.putByte(mem + i, (byte) ('a' + i));
+                }
+                final long lo = mem + 1;
+                TestUtils.assertPtrCompliance(new DirectUtf8String().of(lo, lo + size));
+                // empty: no byte to check, whatever the address
+                TestUtils.assertPtrCompliance(new FixedPtrUtf8Sequence(0, lo, 0));
+
+                // the bug class: ptr() lands before the content, e.g. on a header
+                AssertionError e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> TestUtils.assertPtrCompliance(new FixedPtrUtf8Sequence(mem, lo, size))
+                );
+                TestUtils.assertContains(e.getMessage(), "ptr() does not address the bytes of the sequence");
+                TestUtils.assertContains(e.getMessage(), "index=0, size=4");
+
+                // the content matches up to the last byte only
+                Unsafe.putByte(mem, (byte) 'b');
+                Unsafe.putByte(mem + 1, (byte) 'b');
+                Unsafe.putByte(mem + 2, (byte) 'b');
+                Unsafe.putByte(mem + 3, (byte) 'b');
+                e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> TestUtils.assertPtrCompliance(new FixedPtrUtf8Sequence(mem, lo, size))
+                );
+                TestUtils.assertContains(e.getMessage(), "index=3, size=4");
+
+                // a coloured or zero pointer is not an address, the check must not dereference it
+                e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> TestUtils.assertPtrCompliance(new FixedPtrUtf8Sequence(lo | Long.MIN_VALUE, lo, size))
+                );
+                TestUtils.assertContains(e.getMessage(), "ptr() is not an address");
+                e = Assert.assertThrows(
+                        AssertionError.class,
+                        () -> TestUtils.assertPtrCompliance(new FixedPtrUtf8Sequence(0, lo, size))
+                );
+                TestUtils.assertContains(e.getMessage(), "ptr=0, size=4");
+            } finally {
+                Unsafe.free(mem, size + 1, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test
@@ -171,6 +232,40 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(sink, cursor, factory.getMetadata(), map);
+        }
+    }
+
+    // Reads its bytes from lo but reports ptr as its address, to model a sequence that breaks the ptr() contract.
+    private static final class FixedPtrUtf8Sequence implements Utf8Sequence {
+        private final AsciiCharSequence asciiCharSequence = new AsciiCharSequence();
+        private final long lo;
+        private final long ptr;
+        private final int size;
+
+        private FixedPtrUtf8Sequence(long ptr, long lo, int size) {
+            this.ptr = ptr;
+            this.lo = lo;
+            this.size = size;
+        }
+
+        @Override
+        public @NotNull CharSequence asAsciiCharSequence() {
+            return asciiCharSequence.of(this);
+        }
+
+        @Override
+        public byte byteAt(int index) {
+            return Unsafe.getByte(lo + index);
+        }
+
+        @Override
+        public long ptr() {
+            return ptr;
+        }
+
+        @Override
+        public int size() {
+            return size;
         }
     }
 }

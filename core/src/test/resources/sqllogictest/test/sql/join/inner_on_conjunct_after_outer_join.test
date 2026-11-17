@@ -1,0 +1,98 @@
+# An INNER join after a RIGHT or FULL join whose ON clause holds a conjunct that reads two or more
+# of the tables before the outer join, as in JOIN c ON c.k = r.k AND a.x = b.y + d.z. The outer
+# join NULL-extends those tables, so the conjunct filters the INNER join, after the outer join.
+# a.x = b.y + d.z holds for k = 1 and k = 3, not for k = 2, and r row 400 matches no a row.
+# The expected rows come from DuckDB with every = rewritten to IS NOT DISTINCT FROM, because
+# QuestDB treats NULL = NULL as true in join keys and filters: the NULL-extended row of r row 400
+# passes a.x = b.y + d.z. The tables are not partitioned, so they are not WAL tables and inserted
+# rows are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS a
+
+statement ok
+DROP TABLE IF EXISTS b
+
+statement ok
+DROP TABLE IF EXISTS d
+
+statement ok
+DROP TABLE IF EXISTS r
+
+statement ok
+DROP TABLE IF EXISTS c
+
+statement ok
+CREATE TABLE a (k INT, x INT)
+
+statement ok
+CREATE TABLE b (k INT, y INT)
+
+statement ok
+CREATE TABLE d (k INT, z INT)
+
+statement ok
+CREATE TABLE r (k INT, id INT)
+
+statement ok
+CREATE TABLE c (k INT, w INT)
+
+statement ok
+INSERT INTO a VALUES (1, 5), (2, 7), (3, 9)
+
+statement ok
+INSERT INTO b VALUES (1, 2), (2, 3), (3, 4)
+
+statement ok
+INSERT INTO d VALUES (1, 3), (2, 0), (3, 5)
+
+statement ok
+INSERT INTO r VALUES (1, 100), (2, 200), (3, 300), (4, 400)
+
+statement ok
+INSERT INTO c VALUES (1, 10), (2, 20), (3, 30), (4, 40)
+
+# two tables on the right of =
+query III
+SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z ORDER BY r.id
+----
+1	100	10
+3	300	30
+NULL	400	40
+
+# two tables on the left of =
+query III
+SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND b.y + d.z = a.x ORDER BY r.id
+----
+1	100	10
+3	300	30
+NULL	400	40
+
+# after a FULL join
+query III
+SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k FULL JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z ORDER BY r.id
+----
+1	100	10
+3	300	30
+NULL	400	40
+
+# with a constant: no k matches, and only the NULL-extended row of r row 400 passes
+query III
+SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z - 2 ORDER BY r.id
+----
+NULL	400	40
+
+statement ok
+DROP TABLE a
+
+statement ok
+DROP TABLE b
+
+statement ok
+DROP TABLE d
+
+statement ok
+DROP TABLE r
+
+statement ok
+DROP TABLE c

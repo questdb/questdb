@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.ColumnFilter;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.sql.Record;
+import io.questdb.std.Transient;
 
 /**
  * Wraps over slave key symbols to master Record.
@@ -35,7 +37,7 @@ import io.questdb.cairo.sql.Record;
  * from the map then symbols are converted to strings, that's undesirable. So we wrap over slave key columns
  * to master record, so that we can read symbols from master record.
  */
-public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
+public class SymbolWrapOverJoinRecord extends OuterJoinRecord {
     private final ColumnFilter keyColumnsToMaster;
     private final int slaveValuesKeysSplit;
 
@@ -43,6 +45,52 @@ public final class SymbolWrapOverJoinRecord extends OuterJoinRecord {
         super(masterSlaveSplit, nullRecord);
         this.keyColumnsToMaster = keyColumnsToMaster;
         this.slaveValuesKeysSplit = slaveValuesKeysSplit;
+    }
+
+    /**
+     * Creates the record of a full-fat ASOF or LT join. The join map stores each right-side key
+     * column in the key type of its key pair, which is not the column's own type when the pair
+     * compares different types. For such a map this returns a {@link ConvertedKeyJoinRecord},
+     * which reads the stored value back as the column's own type.
+     *
+     * @param mapKeyTypes      key types of the join map, the exposed key columns first
+     * @param slaveColumnTypes right-side column types as the join exposes them: the map value
+     *                         columns, then one column per exposed key column
+     */
+    public static SymbolWrapOverJoinRecord newInstance(
+            int masterSlaveSplit,
+            Record nullRecord,
+            int slaveValuesKeysSplit,
+            ColumnFilter keyColumnsToMaster,
+            @Transient ColumnTypes mapKeyTypes,
+            @Transient ColumnTypes slaveColumnTypes
+    ) {
+        final int keyCount = slaveColumnTypes.getColumnCount() - slaveValuesKeysSplit;
+        byte[] conversions = null;
+        for (int k = 0; k < keyCount; k++) {
+            final byte conversion = ConvertedKeyJoinRecord.conversionOf(
+                    slaveColumnTypes.getColumnType(slaveValuesKeysSplit + k),
+                    mapKeyTypes.getColumnType(k)
+            );
+            if (conversion != ConvertedKeyJoinRecord.NO_CONVERSION) {
+                if (conversions == null) {
+                    conversions = new byte[keyCount];
+                }
+                conversions[k] = conversion;
+            }
+        }
+        if (conversions == null) {
+            return new SymbolWrapOverJoinRecord(masterSlaveSplit, nullRecord, slaveValuesKeysSplit, keyColumnsToMaster);
+        }
+        return new ConvertedKeyJoinRecord(
+                masterSlaveSplit,
+                nullRecord,
+                slaveValuesKeysSplit,
+                keyColumnsToMaster,
+                conversions,
+                mapKeyTypes,
+                slaveColumnTypes
+        );
     }
 
     @Override

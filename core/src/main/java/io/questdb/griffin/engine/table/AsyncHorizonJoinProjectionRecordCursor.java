@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.AdaptiveDispatchLimit;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlException;
@@ -59,7 +60,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncHorizonJoinProjectionRecordCursor.class);
-    private final int defaultDispatchLimit;
+    // Sizes the in-flight page frame tasks of a read that the reader may stop early.
+    private final AdaptiveDispatchLimit dispatchLimit;
     private final boolean isMasterFiltered;
     // Positioned on the output rows; reads the collected task's frame memory.
     private final PageFrameMemoryRecord masterRecord;
@@ -86,7 +88,6 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
     private long chunkHi;
     private long chunkLo;
     private long cursor = -1;
-    private int dispatchLimit;
     private SqlExecutionContext executionContext;
     // Filtered row indexes of the current frame, followed by the slave row ids of its first rows.
     private DirectLongList filteredRows;
@@ -122,7 +123,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         this.masterTimestampIndex = masterTimestampIndex;
         this.maxTaskRows = maxTaskRows;
         this.isMasterFiltered = isMasterFiltered;
-        this.defaultDispatchLimit = defaultDispatchLimit;
+        this.dispatchLimit = new AdaptiveDispatchLimit(defaultDispatchLimit);
         this.matchedSlaveRecords = new ObjList<>(slaveCount);
         matchedSlaveRecords.setPos(slaveCount);
         this.nullSlaveRecords = new ObjList<>(slaveCount);
@@ -229,12 +230,12 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
 
     @Override
     public void expectLimitedIteration() {
-        // Only the limited light sorts call this, and only over a random-access base, which this
-        // cursor is not, so no plan reaches it. A LIMIT over this factory compiles to
-        // LimitRecordCursorFactory, whose cursor does not call it: dispatch stays unlimited, and
-        // close() cancels the tasks that the reader leaves unstarted. The override caps the
-        // in-flight tasks for a parent that announces a limited read.
-        dispatchLimit = defaultDispatchLimit;
+        // LimitRecordCursorFactory calls this for a LIMIT that reads the first rows of this cursor.
+        // The limited light sorts call it only over a random-access base, which this cursor is not.
+        // Without the call, dispatch stays unlimited, and close() cancels the tasks that the reader
+        // leaves unstarted. With it, the in-flight tasks start at the configured dispatch limit and
+        // grow while the parent keeps reading.
+        dispatchLimit.expectLimitedRead();
     }
 
     @Override
@@ -325,10 +326,23 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
     }
 
     @Override
+    public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
+        // The bound sizes the in-flight tasks of a limited read; the rows are skipped one by one.
+        dispatchLimit.onSkip(remainingFrameRows(), rowCount.get(), maxRowsAfterSkip);
+        NoRandomAccessRecordCursor.super.skipRows(rowCount, maxRowsAfterSkip);
+    }
+
+    @Override
     public void toTop() {
         collectCursor(false);
+        if (frameLimit > -1) {
+            // Workers skip the published tasks they have not started; the frame sequence resets
+            // the cancellation once they finish the started ones.
+            frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+        }
         frameSequence.toTop();
         frameSequence.getAtom().toTop();
+        dispatchLimit.toTop();
         // Keep frameLimit: the frame sequence prepares for dispatch only once.
         frameIndex = -1;
         frameRowCount = 0;
@@ -408,7 +422,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         prepareForDispatchConditionally();
         try {
             do {
-                cursor = frameSequence.next(dispatchLimit, isCountOnly);
+                cursor = frameSequence.next(dispatchLimit.get(), isCountOnly);
                 if (cursor > -1) {
                     final PageFrameReduceTask task = frameSequence.getTask(cursor);
                     LOG.debug()
@@ -429,6 +443,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                     rowPosition = 0;
                     offsetPosition = 0;
                     if (frameRowCount > 0 && frameSequence.isActive()) {
+                        dispatchLimit.onFrameCollected(frameRowCount * offsetCount);
                         if (!isCountOnly) {
                             final PageFrameMemory frameMemory = task.getFrameMemory();
                             masterRecord.init(frameMemory);
@@ -445,6 +460,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                     } else {
                         // Force reset the frame size if the frame sequence was cancelled or failed.
                         frameRowCount = 0;
+                        dispatchLimit.onFrameCollected(0);
                         collectCursor(false);
                     }
                 } else if (cursor == -2) {
@@ -511,6 +527,10 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         return rowPosition < frameRowCount ? (frameRowCount - rowPosition) * offsetCount - offsetPosition : 0;
     }
 
+    int getDispatchLimit() {
+        return dispatchLimit.get();
+    }
+
     void of(PageFrameSequence<AsyncHorizonJoinProjectionAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         // Assign before anything can throw so that close() can reset the sequence.
         this.frameSequence = frameSequence;
@@ -528,7 +548,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         filteredRows = null;
         isAllFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;
-        dispatchLimit = Integer.MAX_VALUE;
+        dispatchLimit.of(Long.MAX_VALUE);
         for (int s = 0; s < slaveCount; s++) {
             final TablePageFrameCursor slaveFrameCursor = (TablePageFrameCursor) slaveFactories.getQuick(s).getPageFrameCursor(executionContext, ORDER_ASC);
             slaveFrameCursors.setQuick(s, slaveFrameCursor);

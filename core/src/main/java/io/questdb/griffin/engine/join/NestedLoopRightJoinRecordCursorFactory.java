@@ -196,6 +196,8 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
             this.slaveCursor = slaveCursor;
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            // a reader can close the previous cursor right after a row, with the match of its slave row still set
+            isMatch = false;
             isSlaveHasNextPending = true;
             circuitBreaker = executionContext.getCircuitBreaker();
         }

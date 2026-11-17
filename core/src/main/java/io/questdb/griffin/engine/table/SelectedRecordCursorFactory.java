@@ -634,6 +634,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public void rampUpFrameSizes(int firstFrameRowCount) {
+            baseCursor.rampUpFrameSizes(firstFrameRowCount);
+        }
+
+        @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
         }

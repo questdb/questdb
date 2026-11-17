@@ -275,6 +275,31 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         return cursor;
     }
 
+    /**
+     * Returns the number of page frame tasks that the open cursor may keep in flight when it
+     * fetches its next frame.
+     */
+    @TestOnly
+    public int getDispatchLimit() {
+        return cursor.getDispatchLimit();
+    }
+
+    /**
+     * Returns the page frames that the open cursor dispatches, once it has fetched its first frame.
+     */
+    @TestOnly
+    public int getFrameCount() {
+        return frameSequence.getFrameCount();
+    }
+
+    /**
+     * Returns the rows of the given page frame of the open cursor, once it has fetched its first frame.
+     */
+    @TestOnly
+    public long getFrameRowCount(int frameIndex) {
+        return frameSequence.getFrameRowCount(frameIndex);
+    }
+
     @Override
     public @NotNull Function getFilter() {
         return filter;
@@ -317,6 +342,16 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean implementsLimit() {
         return limitLoFunction != null;
+    }
+
+    /**
+     * Makes the page frames of a read that a parent may stop early, as a LIMIT above announces with
+     * RecordCursor#expectLimitedIteration(), start at cairo.sql.page.frame.ramp.start.rows rows and
+     * ramp up to their regular size, see PageFrameCursor#rampUpFrameSizes(int). SqlCodeGenerator
+     * calls it for the scan ahead of a RIGHT or FULL join, which takes no LIMIT of its own.
+     */
+    public void rampUpLimitedReads() {
+        cursor.rampUpLimitedReads();
     }
 
     @Override
