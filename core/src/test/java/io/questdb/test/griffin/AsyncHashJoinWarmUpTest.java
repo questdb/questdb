@@ -313,46 +313,17 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
             // collects the frame that the cursor holds after one row. The join's own cursor raises
             // the failure from either, where the query's cursor would log a failure of its close().
             // The frame is collected, and the factory defines no copy and stays on the template,
-            // until the next execution defines all three as it collects its first frame.
+            // until the next execution defines all three as it collects its first frame. Under a
+            // dispatch limit of 4, the frames after the first are in flight as close() fails, and the
+            // cursor waits for them before it frees what they read.
             AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(FRAME_ROWS);
             final String expected = ordinary(SWAPPED_STACK, sqlExecutionContext);
             final Error failure = new Error("test: the stepper copy cannot be defined");
-            for (boolean isOnClose : new boolean[]{false, true}) {
-                final String label = isOnClose ? "close()" : "hasNext()";
-                try (RecordCursorFactory factory = select(SWAPPED_STACK)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(label, join);
-                    final AsyncHashJoinAtom atom = join.getAtom();
-                    final AtomicInteger definitions = new AtomicInteger();
-                    AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(() -> {
-                        if (definitions.incrementAndGet() == 3) {
-                            throw failure;
-                        }
-                    });
-                    int rowsRead = 0;
-                    Throwable thrown = null;
-                    try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
-                        do {
-                            Assert.assertTrue(label, cursor.hasNext());
-                            rowsRead++;
-                        } while (!isOnClose);
-                    } catch (Error e) {
-                        thrown = e;
-                    } finally {
-                        AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(null);
-                    }
-                    Assert.assertSame(label, failure, thrown);
-                    Assert.assertEquals(label, isOnClose ? 1 : FRAME_ROWS, rowsRead);
-                    Assert.assertTrue(label, atom.isSwapped());
-                    Assert.assertEquals(label, 3, definitions.get());
-                    Assert.assertEquals(label, 0, atom.getStepperCopyCount());
-                    Assert.assertFalse(label, join.getStepperClass(0).isHidden());
-                    Assert.assertEquals(label, FRAME_ROWS, atom.getProbedRowCount());
-                    Assert.assertEquals(label, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(label, 0, atom.getRing().getAllocatedBytes());
-                    Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
-                    assertRuns(atom, STEPPER_RUN_TASK, 1, FRAME_COUNT - 1);
-                    Assert.assertEquals(label, 3, atom.getStepperCopyCount());
+            for (int dispatchLimit : new int[]{1, 4}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, dispatchLimit);
+                for (boolean isOnClose : new boolean[]{false, true}) {
+                    final String label = (isOnClose ? "close()" : "hasNext()") + ", dispatch limit " + dispatchLimit;
+                    assertCopyDefinitionFailure(expected, failure, isOnClose, label);
                 }
             }
         });
@@ -550,6 +521,44 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
         }
         Assert.assertNull(atom.getCopyChainClass(stageCount));
         Assert.assertNull(atom.getCopyChainClass(stageCount + 1));
+    }
+
+    private static void assertCopyDefinitionFailure(String expected, Error failure, boolean isOnClose, String label) throws Exception {
+        try (RecordCursorFactory factory = select(SWAPPED_STACK)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(label, join);
+            final AsyncHashJoinAtom atom = join.getAtom();
+            final AtomicInteger definitions = new AtomicInteger();
+            AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(() -> {
+                if (definitions.incrementAndGet() == 3) {
+                    throw failure;
+                }
+            });
+            int rowsRead = 0;
+            Throwable thrown = null;
+            try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                do {
+                    Assert.assertTrue(label, cursor.hasNext());
+                    rowsRead++;
+                } while (!isOnClose);
+            } catch (Error e) {
+                thrown = e;
+            } finally {
+                AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(null);
+            }
+            Assert.assertSame(label, failure, thrown);
+            Assert.assertEquals(label, isOnClose ? 1 : FRAME_ROWS, rowsRead);
+            Assert.assertTrue(label, atom.isSwapped());
+            Assert.assertEquals(label, 3, definitions.get());
+            Assert.assertEquals(label, 0, atom.getStepperCopyCount());
+            Assert.assertFalse(label, join.getStepperClass(0).isHidden());
+            Assert.assertEquals(label, FRAME_ROWS, atom.getProbedRowCount());
+            Assert.assertEquals(label, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+            Assert.assertEquals(label, 0, atom.getRing().getAllocatedBytes());
+            Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+            assertRuns(atom, STEPPER_RUN_TASK, 1, FRAME_COUNT - 1);
+            Assert.assertEquals(label, 3, atom.getStepperCopyCount());
+        }
     }
 
     private static void assertRuns(AsyncHashJoinAtom atom, int kind, long template, long copies) {

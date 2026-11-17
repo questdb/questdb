@@ -230,12 +230,17 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         if (isOpen) {
             isOpen = false;
             try {
-                collectCursor(true);
-                if (frameLimit > -1) {
+                try {
+                    collectCursor(true);
+                } finally {
                     // The rows the consumer did not read are not needed: the frames in flight that no
-                    // worker started are dropped rather than joined.
-                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
-                    frameSequence.await();
+                    // worker started are dropped rather than joined. The frames that workers run are
+                    // awaited even when the collection fails, as defining the stepper copies may,
+                    // since the reset frees what they read.
+                    if (frameLimit > -1) {
+                        frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                        frameSequence.await();
+                    }
                 }
             } finally {
                 try {
