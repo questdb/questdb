@@ -4918,14 +4918,14 @@ public class GroupByTest extends AbstractCairoTest {
                             Frame forward scan on: dim_apTemperature
                 """
                 : "Hash " + joinType + " Outer Join Light\n"
-                + "  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n"
-                + "    PageFrame\n"
-                + "        Row forward scan\n"
-                + "        Frame forward scan on: fact_table\n"
-                + "    Hash\n"
-                + "        PageFrame\n"
-                + "            Row forward scan\n"
-                + "            Frame forward scan on: dim_apTemperature\n").indent(indent);
+                  + "  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n"
+                  + "    PageFrame\n"
+                  + "        Row forward scan\n"
+                  + "        Frame forward scan on: fact_table\n"
+                  + "    Hash\n"
+                  + "        PageFrame\n"
+                  + "            Row forward scan\n"
+                  + "            Frame forward scan on: dim_apTemperature\n").indent(indent);
     }
 
     private void assertError(String query, String errorMessage) throws Exception {

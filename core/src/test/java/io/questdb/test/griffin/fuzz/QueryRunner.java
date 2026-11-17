@@ -857,7 +857,8 @@ public final class QueryRunner {
                 case FILE -> failureFf.clearFailures();
                 case MALLOC -> Unsafe.setRssMemLimit(savedRssLimit);
                 case FUNCTION -> TestFaultFunctionFactory.disarm();
-                case QUERY_MEMORY_LIMIT -> queryMemoryLimitOverrides.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, (String) null);
+                case QUERY_MEMORY_LIMIT ->
+                        queryMemoryLimitOverrides.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, (String) null);
             }
         }
         boolean faultFired = switch (type) {

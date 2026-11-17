@@ -826,14 +826,17 @@ public class ParallelHashJoinBenchmark {
             case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
             // A quarter of the fact rows meet a hot key with eight matches.
             case "FANOUT_DEFERRED" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k";
-            case "FANOUT_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup x ON f.k1 = x.k AND x.w > f.v * 0.5";
-            case "FANOUT_POST_FILTER" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k WHERE x.w > f.v * 0.5";
+            case "FANOUT_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup x ON f.k1 = x.k AND x.w > f.v * 0.5";
+            case "FANOUT_POST_FILTER" ->
+                    "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k WHERE x.w > f.v * 0.5";
             case "PARQUET_PROBE" -> starSql("fact_pq", STAR_JOINS);
             // The Parquet star under a filter that keeps 1% of the fact rows.
             case "PARQUET_PROBE_FILTER" -> starSql("fact_pq", STAR_JOINS) + " WHERE f.sel = 7";
             // An INNER join that 99% of the Parquet fact rows miss, whose output reads more fact
             // columns than its key.
-            case "PARQUET_PROBE_INNER_MISS" -> "SELECT f.id, f.v, f.sym, f.note, d1.w FROM fact_pq f JOIN d1 ON f.k2 = d1.k";
+            case "PARQUET_PROBE_INNER_MISS" ->
+                    "SELECT f.id, f.v, f.sym, f.note, d1.w FROM fact_pq f JOIN d1 ON f.k2 = d1.k";
             case "PARQUET_BUILD" -> "SELECT f.id, f.v, d.w FROM fact f JOIN d3_pq d ON f.k3 = d.k";
             case "MIXED_PROBE" -> starSql("fact_mixed", STAR_JOINS);
             case "COUNT_STAR" -> "SELECT count(*) FROM fact f" + STAR_JOINS;
@@ -843,45 +846,61 @@ public class ParallelHashJoinBenchmark {
                     "LEFT JOIN d3 c ON f.k3 = c.k AND sqrt(c.w) > f.v " +
                     "LEFT JOIN d1 e ON f.sel = e.k AND sqrt(e.w) > f.v";
             // ON residuals of the large dimension alone that keep a sixteenth and a tenth of its rows.
-            case "BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
-            case "BUILD_ONLY_RESIDUAL_REGEX" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
+            case "BUILD_ONLY_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
+            case "BUILD_ONLY_RESIDUAL_REGEX" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
             // dup50's w is the same for each key's 50 rows: an ON residual over it keeps every row of a
             // tenth of the keys, about 5.9 rows per fact row, or of every key, 50 rows per fact row.
-            case "FANOUT_50_BUILD_ONLY_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w < 0.1";
-            case "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w >= 0";
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w < 0.1";
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w >= 0";
             // The dimension is the smaller input, so the first join builds it and probes the fact
             // table; the second join's key, a column of the dimension, comes from its build rows.
-            case "SWAP_STACK_100K" -> "SELECT f.id, d2.w w2, d1.w w1 FROM d2 JOIN fact f ON d2.k = f.k2 JOIN d1 ON d2.kl = d1.kl";
-            case "SWAP_STACK_LARGE" -> "SELECT f.id, d3.w w3, d1.w w1 FROM d3 JOIN fact f ON d3.k = f.k3 JOIN d1 ON d3.kl = d1.kl";
+            case "SWAP_STACK_100K" ->
+                    "SELECT f.id, d2.w w2, d1.w w1 FROM d2 JOIN fact f ON d2.k = f.k2 JOIN d1 ON d2.kl = d1.kl";
+            case "SWAP_STACK_LARGE" ->
+                    "SELECT f.id, d3.w w3, d1.w w1 FROM d3 JOIN fact f ON d3.k = f.k3 JOIN d1 ON d3.kl = d1.kl";
             // VARCHAR payloads of a Parquet build, which the join reads where they live.
-            case "PARQUET_VAR_BUILD_1" -> "SELECT f.id, a.name na FROM fact f JOIN d3_pq a ON f.k3 = a.k WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_BUILD_1" ->
+                    "SELECT f.id, a.name na FROM fact f JOIN d3_pq a ON f.k3 = a.k WHERE f.ts < " + smallProbeBound();
             case "PARQUET_VAR_BUILD_2" -> "SELECT f.id, a.name na, b.name nb FROM fact f JOIN d3_pq a ON f.k3 = a.k " +
                     "JOIN d3_pq b ON f.k3 = b.k WHERE f.ts < " + smallProbeBound();
             case "PARQUET_VAR_BUILD_4" -> "SELECT f.id, a.name na, b.name nb, c.name nc, e.name ne FROM fact f " +
                     "JOIN d3_pq a ON f.k3 = a.k JOIN d3_pq b ON f.k3 = b.k JOIN d3_pq c ON f.k3 = c.k JOIN d3_pq e ON f.k3 = e.k " +
                     "WHERE f.ts < " + smallProbeBound();
             // The probe tasks read the VARCHAR payload for an ON residual over both inputs.
-            case "PARQUET_VAR_RESIDUAL" -> "SELECT f.id, a.w FROM fact f LEFT JOIN d3_pq a ON f.k3 = a.k AND a.name <> f.note " +
-                    "WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_RESIDUAL" ->
+                    "SELECT f.id, a.w FROM fact f LEFT JOIN d3_pq a ON f.k3 = a.k AND a.name <> f.note " +
+                            "WHERE f.ts < " + smallProbeBound();
             // The fact table's first probeRows rows, an interval scan: timestamps step by 3,600 micros.
-            case "SMALL_SINGLE" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k WHERE f.ts < " + smallProbeBound();
-            case "SMALL_STAR" -> "SELECT f.id, f.v, d1.w w1, d2.w w2 FROM fact f JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k WHERE f.ts < "
-                    + smallProbeBound();
+            case "SMALL_SINGLE" ->
+                    "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k WHERE f.ts < " + smallProbeBound();
+            case "SMALL_STAR" ->
+                    "SELECT f.id, f.v, d1.w w1, d2.w w2 FROM fact f JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k WHERE f.ts < "
+                            + smallProbeBound();
             // The fact rows meet 50 and 1,000 rows of their key: 500 million and 10 billion rows.
-            case "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k";
-            case "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup1000 x ON f.k1 = x.k";
+            case "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k";
+            case "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup1000 x ON f.k1 = x.k";
             // The fact table's first 2,500 rows, an interval scan, over the large dimension of two rows
             // per key, which the count indexes whole for a few short chains: about 2,000 joined rows,
             // which a page leaves about a thousand of to count.
-            case "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k WHERE f.ts < "
-                    + probeBound(2_500);
-            case "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE" -> "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k";
+            case "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k WHERE f.ts < "
+                            + probeBound(2_500);
+            case "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k";
             // Builds of fewer rows than parallel.min.rows, whose filters run interpreted over many
             // frames; the filtered input never swaps.
-            case "SMALL_BUILD_REGEX" -> "SELECT f.id, f.v, d.w FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' AND f.ts < "
-                    + probeBound(5_000_000);
-            case "SMALL_BUILD_LIKE_TINY" -> "SELECT f.id, f.v, d.w FROM fact f JOIN dtiny d ON f.k1 = d.k WHERE d.s LIKE '%B%' AND f.ts < "
-                    + probeBound(10_000);
+            case "SMALL_BUILD_REGEX" ->
+                    "SELECT f.id, f.v, d.w FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' AND f.ts < "
+                            + probeBound(5_000_000);
+            case "SMALL_BUILD_LIKE_TINY" ->
+                    "SELECT f.id, f.v, d.w FROM fact f JOIN dtiny d ON f.k1 = d.k WHERE d.s LIKE '%B%' AND f.ts < "
+                            + probeBound(10_000);
             // The fact table's first 3,000,000 rows meet 5 to 50 rows of their key, all of which a cheap
             // condition over both inputs keeps, or about 2% of them: v and w lie in [0, 0.999].
             case "FANOUT_5_RESIDUAL_ALL" -> fanOutResidualSql("dup5", "x.w + f.v >= 0");
@@ -889,15 +908,18 @@ public class ParallelHashJoinBenchmark {
             case "FANOUT_20_RESIDUAL_ALL" -> fanOutResidualSql("dup20", "x.w + f.v >= 0");
             case "FANOUT_50_RESIDUAL_ALL" -> fanOutResidualSql("dup50", "x.w + f.v >= 0");
             case "FANOUT_50_RESIDUAL_SELECTIVE" -> fanOutResidualSql("dup50", "x.w - f.v > 0.8");
-            case "FANOUT_50_POST_FILTER_ALL" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k WHERE x.w + f.v >= 0 AND f.ts < "
-                    + probeBound(FAN_OUT_PROBE_ROWS);
+            case "FANOUT_50_POST_FILTER_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k WHERE x.w + f.v >= 0 AND f.ts < "
+                            + probeBound(FAN_OUT_PROBE_ROWS);
             // Each fact row meets one row of dhot, whose builds lead the join to expect about 2,000.
-            case "FANOUT_MISESTIMATE" -> "SELECT f.id, f.v, h.w FROM fact f JOIN dhot h ON f.k1 = h.k WHERE h.w + f.v >= 0 AND f.ts < "
-                    + probeBound(FAN_OUT_PROBE_ROWS);
+            case "FANOUT_MISESTIMATE" ->
+                    "SELECT f.id, f.v, h.w FROM fact f JOIN dhot h ON f.k1 = h.k WHERE h.w + f.v >= 0 AND f.ts < "
+                            + probeBound(FAN_OUT_PROBE_ROWS);
             // A SYMBOL key over a dictionary of 10,000,000 texts, see createSymbolTables().
             case "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL" ->
                     SYMBOL_10M_JOIN + symbol10mPredicate(shape);
-            case "SYMBOL_10M_INTERVAL_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
+            case "SYMBOL_10M_INTERVAL_D50K" ->
+                    "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
             case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
             // fsym's first probeRows rows, whose timestamps step by half a second from 2024-01-01.
             case "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN "

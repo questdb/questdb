@@ -163,7 +163,8 @@ public class HashJoinGroupByBenchmark {
                             final CharSequence symbol = record.getSymA(i);
                             yield symbol != null ? symbol.length() : -1;
                         }
-                        default -> throw new UnsupportedOperationException("column type: " + ColumnType.nameOf(types[i]));
+                        default ->
+                                throw new UnsupportedOperationException("column type: " + ColumnType.nameOf(types[i]));
                     };
                     checksum = checksum * 31 + value;
                 }
@@ -301,20 +302,28 @@ public class HashJoinGroupByBenchmark {
     private String sql() {
         return switch (shape) {
             case "INT_SMALL" -> "SELECT d1.s, count(*) c, sum(f.v) sv FROM fact f JOIN d1 ON f.k1 = d1.k GROUP BY d1.s";
-            case "INT_LARGE" -> "SELECT d3.s, count(*) c, sum(f.v) sv, sum(d3.w) sw FROM fact f JOIN d3 ON f.k3 = d3.k GROUP BY d3.s";
-            case "LEFT" -> "SELECT f.sym, count(*) c, sum(d2.w) sw FROM fact f LEFT JOIN d2 ON f.k2 = d2.k GROUP BY f.sym";
-            case "PROBE_FILTER" -> "SELECT d2.s, count(*) c, sum(f.v) sv FROM fact f JOIN d2 ON f.k2 = d2.k WHERE f.sel < 10 GROUP BY d2.s";
-            case "SYMBOL" -> "SELECT ds.cat, count(*) c, sum(f.v) sv FROM fact f JOIN dsym ds ON f.sym = ds.sym GROUP BY ds.cat";
+            case "INT_LARGE" ->
+                    "SELECT d3.s, count(*) c, sum(f.v) sv, sum(d3.w) sw FROM fact f JOIN d3 ON f.k3 = d3.k GROUP BY d3.s";
+            case "LEFT" ->
+                    "SELECT f.sym, count(*) c, sum(d2.w) sw FROM fact f LEFT JOIN d2 ON f.k2 = d2.k GROUP BY f.sym";
+            case "PROBE_FILTER" ->
+                    "SELECT d2.s, count(*) c, sum(f.v) sv FROM fact f JOIN d2 ON f.k2 = d2.k WHERE f.sel < 10 GROUP BY d2.s";
+            case "SYMBOL" ->
+                    "SELECT ds.cat, count(*) c, sum(f.v) sv FROM fact f JOIN dsym ds ON f.sym = ds.sym GROUP BY ds.cat";
             case "STAGED" -> "SELECT d2.s, count(*) c, sum(f.v) sv FROM fact f JOIN d2 ON f.k2l = d2.kl GROUP BY d2.s";
             case "COUNT" -> "SELECT count(*) FROM fact f JOIN d3 ON f.k3 = d3.k";
-            case "BUILD_REGEX" -> "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' GROUP BY f.sym";
+            case "BUILD_REGEX" ->
+                    "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' GROUP BY f.sym";
             // A LEFT join builds the filtered dimension whatever the probe's interval holds.
-            case "BUILD_LIKE_TINY" -> "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f LEFT JOIN (SELECT * FROM dtiny WHERE s LIKE '%B%') d ON f.k1 = d.k " +
-                    "WHERE f.ts IN '1970-01-01T00:00:00;10s' GROUP BY f.sym";
+            case "BUILD_LIKE_TINY" ->
+                    "SELECT f.sym, count(*) c, sum(d.w) sw FROM fact f LEFT JOIN (SELECT * FROM dtiny WHERE s LIKE '%B%') d ON f.k1 = d.k " +
+                            "WHERE f.ts IN '1970-01-01T00:00:00;10s' GROUP BY f.sym";
             // fsym's timestamps step by half a second, so ceil(10,000,000 / 256) = 39,063 rows end at 05:25:31.5.
             case "SYMBOL_10M_INTERVAL_D1K" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts IN '2024-03-01T00' GROUP BY k";
-            case "SYMBOL_10M_BOUNDARY_BELOW" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.000000Z' GROUP BY k";
-            case "SYMBOL_10M_BOUNDARY_AT" -> SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.500000Z' GROUP BY k";
+            case "SYMBOL_10M_BOUNDARY_BELOW" ->
+                    SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.000000Z' GROUP BY k";
+            case "SYMBOL_10M_BOUNDARY_AT" ->
+                    SYMBOL_10M_GROUP_BY + " WHERE f.ts < '2024-01-01T05:25:31.500000Z' GROUP BY k";
             case "SYMBOL_10M_FULL" -> SYMBOL_10M_GROUP_BY + " GROUP BY k";
             default -> throw new IllegalArgumentException("unknown shape: " + shape);
         };

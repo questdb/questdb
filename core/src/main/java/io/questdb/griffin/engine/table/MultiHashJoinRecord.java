@@ -78,17 +78,17 @@ public class MultiHashJoinRecord implements Record {
     private ObjList<Record> nullRecords;
 
     /**
-     * @param columnSourcesA  orientation A: for each output column, its source, 0 for the probe
-     *                        record and {@code k + 1} for stage {@code k}
-     * @param columnIndexesA  orientation A: for each output column, its column in that source
-     * @param payloadTypesA   orientation A: for each stage, the column types of its payload
-     *                        record, which type the stage's NULLs
-     * @param columnSourcesB  orientation B, the swapped first join, as {@code columnSourcesA};
-     *                        null when the operator never swaps
-     * @param columnIndexesB  orientation B, as {@code columnIndexesA}; null when the operator
-     *                        never swaps
-     * @param payloadTypesB   orientation B, as {@code payloadTypesA}: stage 0's payload is the
-     *                        left input; null when the operator never swaps
+     * @param columnSourcesA orientation A: for each output column, its source, 0 for the probe
+     *                       record and {@code k + 1} for stage {@code k}
+     * @param columnIndexesA orientation A: for each output column, its column in that source
+     * @param payloadTypesA  orientation A: for each stage, the column types of its payload
+     *                       record, which type the stage's NULLs
+     * @param columnSourcesB orientation B, the swapped first join, as {@code columnSourcesA};
+     *                       null when the operator never swaps
+     * @param columnIndexesB orientation B, as {@code columnIndexesA}; null when the operator
+     *                       never swaps
+     * @param payloadTypesB  orientation B, as {@code payloadTypesA}: stage 0's payload is the
+     *                       left input; null when the operator never swaps
      */
     public MultiHashJoinRecord(
             @NotNull IntList columnSourcesA,

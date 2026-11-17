@@ -767,29 +767,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 // stays serial over it.
                                 ("left".equals(joinType)
                                         ? """
-                                                Async Hash Join workers: 1
-                                                  stages: 1
-                                                    Probe
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: y
-                                                    Build
-                                                      joinType: left outer
-                                                      condition: y1.x=y.x
-                                                      buildPayload: copied when the probe is large enough
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: y1
-                                                """.indent(8)
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: y
+                                            Build
+                                              joinType: left outer
+                                              condition: y1.x=y.x
+                                              buildPayload: copied when the probe is large enough
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: y1
+                                        """.indent(8)
                                         : "        Hash #JOIN_TYPE Outer Join Light\n".replaceAll("#JOIN_TYPE", Character.toUpperCase(joinType.charAt(0)) + joinType.substring(1)) +
-                                        "          condition: y1.x=y.x\n" +
-                                        "            PageFrame\n" +
-                                        "                Row forward scan\n" +
-                                        "                Frame forward scan on: y\n" +
-                                        "            Hash\n" +
-                                        "                PageFrame\n" +
-                                        "                    Row forward scan\n" +
-                                        "                    Frame forward scan on: y1\n") +
+                                          "          condition: y1.x=y.x\n" +
+                                          "            PageFrame\n" +
+                                          "                Row forward scan\n" +
+                                          "                Frame forward scan on: y\n" +
+                                          "            Hash\n" +
+                                          "                PageFrame\n" +
+                                          "                    Row forward scan\n" +
+                                          "                    Frame forward scan on: y1\n") +
                                 "        Hash\n" +
                                 "            SelectedRecord\n" +
                                 "                Async Top K lo: 1 workers: 1\n" +

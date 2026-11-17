@@ -31,20 +31,20 @@ import io.questdb.std.ObjList;
  * shadow does not share: the shadow is always a partitioned WAL table that holds every column from
  * its first row, so the diff-shadow oracle compares each shape below with the plain one.
  *
- * @param isWal                      false for a {@code BYPASS WAL} table
- * @param isPartitioned              false for a {@code PARTITION BY NONE} table, which is never a WAL
- *                                   one
- * @param lateColumns                the columns that the table gains through
- *                                   {@code ALTER TABLE ADD COLUMN} after its first
- *                                   {@code firstChunkRows} rows, which are column tops of them;
- *                                   empty when it has every column from the start
- * @param firstChunkRows             the rows written before the late columns exist and the dropped
- *                                   column goes
- * @param droppedColumnPos           the position among the CREATE TABLE columns of a column that the
- *                                   table drops after its first rows, or -1 for none
- * @param isJoinKeyDictionaryPadded  true when the {@code sym} column's dictionary also holds the
- *                                   {@link #PADDING_TEXT_COUNT} texts of a day that the partitioned
- *                                   table dropped, far more than one per row of the table
+ * @param isWal                     false for a {@code BYPASS WAL} table
+ * @param isPartitioned             false for a {@code PARTITION BY NONE} table, which is never a WAL
+ *                                  one
+ * @param lateColumns               the columns that the table gains through
+ *                                  {@code ALTER TABLE ADD COLUMN} after its first
+ *                                  {@code firstChunkRows} rows, which are column tops of them;
+ *                                  empty when it has every column from the start
+ * @param firstChunkRows            the rows written before the late columns exist and the dropped
+ *                                  column goes
+ * @param droppedColumnPos          the position among the CREATE TABLE columns of a column that the
+ *                                  table drops after its first rows, or -1 for none
+ * @param isJoinKeyDictionaryPadded true when the {@code sym} column's dictionary also holds the
+ *                                  {@link #PADDING_TEXT_COUNT} texts of a day that the partitioned
+ *                                  table dropped, far more than one per row of the table
  */
 public record FuzzStorage(
         boolean isWal,

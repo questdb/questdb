@@ -929,11 +929,14 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                                 for (int col = 0; col < payload.length; col++) {
                                     switch (payload[col]) {
                                         case 1 -> Assert.assertEquals(label, v, probe.getRecord().getLong(col));
-                                        case 2 -> TestUtils.assertEquals(label, "s" + v, probe.getRecord().getStrA(col));
-                                        case 3 -> TestUtils.assertEquals(label, "v" + v, Utf8s.stringFromUtf8Bytes(probe.getRecord().getVarcharA(col)));
+                                        case 2 ->
+                                                TestUtils.assertEquals(label, "s" + v, probe.getRecord().getStrA(col));
+                                        case 3 ->
+                                                TestUtils.assertEquals(label, "v" + v, Utf8s.stringFromUtf8Bytes(probe.getRecord().getVarcharA(col)));
                                         case 4 -> Assert.assertTrue(label, probe.getRecord().getBinLen(col) > 0);
-                                        default -> Assert.assertEquals(label, v, probe.getRecord().getArrayDouble1d2d(col,
-                                                metadata.getColumnType(payload[col]), 0, 0), 0);
+                                        default ->
+                                                Assert.assertEquals(label, v, probe.getRecord().getArrayDouble1d2d(col,
+                                                        metadata.getColumnType(payload[col]), 0, 0), 0);
                                     }
                                 }
                                 v -= 100;

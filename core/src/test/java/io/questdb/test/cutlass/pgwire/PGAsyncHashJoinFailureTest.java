@@ -770,6 +770,7 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
         void run(int port) throws Exception;
     }
 
-    private record Site(String name, String sql, int latchCount, BooleanSupplier isAtSite, String planAttribute, boolean isCapped) {
+    private record Site(String name, String sql, int latchCount, BooleanSupplier isAtSite, String planAttribute,
+                        boolean isCapped) {
     }
 }

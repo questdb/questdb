@@ -87,14 +87,14 @@ public final class HashJoinKeyLayout {
     private final IntList symbolKeyProbeColumns = new IntList();
 
     /**
-     * @param keys              the reconciled keys, whose column indexes address the columns the two
-     *                          mappings name; borrowed for the layout's lifetime
-     * @param probeAlias        the probe input's alias, which the condition text names
-     * @param probeMetadata     the compiled probe input's metadata, borrowed for the key sinks
-     * @param probeBaseColumns  per compiled probe-record index, the column that index holds
-     * @param buildAlias        the build input's alias, which the condition text names
-     * @param buildMetadata     the compiled build input's metadata, borrowed for the key sinks
-     * @param buildBaseColumns  per compiled build-record index, the column that index holds
+     * @param keys             the reconciled keys, whose column indexes address the columns the two
+     *                         mappings name; borrowed for the layout's lifetime
+     * @param probeAlias       the probe input's alias, which the condition text names
+     * @param probeMetadata    the compiled probe input's metadata, borrowed for the key sinks
+     * @param probeBaseColumns per compiled probe-record index, the column that index holds
+     * @param buildAlias       the build input's alias, which the condition text names
+     * @param buildMetadata    the compiled build input's metadata, borrowed for the key sinks
+     * @param buildBaseColumns per compiled build-record index, the column that index holds
      */
     public HashJoinKeyLayout(
             CairoConfiguration configuration,
