@@ -1138,6 +1138,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.index.scan.choice.max.selectivity\tQDB_CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY\t0.05\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.covering.scan.choice.max.selectivity\tQDB_CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY\t0.15\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.covering.groupby.scan.choice.max.selectivity\tQDB_CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY\t0.25\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.covering.multi.key.scan.choice.max.selectivity\tQDB_CAIRO_SQL_COVERING_MULTI_KEY_SCAN_CHOICE_MAX_SELECTIVITY\t0.0075\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.covering.frame.rows\tQDB_CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.covering.local.max.rows\tQDB_CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS\t8192\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.parallel.groupby.merge.shard.queue.capacity\tQDB_CAIRO_SQL_PARALLEL_GROUPBY_MERGE_SHARD_QUEUE_CAPACITY\t8\tdefault\tfalse\tfalse\n" +

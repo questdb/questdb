@@ -2246,6 +2246,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlCoveringMultiKeyScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlCoveringMultiKeyScanChoiceMaxSelectivity();
+    }
+
+    @Override
     public int getSqlParallelIndexGroupByFrameRows() {
         return getDelegate().getSqlParallelIndexGroupByFrameRows();
     }
