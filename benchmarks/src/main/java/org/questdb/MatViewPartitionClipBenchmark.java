@@ -26,6 +26,7 @@ package org.questdb;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -77,10 +78,21 @@ import java.util.concurrent.TimeUnit;
  *     {@code apply}, the WAL apply of what that run wrote; {@code full}, a {@code REFRESH ... FULL}, which rebuilds the
  *     whole view in a single pass without the split, refresh and apply together, as the reference that the change must
  *     leave alone.</li>
+ *     <li>{@code view}: the view's partitioning, {@code DAY}, or {@code default}, the one CREATE picks without
+ *     {@code PARTITION BY}: {@code MONTH} for the view's {@code SAMPLE BY 1h}. Each piece's commit rewrites its view
+ *     partition, so larger view partitions cost more per gap.</li>
+ *     <li>{@code rows}: {@code same}, every RANGE recomputes the rows the view holds, which the WAL apply recognizes
+ *     and skips; {@code changed}, a row added to every populated base hour before each RANGE, outside the measurement,
+ *     so the RANGE replaces every bucket with new values, as after {@code ALTER MATERIALIZED VIEW ... AS} or a late
+ *     backfill.</li>
+ *     <li>{@code symbols}: the keys per hour bucket, 0 for none; with keys, each populated base hour holds one row per
+ *     key, and the view one row per key and hour.</li>
+ *     <li>{@code commitMode}: {@code nosync}, the default, or {@code adaptive}.</li>
  * </ul>
  * The view WAL transactions that one RANGE writes go to stdout once per trial. Run it with
- * {@code java -cp benchmarks/target/benchmarks.jar org.questdb.MatViewPartitionClipBenchmark}; it runs unchanged on
- * builds without the split.
+ * {@code java -cp benchmarks/target/benchmarks.jar org.questdb.MatViewPartitionClipBenchmark}, narrowing the
+ * parameters with {@code -p}, such as {@code -p view=default -p rows=changed}; it runs unchanged on builds without the
+ * split.
  */
 @State(Scope.Benchmark)
 @BenchmarkMode(Mode.SingleShotTime)
@@ -99,8 +111,17 @@ public class MatViewPartitionClipBenchmark {
     private static final long START_MICROS = 1_704_067_200_000_000L;
     @Param({"HOUR", "DAY"})
     public String base;
+    @Param({"nosync", "adaptive"})
+    public String commitMode;
+    @Param({"same", "changed"})
+    public String rows;
     @Param({"refresh", "apply", "full"})
     public String stage;
+    @Param({"0", "1000"})
+    public int symbols;
+    @Param({"DAY", "default"})
+    public String view;
+    private String bumpSql;
     private SqlCompiler compiler;
     private SqlExecutionContext context;
     private Path dbRoot;
@@ -126,6 +147,10 @@ public class MatViewPartitionClipBenchmark {
 
     @Setup(Level.Invocation)
     public void beforeInvocation() throws SqlException {
+        if (bumpSql != null) {
+            engine.execute(bumpSql, context);
+            drainWal();
+        }
         viewTxnBefore = engine.getTableSequencerAPI().lastTxn(viewToken);
         switch (stage) {
             case "refresh" -> engine.execute(RANGE_SQL, context);
@@ -157,7 +182,17 @@ public class MatViewPartitionClipBenchmark {
     @Setup(Level.Trial)
     public void setUp() throws Exception {
         dbRoot = Files.createTempDirectory("mvClipBench-");
-        final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString());
+        final int commitModeValue = switch (commitMode) {
+            case "nosync" -> CommitMode.NOSYNC;
+            case "adaptive" -> CommitMode.ADAPTIVE;
+            default -> throw new IllegalArgumentException("unknown commit mode: " + commitMode);
+        };
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(dbRoot.toString()) {
+            @Override
+            public int getCommitMode() {
+                return commitModeValue;
+            }
+        };
         engine = new CairoEngine(configuration);
         // swaps the no-op mat view state store for the real one
         engine.load();
@@ -172,45 +207,72 @@ public class MatViewPartitionClipBenchmark {
         refreshJob = new MatViewRefreshJob(0, engine, 1);
         walApplyJob = new ApplyWal2TableJob(engine, 0);
 
-        engine.execute("CREATE TABLE base (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY " + base + " WAL", context);
-        engine.execute("CREATE MATERIALIZED VIEW v AS (SELECT ts, count() AS c, sum(v) AS s FROM base SAMPLE BY 1h) PARTITION BY DAY", context);
+        final boolean isChanged = switch (rows) {
+            case "same" -> false;
+            case "changed" -> true;
+            default -> throw new IllegalArgumentException("unknown rows: " + rows);
+        };
+        final String viewPartitionBy = switch (view) {
+            case "DAY" -> " PARTITION BY DAY";
+            case "default" -> "";
+            default -> throw new IllegalArgumentException("unknown view: " + view);
+        };
+        final String keyColumn = symbols > 0 ? "sym, " : "";
+        engine.execute("CREATE TABLE base (ts TIMESTAMP, " + (symbols > 0 ? "sym SYMBOL, " : "") + "v DOUBLE) TIMESTAMP(ts) PARTITION BY " + base + " WAL", context);
+        // A MANUAL view refreshes only when the benchmark asks, so that the base inserts of the changed rows queue no
+        // incremental refresh.
+        final String viewSql = "SELECT ts, " + keyColumn + "count() AS c, sum(v) AS s FROM base SAMPLE BY 1h";
+        engine.execute("CREATE MATERIALIZED VIEW v REFRESH MANUAL AS (" + viewSql + ")" + viewPartitionBy, context);
         viewToken = engine.verifyTableName("v");
-        final long minuteMicros = HOUR_MICROS / ROWS_PER_POPULATED_HOUR;
+        // the rows of a populated hour: one a minute, or one per key and at least one a minute without keys
+        final long rowsPerHour = symbols > 0 ? symbols : ROWS_PER_POPULATED_HOUR;
+        final long rowMicros = HOUR_MICROS / rowsPerHour;
+        final String keyExpr = symbols > 0 ? "concat('s', (x - 1) % " + symbols + "), " : "";
         if ("HOUR".equals(base)) {
-            final long rows = (long) DAYS * 24 / HOUR_BASE_POPULATED_HOUR_STEP * ROWS_PER_POPULATED_HOUR;
-            // row x lands in populated hour (x - 1) / ROWS_PER_POPULATED_HOUR, every HOUR_BASE_POPULATED_HOUR_STEP hours
+            final long baseRows = (long) DAYS * 24 / HOUR_BASE_POPULATED_HOUR_STEP * rowsPerHour;
+            // row x lands in populated hour (x - 1) / rowsPerHour, every HOUR_BASE_POPULATED_HOUR_STEP hours
             engine.execute(
                     "INSERT INTO base SELECT (" + START_MICROS
-                            + " + ((x - 1) / " + ROWS_PER_POPULATED_HOUR + ") * " + HOUR_BASE_POPULATED_HOUR_STEP * HOUR_MICROS
-                            + " + ((x - 1) % " + ROWS_PER_POPULATED_HOUR + ") * " + minuteMicros + ")::TIMESTAMP, x::DOUBLE "
-                            + "FROM long_sequence(" + rows + ")",
+                            + " + ((x - 1) / " + rowsPerHour + ") * " + HOUR_BASE_POPULATED_HOUR_STEP * HOUR_MICROS
+                            + " + ((x - 1) % " + rowsPerHour + ") * " + rowMicros + ")::TIMESTAMP, " + keyExpr + "x::DOUBLE "
+                            + "FROM long_sequence(" + baseRows + ")",
                     context
             );
         } else {
-            final long rows = (long) DAYS * 24 * ROWS_PER_POPULATED_HOUR;
+            final long baseRows = (long) DAYS * 24 * rowsPerHour;
             // every hour of every day, without Saturdays and Sundays; 2024-01-01 is a Monday
             engine.execute(
-                    "INSERT INTO base SELECT ts, v FROM ("
-                            + "SELECT (" + START_MICROS + " + (x - 1) * " + minuteMicros + ")::TIMESTAMP ts, x::DOUBLE v "
-                            + "FROM long_sequence(" + rows + ")"
+                    "INSERT INTO base SELECT ts, " + keyColumn + "v FROM ("
+                            + "SELECT (" + START_MICROS + " + (x - 1) * " + rowMicros + ")::TIMESTAMP ts, " + keyExpr + "x::DOUBLE v "
+                            + "FROM long_sequence(" + baseRows + ")"
                             + ") WHERE ((ts::LONG - " + START_MICROS + ") / " + DAY_MICROS + ") % 7 < 5",
                     context
             );
         }
         drainWal();
+        if (isChanged) {
+            // one more row, 1 microsecond into every populated hour, which changes the hour's count and sum
+            bumpSql = "INSERT INTO base SELECT ts + 1, " + (symbols > 0 ? "'s0', " : "") + "1.0 FROM (SELECT ts, count() FROM base SAMPLE BY 1h)";
+        }
         // the view's first build
+        engine.execute("REFRESH MATERIALIZED VIEW v INCREMENTAL", context);
         runRefreshJob();
         drainWal();
-        final long expectedRows = countRows("(SELECT ts, count() FROM base SAMPLE BY 1h)");
+        final long expectedRows = countRows("(" + viewSql + ")");
         if (countRows("v") != expectedRows) {
             throw new IllegalStateException("the view did not build [rows=" + countRows("v") + ", expected=" + expectedRows + ']');
         }
         // one RANGE outside the measurement, which compiles the SQL and reports the view WAL transactions it writes
+        if (bumpSql != null) {
+            engine.execute(bumpSql, context);
+            drainWal();
+        }
         final long txnBefore = engine.getTableSequencerAPI().lastTxn(viewToken);
         engine.execute(RANGE_SQL, context);
         runRefreshJob();
         drainWal();
         System.out.println("[clip] base=" + base + ", partitions=" + countRows("table_partitions('base')")
+                + ", view partitions=" + countRows("table_partitions('v')") + ", view rows=" + countRows("v")
                 + ", view WAL txns per RANGE=" + (engine.getTableSequencerAPI().lastTxn(viewToken) - txnBefore));
         if (countRows("v") != expectedRows) {
             throw new IllegalStateException("the RANGE changed the view [rows=" + countRows("v") + ", expected=" + expectedRows + ']');
