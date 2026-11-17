@@ -14076,7 +14076,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testWalTxnRangeLoaderReleasesLargeScanBuffer() throws Exception {
         // The scan buffers three longs per data transaction. A scan over a long backlog must not keep that buffer
-        // once it is done, while a short scan keeps its small buffer for the next load.
+        // once it is done, while a scan of up to 1,024 transactions fits the retained buffer and grows nothing.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final TableToken baseToken = engine.verifyTableName("base");
@@ -14102,8 +14102,13 @@ public class MatViewTest extends AbstractCairoTest {
                 Assert.assertEquals(2, intervals.size());
                 Assert.assertEquals(ts, intervals.getQuick(0));
                 Assert.assertEquals(ts, intervals.getQuick(1));
-                final int smallScanCapacity = loader.getTxnIntervalsCapacity();
-                Assert.assertTrue(smallScanCapacity <= WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY);
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
+
+                // 1,024 data transactions fill the retained buffer exactly, so the scan keeps it as it is
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, 1_024);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
 
                 intervals.clear();
                 loader.load(engine, path, baseToken, intervals, 0, txnCount);
@@ -14113,7 +14118,7 @@ public class MatViewTest extends AbstractCairoTest {
                 Assert.assertEquals(ts, intervals.getQuick(1));
                 Assert.assertEquals(ts, loader.getMinTimestamp());
                 Assert.assertEquals(ts, loader.getMaxTimestamp());
-                Assert.assertEquals(smallScanCapacity, loader.getTxnIntervalsCapacity());
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
 
                 // the loader still works after it dropped its buffer
                 intervals.clear();

@@ -46,11 +46,12 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class WalTxnRangeLoader implements QuietCloseable {
-    // The scan keeps txnIntervals up to this capacity, in longs, between loads, and drops a larger buffer after the
-    // load, so that a scan over a long backlog does not hold its buffer until restart.
+    // The scan starts txnIntervals at this capacity, in longs, so that it holds 1,024 transactions without growing,
+    // and drops a larger buffer for one of this capacity after the load, so that a scan over a long backlog does not
+    // hold its buffer until restart.
     public static final int TXN_INTERVALS_RETAINED_CAPACITY = 3 * 1024;
     // the data intervals of the scanned transactions as triples: min timestamp, max timestamp, transaction index
-    private final LongList txnIntervals = new LongList();
+    private final LongList txnIntervals = new LongList(TXN_INTERVALS_RETAINED_CAPACITY);
     private final WalEventReader walEventReader;
     private boolean hasTruncate;
     private long maxTimestamp;
