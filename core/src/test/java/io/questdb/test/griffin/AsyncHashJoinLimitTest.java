@@ -571,6 +571,45 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeLimitOfZeroUpperBoundReadsTheFirstRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // LIMIT 5, 0 returns the first five rows, as LIMIT 5 does: LimitRecordCursorFactory swaps
+            // the bounds of a range whose lower one is the larger, zero counting as positive. The
+            // join's first window holds the frames of four rows that five rows need, the second
+            // capped at one row, whose continuation the join's own cursor goes on to read, through
+            // every row: each of t's rows meets one row of d1 and two of d2. Literal bounds, and
+            // bound ones.
+            bindVariableService.setLong("lo", 5);
+            bindVariableService.setLong("hi", 0);
+            try {
+                for (String limit : new String[]{" LIMIT 5, 0", " LIMIT :lo, :hi"}) {
+                    final String sql = STARS[0] + limit;
+                    final String expected = ordinaryRows(sql);
+                    Assert.assertEquals(sql, ordinaryRows(STARS[0] + " LIMIT 5"), expected);
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(sql, join);
+                        Assert.assertEquals(sql, expected, printRows(factory));
+                        try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(sql, cursor.hasNext());
+                            Assert.assertEquals(sql, 2, join.getDispatchedFrameCount());
+                            int rows = 1;
+                            while (cursor.hasNext()) {
+                                rows++;
+                            }
+                            Assert.assertEquals(sql, 2 * FRAME_COUNT * FRAME_ROWS, rows);
+                            Assert.assertTrue(sql, join.getAtom().getContinuationCount() > 0);
+                        }
+                    }
+                }
+            } finally {
+                bindVariableService.clear();
+            }
+        });
+    }
+
+    @Test
     public void testRangeLimitPerExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
