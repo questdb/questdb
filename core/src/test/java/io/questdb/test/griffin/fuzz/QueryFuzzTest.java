@@ -57,7 +57,9 @@ import org.junit.Test;
 import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Paths;
+import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -179,6 +181,14 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *     <li>{@code -Dquestdb.fuzz.s0=L -Dquestdb.fuzz.s1=L} - replay a
  *         specific seed pair, as printed in the run's "random seeds: ..."
  *         line. Use to reproduce a failure deterministically.</li>
+ *     <li>{@code -Dquestdb.fuzz.repro=<case>} - replay a named case from
+ *         the checked-in registry, {@code query-fuzz-repro.properties} in
+ *         this package. Each case records its test method, seed pair,
+ *         the commit and build it was seen on, and a one-line
+ *         description; the case's stored seed pair is fed into the same
+ *         {@code questdb.fuzz.s0/s1} path as above, so no log is needed
+ *         to replay it. Add a case when a fuzz failure is fixed or
+ *         triaged.</li>
  * </ul>
  * <p>
  * Each query also has a small chance of running with parallel SQL
@@ -270,6 +280,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // QUERY_POOL_NAME + '_' + workerId, which the FILE fault's query-execution
     // scope matches to admit reduce workers alongside the test thread.
     private static final String QUERY_POOL_NAME = "fuzzQuery";
+    // Checked-in repro-case registry, resolved relative to this class's package.
+    private static final String REPRO_REGISTRY = "query-fuzz-repro.properties";
     private static final boolean[] SERIAL_FLAGS = new boolean[7];
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
@@ -292,6 +304,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentFiberQueryFuzz() throws Exception {
+        applyReproCase();
         assertMemoryLeak(() -> {
             final Long s0 = Long.getLong("questdb.fuzz.s0");
             final Long s1 = Long.getLong("questdb.fuzz.s1");
@@ -1176,6 +1189,32 @@ public class QueryFuzzTest extends AbstractCairoTest {
         return context;
     }
 
+    // A name in -Dquestdb.fuzz.repro=<case> stands in for a remembered seed pair: the case's
+    // stored seeds are copied into questdb.fuzz.s0/s1, which the runner already reads. The case
+    // registry is the checked-in REPRO_REGISTRY, so replay needs no log archaeology.
+    private static void applyReproCase() throws IOException {
+        final String caseName = System.getProperty("questdb.fuzz.repro");
+        if (caseName == null || caseName.isEmpty()) {
+            return;
+        }
+        final Properties cases = new Properties();
+        try (InputStream is = QueryFuzzTest.class.getResourceAsStream(REPRO_REGISTRY)) {
+            if (is == null) {
+                throw new IllegalStateException("repro registry not found: " + REPRO_REGISTRY);
+            }
+            cases.load(is);
+        }
+        final String prefix = "case." + caseName + ".";
+        final String s0 = cases.getProperty(prefix + "s0");
+        final String s1 = cases.getProperty(prefix + "s1");
+        if (s0 == null || s1 == null) {
+            throw new IllegalArgumentException("no repro case '" + caseName + "' in " + REPRO_REGISTRY);
+        }
+        System.setProperty("questdb.fuzz.s0", s0.trim());
+        System.setProperty("questdb.fuzz.s1", s1.trim());
+        LOG.info().$("repro case [").$(caseName).$(", s0=").$(s0.trim()).$(", s1=").$(s1.trim()).I$();
+    }
+
     private static BufferedWriter openDump(String path) throws IOException {
         if (path == null || path.isEmpty()) {
             return null;
@@ -1184,6 +1223,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     private static void runFuzz(SqlExecutionContext sqlExecutionContext, WorkerPool writerPool, String queryWorkerNamePrefix) throws Exception {
+        applyReproCase();
         Long s0 = Long.getLong("questdb.fuzz.s0");
         Long s1 = Long.getLong("questdb.fuzz.s1");
         Rnd rnd = (s0 != null && s1 != null)
