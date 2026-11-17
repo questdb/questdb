@@ -206,7 +206,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             // chain of several matches, the one match of a unique build, or a LEFT miss.
             sqlExecutionContext.changePageFrameSizes(1, 1);
             for (boolean isCopiesEnabled : new boolean[]{false, true}) {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopiesEnabled);
+                // The copies run from the first task.
+                useSteppers(isCopiesEnabled);
                 try {
                     for (String firstJoin : new String[]{"d1 a ON t.k = a.k", "u1 a ON t.k = a.k", "none a ON t.k = a.k"}) {
                         final String sql = "SELECT t.v, a.k, d2.w2 FROM t LEFT JOIN " + firstJoin
@@ -235,13 +236,15 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                             isArmed.set(true);
                             assertCancelled(factory, breaker, sql);
                             isArmed.set(false);
+                            // The cancelled tasks ran the stepper under test.
+                            assertStepperRuns(join, isCopiesEnabled, sql);
                             // The residual ran over no pair after the one that cancelled the query.
                             Assert.assertEquals(sql, cancelledAt.get().intValue(), TestLatchedCounterFunctionFactory.getCount());
                             assertReused(factory, join, sql, expected);
                         }
                     }
                 } finally {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                    restoreSteppers();
                 }
             }
         });

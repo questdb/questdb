@@ -678,6 +678,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
             execute("CREATE TABLE e AS (SELECT (x % 7)::LONG lk, x ew FROM long_sequence(30))");
             sqlExecutionContext.setParallelHashJoinEnabled(true);
             final String sql = "SELECT t.v, d.w, e.ew FROM t LEFT JOIN d ON t.k = d.k JOIN e ON t.lk = e.lk";
+            // The stack runs as one parallel hash join of two stages, which the limits then meet.
+            try (RecordCursorFactory factory = select(sql)) {
+                final String plan = ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext);
+                TestUtils.assertContains(plan, "Async Hash Join workers:");
+                TestUtils.assertContains(plan, "stages: 2");
+            }
             final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, node1.getConfigurationOverrides(), false, new ObjList<>(), null);
             Assert.assertTrue(runner.isFaultTypeAvailable(FaultType.QUERY_MEMORY_LIMIT));
             final Rnd rnd = new Rnd(0x5eed, 0x9e1);

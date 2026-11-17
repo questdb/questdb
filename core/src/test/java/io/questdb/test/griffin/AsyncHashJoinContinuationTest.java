@@ -476,7 +476,8 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             String expected
     ) throws SqlException {
         for (boolean isCopy : new boolean[]{true, false}) {
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopy);
+            // The copies run from the first task.
+            useSteppers(isCopy);
             final TrippingFilter filter = new TrippingFilter(breaker, tripAt);
             try (
                     RecordCursorFactory probe = select("SELECT * FROM " + probeTable);
@@ -496,11 +497,13 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                 Assert.assertEquals(pairsRun, filter.calls);
                 Assert.assertEquals(continuations, factory.getAtom().getContinuationCount());
                 Assert.assertEquals(0, factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                // The cancelled tasks and chunks ran the stepper under test.
+                assertStepperRuns(factory, isCopy, probeTable);
                 breaker.reset();
                 filter.tripAt = -1;
                 Assert.assertEquals(expected, printRows(factory, sqlExecutionContext));
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         }
     }

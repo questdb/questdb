@@ -363,22 +363,28 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             final String even = "(SELECT * FROM t WHERE v % 2 = 0) t";
             final String odd = "(SELECT * FROM t WHERE v % 2 = 1) t";
             for (boolean isCopy : new boolean[]{true, false}) {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopy);
+                // The stages' hidden copies from the first task, and the shared template, as on a JVM
+                // without hidden classes.
+                useSteppers(isCopy);
                 try {
                     // One kept row of the first frame yields the two rows of its chain.
                     final String sql = "SELECT t.v, d1.w, d2.w2 FROM " + even + " LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.k = d2.k LIMIT 1";
                     TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "filter: v%2=0");
                     assertFirstRow(sql, 1, 1, 0, 1);
+                    assertStepperRuns(sql, sqlExecutionContext, isCopy);
                     // The first kept row, of key 1, misses m; the chunk of one more, of key 3, meets it.
                     final String inner = "SELECT t.v, m.w FROM " + odd + " JOIN m ON t.k = m.k LIMIT 1";
                     assertParallelHashJoin(inner, sqlExecutionContext);
                     assertFirstRow(inner, 1, 2, 1, 1);
+                    assertStepperRuns(inner, sqlExecutionContext, isCopy);
                     for (int limit : new int[]{1, 2, 3, 5, 9, 31, 32, 33}) {
-                        assertParallelHashJoin("SELECT t.v, d1.w, d2.w2 FROM " + odd + " LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.k = d2.k AND d2.w2 > t.v LIMIT " + limit, sqlExecutionContext);
+                        final String residual = "SELECT t.v, d1.w, d2.w2 FROM " + odd + " LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.k = d2.k AND d2.w2 > t.v LIMIT " + limit;
+                        assertParallelHashJoin(residual, sqlExecutionContext);
+                        assertStepperRuns(residual, sqlExecutionContext, isCopy);
                         assertParallelHashJoin("SELECT t.v, m.w FROM " + even + " JOIN m ON t.k = m.k LIMIT " + limit, sqlExecutionContext);
                     }
                 } finally {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                    restoreSteppers();
                 }
             }
         });
@@ -500,12 +506,17 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             for (boolean isCopy : new boolean[]{true, false}) {
-                // The steppers' shared template, as on a JVM without hidden classes, too.
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopy);
+                // The stages' hidden copies from the first task, and the shared template, as on a JVM
+                // without hidden classes.
+                useSteppers(isCopy);
                 try {
                     assertParityUnderEachLimit();
+                    for (String star : STARS) {
+                        assertStepperRuns(star + " LIMIT 5", sqlExecutionContext, isCopy);
+                        assertStepperRuns(star + " ORDER BY ts DESC LIMIT 2, 5", sqlExecutionContext, isCopy);
+                    }
                 } finally {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                    restoreSteppers();
                 }
             }
         });

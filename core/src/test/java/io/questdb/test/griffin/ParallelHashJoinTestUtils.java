@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -106,6 +107,41 @@ public final class ParallelHashJoinTestUtils {
     }
 
     /**
+     * Asserts that the probe tasks and continuation chunks of the join's last execution, since its
+     * cursor opened, ran the stages' hidden stepper copies alone, {@code isCopy}, or the shared
+     * template alone, and that some ran. A factory runs its copies from the first task once
+     * {@link AsyncHashJoinRecordCursorFactory#setStepperWarmUpRowsForTesting(long)} set no warm-up
+     * before it compiled, and the template while copies are off.
+     */
+    public static void assertStepperRuns(AsyncHashJoinRecordCursorFactory join, boolean isCopy, String label) {
+        Assert.assertEquals(label, isCopy, join.getStepperClass(0).isHidden());
+        final AsyncHashJoinAtom atom = join.getAtom();
+        long runs = 0;
+        for (int kind : new int[]{AsyncHashJoinAtom.STEPPER_RUN_TASK, AsyncHashJoinAtom.STEPPER_RUN_CONTINUATION}) {
+            runs += atom.getStepperRunCount(kind, isCopy);
+            Assert.assertEquals(label, 0, atom.getStepperRunCount(kind, !isCopy));
+        }
+        Assert.assertTrue(label, runs > 0);
+    }
+
+    /**
+     * Executes the query, which runs the operator, reads every row, and asserts which steppers its
+     * tasks ran, see {@link #assertStepperRuns(AsyncHashJoinRecordCursorFactory, boolean, String)}.
+     */
+    public static void assertStepperRuns(String sql, SqlExecutionContext context, boolean isCopy) throws SqlException {
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+                assertStepperRuns(join, isCopy, sql);
+            }
+        }
+    }
+
+    /**
      * The operator inside a compiled query, or null when the query does not run it.
      */
     @Nullable
@@ -136,6 +172,14 @@ public final class ParallelHashJoinTestUtils {
         final TextPlanSink sink = new TextPlanSink();
         sink.of(factory, context);
         return sink.getSink().toString();
+    }
+
+    /**
+     * Restores the stepper copies and their warm-up to the defaults, see {@link #useSteppers}.
+     */
+    public static void restoreSteppers() {
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
     }
 
     /**
@@ -183,5 +227,15 @@ public final class ParallelHashJoinTestUtils {
             Misc.freeObjListIfCloseable(freshTables);
         }
         return sink.toString();
+    }
+
+    /**
+     * Makes the factories that compile from here on run the stages' hidden stepper copies from their
+     * first task, {@code isCopy}, or the shared template, as a JVM without hidden classes runs it;
+     * {@link #restoreSteppers()} undoes it.
+     */
+    public static void useSteppers(boolean isCopy) {
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopy);
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(isCopy ? 0 : AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
     }
 }
