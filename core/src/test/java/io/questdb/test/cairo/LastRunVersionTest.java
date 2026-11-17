@@ -53,18 +53,27 @@ public class LastRunVersionTest extends AbstractBootstrapTest {
     private static final byte[] NO_VERSION_BYTES = {0, 0, 0, 0, 0, 0, 0, 0};
 
     @Test
-    public void testDevelopmentBuildRecordsNoVersion() throws Exception {
+    public void testDevelopmentBuildWritesNothing() throws Exception {
         assertMemoryLeak(() -> {
             final String dbRoot = newDbRoot();
             final WriteCountingFacade ff = new WriteCountingFacade();
-            // A build that does not run from its jar has no version.
+            // A build that does not run from its jar has no version: it creates no file.
             startEngine(new VersionConfiguration(dbRoot, "[DEVELOPMENT]", ff));
-            assertFile(dbRoot, NO_VERSION_BYTES, NO_VERSION_BYTES);
-            Assert.assertEquals(1, ff.writeCount);
+            Assert.assertFalse(new File(dbRoot, LastRunVersion.FILE_NAME).exists());
+            Assert.assertEquals(0, ff.writeCount);
 
+            // Nor does it replace the file of the release that ran before it.
+            startEngine(new VersionConfiguration(dbRoot, "10.2.1"));
+            final byte[] oss1021 = {0, 10, 2, 1, 0, 0, 0, 0};
+            assertFile(dbRoot, oss1021, NO_VERSION_BYTES);
             startEngine(new VersionConfiguration(dbRoot, "[DEVELOPMENT]", ff));
-            assertFile(dbRoot, NO_VERSION_BYTES, NO_VERSION_BYTES);
-            Assert.assertEquals("a restart of the same build must not write the file", 1, ff.writeCount);
+            assertFile(dbRoot, oss1021, NO_VERSION_BYTES);
+            Assert.assertEquals(0, ff.writeCount);
+
+            // Saved directly, no version writes nothing either.
+            LastRunVersion.save(new VersionConfiguration(dbRoot, "unused", ff), null, null);
+            assertFile(dbRoot, oss1021, NO_VERSION_BYTES);
+            Assert.assertEquals(0, ff.writeCount);
         });
     }
 

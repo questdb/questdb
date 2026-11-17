@@ -142,7 +142,9 @@ public final class LastRunVersion {
 
     /**
      * Records the versions of the running release, unless the file already holds exactly them: a restart of
-     * the same release writes nothing. Fails as any other write of the engine start does.
+     * the same release writes nothing. A build that knows neither of its versions, such as a development
+     * build or a unit test, writes nothing either and leaves the file of the last release in place. Fails as
+     * any other write of the engine start does.
      *
      * @param ossVersion the QuestDB version, as the build names it
      * @param entVersion the QuestDB Enterprise version, as the build names it; {@code null} for an OSS engine
@@ -151,6 +153,9 @@ public final class LastRunVersion {
         final FilesFacade ff = configuration.getFilesFacade();
         final long oss = encode(ossVersion);
         final long ent = encode(entVersion);
+        if (oss == NO_VERSION && ent == NO_VERSION) {
+            return;
+        }
         final long buf = Unsafe.malloc(FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(FILE_NAME);
