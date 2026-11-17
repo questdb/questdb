@@ -151,6 +151,10 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code probeRows} rows, one key each, with either dimension: the join opens the shared cache
  *       from 625,000 rows, one per 16 texts, with the 1,000 texts, which fill it, and from 10,000,000
  *       rows, one per text, with the 50,000, which leave it unresolved.
+ *       {@code PAGE_1K} and {@code PAGE_LARGE} read the first 1,001 rows of {@code SINGLE_1K} and
+ *       {@code SINGLE_LARGE}, as an HTTP page of 1,000 rows without a row count does, and
+ *       {@code FETCH_1K} and {@code FETCH_LARGE} read every row of them, as a JDBC client of fetch
+ *       size 1,000 does, through a portal that it resumes.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
@@ -175,6 +179,9 @@ import java.util.concurrent.locks.LockSupport;
  *       decode cache budget; -1 keeps the default.</li>
  *   <li>{@code warmUpRows}: the probe rows after which a factory switches from the shared stepper
  *       template to its stages' hidden copies; -1 keeps the default.</li>
+ *   <li>{@code firstReadHint}: whether the {@code PAGE_*} and {@code FETCH_*} shapes open their
+ *       cursors under the rows that the client reads first, 1,001 and 1,000, as the HTTP and PG
+ *       servers pass them; false opens them as the servers did before they passed them.</li>
  * </ul>
  * {@code plan=OPERATOR_TEMPLATE} runs the operator with the shared stepper template in place of a
  * hidden class per stage, whichever the warm-up picks. The report line names the ring budget and the
@@ -188,8 +195,8 @@ import java.util.concurrent.locks.LockSupport;
  * untimed, and prints one {@code HASHJOIN-REPORT} line: rows and a checksum (equal across plans),
  * wall and CPU time of the consumer and the workers, the peak of the per-query tracked memory, and
  * the operator's dispatch limit, ring memory, continuation chunks and probe frame count. The
- * {@code LIMIT_*} shapes add the median time to the first row and the worker CPU per execution
- * over 20 executions. With {@code -Dquestdb.bench.report=<file>} in the forked JVM's arguments the
+ * {@code LIMIT_*} and {@code PAGE_*} shapes add the median time to the first row and the worker CPU
+ * per execution over 20 executions. With {@code -Dquestdb.bench.report=<file>} in the forked JVM's arguments the
  * line also goes to that file.
  */
 @State(Scope.Benchmark)
@@ -208,9 +215,13 @@ public class ParallelHashJoinBenchmark {
     private static final long COUNT_PAGE_ROWS = 1_001;
     // The fact rows that the FANOUT_*_ALL, FANOUT_50_* and FANOUT_MISESTIMATE shapes join.
     private static final long FAN_OUT_PROBE_ROWS = 3_000_000;
+    // The rows that a JDBC client of fetch size 1,000 reads first, those of each Execute.
+    private static final long FETCH_ROWS = 1_000;
     private static final String DATA_VERSION = "v5";
     private static final int LIMIT_PROBE_EXECUTIONS = 20;
     private static final String OPERATOR_NODE = "Hash Join workers:";
+    // The rows that an HTTP page of 1,000 rows without a row count reads: one past the page.
+    private static final long PAGE_ROWS = 1_001;
     private static final String POOL_NAME = "hashjoinbench";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
@@ -239,6 +250,9 @@ public class ParallelHashJoinBenchmark {
     @Param({"-1"})
     public long payloadCopyMaxSize;
 
+    @Param({"true"})
+    public boolean firstReadHint;
+
     @Param({"false"})
     public boolean freshCompile;
 
@@ -261,6 +275,7 @@ public class ParallelHashJoinBenchmark {
             "SINGLE_1K", "SINGLE_100K", "SINGLE_LARGE",
             "WIDE",
             "LIMIT_1K", "LIMIT_LARGE",
+            "PAGE_1K", "PAGE_LARGE", "FETCH_1K", "FETCH_LARGE",
             "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
             "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
             "COUNT_STAR",
@@ -304,13 +319,13 @@ public class ParallelHashJoinBenchmark {
         if (freshCompile) {
             try (
                     RecordCursorFactory fresh = engine.select(text, ctx);
-                    RecordCursor cursor = fresh.getCursor(ctx)
+                    RecordCursor cursor = openCursor(fresh)
             ) {
-                return isCountShape() ? count(cursor) : consume(cursor, types);
+                return isCountShape() ? count(cursor) : consume(cursor, types, readRows());
             }
         }
-        try (RecordCursor cursor = factory.getCursor(ctx)) {
-            return isCountShape() ? count(cursor) : consume(cursor, types);
+        try (RecordCursor cursor = openCursor(factory)) {
+            return isCountShape() ? count(cursor) : consume(cursor, types, readRows());
         }
     }
 
@@ -337,9 +352,13 @@ public class ParallelHashJoinBenchmark {
     }
 
     private static long consume(RecordCursor cursor, int[] types) {
+        return consume(cursor, types, Long.MAX_VALUE);
+    }
+
+    private static long consume(RecordCursor cursor, int[] types, long maxRows) {
         final Record record = cursor.getRecord();
         long checksum = 0;
-        while (cursor.hasNext()) {
+        for (long rows = 0; rows < maxRows && cursor.hasNext(); rows++) {
             checksum = checksum * 31 + consumeRow(record, types);
         }
         return checksum;
@@ -547,6 +566,18 @@ public class ParallelHashJoinBenchmark {
         engine = Misc.free(engine);
     }
 
+    // The rows that the client of a PAGE_ or FETCH_ shape reads first, Long.MAX_VALUE for any other
+    // shape and without firstReadHint.
+    private long firstReadRows() {
+        if (!firstReadHint) {
+            return Long.MAX_VALUE;
+        }
+        if (shape.startsWith("PAGE_")) {
+            return PAGE_ROWS;
+        }
+        return shape.startsWith("FETCH_") ? FETCH_ROWS : Long.MAX_VALUE;
+    }
+
     // True for a shape that counts the join's rows through the cursor rather than reads them.
     private boolean isCountShape() {
         return shape.startsWith("COUNT_") && !"COUNT_STAR".equals(shape);
@@ -649,6 +680,21 @@ public class ParallelHashJoinBenchmark {
         }
     }
 
+    // Opens the cursor as the HTTP and PG servers do, under the rows that the client reads first.
+    private RecordCursor openCursor(RecordCursorFactory factory) throws SqlException {
+        ctx.setFirstReadRows(firstReadRows());
+        try {
+            return factory.getCursor(ctx);
+        } finally {
+            ctx.setFirstReadRows(Long.MAX_VALUE);
+        }
+    }
+
+    // The rows that the shape reads: a PAGE_ shape's page, every row otherwise.
+    private long readRows() {
+        return shape.startsWith("PAGE_") ? PAGE_ROWS : Long.MAX_VALUE;
+    }
+
     private void report() throws SqlException, IOException, InterruptedException {
         final ThreadMXBean threads = ManagementFactory.getThreadMXBean();
         final StringBuilder line = new StringBuilder();
@@ -665,6 +711,7 @@ public class ParallelHashJoinBenchmark {
                 .append(" probeRows=").append(probeRows)
                 .append(" parquetCacheSize=").append(parquetCacheSize)
                 .append(" warmUpRows=").append(warmUpRows)
+                .append(" firstReadHint=").append(firstReadHint)
                 .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
 
         final long workerCpu0 = cpuNanos(threads, workerThreadIds);
@@ -673,7 +720,7 @@ public class ParallelHashJoinBenchmark {
         long rows = 0;
         long checksum = 0;
         final long peak;
-        try (RecordCursor cursor = factory.getCursor(ctx)) {
+        try (RecordCursor cursor = openCursor(factory)) {
             final MemoryTracker tracker = ctx.getMemoryTracker();
             if (tracker == null) {
                 throw new IllegalStateException("no per-query memory tracker");
@@ -687,7 +734,8 @@ public class ParallelHashJoinBenchmark {
                     checksum = rows;
                 } else {
                     final Record record = cursor.getRecord();
-                    while (cursor.hasNext()) {
+                    final long maxRows = readRows();
+                    while (rows < maxRows && cursor.hasNext()) {
                         checksum = checksum * 31 + consumeRow(record, types);
                         rows++;
                     }
@@ -726,16 +774,16 @@ public class ParallelHashJoinBenchmark {
                         wall / 1e6, consumerCpu / 1e6, workerCpu / 1e6))
                 .append(" peakTrackedBytes=").append(peak);
 
-        if (shape.startsWith("LIMIT_")) {
+        if (shape.startsWith("LIMIT_") || shape.startsWith("PAGE_")) {
             final long[] firstRow = new long[LIMIT_PROBE_EXECUTIONS];
             final long limitWorkerCpu0 = cpuNanos(threads, workerThreadIds);
             final long limitConsumerCpu0 = threads.getCurrentThreadCpuTime();
             for (int i = 0; i < LIMIT_PROBE_EXECUTIONS; i++) {
                 final long start = System.nanoTime();
-                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                try (RecordCursor cursor = openCursor(factory)) {
                     if (cursor.hasNext()) {
                         firstRow[i] = System.nanoTime() - start;
-                        consume(cursor, types);
+                        consume(cursor, types, readRows() - 1);
                     }
                 }
             }
@@ -774,6 +822,8 @@ public class ParallelHashJoinBenchmark {
             case "WIDE" -> "SELECT * FROM fact f" + STAR_JOINS;
             case "LIMIT_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k LIMIT 100";
             case "LIMIT_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "PAGE_1K", "FETCH_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
+            case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
             // A quarter of the fact rows meet a hot key with eight matches.
             case "FANOUT_DEFERRED" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k";
             case "FANOUT_RESIDUAL" -> "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup x ON f.k1 = x.k AND x.w > f.v * 0.5";
