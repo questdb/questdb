@@ -1027,6 +1027,41 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
+    // The position of the SQL's first reference to the regular view of the given name that the parse expanded, or -1.
+    // Walks the models as SqlUtil.findTableNamePosition() does, but not into the body of another expanded view, whose
+    // positions point into that view's own SQL.
+    private static int findExpandedViewPosition(IQueryModel model, CharSequence viewName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                return Chars.equalsIgnoreCase(viewNameExpr.token, viewName) ? viewNameExpr.position : -1;
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    final int position = findExpandedViewPosition(joinModel, viewName);
+                    if (position > -1) {
+                        return position;
+                    }
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final int position = findExpandedViewPosition(unionModel, viewName);
+                if (position > -1) {
+                    return position;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return -1;
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -10739,6 +10774,13 @@ public class SqlParser {
             if (baseTableNamePosition > -1) {
                 throw SqlException.position(baseTableNamePosition)
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
+            // A regular view took the base table's name, and the parse expanded the SQL's reads of it into the tables it
+            // reads. WITH BASE refuses such a view before the parse, see SqlCompilerImpl.alterMatViewAs().
+            if (recordedViews.get(baseTableName) != null) {
+                final int viewPosition = findExpandedViewPosition(queryModel, baseTableName);
+                throw SqlException.position(viewPosition > -1 ? viewPosition : matViewQueryLo)
+                        .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
             }
             throw SqlException.position(matViewQueryLo)
                     .put("materialized view query does not read its base table, name the new base table with WITH BASE [baseTable=")

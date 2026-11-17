@@ -1786,6 +1786,57 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseReplacedByRegularViewWithoutWithBaseIsRefusedAtViewReference() throws Exception {
+        // Without WITH BASE the view keeps its base table's name. When a regular view took the name, the parse expands
+        // it, so the SQL reads the view's own tables; the statement refuses the view as CREATE does, at the SQL's first
+        // reference to it, and leaves the view as it was. The reference sits in the top query, in a join, in a subquery
+        // joined to a UNION, and in front of a join to another regular view. Only a reference that the search does not
+        // walk to, one in a WHERE subquery, gets the error at the start of the SQL. The regular view's name differs in
+        // case from the base table name the view keeps.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute("CREATE TABLE other (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = ALTER_PREFIX + "AS (" + VIEW_SQL + ")";
+            final String joinSql = ALTER_PREFIX + "AS (SELECT o.ts, b.sym, last(b.price) AS price FROM other o "
+                    + "JOIN base b ON (sym) SAMPLE BY 1h)";
+            final String unionSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM (SELECT * FROM base) b "
+                    + "JOIN (SELECT sym FROM other UNION ALL SELECT sym FROM other) u ON (sym) SAMPLE BY 1h)";
+            final String otherViewSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM base b "
+                    + "JOIN other_view o ON (sym) SAMPLE BY 1h)";
+            final String whereSql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM other "
+                    + "WHERE sym IN (SELECT sym FROM base) SAMPLE BY 1h)";
+            final String unionBranchSql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM "
+                    + "(SELECT * FROM other UNION ALL SELECT * FROM base) SAMPLE BY 1h)";
+            // a SQL that does not read the base table, while the base table is a table and once it is gone
+            final String otherSql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM other SAMPLE BY 1h)";
+            final String notReadError = "materialized view query does not read its base table, name the new base table with WITH BASE [baseTable=base]";
+            assertExceptionNoLeakCheck(otherSql, otherSql.indexOf("SELECT"), notReadError);
+
+            execute("DROP TABLE base");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(otherSql, otherSql.indexOf("SELECT"), notReadError);
+            execute("CREATE VIEW BASE AS (SELECT * FROM other)");
+            execute("CREATE VIEW other_view AS (SELECT * FROM other)");
+            drainWalAndMatViewQueues();
+            final String error = "base table should be a physical table, cannot be a view: base";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("FROM base") + "FROM ".length(), error);
+            assertExceptionNoLeakCheck(joinSql, joinSql.indexOf("base b"), error);
+            assertExceptionNoLeakCheck(unionSql, unionSql.indexOf("FROM base") + "FROM ".length(), error);
+            assertExceptionNoLeakCheck(otherViewSql, otherViewSql.indexOf("base b"), error);
+            assertExceptionNoLeakCheck(whereSql, whereSql.indexOf("SELECT"), error);
+            assertExceptionNoLeakCheck(unionBranchSql, unionBranchSql.indexOf("FROM base") + "FROM ".length(), error);
+            assertExceptionNoLeakCheck(otherSql, otherSql.indexOf("SELECT"), notReadError);
+            // WITH BASE naming the regular view is refused at the name after WITH BASE
+            final String withBaseSql = ALTER_PREFIX + "WITH BASE base AS (" + VIEW_SQL + ")";
+            assertExceptionNoLeakCheck(withBaseSql, withBaseSql.indexOf("base AS"), "base table should be a physical table, cannot be a view: BASE");
+
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            Assert.assertEquals("base", viewDefinition().getBaseTableName());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
     public void testDefinitionApplyFailureSuspendsViewWal() throws Exception {
         // A definition event that cannot apply, here because the view's definition left the dependency graph, suspends
         // the view's WAL, so that no node goes on without the definition.
