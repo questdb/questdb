@@ -57,11 +57,13 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.function.LongSupplier;
+import java.util.function.ObjIntConsumer;
 
 public interface CairoConfiguration {
 
@@ -200,6 +202,19 @@ public interface CairoConfiguration {
     double getColumnPurgeRetryDelayMultiplier();
 
     int getColumnPurgeTaskPoolCapacity();
+
+    /**
+     * Receives the task and the offset in {@link ColumnPurgeTask#getUpdatedColumnInfo()} of each entry
+     * whose files the column purge job leaves in place because DROP PARTITION, ATTACH, DETACH or
+     * TRUNCATE changed the truncate version of the table after the purge was queued. The purge log
+     * marks such an entry completed, as it marks a purged one, so tests read the refusals here.
+     *
+     * @return the listener, or null when nothing listens
+     */
+    @Nullable
+    default ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return null;
+    }
 
     long getCommitLatency();
 

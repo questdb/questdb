@@ -59,13 +59,16 @@ public class HashJoinGroupByShapeCoverageTest {
         final Rnd rnd = new Rnd(0x5eed, 0x4a6b);
         final FuzzTable left = table("t0");
         final FuzzTable right = table("t1");
+        // The FILL shapes read the config's table sizes; its own Rnd leaves the generator's draws
+        // as they are.
+        final FuzzConfig config = new FuzzConfig(new Rnd());
         // The VARCHAR and STRING columns that are no join key, under their own names or a
         // projection's alias.
         final Pattern varSize = Pattern.compile("\\b(?:c2|c3)(?:_v)?\\b");
         int whereConjuncts = 0;
         int projections = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
-            final String sql = HashJoinGroupByClause.generate(rnd, left, right, null, false).sql();
+            final String sql = HashJoinGroupByClause.generate(rnd, left, right, null, false, config).sql();
             // An INNER join's WHERE conjunct over its right input alone, which the optimiser hands
             // to the input's scan filter, or a filtered projection that a LEFT join builds.
             if (sql.contains(" r JOIN ") || sql.contains(" l JOIN ")) {

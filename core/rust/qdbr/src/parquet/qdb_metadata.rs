@@ -29,6 +29,6 @@
 //! historical `crate::parquet::qdb_metadata` path used across qdbr.
 
 pub use qdb_parquet_meta::qdb_meta::{
-    extract_qdb_meta, ParquetFieldId, QdbMeta, QdbMetaCol, QdbMetaColFormat, QdbMetaSchema,
-    QdbMetaV1, QDB_META_KEY,
+    column_top_evidence, extract_qdb_meta, ColumnTopEvidence, ParquetFieldId, QdbMeta, QdbMetaCol,
+    QdbMetaColFormat, QdbMetaSchema, QdbMetaV1, QDB_META_KEY,
 };

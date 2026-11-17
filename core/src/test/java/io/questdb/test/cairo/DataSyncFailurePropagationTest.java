@@ -230,7 +230,7 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
         // A table created IN VOLUME lives behind a soft link, so the OS names its files by the volume's path and not
         // by the database root's. A failed flush of one of them must still stop only the engine whose volume it is,
         // not a second engine on the same facade object.
-        Assume.assumeTrue("the owner is found by the failed file's path, which only Linux tells", Os.isLinux());
+        Assume.assumeTrue("the owner is found by the failed file's path, which this OS does not tell", io.questdb.std.Files.isPathLookupSupported());
         assertMemoryLeak(ff, () -> {
             final File volume = new File(temp.newFolder(), "volume");
             Assert.assertTrue(volume.mkdir());
@@ -823,9 +823,9 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
                 failures.append("flush ").append(failAt).append(" has wrong held-writer distress: ")
                         .append(writerDistressedAtFailure).append(", at:\n").append(stackOf(injection));
             }
-            // Linux locates the owner by path. Elsewhere the path is unknown and every durable engine sharing the
-            // facade must be fenced; the bystander is SYNC even when the tested engine is NOSYNC/ASYNC.
-            if (injection != null && bystander.isDurabilityFailed() != !Os.isLinux()) {
+            // Where the OS tells the failed file's path it locates the owner. Without the path every durable engine
+            // sharing the facade must be fenced; the bystander is SYNC even when the tested engine is NOSYNC/ASYNC.
+            if (injection != null && bystander.isDurabilityFailed() != !io.questdb.std.Files.isPathLookupSupported()) {
                 failures.append("flush ").append(failAt).append(" of ").append(flushCount)
                         .append(" has the wrong bystander fence [failure=")
                         .append(bystander.getDurabilityFailure()).append("], at:\n").append(stackOf(injection));

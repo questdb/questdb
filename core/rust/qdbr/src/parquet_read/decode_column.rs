@@ -110,6 +110,7 @@ pub fn decode_single_timestamp_value(
         column_name,
         row_group_index,
         true,
+        false,
     )?;
     if bufs.data_vec.len() < 8 {
         return Err(fmt_err!(
@@ -180,6 +181,10 @@ pub fn decode_column_chunk_with_params(
     // (see parquet_meta_decode::decode_row_group_range). The var-size sinks write
     // absolute data_vec offsets, so appended chunks stay internally consistent.
     reset_bufs: bool,
+    // Whether the decode records the column-top rows of the chunk from its definition levels,
+    // see row_groups::decode_records_top_rows. An appended chunk adds to those of the chunks
+    // before it, at its own rows of the buffer.
+    records_top_rows: bool,
 ) -> ParquetResult<usize> {
     let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
@@ -207,6 +212,7 @@ pub fn decode_column_chunk_with_params(
     if reset_bufs {
         bufs.reset_for_decode(varchar_slice_buf_pool);
     }
+    let mut top_rows = records_top_rows.then(|| bufs.take_top_rows());
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
     varchar_slice_dict_bufs.clear();
@@ -259,6 +265,7 @@ pub fn decode_column_chunk_with_params(
                             col_info,
                             row_lo.saturating_sub(row_count),
                             cmp::min(page_row_count, row_hi - row_count),
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -298,6 +305,7 @@ pub fn decode_column_chunk_with_params(
                             col_info,
                             row_lo.saturating_sub(row_count),
                             cmp::min(page_row_count, row_hi - row_count),
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -319,6 +327,9 @@ pub fn decode_column_chunk_with_params(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
+    if let Some(top_rows) = top_rows {
+        bufs.restore_top_rows(top_rows);
+    }
     bufs.refresh_ptrs()?;
     Ok(row_count)
 }
@@ -338,6 +349,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     rows_filter: &[i64],
     column_name: &str,
     row_group_index: usize,
+    records_top_rows: bool,
 ) -> ParquetResult<usize> {
     let col_len = col_data.len();
     let page_reader = SlicePageReader::from_parts(
@@ -365,6 +377,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
     } = ctx;
 
     bufs.reset_for_decode(varchar_slice_buf_pool);
+    let mut top_rows = records_top_rows.then(|| bufs.take_top_rows());
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
     varchar_slice_dict_bufs.clear();
@@ -440,6 +453,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             lo,
                             hi,
                             &rows_filter[page_filter_start..filter_idx],
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -467,6 +481,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             0,
                             0,
                             &rows_filter[page_filter_start..filter_idx],
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -530,6 +545,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             lo,
                             hi,
                             &rows_filter[page_filter_start..filter_idx],
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -549,6 +565,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             0,
                             0,
                             &rows_filter[page_filter_start..filter_idx],
+                            top_rows.as_mut(),
                         )
                         .with_context(|_| {
                             format!(
@@ -570,6 +587,9 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         varchar_slice_dict_bufs,
         varchar_slice_buf_pool,
     );
+    if let Some(top_rows) = top_rows {
+        bufs.restore_top_rows(top_rows);
+    }
     bufs.refresh_ptrs()?;
     if FILL_NULLS {
         Ok(row_hi - row_lo)
@@ -736,6 +756,7 @@ mod tests {
             "col",
             0,
             true,
+            false,
         )
         .unwrap();
 
@@ -982,6 +1003,7 @@ mod tests {
             "col",
             0,
             true,
+            false,
         );
         assert!(result.is_err(), "expected error for truncated column chunk");
     }

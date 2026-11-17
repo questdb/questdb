@@ -220,7 +220,7 @@ public class RPadVarcharVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public Utf8Sequence getVarcharB(final Record rec) {
-            return rPadVarchar(strFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
+            return rPadVarchar(fillTextFunc.getVarcharB(rec), lenFunc.getInt(rec), sinkB);
         }
 
         @Nullable

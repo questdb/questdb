@@ -372,6 +372,7 @@ public class SeqTxnTracker {
             wtxn = writerTxn;
         }
         metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
+        fireWaiters();
         return seqTxn > 0 && seqTxn > writerTxn;
     }
 

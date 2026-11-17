@@ -373,6 +373,46 @@ public class PostingIndexWriter implements IndexWriter {
         initKeyMemory(keyMem, 0L);
     }
 
+    /**
+     * Writes the header pages of an empty chain whose first entry takes {@code startSealTxn}. The writer maps
+     * {@code .pv.{startSealTxn}} for the data of that entry.
+     */
+    public static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
+        // v2 layout: two 4 KB header pages followed by an empty entry region.
+        // Page A is published with sequence=2 (even, non-zero) and an empty
+        // chain. Page B is zeroed and stays inactive until the first
+        // publish flips the seqlock to it.
+        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
+        // accepts exactly startSealTxn — that lines the first chain entry
+        // up with the .pv.{startSealTxn} file the writer is mapping.
+        keyMem.jumpTo(0);
+        keyMem.truncate();
+
+        // ----- Page A header (active, empty chain) -----
+        keyMem.putLong(2L);                                                  // SEQUENCE_START
+        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
+        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
+        keyMem.putLong(0L);                                                  // ENTRY_COUNT
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
+        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
+        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
+        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
+        // (offset 4088). Pad with zeros.
+        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
+                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
+        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
+            keyMem.putLong(0L);
+        }
+        Unsafe.storeFence();
+        keyMem.putLong(2L);                                                  // SEQUENCE_END
+
+        // ----- Page B header (inactive, all zeros) -----
+        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
+            keyMem.putLong(0L);
+        }
+        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
+    }
+
     @Override
     public void abandon() {
         // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different writer
@@ -988,6 +1028,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newSealTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -1389,6 +1430,8 @@ public class PostingIndexWriter implements IndexWriter {
             LPSZ keyFile = PostingIndexUtils.keyFileName(path, name, columnNameTxn);
 
             if (isInit) {
+                // A new index: never truncate a file an older partition version may share through a hard link
+                TableUtils.removeExistingOrFail(ff, keyFile);
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
@@ -1455,14 +1498,18 @@ public class PostingIndexWriter implements IndexWriter {
                 LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
                 long pvActual = ff.length(pvName);
                 if (valueMemSize > pvActual) {
-                    throw CairoException.critical(0)
+                    throw CairoException.critical(CairoException.FILE_TOO_SMALL)
                             .put("posting index value file too short [expected=").put(valueMemSize)
                             .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
                 }
             }
+            final LPSZ valueFile = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+            if (isInit) {
+                TableUtils.removeExistingOrFail(ff, valueFile);
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
+                    valueFile,
                     configuration.getDataIndexValueAppendPageSize(),
                     isInit ? 0 : valueMemSize,
                     MemoryTag.MMAP_INDEX_WRITER
@@ -1577,7 +1624,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // and the chain inconsistent; drop the entry rather than delete the
                 // live head (the C1 endgame this backstops).
                 LOG.critical().$("posting seal-purge skipped: sealTxn is the live chain head [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", postingColumnNameTxn=").$(entry.postingColumnNameTxn)
                         .$(", sealTxn=").$(entry.sealTxn)
                         .$(']').$();
@@ -1922,7 +1969,7 @@ public class PostingIndexWriter implements IndexWriter {
                                                 // snapshots already taken earlier in this loop.
                                                 final long snapshotHeadroom = rssHeadroom();
                                                 if (sealedLen > snapshotHeadroom) {
-                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$(indexName)
+                                                    LOG.info().$("posting index incremental seal sidecar snapshot would exceed RSS headroom, sealing full [indexName=").$safe(indexName)
                                                             .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                                             .$(", sealTxn=").$(sealTxn)
                                                             .$(", cover=").$(c)
@@ -1957,7 +2004,7 @@ public class PostingIndexWriter implements IndexWriter {
                         break;
                     }
                     if (!isTrusted) {
-                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$(indexName)
+                        LOG.info().$("posting index sidecar snapshot not trusted, sealing full [indexName=").$safe(indexName)
                                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                                 .$(", sealTxn=").$(sealTxn)
                                 .$(", cover=").$(c)
@@ -2006,7 +2053,7 @@ public class PostingIndexWriter implements IndexWriter {
                 // publishing a live chain entry at newSealTxn.
                 isPoisoned = true;
                 LOG.error().$("posting index seal post-switch failure, poisoning writer and scheduling orphan purge [")
-                        .$("indexName=").$(indexName)
+                        .$("indexName=").$safe(indexName)
                         .$(", newSealTxn=").$(newSealTxn)
                         .$(']').$();
                 scheduleOrphanPurge(newSealTxn);
@@ -2215,6 +2262,7 @@ public class PostingIndexWriter implements IndexWriter {
             valueMem.close(false, (byte) 0);
             Path p = Path.getThreadLocal(partitionPath);
             LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+            TableUtils.removeExistingOrFail(ff, fileName);
             valueMem.of(ff, fileName,
                     configuration.getDataIndexValueAppendPageSize(), 0L,
                     MemoryTag.MMAP_INDEX_WRITER, configuration.getWriterFileOpenOpts(), -1);
@@ -2319,42 +2367,6 @@ public class PostingIndexWriter implements IndexWriter {
      */
     private static long encodeCtxPeakBytes(int maxKeyCount) {
         return (long) maxKeyCount * 26L + 2048L;
-    }
-
-    private static void initKeyMemory(MemoryMA keyMem, long startSealTxn) {
-        // v2 layout: two 4 KB header pages followed by an empty entry region.
-        // Page A is published with sequence=2 (even, non-zero) and an empty
-        // chain. Page B is zeroed and stays inactive until the first
-        // publish flips the seqlock to it.
-        // GEN_COUNTER = startSealTxn - 1 so the very first appendNewEntry
-        // accepts exactly startSealTxn — that lines the first chain entry
-        // up with the .pv.{startSealTxn} file the writer is mapping.
-        keyMem.jumpTo(0);
-        keyMem.truncate();
-
-        // ----- Page A header (active, empty chain) -----
-        keyMem.putLong(2L);                                                  // SEQUENCE_START
-        keyMem.putLong(PostingIndexUtils.V2_FORMAT_VERSION);                 // FORMAT_VERSION
-        keyMem.putLong(PostingIndexUtils.V2_NO_HEAD);                        // HEAD_ENTRY_OFFSET
-        keyMem.putLong(0L);                                                  // ENTRY_COUNT
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_BASE
-        keyMem.putLong(PostingIndexUtils.V2_ENTRY_REGION_BASE);              // REGION_LIMIT
-        keyMem.putLong(startSealTxn - 1L);                                   // GEN_COUNTER
-        // Reserved bytes between GEN_COUNTER (offset 48) and SEQUENCE_END
-        // (offset 4088). Pad with zeros.
-        long pageAReservedBytes = PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_END
-                - (PostingIndexUtils.V2_HEADER_OFFSET_GEN_COUNTER + Long.BYTES);
-        for (long i = 0; i < pageAReservedBytes; i += Long.BYTES) {
-            keyMem.putLong(0L);
-        }
-        Unsafe.storeFence();
-        keyMem.putLong(2L);                                                  // SEQUENCE_END
-
-        // ----- Page B header (inactive, all zeros) -----
-        for (int i = 0; i < PostingIndexUtils.PAGE_SIZE / Long.BYTES; i++) {
-            keyMem.putLong(0L);
-        }
-        // Entry region is empty; the file is exactly KEY_FILE_RESERVED bytes.
     }
 
     private static void putFixedValue(MemoryMARW mem, long addr, int valueSize) {
@@ -4403,6 +4415,8 @@ public class PostingIndexWriter implements IndexWriter {
     private void openSealValueFile(long newTxn) {
         Path p = Path.getThreadLocal(partitionPath);
         LPSZ fileName = PostingIndexUtils.valueFileName(p, indexName, postingColumnNameTxn, newTxn);
+        // A new seal generation: never write into a file an older partition version may share through a hard link
+        TableUtils.removeExistingOrFail(ff, fileName);
         sealValueMem.of(ff, fileName,
                 configuration.getDataIndexValueAppendPageSize(),
                 MemoryTag.MMAP_INDEX_WRITER,
@@ -4431,10 +4445,12 @@ public class PostingIndexWriter implements IndexWriter {
                     continue;
                 }
                 long covT = getCoveredColumnNameTxn(c);
+                final LPSZ pcFile = PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn);
+                TableUtils.removeExistingOrFail(ff, pcFile);
                 MemoryMARW mem = Vm.getCMARWInstance();
                 mem.of(
                         ff,
-                        PostingIndexUtils.coverDataFileName(path.trimTo(plen), name, c, postingColumnNameTxn, covT, sealTxn),
+                        pcFile,
                         configuration.getDataIndexValueAppendPageSize(),
                         0L,
                         MemoryTag.MMAP_INDEX_WRITER
@@ -5097,14 +5113,15 @@ public class PostingIndexWriter implements IndexWriter {
                     // purge delete the live file. The orphan .pv.{newSealTxn} only
                     // becomes reachable later if a freed+reopened writer REUSES
                     // newSealTxn and publishes it live; PostingSealPurgeOperator
-                    // re-reads the .pk head at delete time and abandons the purge
-                    // when the file is live again, so the deferral is safe past reuse.
+                    // re-reads the .pk chain at delete time and abandons the purge
+                    // when a reader above the purge's reader window can see an entry
+                    // that names newSealTxn, so the deferral is safe past reuse.
                     // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
                     // allocate and can throw under heap pressure): a secondary failure
                     // must still leave the half-switched writer poisoned.
                     isPoisoned = true;
                     LOG.error().$("posting index rebuildSidecarsByCopy post-switch failure, poisoning writer and scheduling orphan purge [")
-                            .$("indexName=").$(indexName)
+                            .$("indexName=").$safe(indexName)
                             .$(", newSealTxn=").$(newSealTxn)
                             .$(']').$();
                     scheduleOrphanPurge(newSealTxn);
@@ -5184,7 +5201,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)
@@ -5496,14 +5513,15 @@ public class PostingIndexWriter implements IndexWriter {
                             // the now-live .pv.{newSealTxn}. The remaining route --
                             // a freed+reopened writer REUSING newSealTxn and
                             // publishing it live -- is closed at delete time:
-                            // PostingSealPurgeOperator re-reads the .pk head and
-                            // abandons the purge when the file is live again.
+                            // PostingSealPurgeOperator re-reads the .pk chain and
+                            // abandons the purge when a reader above the purge's reader
+                            // window can see an entry that names newSealTxn.
                             // Poison FIRST, before the LOG record and scheduleOrphanPurge
                             // (both allocate and can throw under heap pressure): a secondary
                             // failure must still leave the half-switched writer poisoned.
                             isPoisoned = true;
                             LOG.error().$("posting index rollback post-switch failure, poisoning writer and scheduling orphan purge [")
-                                    .$("indexName=").$(indexName)
+                                    .$("indexName=").$safe(indexName)
                                     .$(", newSealTxn=").$(newSealTxn)
                                     .$(']').$();
                             scheduleOrphanPurge(newSealTxn);
@@ -6105,7 +6123,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         final int unlinked = unlinkAbandonedSealFiles(path, plen);
         LOG.info().$("posting index recovery [")
-                .$("indexName=").$(indexName)
+                .$("indexName=").$safe(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
                 .$(", isHeadTrimmed=").$(isHeadTrimmed)
@@ -6133,7 +6151,7 @@ public class PostingIndexWriter implements IndexWriter {
             PendingSealPurge oldest = pendingPurges.getQuick(0);
             LOG.critical()
                     .$("posting seal-purge outbox saturated, dropping oldest entry [")
-                    .$("indexName=").$(indexName)
+                    .$("indexName=").$safe(indexName)
                     .$(", postingColumnNameTxn=").$(oldest.postingColumnNameTxn)
                     .$(", sealTxn=").$(oldest.sealTxn)
                     .$(", outboxMax=").$(outboxMax)
@@ -7022,22 +7040,21 @@ public class PostingIndexWriter implements IndexWriter {
                 sealTxns.setQuick(i, -1L);
             }
         }
-        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, new PostingIndexUtils.SealedFileVisitor() {
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, postingColumnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                final int i;
-                if (filePostingColumnNameTxn != PostingIndexUtils.coverFilePostingColumnNameTxn(postingColumnNameTxn)
-                        || (i = sealTxns.indexOf(sealTxn)) < 0) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                final int i = sealTxns.indexOf(sealTxn);
+                if (i < 0) {
                     return;
                 }
-                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     scheduleOrphanPurge(sealTxn);
                     sealTxns.setQuick(i, -1L);
                 }
             }
 
             @Override
-            public void onValueFile(long filePostingColumnNameTxn, long sealTxn) {
+            public void onValueFile(long sealTxn) {
             }
         });
         path.trimTo(plen);

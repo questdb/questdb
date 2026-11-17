@@ -64,14 +64,17 @@ public class EquiJoinShapeCoverageTest {
         tables.add(table("t0"));
         tables.add(table("t1"));
         final Rnd rnd = new Rnd(0x5eed, 0xe901);
+        // The hash join GROUP BY shape reads the config's table sizes; its own Rnd leaves the
+        // generator's draws as they are.
+        final FuzzConfig config = new FuzzConfig(new Rnd());
         int equiJoins = 0;
         for (int i = 0; i < GENERATOR_DRAWS; i++) {
             final long s0 = rnd.nextLong();
             final long s1 = rnd.nextLong();
             final Rnd on = new Rnd(s0, s1);
             final Rnd off = new Rnd(s0, s1);
-            final GeneratedQuery withBand = QueryGenerator.generate(on, tables, null, false, true, true, true, true, true, true, true);
-            final GeneratedQuery withoutBand = QueryGenerator.generate(off, tables, null, false, true, true, true, true, true, true, false);
+            final GeneratedQuery withBand = QueryGenerator.generate(on, tables, null, false, true, true, true, true, true, true, true, config);
+            final GeneratedQuery withoutBand = QueryGenerator.generate(off, tables, null, false, true, true, true, true, true, true, false, config);
             Assert.assertNotEquals(QueryShape.EQUI_JOIN, withoutBand.shape());
             if (withBand.shape() == QueryShape.EQUI_JOIN) {
                 equiJoins++;
@@ -91,7 +94,7 @@ public class EquiJoinShapeCoverageTest {
         final ObjList<FuzzTable> single = new ObjList<>();
         single.add(table("t0"));
         for (int i = 0; i < GENERATOR_DRAWS; i++) {
-            Assert.assertNotEquals(QueryShape.EQUI_JOIN, QueryGenerator.generate(rnd, single, null, false, true, true, true, true, true, true, true).shape());
+            Assert.assertNotEquals(QueryShape.EQUI_JOIN, QueryGenerator.generate(rnd, single, null, false, true, true, true, true, true, true, true, config).shape());
         }
     }
 
