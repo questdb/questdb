@@ -785,7 +785,18 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         final RecordCursor cursor;
         try {
-            cursor = factory.getCursor(sqlExecutionContext);
+            // A page without a row count reads the cursor's first rows alone, up to the page's
+            // last one and one more, which tells whether rows follow; the cursor may then prepare
+            // no more rows than those first. See SqlExecutionContext.getFirstReadRows().
+            final long firstReadRows = state.getFirstReadRows();
+            if (firstReadRows != Long.MAX_VALUE) {
+                sqlExecutionContext.setFirstReadRows(firstReadRows);
+            }
+            try {
+                cursor = factory.getCursor(sqlExecutionContext);
+            } finally {
+                sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
+            }
         } catch (Throwable th) {
             // clear factory in the state because we already set it
             state.clearFactory();

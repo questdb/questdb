@@ -100,6 +100,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private CharSequence expiryMaterializingViewName;
     private TableToken expiryRawReadTable;
     private ExpiryReadPolicy expiryReadPolicy = ExpiryReadPolicy.FILTER;
+    // The rows that the client reads first from the cursor that opens next, see getFirstReadRows().
+    private long firstReadRows = Long.MAX_VALUE;
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
@@ -325,6 +327,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public @Nullable ExecutionState getExecutionState() {
         return executionState;
+    }
+
+    @Override
+    public long getFirstReadRows() {
+        return firstReadRows;
     }
 
     @Override
@@ -703,6 +710,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
         this.expiryReadPolicy = policy;
         this.expiryMaterializingViewName = materializingViewName;
+    }
+
+    @Override
+    public void setFirstReadRows(long rows) {
+        this.firstReadRows = rows;
     }
 
     @Override

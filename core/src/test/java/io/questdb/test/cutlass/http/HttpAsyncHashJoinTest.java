@@ -32,7 +32,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -178,6 +180,61 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
     @Test
     public void testExecPagesAndCounts() throws Exception {
         assertPagedRequests(-1);
+    }
+
+    @Test
+    public void testExecPagesWithoutCountBoundTheFirstWindow() throws Exception {
+        // [query, query parameters, the rows that the join's first window was cut for]. A page
+        // without a row count reads the rows up to its last one and one more; a count, no page or
+        // a join that is not the query's rows leaves the window as it is.
+        final Object[][] requests = {
+                {STAR, "limit=1,7", 8L},
+                {STAR, "limit=1,7&count=true", Long.MAX_VALUE},
+                {STAR, "", Long.MAX_VALUE},
+                {STAR, "limit=7", 8L},
+                {STAR, "limit=0", 2L},
+                {STAR, "limit=3_000,3_010", 3_011L},
+                // A page that starts past its end reads the rows it skips, its first row and one more.
+                {STAR, "limit=21,5", 22L},
+                {STAR, "limit=9223372036854775807,9223372036854775806", Long.MAX_VALUE},
+                {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
+                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", Long.MAX_VALUE},
+                {STAR, "limit=2,4", 5L},
+        };
+        final ObjList<String> expected = new ObjList<>();
+        final ObjList<String> actual = new ObjList<>();
+        for (boolean isParallel : new boolean[]{false, true}) {
+            final ObjList<String> responses = isParallel ? actual : expected;
+            newTester().run(newConfiguration(isParallel, 0), (engine, context) -> withQueryPool(engine, () -> {
+                createTables(engine);
+                try (TestHttpClient client = new TestHttpClient()) {
+                    // One connection, whose context serves every request.
+                    client.setKeepConnection(true);
+                    for (Object[] request : requests) {
+                        AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                        responses.add(get(client, "/exec", (String) request[0], (String) request[1]));
+                        final long firstWindowRows = AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                        Assert.assertEquals(request[0] + "&" + request[1], isParallel ? (long) request[2] : -1L, firstWindowRows);
+                    }
+                    // A page whose query fails to open its cursor after the join opened its own: the
+                    // join took the page's rows, and the next request on the connection, without a
+                    // page, finds no trace of them.
+                    final String failing = "SELECT f.k, d1.w, test_fault() x FROM f JOIN d1 ON f.k = d1.k";
+                    TestFaultFunctionFactory.armToFailAfterInits(0);
+                    try {
+                        TestUtils.assertContains(get(client, "/exec", failing, "limit=5", null), "test_fault: injected init failure");
+                    } finally {
+                        TestFaultFunctionFactory.disarm();
+                    }
+                    Assert.assertEquals(isParallel ? 6L : -1L, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                    responses.add(get(client, "/exec", failing, ""));
+                    Assert.assertEquals(isParallel ? Long.MAX_VALUE : -1L, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                    final String plan = get(client, "/exec", "EXPLAIN " + STAR, "");
+                    Assert.assertEquals(plan, isParallel, plan.contains("Hash Join workers:"));
+                }
+            }));
+        }
+        assertResponses(expected, actual);
     }
 
     @Test

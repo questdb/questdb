@@ -91,6 +91,12 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@code LIMIT lo, hi} of no negative bound, first joins only the probe rows that the LIMIT may
  * need, see {@link AsyncHashJoinRecordCursor}. The LIMIT itself stays with its own factory over the
  * join.
+ * <p>
+ * A join whose rows are the query's own, one for one, see {@link #markClientRowSource()}, takes the
+ * rows that the client reads first, see {@link SqlExecutionContext#getFirstReadRows()}, as such a
+ * LIMIT: an HTTP page or a PostgreSQL Execute's row limit then first joins only the probe rows that
+ * the page may need, and a client that reads on, as a PostgreSQL portal does, reads on into the
+ * full window.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
@@ -98,11 +104,15 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     private static final AtomicInteger constructionsBeforeFailureForTesting = new AtomicInteger();
     @TestOnly
     private static volatile RuntimeException constructorFailureForTesting;
+    @TestOnly
+    private static volatile long lastFirstWindowRowsForTesting = -1;
     private final SCSequence collectSubSeq = new SCSequence();
     private final int workerCount;
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     private AsyncHashJoinRecordCursor cursor;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
+    // True when the query's rows are the join's own, one for one; see markClientRowSource().
+    private boolean isClientRowSource;
     // The LIMIT that the optimiser advised the join's model, its lower bound and its upper bound,
     // until the planner hands it over, see ofLimit(); planning-time references to pooled nodes,
     // which the factory does not own. Both null without advice; the upper bound is null for a LIMIT
@@ -230,7 +240,14 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         cursor.close();
         final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        final long limitRows = getLimitRows(executionContext);
+        long limitRows = getLimitRows(executionContext);
+        if (isClientRowSource) {
+            final long firstReadRows = executionContext.getFirstReadRows();
+            if (firstReadRows > 0) {
+                limitRows = Math.min(limitRows, firstReadRows);
+            }
+        }
+        lastFirstWindowRowsForTesting = limitRows;
         cursor.open(frameSequence, buildRounds);
         try {
             // Consult the breaker at open, so a join over empty inputs still observes cancellation.
@@ -352,6 +369,15 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * True once the planner marked the join as the source of the query's rows, see
+     * {@link #markClientRowSource()}.
+     */
+    @TestOnly
+    public boolean isClientRowSource() {
+        return isClientRowSource;
+    }
+
+    /**
      * True when the optimiser advised the join's model the LIMIT of these bounds, and the planner
      * has not yet handed one over: the LIMIT of the model that states it, which applies to the
      * join's rows, see {@link #ofLimitAdvice}. The bounds are the model's own nodes, of which the
@@ -360,6 +386,19 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
      */
     public boolean isLimitAdvised(@Nullable ExpressionNode limitLo, @Nullable ExpressionNode limitHi) {
         return limitLo != null ? limitLo == limitAdvice : limitHi == limitAdviceHi;
+    }
+
+    /**
+     * Marks the join as the source of the query's rows: the planner found it under the query's
+     * projections alone, so the rows the client reads are the join's own, one for one, in order.
+     * Each execution then takes the rows that the client reads first, see
+     * {@link SqlExecutionContext#getFirstReadRows()}, as the rows its first window may need, or the
+     * LIMIT's rows when fewer; see {@link AsyncHashJoinRecordCursor}. The join of any other query,
+     * under a sort, a GROUP BY, a filter or a LIMIT, for example, reads more rows than the client
+     * does, and never reads the hint.
+     */
+    public void markClientRowSource() {
+        isClientRowSource = true;
     }
 
     /**
@@ -500,6 +539,20 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     @TestOnly
     public static void setStepperWarmUpRowsForTesting(long rows) {
         AsyncHashJoinAtom.setStepperWarmUpRows(rows);
+    }
+
+    /**
+     * The rows that the first window of the last execution of any join since the last call was cut
+     * for, Long.MAX_VALUE when nothing narrowed it, and -1 when no join executed; the next call
+     * returns -1 until a join executes. The rows are its LIMIT's, or the rows that the client reads
+     * first, when fewer. Tests that drive a join through a protocol read it, since they cannot reach
+     * the factory.
+     */
+    @TestOnly
+    public static long takeLastFirstWindowRowsForTesting() {
+        final long rows = lastFirstWindowRowsForTesting;
+        lastFirstWindowRowsForTesting = -1;
+        return rows;
     }
 
     /**

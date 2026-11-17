@@ -328,6 +328,45 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstReadPicksTheModeOfEachExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The rows that the client reads first bound the execution's reach, as a LIMIT does: one
+            // factory reads every row under each, and 18,749 rows read first translate through the
+            // slots, 18,750 open the shared cache, as does no bound, and 18,749 go back to the slots.
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            final String expected = ordinaryRows(sql);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                Assert.assertTrue(join.isClientRowSource());
+                for (long firstRead : new long[]{18_749, 18_750, Long.MAX_VALUE, 18_749}) {
+                    sqlExecutionContext.setFirstReadRows(firstRead);
+                    final RecordCursor cursor;
+                    try {
+                        cursor = factory.getCursor(sqlExecutionContext);
+                    } finally {
+                        sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
+                    }
+                    final MemoryTracker tracker;
+                    try (cursor) {
+                        Assert.assertEquals(expected, printRows(cursor, factory));
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        if (firstRead < 18_750) {
+                            assertSlotCached(join);
+                        } else {
+                            assertSharedCache(join);
+                            Assert.assertTrue(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+                        }
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFullScanFillsTheSharedCacheFromTheBuild() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -840,6 +879,24 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
 
     // The rows of a result: after its two lines of metadata, two lines per row, its values and the
     // values that its SYMBOL, STRING and VARCHAR columns read through other paths.
+    // The ordinary plan's rows, as printRows() prints them.
+    private static String ordinaryRows(String sql) throws SqlException {
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            return printRows(cursor, factory);
+        } finally {
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+        }
+    }
+
+    private static String printRows(RecordCursor cursor, RecordCursorFactory factory) {
+        final StringSink sink = new StringSink();
+        while (cursor.hasNext()) {
+            CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), sink, true);
+        }
+        return sink.toString();
+    }
+
     private static long rowCount(CharSequence result) {
         long lines = 0;
         for (int i = 0, n = result.length(); i < n; i++) {

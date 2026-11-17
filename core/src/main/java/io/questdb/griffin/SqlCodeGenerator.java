@@ -954,7 +954,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         final boolean isOutermost = whereClauseParserDepth == 0;
         try {
-            return generateAttempt(model, executionContext);
+            final RecordCursorFactory factory = generateAttempt(model, executionContext);
+            if (isOutermost) {
+                markClientRowSource(factory);
+            }
+            return factory;
         } finally {
             if (isOutermost) {
                 // The cache borrows factories from the returned tree. A retry can reuse model
@@ -2218,6 +2222,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * Marks the parallel hash join whose rows are the query's own, one for one, in order, under the
+     * query's projections alone, see {@link AsyncHashJoinRecordCursorFactory#markClientRowSource()}:
+     * the rows that the client reads first then bound the rows that the join's first window may
+     * need. Any other factory over the join, a sort, a GROUP BY, a filter or a LIMIT among them, may
+     * read more of the join's rows than the client reads, and leaves the join unmarked.
+     *
+     * @param factory the query's factory, as generated for its outermost model
+     */
+    private static void markClientRowSource(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (current instanceof SelectedRecordCursorFactory || current instanceof VirtualRecordCursorFactory) {
+            current = current.getBaseFactory();
+        }
+        if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+            join.markClientRowSource();
+        }
     }
 
     /**

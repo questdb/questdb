@@ -273,6 +273,9 @@ public final class QueryRunner {
     // Executions of the parallel hash join, on any axis, whose probe had more frames than the tuple
     // ring has entries, more than one, so that frames share entries.
     private int parallelJoinAliasedRuns;
+    // Executions of the parallel hash join, on any axis, whose rows were the query's own and whose
+    // cursor opened under the rows that a client reads first; see firstReadRows().
+    private int parallelJoinFirstReadRuns;
     // Executions of the parallel hash join, on any axis, that ended with a window of one frame.
     private int parallelJoinSingleFrameWindowRuns;
     // Executions of the parallel hash join, on any axis, whose window ended narrower than it was when
@@ -578,6 +581,14 @@ public final class QueryRunner {
      */
     public int getParallelJoinNarrowedWindowRuns() {
         return parallelJoinNarrowedWindowRuns;
+    }
+
+    /**
+     * Executions of a parallel hash join whose rows were the query's own and whose cursor opened
+     * under the rows that a client reads first, see {@link #firstReadRows(String)}.
+     */
+    public int getParallelJoinFirstReadRuns() {
+        return parallelJoinFirstReadRuns;
     }
 
     /**
@@ -1648,6 +1659,22 @@ public final class QueryRunner {
      * {@link CursorCheckException}; a per-row runtime error that the first pass did not raise is
      * tolerated, as the other cursor checks tolerate it. Leaves the cursor exhausted.
      */
+    /**
+     * The rows that a protocol's client reads first, under which {@link #runOnce} opens the cursor of
+     * half of the queries: one row, a few, or up to a page of 2,000, drawn from the query's text, so
+     * that a replay draws them again without a draw from the fuzzer's generator. Long.MAX_VALUE for
+     * the other half.
+     */
+    private static long firstReadRows(String sql) {
+        final int hash = sql.hashCode() & 0x7fff_ffff;
+        return switch (hash % 6) {
+            case 0 -> 1;
+            case 1 -> 1 + (hash >>> 3) % 16;
+            case 2 -> 1 + (hash >>> 3) % 2_000;
+            default -> Long.MAX_VALUE;
+        };
+    }
+
     private void checkParallelJoinPartialReads(String sql, RecordCursor cursor, RecordMetadata metadata, int columnCount,
                                                StringSink firstPass, int firstRowsRead, boolean deterministic,
                                                AsyncHashJoinRecordCursorFactory join) {
@@ -2338,7 +2365,18 @@ public final class QueryRunner {
             }
             int rowsRead;
             boolean[] fpColumnMask;
-            try (RecordCursor cursor = factory.getCursor(executionContext)) {
+            // The cursor opens as an HTTP page or a PostgreSQL Execute's row limit opens it, under
+            // the rows that the client reads first, for half of the queries; every check below
+            // reads past them, as a client that reads on does.
+            final long firstReadRows = firstReadRows(sql);
+            executionContext.setFirstReadRows(firstReadRows);
+            final RecordCursor firstReadCursor;
+            try {
+                firstReadCursor = factory.getCursor(executionContext);
+            } finally {
+                executionContext.setFirstReadRows(Long.MAX_VALUE);
+            }
+            try (RecordCursor cursor = firstReadCursor) {
                 RecordMetadata metadata = factory.getMetadata();
                 int columnCount = metadata.getColumnCount();
                 // The FP-column mask belongs to THIS projection, so it travels on this
@@ -2350,6 +2388,9 @@ public final class QueryRunner {
                 // a genuine one-unit integer divergence.
                 fpColumnMask = buildFpColumnMask(metadata, columnCount);
                 final AsyncHashJoinRecordCursorFactory join = ParallelHashJoinTestUtils.find(factory);
+                if (join != null && join.isClientRowSource() && firstReadRows != Long.MAX_VALUE) {
+                    parallelJoinFirstReadRuns++;
+                }
                 rowsRead = join != null
                         ? materializeParallelJoin(cursor, metadata, columnCount, rows, join)
                         : materialize(cursor, metadata, columnCount, rows);

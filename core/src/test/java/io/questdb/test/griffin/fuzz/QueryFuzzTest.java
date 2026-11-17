@@ -1527,7 +1527,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinPartialReadChecks()).$(" partial reads checked (")
                 .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
-                .$(runner.getParallelJoinPartialReadContinued()).$(" continued)")
+                .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
+                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first")
                 .$();
         LOG.info().$("fuzz parallel join storage: ").$(runner.getParallelJoinOverColumnTopKeys()).$(" executions over a column top join key, ")
                 .$(runner.getParallelJoinOverParquetColumnTops()).$(" over column tops in Parquet tables, ")

@@ -82,7 +82,11 @@ import io.questdb.std.Os;
  * window, and the task of the last of them joins only as many of its rows as the LIMIT needs; the
  * consumer, if it reads further, continues that frame itself, in chunks that double, before the
  * window opens. A LIMIT met by the first rows thus joins about as many rows as it returns, where a
- * full window would join a frame per worker.
+ * full window would join a frame per worker. The rows that the client reads first narrow the first
+ * window as a LIMIT does, see {@link AsyncHashJoinRecordCursorFactory#markClientRowSource()}; a
+ * client that has read them, and reads on, reads the rest of the join, so the window opens in full
+ * as soon as it asks for the first row past them, and the workers join the frames after the capped
+ * one while the consumer continues it.
  * <p>
  * An execution that swapped the first join's inputs, see {@link AsyncHashJoinAtom#isSwapped()}, probes
  * the right input's frames and reads the left input's columns from the first stage's matches; the
@@ -135,8 +139,11 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private int heldEntryFrame = -1;
     private boolean isBuilt;
     private boolean isOpen;
-    // The rows of the query's LIMIT, Long.MAX_VALUE when it states none that the cursor can use.
+    // The rows of the query's LIMIT, or that the client reads first, Long.MAX_VALUE when neither
+    // bounds them.
     private long limitRows = Long.MAX_VALUE;
+    // The rows that hasNext() returned since the cursor opened or went back to the top.
+    private long returnedRows;
     private long tupleCount;
     private long tupleIndex;
     private int tupleStride;
@@ -276,11 +283,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
         if (chainStageCount > 0 && nextChainMatch()) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            returnedRows++;
             return true;
         }
         while (true) {
             if (tupleIndex < tupleCount) {
                 positionTuple();
+                returnedRows++;
                 return true;
             }
             // A frame whose task stopped at its cap of tuples goes on in another chunk.
@@ -378,6 +387,14 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         // The breaker is checked before each chunk, as the reduce jobs check it before each frame,
         // and the chunk checks it every so many pairs.
         if (!AsyncHashJoinAtom.isInterrupted(circuitBreaker, frameSequence)) {
+            if (frameIndex == firstWindowEnd && returnedRows >= limitRows) {
+                // The reader has read the rows that the first window was cut for and asks for more:
+                // it reads on, so the frames after this one go out now, within the full window,
+                // and the workers join them while the consumer continues this one. A reader that
+                // still lacks some of those rows, which an INNER join or a probe filter dropped,
+                // continues this frame first.
+                frameSequence.dispatchAhead(atom.getRing().getDispatchLimit());
+            }
             final long chunkTupleCount = atom.continueFrame(frameSequence.getTask(cursor), circuitBreaker);
             if (chunkTupleCount != HashJoinStageStepper.CANCELLED) {
                 tuples = atom.getRing().getTuples(frameIndex);
@@ -614,6 +631,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void resetFrames() {
         frameIndex = -1;
+        returnedRows = 0;
         tupleIndex = 0;
         tupleCount = 0;
         chainStageCount = 0;

@@ -152,6 +152,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
+    /**
+     * The rows that the client reads first from the cursor that the query's factory opens next, as
+     * its protocol bounds them: an HTTP page without a row count, or a PostgreSQL Execute's row
+     * limit. Long.MAX_VALUE when nothing bounds them. A hint, not a limit: the client may read on,
+     * as a PostgreSQL portal does on its next Execute. The protocol sets it around the factory's
+     * {@code getCursor()} alone, see {@link #setFirstReadRows(long)}.
+     */
+    default long getFirstReadRows() {
+        return Long.MAX_VALUE;
+    }
+
     int getIntervalFunctionType();
 
     /**
@@ -583,6 +594,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             throw new UnsupportedOperationException("this SQL execution context cannot enter expiry REJECT mode");
         }
         setExpiryReadFilterEnabled(policy == ExpiryReadPolicy.FILTER);
+    }
+
+    /**
+     * Sets the rows that the client reads first, see {@link #getFirstReadRows()}, a positive count,
+     * or Long.MAX_VALUE for none. A protocol sets it right before the query's factory opens its
+     * cursor and resets it to Long.MAX_VALUE right after, whether the open succeeds or fails, so
+     * that it reaches no other cursor. A context that does not serve a client ignores it.
+     */
+    default void setFirstReadRows(long rows) {
     }
 
     void setIntervalFunctionType(int intervalType);

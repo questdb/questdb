@@ -30,7 +30,9 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolMode;
@@ -73,6 +75,25 @@ public class PGAsyncHashJoinTest extends BasePGTest {
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
     private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final int WORKER_COUNT = 4;
+
+    @Test
+    public void testExecuteRowLimitsBoundTheFirstWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            // f8 holds 96 probe rows, twelve frames of eight rows, each meeting the three rows of its
+            // key in d3. Dev mode enables test_fault().
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 8);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 8);
+            execute("CREATE TABLE f8 AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(96)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d3 AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            withServer(false, WorkerPoolMode.LEGACY, port -> readUnderRowLimits(port, expected, false));
+            withServer(true, WorkerPoolMode.LEGACY, port -> readUnderRowLimits(port, actual, true));
+            Assert.assertTrue(countLines(expected) > 2 * 2 * 96 * 3);
+            TestUtils.assertEquals(expected, actual);
+        });
+    }
 
     @Test
     public void testNamedStatementWithBuildLikePattern() throws Exception {
@@ -193,6 +214,19 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                 }
                 return plan.toString();
             }
+        }
+    }
+
+    private static String explain(Connection connection, String sql) throws SQLException {
+        try (
+                PreparedStatement statement = connection.prepareStatement("EXPLAIN " + sql);
+                ResultSet resultSet = statement.executeQuery()
+        ) {
+            final StringBuilder plan = new StringBuilder();
+            while (resultSet.next()) {
+                plan.append(resultSet.getString(1)).append('\n');
+            }
+            return plan.toString();
         }
     }
 
@@ -320,6 +354,89 @@ public class PGAsyncHashJoinTest extends BasePGTest {
                     }
                 }
                 connection.commit();
+            }
+        }
+    }
+
+    // Executes named statements under Execute row limits, twice over, in binary and text transfer,
+    // and appends their rows to the sink: pgjdbc's maxRows, which the client reads alone, and its
+    // fetch size, after which it resumes the portal to read every row. A row limit is the rows that
+    // the join's first window is cut for, on that statement's executions alone; a sort over the join
+    // reads every row of it, and the join leaves its window as it is. A statement that fails to open
+    // its cursor, once the join took the limit, leaves no trace of it on the connection.
+    private void readUnderRowLimits(int port, StringSink sink, boolean isParallel) throws Exception {
+        final String sql = "SELECT f8.v, d3.w FROM f8 JOIN d3 ON f8.k = d3.k";
+        final String sorted = sql + " ORDER BY d3.w DESC, f8.v";
+        final String failing = "SELECT f8.v, d3.w, test_fault() x FROM f8 JOIN d3 ON f8.k = d3.k";
+        final long none = isParallel ? Long.MAX_VALUE : -1;
+        final StringSink rows = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again on
+            // every later execution.
+            try (Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1)) {
+                AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                for (String query : new String[]{sql, sorted}) {
+                    final boolean isQueryRows = query.equals(sql);
+                    try (PreparedStatement statement = connection.prepareStatement(query)) {
+                        statement.setMaxRows(3);
+                        for (int execution = 0; execution < 2; execution++) {
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                rows.clear();
+                                printToSink(rows, resultSet, null);
+                            }
+                            sink.put(query).put(" maxRows=3\n").put(rows);
+                            Assert.assertEquals(query, isParallel ? (isQueryRows ? 3 : Long.MAX_VALUE) : -1, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                        }
+                    }
+                }
+                // pgjdbc fetches in chunks only outside autocommit.
+                connection.setAutoCommit(false);
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setFetchSize(7);
+                    for (int execution = 0; execution < 2; execution++) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            Assert.assertEquals(7, resultSet.getFetchSize());
+                            rows.clear();
+                            printToSink(rows, resultSet, null);
+                        }
+                        sink.put(sql).put(" fetchSize=7\n").put(rows);
+                        Assert.assertEquals(isParallel ? 7 : -1, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                    }
+                }
+                connection.commit();
+                connection.setAutoCommit(true);
+                // The same statement without a row limit, on the same connection.
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        rows.clear();
+                        printToSink(rows, resultSet, null);
+                    }
+                    sink.put(sql).put('\n').put(rows);
+                    Assert.assertEquals(none, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                }
+                try (PreparedStatement statement = connection.prepareStatement(failing)) {
+                    statement.setMaxRows(5);
+                    TestFaultFunctionFactory.armToFailAfterInits(0);
+                    try {
+                        statement.executeQuery().close();
+                        Assert.fail("expected the cursor's open to fail");
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "test_fault: injected init failure");
+                    } finally {
+                        TestFaultFunctionFactory.disarm();
+                    }
+                    Assert.assertEquals(isParallel ? 5 : -1, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                }
+                try (PreparedStatement statement = connection.prepareStatement(failing)) {
+                    try (ResultSet resultSet = statement.executeQuery()) {
+                        rows.clear();
+                        printToSink(rows, resultSet, null);
+                    }
+                    sink.put(failing).put('\n').put(rows);
+                    Assert.assertEquals(none, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                }
+                final String plan = explain(connection, sql);
+                Assert.assertEquals(plan, isParallel, plan.contains("Hash Join workers:"));
             }
         }
     }
