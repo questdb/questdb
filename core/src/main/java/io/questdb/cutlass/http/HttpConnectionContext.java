@@ -139,6 +139,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
+    // true when the connection ends as soon as its socket has sent what the responses wrote to it
+    private boolean isClosingAfterSend;
     // true when the current request asks to close the connection after its response
     private boolean isConnectionCloseRequested;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
@@ -287,6 +289,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.multipartContentHeaderParser.close();
         }
         this.forceDisconnectOnComplete = false;
+        this.isClosingAfterSend = false;
         this.isConnectionCloseRequested = false;
         this.localValueMap.disconnect();
         // SECURITY: these unconditional resets are the safety net for the conditional skips in
@@ -631,11 +634,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             } catch (PeerDisconnectedException ignore) {
                 throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_RERUN);
             } catch (PeerIsSlowToReadException e2) {
-                LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
-                        .$(", thread=").$(Thread.currentThread().threadId()).I$();
-                processor.parkRequest(this, false);
-                resumeHandlerId = (processor instanceof RejectProcessor)
-                        ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
+                // a connection that waits only for its socket to send the rest of the responses before
+                // it closes has no request to park
+                if (!isClosingAfterSend) {
+                    LOG.info().$("peer is slow on running the rerun [fd=").$(getFd())
+                            .$(", thread=").$(Thread.currentThread().threadId()).I$();
+                    processor.parkRequest(this, false);
+                    resumeHandlerId = (processor instanceof RejectProcessor)
+                            ? HttpRequestProcessorSelector.REJECT_PROCESSOR_ID : currentHandlerId;
+                }
                 throw registerDispatcherWrite();
             } catch (ServerDisconnectException e) {
                 LOG.info().$("kicked out [fd=").$(getFd()).I$();
@@ -922,14 +929,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             if (read > 0) {
                 lo = chunkedContentParser.handleRecv(lo, hi, processor);
                 if (lo == Long.MAX_VALUE) {
-                    // done
+                    // done, serveNextRequests() decides whether the connection serves another request
                     processor.onRequestComplete(this);
                     reset();
-                    if (keepConnectionAlive()) {
-                        return true;
-                    } else {
-                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                    }
+                    return true;
                 } else if (lo == Long.MIN_VALUE) {
                     // protocol violation
                     LOG.error().$("cannot parse chunk length, chunked protocol violation, disconnecting [fd=").$(getFd()).I$();
@@ -1006,13 +1009,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         return disconnectHttp(processor, DISCONNECT_REASON_KICKED_OUT_AT_EXTRA_BYTES);
                     }
 
+                    // serveNextRequests() decides whether the connection serves another request
                     processor.onRequestComplete(this);
                     reset();
-                    if (keepConnectionAlive()) {
-                        return true;
-                    } else {
-                        return disconnectHttp(processor, DISCONNECT_REASON_KEEPALIVE_OFF_RECV);
-                    }
+                    return true;
                 }
             }
 
@@ -1185,6 +1185,20 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         processor.onConnectionClosed(this);
         reset();
         throw registerDispatcherDisconnect(reason);
+    }
+
+    // Returns the exception that ends the connection, once its socket has sent everything the responses
+    // wrote to it. An encrypted socket reports a send complete as soon as its TLS session has taken the
+    // bytes, while the session may still hold records of them, which only a later tlsIO() on a writable
+    // socket sends. Closing the socket now would drop those records, and the client would get a response
+    // without its end. So, until the session holds none, the connection waits for the socket to become
+    // writable, and handleClientSend() sends them.
+    private ServerDisconnectException disconnectOnceSent() throws PeerIsSlowToReadException {
+        if (socket.wantsTlsWrite()) {
+            isClosingAfterSend = true;
+            throw registerDispatcherWrite();
+        }
+        return registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
     }
 
     private void dumpBuffer(long buffer, int size) {
@@ -1436,6 +1450,13 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean handleClientSend(HttpRequestProcessorSelector selector) throws PeerIsSlowToReadException, ServerDisconnectException {
+        if (isClosingAfterSend) {
+            // the socket is writable, send the TLS records the session still holds
+            if (socket.tlsIO(Socket.WRITE_FLAG) < 0) {
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_PEER_DISCONNECT_AT_SEND);
+            }
+            throw disconnectOnceSent();
+        }
         if (resumeHandlerId != NO_RESUME_PROCESSOR) {
             final HttpRequestProcessor proc = resolveResumeProcessor(selector);
             try {
@@ -1506,10 +1527,12 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return Utf8s.equalsNcAscii(FALSE, getRequestHeader().getUrlParam(URL_PARAM_SESSION));
     }
 
+    // A connection that switched to another protocol, such as WebSocket, belongs to that protocol, and
+    // the keep-alive setting of HTTP no longer applies to it.
     private boolean keepConnectionAlive() {
         return !forceDisconnectOnComplete
                 && !isConnectionCloseRequested
-                && configuration.getHttpContextConfiguration().getServerKeepAlive();
+                && (isProtocolSwitched || configuration.getHttpContextConfiguration().getServerKeepAlive());
     }
 
     private boolean parseMultipartResult(
@@ -1553,7 +1576,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         do {
             if (!keepConnectionAlive()) {
-                throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
+                throw disconnectOnceSent();
             }
         } while (handleClientRecv(selector, rescheduleContext));
     }
