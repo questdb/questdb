@@ -29,6 +29,8 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.postgresql.util.PSQLException;
+import org.postgresql.util.ServerErrorMessage;
 
 import java.sql.PreparedStatement;
 
@@ -75,6 +77,36 @@ public class PGLiveViewTest extends BasePGTest {
                         + "2026-04-01T01:00:00.000000Z\t2\t2\n");
             }
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateWithUnstorableColumnFailsOnEveryExecution() throws Exception {
+        // A prepared CREATE LIVE VIEW whose SELECT projects an untyped NULL, executed twice. Both
+        // executions refuse the column at its position, which the server sends one-based, and
+        // neither leaves a view behind.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, NULL n, "
+                    + "count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
+            try (PreparedStatement create = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        create.execute();
+                        Assert.fail("execution " + i + " must refuse the NULL column");
+                    } catch (PSQLException e) {
+                        final ServerErrorMessage serverError = e.getServerErrorMessage();
+                        Assert.assertNotNull(serverError);
+                        Assert.assertEquals(
+                                "cannot create NULL-type column, please use type cast, e.g. n::type",
+                                serverError.getMessage()
+                        );
+                        Assert.assertEquals(sql.indexOf("NULL n") + 1, serverError.getPosition());
+                    }
+                    Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                }
+            }
         });
     }
 

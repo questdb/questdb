@@ -31,6 +31,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.IntList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -44,6 +45,11 @@ public class CreateLiveViewOperation implements Operation {
     private final long inMemoryInterval;
     private final char inMemoryIntervalUnit;
     private final int partitionBy;
+    // Per output column, in output order, the position in the CREATE statement of its top-level
+    // SELECT expression. A copy: the builder that fills it is the parser's reusable instance,
+    // cleared by the next parse, while the operation can outlive that parse (a PG prepared
+    // statement executes it again).
+    private final IntList selectColumnPositions;
     private final String selectSql;
     private final String sqlText;
     private final byte startFromKind;
@@ -71,7 +77,8 @@ public class CreateLiveViewOperation implements Operation {
             byte startFromKind,
             @Nullable String startFromTimestamp,
             int startFromTimestampPosition,
-            @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec
+            @Nullable LiveViewDefinition.LvAnchorSpec anchorSpec,
+            IntList selectColumnPositions
     ) {
         this.viewName = viewName;
         this.viewNamePosition = viewNamePosition;
@@ -89,6 +96,7 @@ public class CreateLiveViewOperation implements Operation {
         this.startFromTimestamp = startFromTimestamp;
         this.startFromTimestampPosition = startFromTimestampPosition;
         this.anchorSpec = anchorSpec;
+        this.selectColumnPositions = new IntList(selectColumnPositions);
     }
 
     @Override
@@ -144,6 +152,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public int getPartitionBy() {
         return partitionBy;
+    }
+
+    public IntList getSelectColumnPositions() {
+        return selectColumnPositions;
     }
 
     public String getSelectSql() {

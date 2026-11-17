@@ -2247,12 +2247,18 @@ public class SqlParser {
         // The top-level projection is the only one to check: it alone fixes the view's schema,
         // and a subquery in FROM - the one shape that could hide another projection - is
         // already rejected below ("live view requires a single base table in FROM clause").
+        //
+        // The same walk records where each projection item sits in the CREATE statement, one
+        // per output column: CairoEngine.createLiveView compiles the SELECT text on its own, so
+        // its positions are relative to the SELECT, and it reports an output column of a type
+        // no table can store at the position recorded here.
         final ObjList<QueryColumn> projection = queryModel.getColumns();
         for (int i = 0, n = projection.size(); i < n; i++) {
             final ExpressionNode ast = projection.getQuick(i).getAst();
             if (ast.isWildcard()) {
                 throw SqlException.$(ast.position, "wildcard column select is not allowed in live view queries");
             }
+            builder.addSelectColumnPosition(ast.position);
         }
         // Trim whitespace between the query and any wrapping parentheses so the
         // captured SELECT text round-trips cleanly. SHOW CREATE LIVE VIEW re-emits

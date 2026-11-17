@@ -1701,6 +1701,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
+                validateLiveViewColumnTypes(metadata, op.getSelectColumnPositions());
 
                 // Resolved by the same helper the repair's uniqueness check reads, so the pair the
                 // table deduplicates on and the pair a repair proves unique always match.
@@ -4460,6 +4461,38 @@ public class CairoEngine implements Closeable, WriterSource {
         if (tag != ColumnType.TIMESTAMP && tag != ColumnType.LONG && tag != ColumnType.INT) {
             throw SqlException.$(position, "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got ")
                     .put(ColumnType.nameOf(fn.getType()));
+        }
+    }
+
+    /**
+     * Rejects an output column whose type no table can store. The view's table takes the
+     * SELECT's metadata as is, and its WAL writer refuses such a column
+     * (WalWriter.configureNullSetters), so every refresh would fault until the view
+     * invalidates itself. The message advises a replacement only where one keeps the value:
+     * a cast to any type for an untyped NULL (CREATE TABLE AS SELECT's wording), and the two
+     * bounds for an INTERVAL, which keep its precision where a cast to a string keeps
+     * milliseconds only. Nothing takes the place of a text[].
+     */
+    private static void validateLiveViewColumnTypes(RecordMetadata metadata, IntList columnPositions) throws SqlException {
+        // one top-level projection item per output column: the parser rejects wildcards, and
+        // validateLiveViewFactory every shape but a projection over the window over the base scan
+        assert columnPositions.size() == metadata.getColumnCount();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int columnType = metadata.getColumnType(i);
+            // isPersisted() takes a tag: an INTERVAL carries its timestamp kind above the tag
+            final short columnTag = ColumnType.tagOf(columnType);
+            if (!ColumnType.isPersisted(columnTag)) {
+                final CharSequence columnName = metadata.getColumnName(i);
+                final SqlException e = SqlException.$(columnPositions.getQuick(i), "cannot create ")
+                        .put(ColumnType.nameOf(columnType)).put("-type column");
+                switch (columnTag) {
+                    case ColumnType.NULL -> e.put(", please use type cast, e.g. ").put(columnName).put("::type");
+                    case ColumnType.INTERVAL -> e.put(", please use interval_start(").put(columnName)
+                            .put("), interval_end(").put(columnName).put(')');
+                    default -> e.put(" [column=").put(columnName).put(']');
+                }
+                throw e;
+            }
         }
     }
 

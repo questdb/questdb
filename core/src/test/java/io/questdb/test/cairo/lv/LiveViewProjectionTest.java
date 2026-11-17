@@ -373,6 +373,40 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testIntervalRejectAdviceKeepsMicrosecondBounds() throws Exception {
+        assertIntervalRejectAdviceKeepsTheBounds(
+                "TIMESTAMP",
+                """
+                        ('2026-08-07T12:00:00.123456Z','A',10.0,'2026-08-07T12:00:00.987654Z'),
+                        ('2026-08-07T12:00:01.000001Z','A',11.0,'2026-08-07T12:00:01.000002Z'),
+                        ('2026-08-07T12:00:02.999999Z','B',20.0,'2026-08-07T12:00:03.000001Z')""",
+                """
+                        ts\tsym\ts\te\ta
+                        2026-08-07T12:00:00.123456Z\tA\t2026-08-07T12:00:00.123456Z\t2026-08-07T12:00:00.987654Z\t10.0
+                        2026-08-07T12:00:01.000001Z\tA\t2026-08-07T12:00:01.000001Z\t2026-08-07T12:00:01.000002Z\t10.5
+                        2026-08-07T12:00:02.999999Z\tB\t2026-08-07T12:00:02.999999Z\t2026-08-07T12:00:03.000001Z\t20.0
+                        """
+        );
+    }
+
+    @Test
+    public void testIntervalRejectAdviceKeepsNanosecondBounds() throws Exception {
+        assertIntervalRejectAdviceKeepsTheBounds(
+                "TIMESTAMP_NS",
+                """
+                        ('2026-08-07T12:00:00.123456789Z','A',10.0,'2026-08-07T12:00:00.987654321Z'),
+                        ('2026-08-07T12:00:01.000000001Z','A',11.0,'2026-08-07T12:00:01.000000002Z'),
+                        ('2026-08-07T12:00:02.999999999Z','B',20.0,'2026-08-07T12:00:03.000000001Z')""",
+                """
+                        ts\tsym\ts\te\ta
+                        2026-08-07T12:00:00.123456789Z\tA\t2026-08-07T12:00:00.123456789Z\t2026-08-07T12:00:00.987654321Z\t10.0
+                        2026-08-07T12:00:01.000000001Z\tA\t2026-08-07T12:00:01.000000001Z\t2026-08-07T12:00:01.000000002Z\t10.5
+                        2026-08-07T12:00:02.999999999Z\tB\t2026-08-07T12:00:02.999999999Z\t2026-08-07T12:00:03.000000001Z\t20.0
+                        """
+        );
+    }
+
+    @Test
     public void testMemoizedProjectionColumnSurvivesCheckpointRestore() throws Exception {
         // The two memoized replay tests cover the O3 paths; this one covers the restore. What
         // it adds is coverage rather than a proof: the restore recompiles, so its memoizers are
@@ -1156,6 +1190,47 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSpellingsTheUnstorableColumnRejectsAdviseRefresh() throws Exception {
+        // CREATE refuses a column no table can store and advises a spelling: a typed NULL for
+        // an untyped one, for a CASE whose every branch is NULL too, and an INTERVAL's two
+        // bounds for the INTERVAL, the raw one the slice operator makes included. Each advised
+        // spelling has to give a view that refreshes, or the advice leads nowhere.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String select = "SELECT ts, sym, NULL::double n, (CASE WHEN px > 0 THEN NULL END)::double c, "
+                    + "interval_start(interval(ts, ts)) s, interval_end(interval(ts, ts)) e, "
+                    + "interval_start(1:2) rs, interval_end(1:2) re, px - avg(px) OVER (" + FRAME + ") AS dev FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+            insertFourRows();
+            refresh();
+            assertNoRefreshFaults("lv");
+            Assert.assertFalse(engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tn\tc\ts\te\trs\tre\tdev
+                            2026-08-07T12:00:00.000000Z\tA\tnull\tnull\t2026-08-07T12:00:00.000000Z\t2026-08-07T12:00:00.000000Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000002Z\t0.0
+                            2026-08-07T12:00:01.000000Z\tA\tnull\tnull\t2026-08-07T12:00:01.000000Z\t2026-08-07T12:00:01.000000Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000002Z\t0.5
+                            2026-08-07T12:00:02.000000Z\tB\tnull\tnull\t2026-08-07T12:00:02.000000Z\t2026-08-07T12:00:02.000000Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000002Z\t0.0
+                            2026-08-07T12:00:03.000000Z\tA\tnull\tnull\t2026-08-07T12:00:03.000000Z\t2026-08-07T12:00:03.000000Z\t1970-01-01T00:00:00.000001Z\t1970-01-01T00:00:00.000002Z\t1.666666666666666
+                            """);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
+
+            // a restart compiles the stored SQL again; then an in-order and an out-of-order row
+            restartLiveViewsAndRecover();
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:04.000000Z','A',16.0)");
+            refresh();
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','B',-3.0)");
+            refresh();
+            assertNoRefreshFaults("lv");
+            Assert.assertFalse(engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
+        });
+    }
+
+    @Test
     public void testStartFromNowSkipsHistoryThroughTheProjection() throws Exception {
         // START FROM NOW drops every base row below the CREATE moment before the window
         // sees it, so the projection must never evaluate over them either - and the
@@ -1217,6 +1292,92 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                             2026-08-07T12:00:02.000000Z\tB\tnull
                             2026-08-07T12:00:03.000000Z\tA\t4.0
                             2026-08-07T12:00:04.000000Z\tB\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTypedNullsOfEveryStorableTypeAreAccepted() throws Exception {
+        // CREATE refuses an output column whose type no table can store. A typed NULL of every
+        // type a table does store must still pass, the widths of DECIMAL and GEOHASH, the
+        // nanosecond timestamp and both array ranks included, and the view must hold them.
+        // LONG128 has no cast from NULL, so a function stands in for it.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String select = "SELECT ts, sym, "
+                    + "NULL::decimal(2,0) d8, NULL::decimal(4,0) d16, NULL::decimal(9,0) d32, NULL::decimal(18,3) d64, "
+                    + "NULL::decimal(38,0) d128, NULL::decimal(76,0) d256, "
+                    + "cast(NULL AS binary) bin, cast(NULL AS geohash(1c)) g1, cast(NULL AS geohash(2c)) g2, "
+                    + "cast(NULL AS geohash(5c)) g5, cast(NULL AS geohash(8c)) g8, "
+                    + "NULL::timestamp_ns tns, NULL::double[][] a2, NULL::double[] a1, "
+                    + "NULL::boolean b, NULL::byte bt, NULL::short sh, NULL::char ch, NULL::int i, NULL::long l, "
+                    + "NULL::date dt, NULL::timestamp t, NULL::float4 f, NULL::double d, NULL::string s, NULL::varchar vc, "
+                    + "NULL::symbol sy, NULL::uuid u, NULL::ipv4 ip, NULL::long256 l256, to_long128(1, 2) l128, "
+                    + "avg(px) OVER (" + FRAME + ") w FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+            assertQuery("SELECT \"column\", type FROM table_columns('lv')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            ts\tTIMESTAMP
+                            sym\tSYMBOL
+                            d8\tDECIMAL(2,0)
+                            d16\tDECIMAL(4,0)
+                            d32\tDECIMAL(9,0)
+                            d64\tDECIMAL(18,3)
+                            d128\tDECIMAL(38,0)
+                            d256\tDECIMAL(76,0)
+                            bin\tBINARY
+                            g1\tGEOHASH(1c)
+                            g2\tGEOHASH(2c)
+                            g5\tGEOHASH(5c)
+                            g8\tGEOHASH(8c)
+                            tns\tTIMESTAMP_NS
+                            a2\tDOUBLE[][]
+                            a1\tDOUBLE[]
+                            b\tBOOLEAN
+                            bt\tBYTE
+                            sh\tSHORT
+                            ch\tCHAR
+                            i\tINT
+                            l\tLONG
+                            dt\tDATE
+                            t\tTIMESTAMP
+                            f\tFLOAT
+                            d\tDOUBLE
+                            s\tSTRING
+                            vc\tVARCHAR
+                            sy\tSYMBOL
+                            u\tUUID
+                            ip\tIPv4
+                            l256\tLONG256
+                            l128\tLONG128
+                            w\tDOUBLE
+                            """);
+            insertFourRows();
+            refresh();
+            assertNoRefreshFaults("lv");
+            Assert.assertFalse(engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
+
+            // a restart compiles the stored SQL again; then two more rows
+            restartLiveViewsAndRecover();
+            execute("""
+                    INSERT INTO base (ts, sym, px) VALUES
+                      ('2026-08-07T12:00:04.000000Z','B',24.0),
+                      ('2026-08-07T12:00:05.000000Z','A',16.0)""");
+            refresh();
+            assertNoRefreshFaults("lv");
+            Assert.assertFalse(engine.getLiveViewRegistry().getViewInstance("lv").isInvalid());
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
+            assertQuery("SELECT count() FROM lv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            6
                             """);
         });
     }
@@ -1334,6 +1495,34 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
                         c\tDOUBLE
                         """);
         TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
+    }
+
+    // Follows the INTERVAL reject's advice over rows whose bounds have digits below a
+    // millisecond: the interval's two bounds, each a timestamp of the interval's own
+    // precision, instead of the interval.
+    private void assertIntervalRejectAdviceKeepsTheBounds(String timestampType, String rows, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts " + timestampType + ", sym SYMBOL, px DOUBLE, hi " + timestampType
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String rejected = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, interval(ts, hi) iv, avg(px) OVER (" + FRAME + ") a FROM base";
+            assertExceptionNoLeakCheck(
+                    rejected,
+                    rejected.indexOf("interval("),
+                    "cannot create INTERVAL-type column, please use interval_start(iv), interval_end(iv)"
+            );
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, interval_start(interval(ts, hi)) s, interval_end(interval(ts, hi)) e, "
+                    + "avg(px) OVER (" + FRAME + ") a FROM base");
+            execute("INSERT INTO base (ts, sym, px, hi) VALUES " + rows);
+            refresh();
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT * FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+        });
     }
 
     private void createBase() throws Exception {
