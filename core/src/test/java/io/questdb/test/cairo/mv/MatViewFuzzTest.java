@@ -192,6 +192,94 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testAggregatingSqlGeneratorEmitsAllShapes() {
+        // testAggregatingViewAlterAs must keep drawing SQL that ALTER ... AS takes and SQL that it refuses, through
+        // each source of the aggregating SELECT, each bucketing and each wrapper, see generateAggregatingSql(). The
+        // error position a refused SQL predicts is that of its outermost timestamp column, or the SQL's start under a
+        // wildcard. The seed is fixed, so a failure reproduces.
+        final Rnd rnd = new Rnd(42, 42);
+        final AggregatingSql sql = new AggregatingSql();
+        final int[][] takenCounts = new int[3][3];
+        final int[][] refusedCounts = new int[3][3];
+        final int[] wrapperCounts = new int[3];
+        final int[] refusedKindCounts = new int[3];
+        int timestampClauses = 0;
+        for (int i = 0; i < 600; i++) {
+            generateAggregatingSql(rnd, sql);
+            final String text = sql.sql.toString();
+            final int kind = sql.inner.kind;
+            if (kind == PassthroughSql.PASSED_THROUGH) {
+                Assert.assertFalse(text, text.contains("dateadd") || text.contains("TIMESTAMP(ts2)") || text.contains("ts2 AS"));
+                takenCounts[sql.source][sql.bucketing]++;
+            } else {
+                Assert.assertTrue(text, text.contains("dateadd") || text.contains("TIMESTAMP(ts2)"));
+                refusedCounts[sql.source][sql.bucketing]++;
+                refusedKindCounts[kind]++;
+            }
+            if (kind == PassthroughSql.SHIFTED) {
+                // a shift loses the designated timestamp, which the clause restores
+                Assert.assertTrue(text, text.contains(") TIMESTAMP(ts)") || text.contains("FROM a TIMESTAMP(ts)"));
+            }
+            if (text.contains(") TIMESTAMP(ts)") || text.contains("FROM a TIMESTAMP(ts)")) {
+                timestampClauses++;
+            }
+            switch (sql.bucketing) {
+                case AggregatingSql.SAMPLE_BY -> Assert.assertTrue(text, text.contains(" SAMPLE BY 1h") && !text.contains("timestamp_floor"));
+                case AggregatingSql.FLOOR -> Assert.assertTrue(text, text.contains("timestamp_floor('1h', ") && !text.contains("SAMPLE BY"));
+                default -> Assert.assertTrue(text, text.contains("ts, '2024-01-01T00:00:00.000000Z') AS ts") && !text.contains("SAMPLE BY"));
+            }
+            switch (sql.source) {
+                case AggregatingSql.CTE -> Assert.assertTrue(text, text.startsWith("WITH a AS (") || text.contains("(WITH a AS ("));
+                case AggregatingSql.JOIN -> Assert.assertTrue(text, text.contains(" b JOIN other o ON (sym)"));
+                default -> Assert.assertFalse(text, text.contains("WITH a AS (") || text.contains(" JOIN "));
+            }
+            wrapperCounts[sql.wrapper]++;
+            if (sql.wrapper == AggregatingSql.WILDCARD) {
+                Assert.assertTrue(text, text.startsWith("SELECT * FROM ("));
+                Assert.assertEquals(text, 0, sql.timestampPosition);
+            } else {
+                Assert.assertTrue(text, text.startsWith(sql.topTimestampColumn, sql.timestampPosition));
+                // the column names ts, as a bare or prefixed reference or under an alias
+                Assert.assertTrue(text, sql.topTimestampColumn.equals("ts") || sql.topTimestampColumn.endsWith(".ts")
+                        || sql.topTimestampColumn.endsWith(" AS ts"));
+            }
+        }
+        for (int source = 0; source < 3; source++) {
+            for (int bucketing = 0; bucketing < 3; bucketing++) {
+                Assert.assertTrue("too few taken SQL [source=" + source + ", bucketing=" + bucketing + ']', takenCounts[source][bucketing] > 10);
+                Assert.assertTrue("too few refused SQL [source=" + source + ", bucketing=" + bucketing + ']', refusedCounts[source][bucketing] > 10);
+            }
+        }
+        for (int wrapper = 0; wrapper < 3; wrapper++) {
+            Assert.assertTrue("too few SQL with wrapper " + wrapper, wrapperCounts[wrapper] > 100);
+        }
+        Assert.assertTrue("too few SQL shifting the timestamp", refusedKindCounts[PassthroughSql.SHIFTED] > 75);
+        Assert.assertTrue("too few SQL taking ts2 as the timestamp", refusedKindCounts[PassthroughSql.OTHER_COLUMN] > 75);
+        Assert.assertTrue("too few TIMESTAMP clauses", timestampClauses > 150);
+    }
+
+    @Test
+    public void testAggregatingViewAlterAs() throws Exception {
+        // ALTER MATERIALIZED VIEW ... AS on an aggregating view, mixed with ingestion in and out of order, WAL apply and
+        // refresh job runs at random points, FULL refreshes and restarts of the view states. Half of the new SQLs bucket
+        // the base table's designated timestamp, taken as it is through a random chain of aliases, subqueries, a CTE
+        // or the master of a join, which the statement takes; the others bucket ts2 or a shifted timestamp, which the
+        // statement refuses with the aggregating timestamp rule, at the outermost timestamp column, and no view
+        // transaction, see generateAggregatingSql(). The oracle is the view's SQL run on the base: at each check, the
+        // view holds exactly its rows.
+        // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
+        final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
+        final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
+        assertMemoryLeak(() -> {
+            final Rnd rnd = generateRandom(LOG);
+            for (int round = 0; round < rounds; round++) {
+                LOG.info().$("fuzz: aggregating round ").$(round).$();
+                runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), true);
+            }
+        });
+    }
+
+    @Test
     public void testBareNameSwitchResume() throws Exception {
         // A bare-name round, see MatViewFuzzOpGenerator.forBareNameRound(): a view whose SQL calls count without
         // parentheses, as the versions before the explicit-name rule store it, over a base that gains and drops a
@@ -725,7 +813,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             final Rnd rnd = generateRandom(LOG);
             for (int round = 0; round < rounds; round++) {
                 LOG.info().$("fuzz: passthrough round ").$(round).$();
-                runPassthroughAlterOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40));
+                runAlterAsOperations(rnd, steps > 0 ? steps : 40 + rnd.nextInt(40), false);
             }
         });
     }
@@ -2296,10 +2384,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalAndMatViewQueues();
     }
 
-    // A check of testPassthroughViewAlterAs(): catches the view up, as the next base commit would after a restart lost
-    // its refresh, and asserts that the view is valid, has the SQL the fuzzer last saw taken, and holds exactly the
-    // rows the SQL gives on the base.
-    private static void checkPassthroughFuzzView(String viewSql, int step) throws Exception {
+    // A check of testPassthroughViewAlterAs() and testAggregatingViewAlterAs(): catches the view up, as the next base
+    // commit would after a restart lost its refresh, and asserts that the view is valid, has the SQL the fuzzer last
+    // saw taken, and holds exactly the rows the SQL gives on the base.
+    private static void checkAlterAsFuzzView(String viewSql, int step) throws Exception {
         final TableToken viewToken = engine.verifyTableName("mv");
         engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
         for (int i = 0; i < 3; i++) {
@@ -2370,6 +2458,85 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 .put(" sample by ").put(fuzzCase.stride).put(fuzzCase.unit)
                 .put(" align to calendar time zone '").put(fuzzCase.zone).put("' with offset '")
                 .put(hours < 10 ? "0" : "").put(hours).put(':').put(minutes < 10 ? "0" : "").put(minutes).put('\'');
+    }
+
+    // The SQL of an ALTER ... AS of testAggregatingViewAlterAs(): the sums of price and qty of each symbol by the hour
+    // over the rows of a SQL of generatePassthroughSql(), the inner SQL, whose designated timestamp passes the base's
+    // through, or is shifted or taken from ts2. The aggregating SELECT buckets its timestamp ts by SAMPLE BY, or by
+    // timestamp_floor() with or without its origin argument, and reads the inner SQL as a subquery, a CTE or the master
+    // of a join with the table other. A TIMESTAMP(ts) clause on the inner SQL restores the designated timestamp that a
+    // shift loses, and appears at random elsewhere. One more SELECT may wrap the aggregating one, naming its columns
+    // or selecting all. ALTER ... AS takes the SQL when the inner SQL passes the base's timestamp through, and
+    // otherwise refuses it with the aggregating timestamp rule, at the outermost timestamp column, or at the SQL's
+    // start under a wildcard.
+    private static void generateAggregatingSql(Rnd rnd, AggregatingSql out) {
+        generatePassthroughSql(rnd, out.inner);
+        final String inner = out.inner.sql.toString();
+        out.source = rnd.nextInt(3);
+        out.bucketing = rnd.nextInt(3);
+        out.wrapper = rnd.nextInt(3);
+        final boolean hasTimestampClause = out.inner.kind == PassthroughSql.SHIFTED || rnd.nextInt(3) == 0;
+        final StringBuilder sb = new StringBuilder();
+        final String from;
+        final String prefix;
+        switch (out.source) {
+            case AggregatingSql.CTE -> {
+                sb.append("WITH a AS (").append(inner).append(") ");
+                from = hasTimestampClause ? "a TIMESTAMP(ts)" : "a";
+                prefix = !hasTimestampClause && rnd.nextBoolean() ? "a." : "";
+            }
+            case AggregatingSql.JOIN -> {
+                from = (hasTimestampClause ? "((" + inner + ") TIMESTAMP(ts))" : "(" + inner + ")") + " b JOIN other o ON (sym)";
+                // other has the columns ts and sym too
+                prefix = "b.";
+            }
+            default -> {
+                // SUBQUERY
+                final boolean isAliased = !hasTimestampClause && rnd.nextBoolean();
+                from = "(" + inner + ")" + (hasTimestampClause ? " TIMESTAMP(ts)" : (isAliased ? " t" : ""));
+                prefix = isAliased && rnd.nextBoolean() ? "t." : "";
+            }
+        }
+        final String timestampColumn = switch (out.bucketing) {
+            case AggregatingSql.SAMPLE_BY -> prefix + "ts";
+            case AggregatingSql.FLOOR -> "timestamp_floor('1h', " + prefix + "ts) AS ts";
+            // FLOOR_FROM
+            default -> "timestamp_floor('1h', " + prefix + "ts, '2024-01-01T00:00:00.000000Z') AS ts";
+        };
+        final String[] columns = {timestampColumn, prefix + "sym", "sum(" + prefix + "price) AS price", "sum(" + prefix + "qty) AS qty"};
+        final int rotation = rnd.nextInt(4);
+        sb.append("SELECT ");
+        int timestampOffset = -1;
+        for (int i = 0; i < 4; i++) {
+            final int index = (i + rotation) % 4;
+            if (i > 0) {
+                sb.append(", ");
+            }
+            if (index == 0) {
+                timestampOffset = sb.length();
+            }
+            sb.append(columns[index]);
+        }
+        sb.append(" FROM ").append(from).append(out.bucketing == AggregatingSql.SAMPLE_BY ? " SAMPLE BY 1h" : " ORDER BY ts");
+        out.sql.clear();
+        switch (out.wrapper) {
+            case AggregatingSql.WILDCARD -> {
+                out.sql.put("SELECT * FROM (").put(sb).put(')');
+                out.timestampPosition = 0;
+                out.topTimestampColumn = null;
+            }
+            case AggregatingSql.NAMED -> {
+                out.sql.put("SELECT sym, ts, price, qty FROM (").put(sb).put(')');
+                out.timestampPosition = "SELECT sym, ".length();
+                out.topTimestampColumn = "ts";
+            }
+            default -> {
+                // NO_WRAPPER
+                out.sql.put(sb);
+                out.timestampPosition = timestampOffset;
+                out.topTimestampColumn = timestampColumn;
+            }
+        }
     }
 
     // The SQL of an ALTER ... AS of testPassthroughViewAlterAs(): the columns ts, sym, price and qty of the base's rows
@@ -2562,41 +2729,68 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    // A round of testPassthroughViewAlterAs(): a base with the designated timestamp ts and another TIMESTAMP column ts2,
-    // of either precision, and a passthrough view of its ts, sym, price and qty.
-    private static void runPassthroughAlterOperations(Rnd rnd, int steps) throws Exception {
+    // A round of testPassthroughViewAlterAs() or testAggregatingViewAlterAs(): a base with the designated timestamp ts
+    // and another TIMESTAMP column ts2, of either precision, and a view of its ts, sym, price and qty, which passes the
+    // base's rows through, or sums the price and qty of each symbol by the hour. The aggregating round reads the table
+    // other, which holds a row of each symbol, in its joins.
+    private static void runAlterAsOperations(Rnd rnd, int steps, boolean isAggregating) throws Exception {
         final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         execute("CREATE TABLE base (ts " + timestampType + ", ts2 " + timestampType + ", sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         insertPassthroughFuzzRows(rnd, 1 + rnd.nextInt(20));
-        String viewSql = "SELECT ts, sym, price, qty FROM base";
-        LOG.info().$("fuzz: passthrough view [timestampType=").$(timestampType).I$();
+        String viewSql;
+        if (isAggregating) {
+            execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO other VALUES ('2024-01-01T00:00:00.000000Z', 's0', 1.0), ('2024-01-01T00:00:00.000000Z', 's1', 2.0), ('2024-01-01T00:00:00.000000Z', 's2', 3.0)");
+            viewSql = "SELECT ts, sym, sum(price) AS price, sum(qty) AS qty FROM base SAMPLE BY 1h";
+        } else {
+            viewSql = "SELECT ts, sym, price, qty FROM base";
+        }
+        LOG.info().$("fuzz: ").$(isAggregating ? "aggregating" : "passthrough").$(" view [timestampType=").$(timestampType).I$();
         execute("CREATE MATERIALIZED VIEW mv AS (" + viewSql + ") PARTITION BY DAY");
         drainWalAndMatViewQueues();
         final TableToken viewToken = engine.verifyTableName("mv");
         final String alterHead = "ALTER MATERIALIZED VIEW mv AS (";
-        final PassthroughSql alter = new PassthroughSql();
+        final PassthroughSql passthroughAlter = new PassthroughSql();
+        final AggregatingSql aggregatingAlter = new AggregatingSql();
         for (int step = 0; step < steps; step++) {
             switch (rnd.nextInt(10)) {
                 case 0, 1, 2 -> insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5));
                 case 3, 4, 5 -> {
-                    generatePassthroughSql(rnd, alter);
-                    final String sql = alter.sql.toString();
-                    LOG.info().$("fuzz: step ").$(step).$(" ALTER AS ").$(sql).$(" [kind=").$(alter.kind).I$();
+                    final String sql;
+                    final int kind;
+                    final int timestampPosition;
+                    if (isAggregating) {
+                        generateAggregatingSql(rnd, aggregatingAlter);
+                        sql = aggregatingAlter.sql.toString();
+                        kind = aggregatingAlter.inner.kind;
+                        timestampPosition = aggregatingAlter.timestampPosition;
+                    } else {
+                        generatePassthroughSql(rnd, passthroughAlter);
+                        sql = passthroughAlter.sql.toString();
+                        kind = passthroughAlter.kind;
+                        timestampPosition = passthroughAlter.timestampPosition;
+                    }
+                    LOG.info().$("fuzz: step ").$(step).$(" ALTER AS ").$(sql).$(" [kind=").$(kind).I$();
                     final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
                     try {
                         execute(alterHead + sql + ')');
                         Assert.assertEquals("ALTER ... AS must refuse a designated timestamp that is not the base's as it is: " + sql,
-                                PassthroughSql.PASSED_THROUGH, alter.kind);
+                                PassthroughSql.PASSED_THROUGH, kind);
                         // one definition event
                         Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
                         viewSql = sql;
                     } catch (SqlException e) {
-                        if (alter.kind == PassthroughSql.PASSED_THROUGH) {
+                        if (kind == PassthroughSql.PASSED_THROUGH) {
                             throw e;
                         }
-                        TestUtils.assertEquals(sql, "passthrough materialized view timestamp must reference the base table designated timestamp without transformation",
-                                e.getFlyweightMessage());
-                        Assert.assertEquals(sql, alterHead.length() + alter.timestampPosition, e.getPosition());
+                        TestUtils.assertEquals(
+                                sql,
+                                isAggregating
+                                        ? "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation"
+                                        : "passthrough materialized view timestamp must reference the base table designated timestamp without transformation",
+                                e.getFlyweightMessage()
+                        );
+                        Assert.assertEquals(sql, alterHead.length() + timestampPosition, e.getPosition());
                         Assert.assertEquals("a refused ALTER ... AS wrote to the view's WAL: " + sql, viewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
                     }
                 }
@@ -2618,11 +2812,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 drainWalAndMatViewQueues();
             }
             if (step % 6 == 5 || step == steps - 1) {
-                checkPassthroughFuzzView(viewSql, step);
+                checkAlterAsFuzzView(viewSql, step);
             }
         }
         execute("DROP MATERIALIZED VIEW mv");
         execute("DROP TABLE base");
+        if (isAggregating) {
+            execute("DROP TABLE other");
+        }
         drainWalAndMatViewQueues();
     }
 
@@ -3158,6 +3355,40 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         long transitionTs;
         char unit;
         String zone;
+    }
+
+    // An ALTER ... AS SQL of testAggregatingViewAlterAs(), see generateAggregatingSql().
+    private static final class AggregatingSql {
+        // the aggregating SELECT reads the inner SQL as a CTE
+        static final int CTE = 1;
+        // the aggregating SELECT buckets with timestamp_floor()
+        static final int FLOOR = 1;
+        // the aggregating SELECT buckets with timestamp_floor() and its origin argument
+        static final int FLOOR_FROM = 2;
+        // the aggregating SELECT reads the inner SQL as the master of a join
+        static final int JOIN = 2;
+        // the wrapper SELECT names the columns
+        static final int NAMED = 2;
+        // no wrapper SELECT
+        static final int NO_WRAPPER = 0;
+        // the aggregating SELECT buckets with SAMPLE BY
+        static final int SAMPLE_BY = 0;
+        // the aggregating SELECT reads the inner SQL as a subquery
+        static final int SUBQUERY = 0;
+        // the wrapper SELECT selects all columns
+        static final int WILDCARD = 1;
+        // the inner SQL, whose kind tells whether ALTER ... AS takes the SQL
+        final PassthroughSql inner = new PassthroughSql();
+        final StringSink sql = new StringSink();
+        int bucketing;
+        int source;
+        // the offset in the SQL of the outermost SELECT's timestamp column, where a refusal points, or 0 under a
+        // wildcard, the SQL's start
+        int timestampPosition;
+        // the outermost SELECT's timestamp column, null under a wildcard
+        String topTimestampColumn;
+        // NO_WRAPPER, WILDCARD or NAMED
+        int wrapper;
     }
 
     // An ALTER ... AS SQL of testPassthroughViewAlterAs(), see generatePassthroughSql().

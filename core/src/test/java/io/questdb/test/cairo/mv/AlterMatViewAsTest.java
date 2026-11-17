@@ -82,6 +82,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * expression the new SQL computes, of its symbol's base rows within the hour.
  */
 public class AlterMatViewAsTest extends AbstractCairoTest {
+    // the error of the rule ALTER MATERIALIZED VIEW ... AS applies to an aggregating view's designated timestamp
+    private static final String AGGREGATING_TIMESTAMP_ERROR = "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation";
+    // the rows of the view av of createAggregatingView()
+    private static final String AGGREGATING_VIEW_ROWS = """
+            ts\tsym\tprice
+            2024-01-01T10:00:00.000000Z\ta\t1.0
+            2024-01-01T11:00:00.000000Z\tb\t2.0
+            """;
     private static final String ALTER_PREFIX = "ALTER MATERIALIZED VIEW price_1h ";
     private static final String BASE2_SQL = "SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h";
     // column names of the base of the positional copy tests, see createLongNameBase()
@@ -1397,6 +1405,204 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAggregatingAlterKeepsBucketedBaseTimestamp() throws Exception {
+        // ALTER ... AS takes a SQL whose designated timestamp buckets the base table's designated timestamp, by SAMPLE BY
+        // or timestamp_floor(), under any spelling, table alias, alias chain, subquery, CTE or regular view, as the master
+        // of a join, under a subquery's own alias too, with filters and other columns. A FULL refresh and the incremental
+        // refresh of a later insert then give the SQL's rows over the base: one row a round, an hour later each round.
+        assertMemoryLeak(() -> {
+            createAggregatingView();
+            createPassthroughRegularViews();
+            final String[] accepted = {
+                    "SELECT ts, sym, max(price) AS price FROM BASE SAMPLE BY 1h",
+                    "SELECT TS, sym, sum(price) AS price FROM base SAMPLE BY 1h",
+                    "SELECT b.ts AS ts, b.sym, sum(b.price) AS price FROM base b SAMPLE BY 1h",
+                    "SELECT base.ts, sym, sum(price) AS price FROM base TIMESTAMP(ts) WHERE price > 0 SAMPLE BY 1h",
+                    "SELECT ts, sym, sum(price) AS price FROM (SELECT * FROM base WHERE price > 0) SAMPLE BY 1h",
+                    "SELECT x AS ts, sym, sum(price) AS price FROM (SELECT ts AS x, sym, price FROM base) TIMESTAMP(x) SAMPLE BY 1h",
+                    "WITH c AS (SELECT ts, sym, price FROM base) SELECT ts, sym, sum(price) AS price FROM c SAMPLE BY 1h",
+                    "SELECT ts, sym, sum(price) AS price FROM rv_ok SAMPLE BY 1h",
+                    "SELECT * FROM (SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h)",
+                    "SELECT timestamp_floor('1h', ts) AS ts, sym, sum(price) AS price FROM base ORDER BY ts",
+                    "SELECT timestamp_floor('1h', ts, '2024-01-01T00:00:00.000000Z') AS ts, sym, sum(price) AS price FROM base ORDER BY ts",
+                    "SELECT timestamp_floor('1h', x) AS ts, sym, sum(price) AS price FROM (SELECT ts AS x, sym, price FROM base) TIMESTAMP(x) ORDER BY ts",
+                    "SELECT b.ts, b.sym, sum(b.price) AS price FROM base b JOIN other o ON (sym) SAMPLE BY 1h",
+                    "SELECT b.ts, b.sym, sum(b.price) AS price FROM (SELECT * FROM base WHERE price > 0) b JOIN other o ON (sym) SAMPLE BY 1h",
+                    "SELECT b.ts, b.sym, sum(b.price + o.x) AS price FROM (base WHERE price > 0) b ASOF JOIN other o ON (sym) SAMPLE BY 1h",
+                    "SELECT ts, sym, sum(price) AS price, max(ts2) AS last_ts2 FROM base SAMPLE BY 1h",
+                    "SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h"
+            };
+            final StringSink expected = new StringSink();
+            expected.put(AGGREGATING_VIEW_ROWS);
+            for (int i = 0; i < accepted.length; i++) {
+                final String query = accepted[i];
+                execute("ALTER MATERIALIZED VIEW av AS (" + query + ")");
+                assertMappingColumns("av", "", query.contains("last_ts2") ? "last_ts2" : "");
+                drainWalQueue();
+                Assert.assertEquals(query, engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("av")).getMatViewSql());
+                execute("REFRESH MATERIALIZED VIEW av FULL");
+                drainWalAndMatViewQueues();
+                final String hour = String.format("2024-01-%02dT%02d:00:00.000000Z", 1 + (12 + i) / 24, (12 + i) % 24);
+                execute("INSERT INTO base VALUES ('" + hour + "', '" + hour + "', 'c', " + (12 + i) + ".0)");
+                drainWalAndMatViewQueues();
+                assertViewStatus("av", "valid", "");
+                assertSqlCursors("SELECT ts, sym, price FROM (" + query + ") ORDER BY ts, sym", "SELECT ts, sym, price FROM av ORDER BY ts, sym");
+                assertQuery("SELECT count() FROM av").noLeakCheck().noRandomAccess().expectSize().returns("count\n" + (3 + i) + "\n");
+                expected.put(hour).put("\tc\t").put(12 + i).put(".0\n");
+            }
+            // the last SQL sums the price of each symbol by the hour
+            assertQuery("av").timestamp("ts").noLeakCheck().expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testAggregatingAlterOnTimeZoneNanosAndViewBase() throws Exception {
+        // The rule holds under a SAMPLE BY time zone and offset, for a nanosecond designated timestamp, and over a
+        // materialized view as the base table, whose designated timestamp is the view's.
+        assertMemoryLeak(() -> {
+            createAggregatingView();
+            execute("CREATE MATERIALIZED VIEW tz_1h AS (SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:15') PARTITION BY DAY");
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, ts2 TIMESTAMP_NS, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base_ns VALUES ('2024-01-01T10:00:00.000000001Z', '2024-01-01T10:30:00.000000001Z', 'a', 1.0)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW nv AS (SELECT ts, sym, sum(price) AS price FROM base_ns SAMPLE BY 1h) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW av_1d AS (SELECT ts, sym, sum(price) AS price FROM av SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+
+            final String grid = " SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/London' WITH OFFSET '00:15'";
+            assertAggregatingAlterRefused("tz_1h", "SELECT ts2 AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2)" + grid, "ts2 AS ts");
+            execute("ALTER MATERIALIZED VIEW tz_1h AS (SELECT ts, sym, max(price) AS price FROM base" + grid + ")");
+            assertAggregatingAlterRefused("nv", "SELECT ts2 AS ts, sym, sum(price) AS price FROM base_ns TIMESTAMP(ts2) SAMPLE BY 1h", "ts2 AS ts");
+            execute("ALTER MATERIALIZED VIEW nv AS (SELECT ts, sym, max(price) AS price FROM base_ns SAMPLE BY 1h)");
+            assertAggregatingAlterRefused("av_1d", "SELECT ts, sym, sum(price) AS price FROM (SELECT dateadd('h', 1, ts) AS ts, sym, price FROM av) TIMESTAMP(ts) SAMPLE BY 1d", "ts, sym, sum");
+            execute("ALTER MATERIALIZED VIEW av_1d AS (SELECT ts, max(price) AS price, sym FROM av SAMPLE BY 1d)");
+            drainWalQueue();
+
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0), ('2024-01-01T12:05:00.000000Z', '2024-01-01T12:35:00.000000Z', 'c', 4.0)");
+            execute("INSERT INTO base_ns VALUES ('2024-01-01T11:00:00.000000002Z', '2024-01-01T11:30:00.000000002Z', 'b', 2.0), ('2024-01-01T11:30:00.000000003Z', '2024-01-01T11:35:00.000000003Z', 'b', 5.0)");
+            drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
+            for (String view : new String[]{"av", "tz_1h", "nv", "av_1d"}) {
+                assertViewStatus(view, "valid", "");
+            }
+            // London keeps UTC in January, and the offset starts the buckets at a quarter past the hour
+            assertQuery("tz_1h").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice
+                    2024-01-01T09:15:00.000000Z\ta\t1.0
+                    2024-01-01T10:15:00.000000Z\tb\t2.0
+                    2024-01-01T11:15:00.000000Z\tc\t4.0
+                    """);
+            assertQuery("nv").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice
+                    2024-01-01T10:00:00.000000000Z\ta\t1.0
+                    2024-01-01T11:00:00.000000000Z\tb\t5.0
+                    """);
+            // av sums the two rows of c; av_1d takes the largest hourly sum of each symbol a day
+            assertQuery("av_1d ORDER BY sym").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T00:00:00.000000Z\tb\t2.0
+                    2024-01-01T00:00:00.000000Z\tc\t7.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testAggregatingAlterRefusesTimestampNotBucketingBase() throws Exception {
+        // An aggregating view recomputes, at each refresh, the buckets of the base table's intervals of its designated
+        // timestamp, so ALTER ... AS refuses a SQL whose designated timestamp buckets anything else: another column under
+        // TIMESTAMP(ts2), a shifted timestamp, either through a subquery, a CTE, a regular view or the master of a join,
+        // or the timestamp of a joined table. The error points at the query column, or at the SQL under a wildcard.
+        // CREATE still takes such a SQL (questdb/questdb#6052). The view keeps refreshing with its SQL.
+        assertMemoryLeak(() -> {
+            createAggregatingView();
+            createPassthroughRegularViews();
+            final String[][] refused = {
+                    {"SELECT ts2 AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2) SAMPLE BY 1h", "ts2 AS ts"},
+                    {"SELECT ts2 AS ts, ts AS ts2, sym, sum(price) AS price FROM base TIMESTAMP(ts2) SAMPLE BY 1h", "ts2 AS ts,"},
+                    {"SELECT timestamp_floor('1h', ts2) AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2) ORDER BY ts", "timestamp_floor"},
+                    {"SELECT timestamp_floor('1h', ts2, '2024-01-01T00:00:00.000000Z') AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2) ORDER BY ts", "timestamp_floor"},
+                    {"SELECT timestamp_floor('1h', dateadd('m', 15, ts)) AS ts, sym, sum(price) AS price FROM base ORDER BY ts", "timestamp_floor"},
+                    {"SELECT ts, sym, sum(price) AS price FROM (SELECT ts2 AS ts, sym, price FROM base) TIMESTAMP(ts) SAMPLE BY 1h", "ts, sym, sum"},
+                    {"SELECT ts, sym, sum(price) AS price FROM (SELECT dateadd('m', 15, ts) AS ts, sym, price FROM base) TIMESTAMP(ts) SAMPLE BY 1h", "ts, sym, sum"},
+                    {"WITH c AS (SELECT ts2 AS ts, sym, price FROM base TIMESTAMP(ts2)) SELECT ts, sym, sum(price) AS price FROM c SAMPLE BY 1h", "ts, sym, sum"},
+                    {"SELECT ts, sym, sum(price) AS price FROM rv SAMPLE BY 1h", "ts, sym, sum"},
+                    {"SELECT * FROM (SELECT ts2 AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2) SAMPLE BY 1h)", null},
+                    {"SELECT b.ts, b.sym, sum(b.price) AS price FROM (SELECT ts2 AS ts, sym, price FROM base TIMESTAMP(ts2)) b JOIN other o ON (sym) SAMPLE BY 1h", "b.ts"},
+                    {"SELECT o.ts, o.sym, sum(b.price) AS price FROM other o JOIN base b ON (sym) SAMPLE BY 1h", "o.ts"}
+            };
+            for (String[] shape : refused) {
+                assertAggregatingAlterRefused("av", shape[0], shape[1]);
+            }
+            execute("INSERT INTO base VALUES ('2024-01-01T12:00:00.000000Z', '2024-01-01T12:30:00.000000Z', 'c', 3.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("av", "valid", "");
+            assertQuery("av").timestamp("ts").noLeakCheck().expectSize().returns(AGGREGATING_VIEW_ROWS + "2024-01-01T12:00:00.000000Z\tc\t3.0\n");
+        });
+    }
+
+    @Test
+    public void testAggregatingAlterWithBaseChecksNewBaseTimestamp() throws Exception {
+        // WITH BASE checks the SQL against the new base table's designated timestamp, event_time here: the column named
+        // as the old base's timestamp is refused before the view goes invalid, and event_time under the view's timestamp
+        // name is taken.
+        assertMemoryLeak(() -> {
+            createAggregatingView();
+            execute("CREATE TABLE base3 (ts TIMESTAMP, event_time TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(event_time) PARTITION BY DAY WAL");
+            execute("INSERT INTO base3 VALUES ('2024-01-02T10:00:00.000000Z', '2024-01-02T10:30:00.000000Z', 'c', 3.0)");
+            drainWalQueue();
+            final String head = "ALTER MATERIALIZED VIEW av WITH BASE base3 AS (";
+            assertAggregatingAlterRefused("av", head, "SELECT ts, sym, sum(price) AS price FROM base3 TIMESTAMP(ts) SAMPLE BY 1h", "ts,");
+            assertAggregatingAlterRefused("av", head, "SELECT timestamp_floor('1h', ts) AS ts, sym, sum(price) AS price FROM base3 TIMESTAMP(ts) ORDER BY ts", "timestamp_floor");
+            Assert.assertNull(engine.getMatViewStateStore().getViewState(engine.verifyTableName("av")).getBacklogLostReason());
+            assertDependents("base3");
+
+            execute(head + "SELECT event_time AS ts, sym, sum(price) AS price FROM base3 SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("av", "invalid", "base table changed");
+            execute("REFRESH MATERIALIZED VIEW av RESUME SKIP BACKLOG");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base3 VALUES ('2024-01-02T11:00:00.000000Z', '2024-01-02T11:30:00.000000Z', 'd', 4.0)");
+            drainWalAndMatViewQueues();
+            assertViewStatus("av", "valid", "");
+            // the old base's rows stay, and the row base3 held before RESUME SKIP BACKLOG falls into the gap
+            assertQuery("av").timestamp("ts").noLeakCheck().expectSize().returns(AGGREGATING_VIEW_ROWS + "2024-01-02T11:00:00.000000Z\td\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testAggregatingTimestampCheckOrder() throws Exception {
+        // The rule comes after the designated timestamp and the sampling interval checks, which keep their errors, and
+        // before the column checks, so a SQL that breaks the rule and a column cast fails on the rule. A timestamp the
+        // query takes from a joined table, or from a column that SAMPLE BY does not bucket, is not its designated
+        // timestamp. A malformed timestamp_floor() inside the SQL fails its compile.
+        assertMemoryLeak(() -> {
+            createAggregatingView();
+            final String head = "ALTER MATERIALIZED VIEW av AS (";
+            final String[] notDesignated = {
+                    "SELECT ts2 AS ts, sym, sum(price) AS price FROM base SAMPLE BY 1h",
+                    "SELECT o.ts AS ts, b.sym, sum(b.price) AS price FROM base b JOIN other o ON (sym) SAMPLE BY 1h",
+                    "SELECT o.ts, b.sym, sum(b.price) AS price FROM (SELECT * FROM base) b ASOF JOIN (SELECT * FROM other) o ON (sym) SAMPLE BY 1h"
+            };
+            for (String sql : notDesignated) {
+                assertAlterRefused("av", head + sql + ')', head.length() + "SELECT ".length(),
+                        "materialized view query must produce the view's designated timestamp as its designated timestamp [column=ts, type=TIMESTAMP]");
+            }
+            final String malformedFloor = "SELECT timestamp_floor('1h', x) AS ts, sym, sum(price) AS price FROM (SELECT timestamp_floor('1h', ts, null, '00:00') AS x, sym, price FROM base) TIMESTAMP(x) ORDER BY ts";
+            assertAlterRefused("av", head + malformedFloor + ')', head.length() + malformedFloor.lastIndexOf("timestamp_floor"),
+                    "there is no matching function `timestamp_floor` with the argument types: (STRING, TIMESTAMP, NULL, STRING)");
+            final String otherInterval = "SELECT ts2 AS ts, sym, sum(price) AS price FROM base TIMESTAMP(ts2) SAMPLE BY 2h";
+            assertAlterRefused("av", head + otherInterval + ')', head.length() + otherInterval.indexOf("2h"),
+                    "materialized view query must keep the view's sampling interval [interval=1h, queryInterval=2h]");
+            assertAggregatingAlterRefused("av", "SELECT ts2 AS ts, sym, first(sym) AS price FROM base TIMESTAMP(ts2) SAMPLE BY 1h", "ts2 AS ts");
+            final String inconvertible = "SELECT ts, sym, first(sym) AS price FROM base SAMPLE BY 1h";
+            assertAlterRefused("av", head + inconvertible + ')', head.length() + inconvertible.indexOf("first"),
+                    "inconvertible types: SYMBOL -> DOUBLE [from=price, to=price]");
+        });
+    }
+
+    @Test
     public void testAlterOnDroppedViewStateIsRefused() throws Exception {
         // A view whose state a concurrent DROP marked dropped refuses the statement once it has validated the SQL.
         assertMemoryLeak(() -> {
@@ -1974,7 +2180,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     public void testPassthroughTimestampCheckOrder() throws Exception {
         // The rule comes after the designated timestamp check, so a SQL without the view's designated timestamp keeps
         // that error, and before the column checks, so a shifted timestamp fails on the rule first. An aggregating view
-        // computes its designated timestamp, which the rule does not apply to.
+        // buckets the base's designated timestamp, which the passthrough rule does not apply to.
         assertMemoryLeak(() -> {
             createPassthroughBase();
             execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
@@ -2656,6 +2862,20 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         engine.hydrateMatViewStateStore();
     }
 
+    // Fails ALTER MATERIALIZED VIEW ... AS (query) on the valid view with the aggregating timestamp rule, see
+    // assertAlterRefused(), at the token of the query, or at the query's start when the token is null.
+    private void assertAggregatingAlterRefused(String viewName, String query, String token) throws Exception {
+        assertAggregatingAlterRefused(viewName, "ALTER MATERIALIZED VIEW " + viewName + " AS (", query, token);
+    }
+
+    // As assertAggregatingAlterRefused() above, for the statement that starts with head.
+    private void assertAggregatingAlterRefused(String viewName, String head, String query, String token) throws Exception {
+        final int tokenIndex = token != null ? query.indexOf(token) : 0;
+        Assert.assertTrue(tokenIndex > -1);
+        Assert.assertTrue("the token must be unique", token == null || query.lastIndexOf(token) == tokenIndex);
+        assertAlterRefused(viewName, head + query + ')', head.length() + tokenIndex, AGGREGATING_TIMESTAMP_ERROR);
+    }
+
     private void assertAlterFails(String tail, String token, String message) throws Exception {
         final String sql = ALTER_PREFIX + tail;
         final int position = token != null ? sql.indexOf(token) : sql.length();
@@ -2826,6 +3046,23 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
 
     private void createBase(String name) throws Exception {
         execute("CREATE TABLE " + name + " (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    // The view av over the base of createPassthroughBase(), which sums the price of each symbol by the hour of the base's
+    // designated timestamp ts, see AGGREGATING_VIEW_ROWS, and the table other, with a row for each symbol of the tests.
+    private void createAggregatingView() throws Exception {
+        createPassthroughBase();
+        execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO other VALUES
+                ('2024-01-01T00:00:00.000000Z', 'a', 10.0),
+                ('2024-01-01T00:00:00.000000Z', 'b', 20.0),
+                ('2024-01-01T00:00:00.000000Z', 'c', 30.0)
+                """);
+        drainWalQueue();
+        execute("CREATE MATERIALIZED VIEW av AS (SELECT ts, sym, sum(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertQuery("av").timestamp("ts").noLeakCheck().expectSize().returns(AGGREGATING_VIEW_ROWS);
     }
 
     // A second base table with one row, base txn 1.

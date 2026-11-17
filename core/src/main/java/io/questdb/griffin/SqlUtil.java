@@ -1289,6 +1289,17 @@ public class SqlUtil {
     }
 
     /**
+     * Extracts the expression a timestamp_floor or timestamp_floor_utc function call floors, its second argument,
+     * handling 2/3/5-param overloads.
+     */
+    public static ExpressionNode getTimestampFloorTimestamp(ExpressionNode ast) {
+        if (ast.paramCount == 3 || ast.paramCount == 5) {
+            return ast.args.getQuick(ast.paramCount - 2);
+        }
+        return ast.rhs;
+    }
+
+    /**
      * Returns whether the top-level select list of a parsed query, before the optimiser expands it in
      * place, contains a wildcard: a written one ({@code *}, {@code t.*}) or the one the parser adds for a
      * query written without SELECT. An empty select list counts as a wildcard, so a caller that skips a

@@ -87,6 +87,8 @@ import static io.questdb.griffin.model.ExpressionNode.LITERAL;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
+    // the error of the rule isBucketedBaseTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies
+    public static final String AGGREGATING_TIMESTAMP_ERROR = "aggregating materialized view timestamp must bucket the base table designated timestamp without transformation";
     // the error of the rule isPassthroughTimestampColumn() tells, which ALTER MATERIALIZED VIEW ... AS applies too
     public static final String PASSTHROUGH_TIMESTAMP_ERROR = "passthrough materialized view timestamp must reference the base table designated timestamp without transformation";
     private final String baseTableName;
@@ -534,7 +536,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                             column.getAst(),
                             queryModel.getNestedModel(),
                             baseTableName,
-                            baseTableMetadata
+                            baseTableMetadata,
+                            false
                     );
                     final String columnName = SqlUtil.toColumnName(column.getName());
                     if (baseColumnIndex > -1 && passthroughColumnNames.getQuick(baseColumnIndex) == null) {
@@ -658,6 +661,25 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
+     * Returns true when an output column of an aggregating view's optimised query buckets the base table's designated
+     * timestamp: it references that timestamp through aliases, nested selects, the master of a join and the floored
+     * argument of timestamp_floor(), which SAMPLE BY lowers to, with no other transformation. Refresh recomputes the
+     * buckets of the base table's intervals of that timestamp, so a view whose designated timestamp buckets another
+     * column, as under TIMESTAMP(ts2), would miss rows while it reports valid. ALTER MATERIALIZED VIEW ... AS applies
+     * the rule to an aggregating view's new SQL.
+     */
+    public static boolean isBucketedBaseTimestampColumn(
+            @NotNull IQueryModel queryModel,
+            @NotNull QueryColumn column,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        // The projection AST references the input model, not its own output aliases.
+        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, true)
+                == baseTableMetadata.getTimestampIndex();
+    }
+
+    /**
      * Returns true when a materialized view's optimised query, which has no sampling interval, is a non-aggregating
      * passthrough query over one table, as CREATE MATERIALIZED VIEW tells it.
      */
@@ -678,7 +700,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull TableMetadata baseTableMetadata
     ) {
         // The projection AST references the input model, not its own output aliases.
-        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata)
+        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, false)
                 == baseTableMetadata.getTimestampIndex();
     }
 
@@ -693,7 +715,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             if (columnNode.type == ExpressionNode.LITERAL) {
                 if (queryModel.getTableName() != null) {
                     if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
-                        final CharSequence columnName = resolveColumnName(columnNode, queryModel);
+                        final CharSequence columnName = resolveColumnName(columnNode.token, queryModel);
                         if (columnName != null) {
                             final int columnIndex = baseTableMetadata.getColumnIndexQuiet(columnName);
                             if (columnIndex > -1) {
@@ -783,7 +805,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL || columnModel.isIndexed()) {
             return;
         }
-        final int columnIndex = resolveBaseColumnIndex(columnNode, queryModel, baseTableName, baseTableMetadata);
+        final int columnIndex = resolveBaseColumnIndex(columnNode, queryModel, baseTableName, baseTableMetadata, false);
         if (columnIndex < 0
                 || !ColumnType.isSymbol(baseTableMetadata.getColumnType(columnIndex))
                 || !baseTableMetadata.isColumnIndexed(columnIndex)) {
@@ -820,29 +842,71 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
+    // Returns the index of the base table column whose values an expression over the columns of queryModel takes
+    // unchanged, or -1: the expression must be a column reference, which the method follows through the aliases of
+    // nested models down to the base table. With isFloorFollowed, it also follows the floored argument of
+    // timestamp_floor(), whose buckets keep the order and the intervals of the column it floors.
     private static int resolveBaseColumnIndex(
             @Nullable ExpressionNode columnNode,
             @Nullable IQueryModel queryModel,
             @NotNull CharSequence baseTableName,
-            @NotNull TableMetadata baseTableMetadata
+            @NotNull TableMetadata baseTableMetadata,
+            boolean isFloorFollowed
     ) {
-        if (columnNode == null || queryModel == null || columnNode.type != ExpressionNode.LITERAL) {
+        if (columnNode == null) {
             return -1;
         }
+        if (isFloorFollowed && SqlUtil.isTimestampFloorFunction(columnNode)) {
+            return resolveBaseColumnIndex(
+                    SqlUtil.getTimestampFloorTimestamp(columnNode),
+                    queryModel,
+                    baseTableName,
+                    baseTableMetadata,
+                    true
+            );
+        }
+        if (columnNode.type != ExpressionNode.LITERAL) {
+            return -1;
+        }
+        return resolveBaseColumnIndex(columnNode.token, queryModel, baseTableName, baseTableMetadata, isFloorFollowed);
+    }
+
+    // As above, for a reference to a column of queryModel. The reference may carry the name of the model as a prefix,
+    // as the columns of the master model of a join do.
+    private static int resolveBaseColumnIndex(
+            @NotNull CharSequence columnRef,
+            @Nullable IQueryModel queryModel,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata,
+            boolean isFloorFollowed
+    ) {
+        if (queryModel == null) {
+            return -1;
+        }
+        // null under the prefix of another model
+        final CharSequence columnName = resolveColumnName(columnRef, queryModel);
         if (queryModel.getTableName() != null) {
-            if (Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
-                final CharSequence columnName = resolveColumnName(columnNode, queryModel);
-                return columnName != null ? baseTableMetadata.getColumnIndexQuiet(columnName) : -1;
+            if (columnName != null && Chars.equalsIgnoreCase(queryModel.getTableName(), baseTableName)) {
+                return baseTableMetadata.getColumnIndexQuiet(columnName);
             }
             return -1;
         }
 
-        final QueryColumn column = queryModel.getAliasToColumnMap().get(columnNode.token);
+        QueryColumn column = queryModel.getAliasToColumnMap().get(columnRef);
+        if (column == null && columnName != null) {
+            column = queryModel.getAliasToColumnMap().get(columnName);
+        }
+        if (column != null) {
+            return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, isFloorFollowed);
+        }
+        // a model without a projection of its own, such as the master model of a join, passes its nested model's
+        // columns through
         return resolveBaseColumnIndex(
-                column != null ? column.getAst() : columnNode,
+                columnName != null ? columnName : columnRef,
                 queryModel.getNestedModel(),
                 baseTableName,
-                baseTableMetadata
+                baseTableMetadata,
+                isFloorFollowed
         );
     }
 
@@ -914,14 +978,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         samplingIntervalUnit = 'U';
     }
 
-    private static @Nullable CharSequence resolveColumnName(ExpressionNode columnNode, IQueryModel queryModel) {
-        final int dotIndex = Chars.indexOfLastUnquoted(columnNode.token, '.');
+    // Returns the name of the column a reference to a column of queryModel names, without the prefix of the model's
+    // name, or null when the reference carries the prefix of another model.
+    private static @Nullable CharSequence resolveColumnName(CharSequence columnRef, IQueryModel queryModel) {
+        final int dotIndex = Chars.indexOfLastUnquoted(columnRef, '.');
         if (dotIndex > -1) {
-            if (Chars.equalsIgnoreCase(queryModel.getName(), columnNode.token, 0, dotIndex)) {
-                return columnNode.token.subSequence(dotIndex + 1, columnNode.token.length());
+            final CharSequence modelName = queryModel.getName();
+            if (modelName != null && Chars.equalsIgnoreCase(modelName, columnRef, 0, dotIndex)) {
+                return columnRef.subSequence(dotIndex + 1, columnRef.length());
             }
         } else {
-            return columnNode.token;
+            return columnRef;
         }
         return null;
     }
