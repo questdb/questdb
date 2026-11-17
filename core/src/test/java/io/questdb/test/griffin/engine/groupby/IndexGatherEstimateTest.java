@@ -42,6 +42,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntGroupSort;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -482,17 +483,17 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
             setFeatures(false, false);
             final String expected = runToString(engine, sqlExecutionContext, sql);
             setFeatures(true, true);
-            // 1970-01-01T08 is the third target (j = 2: floor(2 * 257 / 64) = 8)
+            // 1970-01-01T10 is the third target (j = 2: floor(5 * 257 / 128) = 10)
             for (String file : new String[]{"s.pk", "a.d"}) {
                 try (RecordCursorFactory factory = select(sql)) {
                     final IndexGatherRecordCursorFactory gather = findGather(factory);
                     engine.releaseAllReaders();
-                    fail.set(new String[]{"1970-01-01T08", file});
+                    fail.set(new String[]{"1970-01-01T10", file});
                     try {
                         gather.estimateSelection(sqlExecutionContext, new long[2]);
                         Assert.fail("estimate did not fail on " + file);
                     } catch (CairoException e) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "1970-01-01T08");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "1970-01-01T10");
                     }
                     Assert.assertNull(fail.get());
                     TestUtils.assertEquals(file, expected, print(factory, sqlExecutionContext));
@@ -525,23 +526,19 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
 
     @Test
     public void testFractionalKeySample() throws Exception {
-        // 500 of 5000 keys, 2 rows of each per partition: 64 sampled keys count 128 rows per
-        // probed partition, scaled by 500 / 64 to 1000, 10% of the rows: the scan. Unscaled, the
-        // 1.28% would take the index
+        // 4500 of 5000 keys, 2 rows of each per partition: the budget's 4096 keys count 8192 rows
+        // in the one probed partition, the midpoint 128, scaled by 4500 / 4096 to 9000, 90% of the
+        // rows. Unscaled, the 82% would underestimate
         assertMemoryLeak(() -> {
             createTable("t", true, 257, 10_000, "'k' || (r % 5000)");
-            final StringSink in = new StringSink();
-            for (int i = 0; i < 500; i++) {
-                in.put(i == 0 ? "'k" : ", 'k").put(i).put('\'');
-            }
-            final Open open = open("select count() n, sum(a) s from t where s in (" + in + ")");
-            Assert.assertEquals(targets(257).toString(), open.partitions);
+            final Open open = open("select count() n, sum(a) s from t where s in (" + keyList("k", 0, 4500) + ")");
+            Assert.assertEquals("[128]", open.partitions);
             Assert.assertEquals(4096, open.probes);
-            Assert.assertEquals(257L * (long) (128.0 * 500 / 64), open.selected);
-            Assert.assertEquals(257_000, open.selected);
+            Assert.assertEquals(257L * (long) (8192.0 * 4500 / 4096), open.selected);
+            Assert.assertEquals(2_313_000, open.selected);
             Assert.assertEquals(2_570_000, open.scanned);
             Assert.assertFalse(open.index);
-            TestUtils.assertContains(open.rows, "257000\t");
+            TestUtils.assertContains(open.rows, "2313000\t");
         });
     }
 
@@ -576,7 +573,7 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
 
     @Test
     public void testKeyCountBoundaries() throws Exception {
-        // with 64 sampled partitions, 64 keys are all counted and 65 sampled to 64; with one
+        // the keys first: 64 keys are counted in 64 partitions and 65 in 63 (4096 / 65); with one
         // partition, 4096 keys are all counted and 4097 sampled to 4096
         assertMemoryLeak(() -> {
             createTable("t", true, 65, 100, "'k' || (r % 100)");
@@ -584,8 +581,8 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
             for (int keys : new int[]{64, 65}) {
                 final String where = "s in (" + keyList("k", 0, keys) + ")";
                 final Open open = open("select count() n, sum(a) s from t where " + where);
-                Assert.assertEquals(targets(65).toString(), open.partitions);
-                Assert.assertEquals(64 * 64, open.probes);
+                Assert.assertEquals(targets(65, keys).toString(), open.partitions);
+                Assert.assertEquals((long) sampledPartitions(65, keys) * keys, open.probes);
                 Assert.assertEquals(65L * keys, twinCount(where));
                 Assert.assertEquals(65L * keys, open.selected);
             }
@@ -647,23 +644,25 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
     @Test
     public void testNullKeySampling() throws Exception {
         // 100 partitions of 25,000 rows: 250 NULL rows (1%) and 640 keys u0..u639 of 1 row each
-        // (2.56%) per partition. 641 keys sample to 64: NULL counted as it is, 63 of the 640
-        // others scaled by 640 / 63. Scaling NULL with the others would estimate 12.5% and scan
+        // (2.56%) per partition. Under a budget of 64 counts, 641 keys sample to 64 in the one
+        // probed partition, the midpoint 50: NULL counted as it is, 63 of the 640 others scaled
+        // by 640 / 63. Scaling NULL with the others would estimate 12.5% and scan
         assertMemoryLeak(() -> {
+            IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, 64);
             final String symbol = "case when r < 250 then null when r < 890 then 'u' || (r - 250) else 'other' end";
             createTable("t", true, 100, 25_000, symbol);
             createTable("tw", false, 100, 25_000, symbol);
             final String keys = keyList("u", 0, 640);
             Open open = open("select count() n, sum(a) s from t where s in (null, " + keys + ")");
-            Assert.assertEquals(targets(100).toString(), open.partitions);
-            Assert.assertEquals(64 * 64, open.probes);
+            Assert.assertEquals("[50]", open.partitions);
+            Assert.assertEquals(64, open.probes);
             Assert.assertEquals(100L * (250 + (long) (63.0 * 640 / 63)), open.selected);
             Assert.assertEquals(twinCount("s in (null, " + keys + ")"), open.selected);
             Assert.assertEquals(2_500_000, open.scanned);
             Assert.assertTrue(open.index);
             // the same keys without NULL: 640 keys sampled to 64, scaled by 640 / 64
             open = open("select count() n, sum(a) s from t where s in (" + keys + ")");
-            Assert.assertEquals(64 * 64, open.probes);
+            Assert.assertEquals(64, open.probes);
             Assert.assertEquals(100L * (long) (64.0 * 640 / 64), open.selected);
             Assert.assertEquals(twinCount("s in (" + keys + ")"), open.selected);
             Assert.assertTrue(open.index);
@@ -682,9 +681,9 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
             final String symbol = "case when r < 10 then null else 'k' || (r % 10) end";
             createTable("t", true, 4, 100, symbol);
             IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(1, 1);
-            // m' = 1 (partition 0), kS = 2: NULL and k1 of k1, k2, scaled by 2 / 1
+            // m' = 1 (the midpoint, partition 2), kS = 2: NULL and k1 of k1, k2, scaled by 2 / 1
             final Open open = open("select count() n, sum(a) s from t where s in (null, 'k1', 'k2')");
-            Assert.assertEquals("[0]", open.partitions);
+            Assert.assertEquals("[2]", open.partitions);
             Assert.assertEquals(2, open.probes);
             // 10 NULL + 9 k1 * 2 per 100 rows, over 400 rows
             Assert.assertEquals((long) ((double) (10 + 9 * 2) * 400 / 100), open.selected);
@@ -706,8 +705,18 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
             drainWalQueue();
             final long partitions = twinCountOf("select count() from table_partitions('t')");
             Assert.assertEquals(258, partitions);
+            // the targets by rows: 256 hours of 100, the split hour's prefix and the rest
+            final LongList rows = new LongList();
+            try (RecordCursorFactory factory = select("select numRows from table_partitions('t')");
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    rows.add(cursor.getRecord().getLong(0));
+                }
+            }
+            Assert.assertEquals(258, rows.size());
+            Assert.assertTrue(rows.toString(), rows.getQuick(256) < 100 && rows.getQuick(257) < 100);
             final Open open = open("select count() n, sum(a) s from t where s = 'k7'");
-            Assert.assertEquals(targets(258).toString(), open.partitions);
+            Assert.assertEquals(targetsByRows(rows, SAMPLE_PARTITIONS).toString(), open.partitions);
             Assert.assertEquals(25_705, open.scanned);
         });
     }
@@ -784,7 +793,8 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
 
     @Test
     public void testProbesStayWithinBudget() throws Exception {
-        // the counts per open stay within 4096 for long lists: m' * min(K, 4096 / m')
+        // the counts per open stay within 4096 for long lists: m' * min(K, 4096), with
+        // m' = min(P, 64, 4096 / min(K, 4096))
         assertMemoryLeak(() -> {
             final int[][] shapes = {{17, 300}, {257, 100}, {4000, 100}};
             for (int[] shape : shapes) {
@@ -792,11 +802,12 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
                 createTable("t", true, partitions, shape[1], "'k' || (r % 5000)");
                 for (int keys : new int[]{1, 50, 300, 5000}) {
                     final Open open = open("select count() n, sum(a) s from t where s in (" + keyList("k", 0, keys) + ")");
-                    final int m = Math.min(partitions, SAMPLE_PARTITIONS);
-                    final long expected = (long) m * Math.min(keys, MAX_COUNTS / m);
+                    // a partition's r runs to its rows: the keys past them are not in the table
+                    final int present = Math.min(keys, shape[1]);
+                    final long expected = (long) sampledPartitions(partitions, present) * Math.min(present, MAX_COUNTS);
                     Assert.assertEquals("P=" + partitions + " K=" + keys, expected, open.probes);
                     Assert.assertTrue(open.probes <= MAX_COUNTS);
-                    Assert.assertEquals("P=" + partitions + " K=" + keys, targets(partitions).toString(), open.partitions);
+                    Assert.assertEquals("P=" + partitions + " K=" + keys, targets(partitions, present).toString(), open.partitions);
                 }
                 execute("drop table t");
             }
@@ -991,13 +1002,46 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
     }
 
     // the partitions the estimate probes when the walk yields frames in `groups` partitions
-    private static IntList targets(int groups) {
+    // the groups holding the scan's (2j + 1) * scanned / 2m-th rows, distinct, for groups of
+    // these rows
+    private static IntList targetsByRows(LongList groupRows, int m) {
+        long scanned = 0;
+        for (int g = 0, n = groupRows.size(); g < n; g++) {
+            scanned += groupRows.getQuick(g);
+        }
         final IntList targets = new IntList();
-        final int m = Math.min(groups, SAMPLE_PARTITIONS);
-        for (int j = 0; j < m; j++) {
-            targets.add((int) ((long) j * groups / m));
+        long end = groupRows.getQuick(0);
+        for (int j = 0, g = 0; j < m; j++) {
+            final long row = (long) ((2.0 * j + 1) * scanned / (2.0 * m));
+            while (end <= row) {
+                end += groupRows.getQuick(++g);
+            }
+            if (targets.size() == 0 || targets.getLast() != g) {
+                targets.add(g);
+            }
         }
         return targets;
+    }
+
+    // the groups an estimate over equal groups probes for a list of one key
+    private static IntList targets(int groups) {
+        return targets(groups, 1);
+    }
+
+    // the groups an estimate over equal groups probes for a list of `keys` keys: every group when
+    // the budget covers them, else the midpoints floor((2j + 1) * G / 2m)
+    private static IntList targets(int groups, int keys) {
+        final int m = sampledPartitions(groups, keys);
+        final IntList targets = new IntList();
+        for (int j = 0; j < m; j++) {
+            targets.add(m == groups ? j : (int) ((2L * j + 1) * groups / (2L * m)));
+        }
+        return targets;
+    }
+
+    // the partitions an estimate probes: the counts go to the keys first, see PostingEstimateSample
+    private static int sampledPartitions(int groups, int keys) {
+        return Math.min(Math.min(groups, SAMPLE_PARTITIONS), Math.max(1, MAX_COUNTS / Math.min(keys, MAX_COUNTS)));
     }
 
     private static long twinCount(String where) throws SqlException {

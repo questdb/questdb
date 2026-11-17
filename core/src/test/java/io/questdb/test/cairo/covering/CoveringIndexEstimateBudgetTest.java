@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.str.StringSink;
@@ -324,7 +325,8 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
     @Test
     public void testNullKeyCountsUnscaled() throws Exception {
         // 100 partitions of 4200 rows: k0..k639 4 rows each, 640 NULL, 1000 'z'. The list holds
-        // NULL and the 640 keys: 64 counts per target, NULL and 63 others scaled by 640 / 63
+        // NULL and the 640 keys: all 641 counted in 6 partitions (4096 / 641); under a budget of
+        // 64 counts, NULL and 63 others in one, scaled by 640 / 63
         assertMemoryLeak(() -> {
             execute("CREATE TABLE n (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (a), a DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO n SELECT (((x - 1) / 4200) * 86_400_000_000L + ((x - 1) % 4200) * 1000L)::TIMESTAMP, "
@@ -336,11 +338,21 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
                 final CoveringIndexRecordCursorFactory covering = covering(factory);
                 final long[] sink = new long[2];
                 Assert.assertTrue(covering.estimateSelection(sqlExecutionContext, 0, sink));
-                // per target: 640 NULL + (63 x 4) x 640 / 63 = 3200 of 4200, i.e. 100 x 3200 over the table
+                // per target: 640 NULL + 640 x 4 = 3200 of 4200, i.e. 100 x 3200 over the table
                 Assert.assertEquals(320_000, sink[0]);
                 Assert.assertEquals(420_000, sink[1]);
-                Assert.assertEquals(64L * 64, covering.getLastEstimateProbes());
-                Assert.assertEquals(targets(100).toString(), covering.getLastEstimatePartitions().toString());
+                Assert.assertEquals(6L * 641, covering.getLastEstimateProbes());
+                Assert.assertEquals(targets(100, 641).toString(), covering.getLastEstimatePartitions().toString());
+                IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, 64);
+                try {
+                    // 640 NULL + (63 x 4) x 640 / 63 = 3200, NULL unscaled
+                    Assert.assertTrue(covering.estimateSelection(sqlExecutionContext, 0, sink));
+                    Assert.assertEquals(320_000, sink[0]);
+                    Assert.assertEquals(64, covering.getLastEstimateProbes());
+                    Assert.assertEquals("[50]", covering.getLastEstimatePartitions().toString());
+                } finally {
+                    IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, MAX_COUNTS);
+                }
             }
             final String nullOnly = "SELECT ts, a FROM n WHERE s IN (NULL)";
             try (RecordCursorFactory factory = select(nullOnly)) {
@@ -358,12 +370,23 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
                 final CoveringIndexRecordCursorFactory covering = covering(factory);
                 CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
                 drain(factory);
-                Assert.assertEquals(64L * 64, covering.getLastEstimateProbes());
+                Assert.assertEquals(6L * 641, covering.getLastEstimateProbes());
             }
-            // per target: NULL 640 rows in 1 pair, 63 keys x 4 rows in 63 pairs scaled by 640 / 63:
+            // per target: NULL 640 rows in 1 pair, 640 keys x 4 rows in 640 pairs:
             // (640 + 2560) / (1 + 640) = 4
+            assertFrameMode("n", "merged", 641, 4, 64);
+            // under a budget of 64 counts, 63 keys x 4 rows in 63 pairs scaled by 640 / 63, NULL as it is
+            IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, 64);
+            try (RecordCursorFactory factory = select(groupBy)) {
+                final CoveringIndexRecordCursorFactory covering = covering(factory);
+                CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
+                drain(factory);
+                Assert.assertEquals(64, covering.getLastEstimateProbes());
+            } finally {
+                IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, MAX_COUNTS);
+            }
             final double scale = 640.0 / 63;
-            final long rowsPerPair = (long) ((64 * 640 + 64 * 252 * scale) / (64 + 64 * 63 * scale));
+            final long rowsPerPair = (long) ((640 + 252 * scale) / (1 + 63 * scale));
             Assert.assertEquals(4, rowsPerPair);
             assertFrameMode("n", "merged", 641, rowsPerPair, 64);
             assertSqlCursors(groupBy.replace("/*+ force_use_covering */", "/*+ no_index */"), groupBy);
@@ -371,9 +394,84 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
     }
 
     @Test
+    public void testLongListOverSkewedKeysAndHours() throws Exception {
+        // A 1000-key list over 4000 skewed keys (k0 alone holds about 8% of the rows, k0..k39
+        // about 32%) in hourly partitions of unequal rows: 4 hours of 10,000 and 20 of 60,000.
+        // Sampling 64 of the 1000 keys missed or over-weighted the heavy ones and erred by a
+        // factor of 3 either way; every key is counted now, in 4 partitions placed by rows
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (ts TIMESTAMP, s SYMBOL CAPACITY 4096 INDEX TYPE POSTING INCLUDE (a), a DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            for (int h = 0; h < 24; h++) {
+                final int rows = h < 4 ? 10_000 : 60_000;
+                execute("INSERT INTO z SELECT (" + h * 3_600_000_000L + "L + (x - 1) * (3_600_000_000L / " + rows + "))::TIMESTAMP, "
+                        + "'k' || cast(4000 * power(((x * 7919 + " + h * 101 + ") % 10007) / 10007.0, 4.0) AS INT), x FROM long_sequence(" + rows + ")");
+            }
+            final StringBuilder list = new StringBuilder();
+            for (int k = 0; k < 4000; k += 4) {
+                list.append(k == 0 ? "'k" : ", 'k").append(k).append('\'');
+            }
+            final String rows = "SELECT ts, a FROM z WHERE s IN (" + list + ")";
+            final long truth = countOf("SELECT /*+ no_index */ count() FROM z WHERE s IN (" + list + ")");
+            final long scanned = 4 * 10_000 + 20 * 60_000;
+            // the hint keeps the covering plan, whose estimate the compile-time choice reads
+            try (RecordCursorFactory factory = select(rows.replace("SELECT ts", "SELECT /*+ force_use_covering */ ts"))) {
+                final CoveringIndexRecordCursorFactory covering = covering(factory);
+                final long[] sink = new long[2];
+                Assert.assertTrue(covering.estimateSelection(sqlExecutionContext, 0, sink));
+                Assert.assertEquals(scanned, sink[1]);
+                Assert.assertTrue(sink[0] + " vs " + truth, Math.abs(sink[0] - truth) <= truth / 20);
+                // every key the table holds (the skew leaves some out) in 4 partitions, none of them
+                // the thin first hours
+                final long present = countOf("SELECT count_distinct(s) FROM z WHERE s IN (" + list + ")");
+                Assert.assertTrue(present > 800);
+                Assert.assertEquals(4 * present, covering.getLastEstimateProbes());
+                final IntList probed = covering.getLastEstimatePartitions();
+                Assert.assertEquals(4, probed.size());
+                for (int i = 0; i < probed.size(); i++) {
+                    Assert.assertTrue(probed.toString(), probed.getQuick(i) >= 4);
+                }
+            }
+            // the list selects over 15% of the 1.24M rows: the compile-time choice takes the scan
+            Assert.assertTrue(truth + " of " + scanned, truth > scanned * 15 / 100);
+            assertPlanLacks(rows, "CoveringIndex");
+            assertSqlCursors(rows.replace("SELECT ts", "SELECT /*+ no_index */ ts"), rows);
+        });
+    }
+
+    @Test
+    public void testSharesCountByTargets() throws Exception {
+        // 4 partitions of 10k, 50k, 20k and 20k rows, of which 0%, 20%, 100% and 0% hold 'a'.
+        // With 3 targets they fall at rows 16,666, 50,000 and 83,333: twice in the second
+        // partition, once in the fourth. Drawn by rows, a share counts by its targets:
+        // (2 x 0.2 + 0) / 3 x 100k = 13,333, not by its rows again, (10k + 0) / 70k x 100k = 14,285
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (a), a DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final int[] rows = {10_000, 50_000, 20_000, 20_000};
+            final int[] percent = {0, 20, 100, 0};
+            for (int d = 0; d < rows.length; d++) {
+                execute("INSERT INTO w SELECT (" + d * 86_400_000_000L + "L + x * 1_000_000L)::TIMESTAMP, "
+                        + "CASE WHEN x % 100 < " + percent[d] + " THEN 'a' ELSE 'b' END, x FROM long_sequence(" + rows[d] + ")");
+            }
+            IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(3, MAX_COUNTS);
+            try (RecordCursorFactory factory = select("SELECT /*+ force_use_covering */ ts, a FROM w WHERE s = 'a'")) {
+                final CoveringIndexRecordCursorFactory covering = covering(factory);
+                final long[] sink = new long[2];
+                Assert.assertTrue(covering.estimateSelection(sqlExecutionContext, 0, sink));
+                Assert.assertEquals("[1,3]", covering.getLastEstimatePartitions().toString());
+                Assert.assertEquals(13_333, sink[0]);
+                Assert.assertEquals(100_000, sink[1]);
+            } finally {
+                IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(SAMPLE_PARTITIONS, MAX_COUNTS);
+            }
+        });
+    }
+
+    @Test
     public void testPairBudgetSamplesEveryTarget() throws Exception {
         // 300 keys used to eat the (partition, key) pair budget, which then probed only the oldest
-        // partition, here one without the keys: the estimate was 0 for a list selecting 75%
+        // partition, here one without the keys: the estimate was 0 for a list selecting 75%. All
+        // 300 keys are counted in 13 partitions (4096 / 300), at the midpoints, none of them the
+        // keyless partition 0: 300 of 400 rows each
         assertMemoryLeak(() -> {
             createSparse("t", 1000, false);
             final String rows = "SELECT ts, a FROM t WHERE s IN (" + keyList(0, 300) + ")";
@@ -381,13 +479,13 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
                 final CoveringIndexRecordCursorFactory covering = covering(factory);
                 final long[] sink = new long[2];
                 Assert.assertTrue(covering.estimateSelection(sqlExecutionContext, 0, sink));
-                Assert.assertEquals(sparseSelectionModel(1000, 300), sink[0]);
+                Assert.assertEquals(300_000, sink[0]);
                 Assert.assertEquals(400_000, sink[1]);
                 // within 2% of the 999 x 300 rows the list selects
                 final long truth = 999L * 300;
                 Assert.assertTrue(sink[0] + " vs " + truth, Math.abs(sink[0] - truth) <= truth / 50);
-                Assert.assertEquals(targets(1000).toString(), covering.getLastEstimatePartitions().toString());
-                Assert.assertEquals(MAX_COUNTS, covering.getLastEstimateProbes());
+                Assert.assertEquals(targets(1000, 300).toString(), covering.getLastEstimatePartitions().toString());
+                Assert.assertEquals(13L * 300, covering.getLastEstimateProbes());
             }
             assertSqlCursors(rows.replace("SELECT ts", "SELECT /*+ no_index */ ts"), rows);
 
@@ -512,23 +610,22 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
     }
 
     @Test
-    public void testRecentOnlyKeysFallBackToMerge() throws Exception {
-        // The declared tradeoff: the targets floor(j * 1000 / 64) stop at partition 984, so keys
-        // that only the newest 15 partitions hold are never counted. The estimate finds no pair
-        // (-1) and the open takes the merge, which the 1000 rows per pair would have beaten
-        // per-key; the rows are the same either way
+    public void testRecentOnlyKeysTakePerKey() throws Exception {
+        // Keys that only the newest 15 of 1000 partitions hold: by partition count the targets
+        // floor(j * 1000 / 64) stop at partition 984 and never count them, but those partitions
+        // hold 60,000 of the 60,985 rows, so the targets placed by rows fall in them, find the
+        // 1000 rows per pair, and the open takes per-key; the rows are the same either way
         assertMemoryLeak(() -> {
             execute("CREATE TABLE r (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (a), a DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("INSERT INTO r SELECT ((x - 1) * 86_400_000_000L)::TIMESTAMP, 'z', x FROM long_sequence(985)");
             execute("INSERT INTO r SELECT ((985 + (x - 1) / 4000) * 86_400_000_000L + ((x - 1) % 4000) * 1000L)::TIMESTAMP, "
                     + "'k' || ((x - 1) % 4), x FROM long_sequence(60_000)");
             final String sql = "SELECT s, max(a) m FROM r WHERE s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s";
-            Assert.assertEquals(984, targets(1000).getQuick(SAMPLE_PARTITIONS - 1));
             CoveringIndexRecordCursorFactory.resetModeSelectionsForTesting();
             printSql(sql, new StringSink());
-            assertFrameMode("r", "merged", 4, -1, 64);
-            Assert.assertEquals(0, CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting());
-            Assert.assertEquals(1, CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting());
+            assertFrameMode("r", "per-key", 4, 1000, 64);
+            Assert.assertEquals(1, CoveringIndexRecordCursorFactory.getPerKeyModeOpensForTesting());
+            Assert.assertEquals(0, CoveringIndexRecordCursorFactory.getMergedModeOpensForTesting());
             assertSqlCursors(sql.replace("SELECT s", "SELECT /*+ no_index */ s"), sql);
         });
     }
@@ -559,6 +656,13 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
         }
     }
 
+    private static long countOf(String sql) throws Exception {
+        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
     private static String keyList(int from, int count) {
         final StringBuilder sb = new StringBuilder();
         for (int i = from; i < from + count; i++) {
@@ -569,25 +673,38 @@ public class CoveringIndexEstimateBudgetTest extends AbstractCoveringIndexQueryT
 
     // the sparse fixture's selection: target 0 selects nothing, the others the counted keys, one
     // row each, scaled by K / kS; the sample's share of 400 rows per partition, over the table
+    // the estimate over createSparse()'s table, partition 0 without the keys: the mean of the
+    // probed partitions' shares, keys / SPARSE_KEYS but 0 for partition 0, times the rows scanned
     private static long sparseSelectionModel(int partitions, int keys) {
-        final int m = Math.min(partitions, SAMPLE_PARTITIONS);
-        final int kS = Math.min(keys, Math.max(1, MAX_COUNTS / m));
-        long sampledSelected = 0;
-        for (int j = 0; j < m; j++) {
-            final int partition = (int) ((long) j * partitions / m);
-            final long counted = partition == 0 ? 0 : kS;
-            sampledSelected += Math.min(kS == keys ? counted : (long) ((double) counted * keys / kS), SPARSE_KEYS);
+        final IntList targets = targets(partitions, keys);
+        long withKeys = 0;
+        for (int j = 0, n = targets.size(); j < n; j++) {
+            if (targets.getQuick(j) != 0) {
+                withKeys++;
+            }
         }
-        return (long) ((double) sampledSelected * partitions * SPARSE_KEYS / ((long) m * SPARSE_KEYS));
+        return (long) ((double) withKeys * keys / SPARSE_KEYS / targets.size() * partitions * SPARSE_KEYS * (1 + 1e-9));
     }
 
+    // the groups an estimate over equal groups probes for a list of one key
     private static IntList targets(int groups) {
-        final int m = Math.min(groups, SAMPLE_PARTITIONS);
+        return targets(groups, 1);
+    }
+
+    // the groups an estimate over equal groups probes for a list of `keys` keys: every group when
+    // the budget covers them, else the midpoints floor((2j + 1) * G / 2m)
+    private static IntList targets(int groups, int keys) {
+        final int m = sampledPartitions(groups, keys);
         final IntList targets = new IntList();
         for (int j = 0; j < m; j++) {
-            targets.add((int) ((long) j * groups / m));
+            targets.add(m == groups ? j : (int) ((2L * j + 1) * groups / (2L * m)));
         }
         return targets;
+    }
+
+    // the partitions an estimate probes: the counts go to the keys first, see PostingEstimateSample
+    private static int sampledPartitions(int groups, int keys) {
+        return Math.min(Math.min(groups, SAMPLE_PARTITIONS), Math.max(1, MAX_COUNTS / Math.min(keys, MAX_COUNTS)));
     }
 
     private void assertPerKeyEstimate(String table, String sql, int partitions, int keys) throws Exception {

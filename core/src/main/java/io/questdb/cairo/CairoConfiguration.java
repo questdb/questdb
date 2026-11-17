@@ -1866,6 +1866,15 @@ public interface CairoConfiguration {
     double getSqlCoveringGroupByScanChoiceMaxSelectivity();
 
     /**
+     * {@link #getSqlCoveringScanChoiceMaxSelectivity()} for a covering scan of more than one key
+     * whose rows the query returns. Such a scan merges the keys' rows back into table order, a
+     * cost per selected row about ten times a single key's, while the scan's cost is the table's
+     * columns, bound by memory bandwidth, not the workers; past about 1% of the rows the scan is
+     * faster.
+     */
+    double getSqlCoveringMultiKeyScanChoiceMaxSelectivity();
+
+    /**
      * Rows of a covering-index scan's page frames, up to the page frame row cap: each frame holds
      * the rows of one key in one partition, which a worker of a parallel GROUP BY or filter reads
      * from the index, row ids and covered values, so a key's rows of a partition spread over the

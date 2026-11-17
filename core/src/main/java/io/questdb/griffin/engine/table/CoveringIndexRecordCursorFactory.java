@@ -727,7 +727,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * symbol patterns and LATEST BY.
      *
      * @param minScannedRows the scanned rows under which no estimate is needed
-     * @param sink           receives {selected, scanned}
+     * @param sink           receives {selected, scanned}, and in a third element, when it has one,
+     *                       the keys the table holds
      * @return whether the sink holds an estimate: false when the keys are not known, or fewer than
      * {@code minScannedRows} rows are scanned
      */
@@ -746,8 +747,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
         final PostingEstimateSample sample = estimateSample;
         final IntList keys = estimateSymbolKeys;
-        long sampledScanned = 0;
-        long sampledSelected = 0;
         try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, PartitionFrameCursorFactory.ORDER_ASC)) {
             final TableReader reader = frameCursor.getTableReader();
             // the keys against the table's symbol map; a value it does not hold selects no rows
@@ -761,6 +760,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
             }
             final int keyCount = keys.size();
+            if (sink.length > 2) {
+                sink[2] = keyCount;
+            }
             // the scanned rows first, from partition metadata, without opening a partition
             sample.walkMetadata(frameCursor);
             final long scanned = sample.getScanned();
@@ -790,10 +792,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     final long rowLo = frame.getRowLo();
                     final long rowHi = frame.getRowHi();
                     final long rows = rowHi - rowLo;
-                    sampledScanned += rows;
                     final IndexReader indexReader = reader.getIndexReader(frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
                     if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
-                        sampledSelected += rows;
+                        sample.addProbe(rows, rows);
                         continue;
                     }
                     final long callerHiInclusive = rowHi - 1;
@@ -805,11 +806,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     for (int k = 0; k < sampledKeyCount; k++) {
                         selected += countOrRows(posting, sample.getSampledKey(k), rows, rowLo, callerHiInclusive, clampedMax);
                     }
-                    sampledSelected += Math.min(nullSelected + sample.scaleNonNull(selected), rows);
+                    sample.addProbe(nullSelected + sample.scaleNonNull(selected), rows);
                 }
             }
             sample.finish();
-            sink[0] = sampledScanned > 0 ? (long) ((double) sampledSelected * scanned / sampledScanned) : 0;
+            sink[0] = sample.getEstimatedSelected();
             sink[1] = scanned;
         }
         return true;
@@ -1658,10 +1659,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             IntList keys
     ) {
         final PostingEstimateSample sample = estimateSample;
-        long nullRows = 0;
-        long nullPairs = 0;
-        long rows = 0;
-        long pairs = 0;
+        double nullRows = 0;
+        double nullPairs = 0;
+        double rows = 0;
+        double pairs = 0;
         try {
             sample.walkMetadata(frameCursor);
             if (!sample.plan(toSortedIndexKeys(keys))) {
@@ -1700,12 +1701,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                         return -1;
                     }
                     if (count > 0) {
+                        // a group drawn by its rows counts inversely to them, see getProbeSumWeight()
+                        final double weight = sample.getProbeSumWeight();
                         if (k < 0) {
-                            nullRows += count;
-                            nullPairs++;
+                            nullRows += count * weight;
+                            nullPairs += weight;
                         } else {
-                            rows += count;
-                            pairs++;
+                            rows += count * weight;
+                            pairs += weight;
                         }
                     }
                 }
@@ -1719,12 +1722,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // looked. Both are "no bounded answer", and both fall back to the merge.
             return -1;
         }
+        // the weights land a few ulps under the exact quotient of equal groups; the relative 1e-9
+        // keeps its floor
         if (!sample.isScaled()) {
-            return (nullRows + rows) / (nullPairs + pairs);
+            return (long) ((nullRows + rows) / (nullPairs + pairs) * (1 + 1e-9));
         }
         // the sampled keys' rows and pairs stand for all the non-NULL keys'; NULL's as they are
         final double scale = sample.scaleOfNonNull();
-        return (long) ((nullRows + rows * scale) / (nullPairs + pairs * scale));
+        return (long) ((nullRows + rows * scale) / (nullPairs + pairs * scale) * (1 + 1e-9));
     }
 
     /**
