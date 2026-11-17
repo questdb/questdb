@@ -133,25 +133,25 @@ public class PGAsyncHashJoinTest extends BasePGTest {
     @Test
     public void testNamedStatementsWithLimitsThatSwitchSymbolKeyTranslation() throws Exception {
         assertMemoryLeak(() -> {
-            // fs.sym holds 300,000 texts, so the join translates its key through one shared cache when it
-            // reads at least ceil(300,000 / 256) = 1,172 probe rows first, and through each worker's own
-            // cache otherwise. A LIMIT of 1,171 or 10 reads fewer, a LIMIT of 1,172 or of the March
-            // partition's 1,000 rows not, so each execution of a statement may switch.
+            // fs.sym holds 300,000 texts, and ds's 1,000 fill the cache, so the join translates its key
+            // through one shared cache when it reads at least ceil(300,000 / 16) = 18,750 probe rows
+            // first, and through each worker's own cache otherwise. A LIMIT of 18,749 or 10 reads fewer,
+            // a LIMIT of 18,750 not, so each execution of a statement may switch.
             execute("CREATE TABLE fs (sym SYMBOL CAPACITY 524288, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO fs SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 1_000_000) FROM long_sequence(300_000)");
             execute("INSERT INTO fs SELECT 'k' || ((x - 1) % 900 + 1), x, timestamp_sequence('2024-03-01', 1_000_000) FROM long_sequence(1_000)");
             execute("CREATE TABLE ds AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(1_000))");
             final String[] queries = {
-                    "SELECT fs.ts, fs.sym, ds.w FROM fs JOIN ds ON fs.sym = ds.sym LIMIT ?",
+                    "SELECT fs.ts, fs.sym, ds.w FROM fs LEFT JOIN ds ON fs.sym = ds.sym LIMIT ?",
                     "SELECT fs.ts, fs.sym, ds.w FROM fs LEFT JOIN ds ON fs.sym = ds.sym WHERE fs.ts IN '2024-03-01' LIMIT ?",
             };
-            final long[][] limits = {{1_171, 1_172, 1_171}, {10, 1_000_000, 10}};
+            final long[][] limits = {{18_749, 18_750, 18_749}, {10, 1_000_000, 10}};
             final StringSink expected = new StringSink();
             final StringSink actual = new StringSink();
             withServer(false, WorkerPoolMode.LEGACY, port -> readLimits(port, queries, limits, expected, false));
             withServer(true, WorkerPoolMode.LEGACY, port -> readLimits(port, queries, limits, actual, true));
             // Each execution of the first statement returns its LIMIT's rows, twice per transfer format.
-            Assert.assertTrue(countLines(expected) > 2 * 2 * (1_171 + 1_172 + 1_171));
+            Assert.assertTrue(countLines(expected) > 2 * 2 * (18_749 + 18_750 + 18_749));
             TestUtils.assertEquals(expected, actual);
         });
     }

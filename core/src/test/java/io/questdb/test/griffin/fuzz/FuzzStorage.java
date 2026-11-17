@@ -57,8 +57,9 @@ public record FuzzStorage(
     // The name of the column that a table with droppedColumnPos > -1 creates, then drops.
     public static final String DROPPED_COLUMN = "zdrop";
     // The texts that pad the sym dictionary of a table with isJoinKeyDictionaryPadded: a probe of
-    // the table's rows, fewer than PADDING_TEXT_COUNT / 256, translates SYMBOL join keys through the
-    // join workers' own caches rather than a cache that the dictionary sizes.
+    // the table's rows, fewer than PADDING_TEXT_COUNT / 256, and so than PADDING_TEXT_COUNT / 16,
+    // translates SYMBOL join keys through the join workers' own caches rather than a cache that the
+    // dictionary sizes, under either operator.
     public static final int PADDING_TEXT_COUNT = 60_000;
     public static final FuzzStorage PLAIN = new FuzzStorage(true, true, new ObjList<>(), 0, -1, false);
 

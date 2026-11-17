@@ -61,18 +61,20 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
 /**
  * The SYMBOL key translation of the parallel hash join, by the rows that each execution's probe
- * reads. A join whose probe reads at least one row per 256 texts of the probe column's dictionary
- * translates through one cache that every slot shares, of four bytes per text, which the execution
- * clears, or fills from the build; any other translates through a lazy cache of each slot's own, as
- * the ordinary plan's SymbolTranslatingRecord does, which costs nothing until the slot meets a key.
- * f.sym holds 300,000 texts, so the shared cache opens for 1,172 probe rows or more: the probe's frame
- * rows, or a LIMIT's rows when fewer. Every query compares its rows, in order, with the ordinary
- * plan's, and asserts each SYMBOL key's mode and the shared cache's size while the cursor is open.
+ * reads. A join whose probe reads at least one row per 16 texts of the probe column's dictionary,
+ * when its build is small enough to fill the cache from, or one row per text otherwise, translates
+ * through one cache that every slot shares, of four bytes per text, which the execution fills from
+ * the build, or clears; any other translates through a lazy cache of each slot's own, as the
+ * ordinary plan's SymbolTranslatingRecord does, which costs nothing until the slot meets a key.
+ * f.sym holds 300,000 texts, and d's 903 fill the cache, so it opens for 18,750 probe rows or more:
+ * the probe's frame rows, or a LIMIT's rows when fewer. Every query compares its rows, in order,
+ * with the ordinary plan's, and asserts each SYMBOL key's mode and the shared cache's size while the
+ * cursor is open.
  */
 public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     // f.sym's texts: k1 to k299947, and the 53 texts of the March rows that the January rows lack.
     static final int PROBE_KEY_COUNT = 300_000;
-    // The selective probe: the 1,000 rows of f's March partition, 1,000 < ceil(300,000 / 256) = 1,172.
+    // The selective probe: the 1,000 rows of f's March partition, 1,000 < ceil(300,000 / 16) = 18,750.
     static final String SELECTIVE = " WHERE f.ts IN '2024-03-01'";
     // The shared cache of f.sym: four bytes per text.
     static final long SHARED_CACHE_SIZE = 4L * PROBE_KEY_COUNT;
@@ -97,19 +99,19 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     public void testBindVariablesPickTheModeOfEachExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // One factory, whose LIMIT decides each execution's reach: 1,171 rows translate through the
-            // slots, 1,172 open the shared cache, and 1,171 go back to the slots.
-            final String limitSql = "SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym LIMIT $1";
+            // One factory, whose LIMIT decides each execution's reach: 18,749 rows translate through the
+            // slots, 18,750 open the shared cache, and 18,749 go back to the slots.
+            final String limitSql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym LIMIT $1";
             bindVariableService.clear();
-            bindVariableService.setLong(0, 1_171);
+            bindVariableService.setLong(0, 18_749);
             try (RecordCursorFactory factory = select(limitSql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
-                for (long limit : new long[]{1_171, 1_172, 1_171}) {
+                for (long limit : new long[]{18_749, 18_750, 18_749}) {
                     bindVariableService.setLong(0, limit);
                     final String expected = ordinary(limitSql, sqlExecutionContext);
                     Assert.assertEquals(limit, rowCount(expected));
-                    assertExecution(factory, join, expected, limit < 1_172 ? AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached : AsyncHashJoinSymbolKeyTranslationTest::assertSharedCache);
+                    assertExecution(factory, join, expected, limit < 18_750 ? AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached : AsyncHashJoinSymbolKeyTranslationTest::assertSharedCache);
                 }
             }
             // An interval of bind variables: the March partition's 1,000 rows, every row, then the March
@@ -147,8 +149,10 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
                 assertExecution(factory, join, ordinary(sql, sqlExecutionContext), AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached);
-                // 2,000 more March rows: 3,000 >= 1,172, so the same factory opens the shared cache.
-                execute("INSERT INTO f SELECT 'k' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-01T01', 1_000_000) FROM long_sequence(2_000)");
+                // 17,750 more March rows of known texts: 18,750 >= 18,750, so the same factory opens the
+                // shared cache.
+                execute("INSERT INTO f SELECT 'k' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-01T01', 1_000_000) FROM long_sequence(17_750)");
+                assertProbeKeyCount("f", PROBE_KEY_COUNT);
                 assertExecution(factory, join, ordinary(sql, sqlExecutionContext), AsyncHashJoinSymbolKeyTranslationTest::assertSharedCache);
                 // TRUNCATE drops the texts, which come back in another order, under other keys.
                 execute("TRUNCATE TABLE f");
@@ -252,7 +256,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             Assert.assertEquals(10, rowCount(assertTranslation("SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-02-15'",
                     AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached)));
             // A probe column of NULLs alone has an empty dictionary, which the shared cache covers with
-            // no byte: ceil(0 / 256) = 0 rows reach it.
+            // no byte: ceil(0 / 16) = 0 rows reach it.
             execute("CREATE TABLE fnull AS (SELECT NULL::SYMBOL sym, x v, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
             assertProbeKeyCount("fnull", 0);
             Assert.assertEquals(100, rowCount(assertTranslation("SELECT fnull.ts, fnull.v, d.w FROM fnull JOIN d ON fnull.sym = d.sym WHERE fnull.ts IN '2024-01-01'",
@@ -352,7 +356,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW mv WITH BASE fw AS (" + view + ") PARTITION BY DAY");
             drainWalAndMatViewQueues();
             Assert.assertTrue(isOperatorCached("mv"));
-            // One hour of 360 rows, which the next refresh reads alone: 360 < 1,172.
+            // One hour of 360 rows, which the next refresh reads alone: 360 < 18,750.
             execute("INSERT INTO fw SELECT 'k' || x, x, timestamp_sequence('2024-03-02T05', 10_000_000) FROM long_sequence(360)");
             drainWalAndMatViewQueues();
             Assert.assertTrue(isOperatorCached("mv"));
@@ -444,17 +448,40 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSharedCacheOpensAtOneProbeRowPer256Symbols() throws Exception {
+    public void testSharedCacheOpensAtOneProbeRowPer16SymbolsWhenFilled() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // ceil(300,000 / 256) = 1,172: a LIMIT, and an interval, of 1,171 rows translate through the
-            // slots, and of 1,172 rows open the shared cache. The interval's rows hold k1 to k1171 or k1172,
-            // and d holds k1 to k96 twice, so the LEFT join returns 96 more rows than the interval holds.
-            for (int rows : new int[]{1_171, 1_172}) {
-                final TranslationCheck check = rows < 1_172 ? AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached : AsyncHashJoinSymbolKeyTranslationTest::assertSharedCache;
-                Assert.assertEquals(rows, rowCount(assertTranslation("SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym LIMIT " + rows, check)));
-                final String bound = rows == 1_171 ? "2024-01-01T00:19:31" : "2024-01-01T00:19:32";
+            // d's 903 texts fill the cache, so ceil(300,000 / 16) = 18,750: a LIMIT, and an interval, of
+            // 18,749 rows translate through the slots, and of 18,750 rows open the shared cache. The
+            // interval's rows hold k1 to k18749 or k18750, and d holds k1 to k96 twice, so the LEFT join
+            // returns 96 more rows than the interval holds.
+            for (int rows : new int[]{18_749, 18_750}) {
+                final TranslationCheck check = rows < 18_750 ? AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached : join -> {
+                    assertSharedCache(join);
+                    Assert.assertTrue(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+                };
+                Assert.assertEquals(rows, rowCount(assertTranslation("SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym LIMIT " + rows, check)));
+                final String bound = rows == 18_749 ? "2024-01-01T05:12:29" : "2024-01-01T05:12:30";
                 Assert.assertEquals(rows + 96, rowCount(assertTranslation("SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts >= '2024-01-01' AND f.ts < '" + bound + "'", check)));
+            }
+        });
+    }
+
+    @Test
+    public void testSharedCacheOpensAtOneProbeRowPerSymbolWhenUnresolved() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // dl's 40,000 texts are more than the 32,768 that fill a cache, so the cache opens unresolved,
+            // once the probe reads a row per probe text: a LIMIT of 299,999 rows translates through the
+            // slots, of 300,000 rows opens the shared cache. f's January rows hold k1 to k299947, of which
+            // dl holds the first 40,000, so the LEFT join's rows are the probe's.
+            execute("CREATE TABLE dl AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(40_000))");
+            for (int rows : new int[]{299_999, 300_000}) {
+                final TranslationCheck check = rows < 300_000 ? AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached : join -> {
+                    assertSharedCache(join);
+                    Assert.assertFalse(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+                };
+                Assert.assertEquals(rows, rowCount(assertTranslation("SELECT f.ts, f.sym, dl.w FROM f LEFT JOIN dl ON f.sym = dl.sym LIMIT " + rows, check)));
             }
         });
     }
@@ -544,7 +571,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // r holds 1,000 rows over a dictionary of 300,000 texts, l 10 rows: the INNER join of l and r
-            // swaps, so the first stage builds l and probes r, and 1,000 < ceil(300,000 / 256) rows.
+            // swaps, so the first stage builds l and probes r, and 1,000 < ceil(300,000 / 16) rows.
             createPaddedTable("r", 1_000);
             execute("CREATE TABLE l AS (SELECT * FROM f WHERE ts IN '2024-03-01' LIMIT 10)");
             assertTranslation("SELECT l.v, r.v rv, r.sym FROM l JOIN r ON l.sym = r.sym", join -> {
@@ -720,7 +747,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                     for (int execution = 0; execution < 20; execution++) {
                         assertExecution(factory, join, expected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
                     }
-                    // A writer commits 5,000 new texts, and rows of them, to a later March day while a
+                    // A writer commits 20,000 new texts, and rows of them, to a later March day while a
                     // cursor is open: the cursor reads the rows of its snapshot.
                     final String snapshot = printRows(sql, false, context);
                     final StringSink rows = new StringSink();
@@ -729,7 +756,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                         CursorPrinter.println(record, factory.getMetadata(), rows, true);
                         assertSlotCached(join);
-                        db.execute("INSERT INTO f SELECT 'n' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-05', 1_000_000) FROM long_sequence(5_000)", context);
+                        db.execute("INSERT INTO f SELECT 'n' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-05', 1_000_000) FROM long_sequence(20_000)", context);
                         while (cursor.hasNext()) {
                             CursorPrinter.println(record, factory.getMetadata(), rows, true);
                         }
@@ -737,15 +764,15 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                     TestUtils.assertEquals(snapshot, rows);
                     Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     try (TableReader reader = db.getReader("f")) {
-                        Assert.assertEquals(PROBE_KEY_COUNT + 5_000, reader.getSymbolMapReader(0).getSymbolCount());
+                        Assert.assertEquals(PROBE_KEY_COUNT + 20_000, reader.getSymbolMapReader(0).getSymbolCount());
                     }
-                    // The next execution reads 6,000 rows over a dictionary of 305,000 texts, which open
-                    // the shared cache: 6,000 >= ceil(305,000 / 256) = 1,192.
+                    // The next execution reads 21,000 rows over a dictionary of 320,000 texts, which open
+                    // the shared cache: 21,000 >= ceil(320,000 / 16) = 20,000.
                     final String grown = ordinary(sql, context);
-                    Assert.assertEquals(rowCount(expected) + 5_000, rowCount(grown));
-                    assertExecution(factory, join, grown, join1 -> assertSharedCache(join1.getAtom().getStage(0), 0, 4L * (PROBE_KEY_COUNT + 5_000)), context);
+                    Assert.assertEquals(rowCount(expected) + 20_000, rowCount(grown));
+                    assertExecution(factory, join, grown, join1 -> assertSharedCache(join1.getAtom().getStage(0), 0, 4L * (PROBE_KEY_COUNT + 20_000)), context);
                 }
-                // The March partition alone still translates through the slots: 1,000 < 1,192.
+                // The March partition alone still translates through the slots: 1,000 < 20,000.
                 final String march = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03-01'";
                 final String marchExpected = ordinary(march, context);
                 context.setParallelHashJoinEnabled(true);

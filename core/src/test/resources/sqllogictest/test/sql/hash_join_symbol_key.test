@@ -7,8 +7,8 @@
 # HashJoinSymbolKeySqllogicTest checks that the runner's server plans them so. The events table's
 # SYMBOL column holds 1,002 texts: the 1,000 of a day that the table drops, whose texts stay in the
 # dictionary, and two of its three rows. A probe of events reads fewer rows than one per 256 texts,
-# so each worker translates the SYMBOL key through a cache of its own rather than through one that
-# the dictionary sizes. The padding of the dictionary is QuestDB-specific. The queries above the
+# the bound of the fused GROUP BY and below the parallel hash join's, so each worker translates the
+# SYMBOL key through a cache of its own rather than through one that the dictionary sizes. The padding of the dictionary is QuestDB-specific. The queries above the
 # "QuestDB-specific" line follow DuckDB and PostgreSQL semantics, which join equal texts, and return
 # their expected rows; the SYMBOL columns are VARCHAR columns there. Below that line, QuestDB
 # deliberately differs:

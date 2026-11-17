@@ -95,7 +95,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * one, in one round with one task per stage, each on the slot that its task takes; see
  * {@link #BUILD_STAGE}. Then {@link #bindProbes()} gives every slot its probe of the frozen build.
  * Once the probe scan has cut its frames, whose rows bound the keys that the execution translates,
- * {@link #bindSymbolKeyTranslation(long, SqlExecutionCircuitBreaker)} binds the SYMBOL key
+ * {@link #bindSymbolKeyTranslation(long, boolean, SqlExecutionCircuitBreaker)} binds the SYMBOL key
  * translation: per SYMBOL key column, one cache shared by every slot, or, for a probe of few rows
  * next to the probe dictionary, a lazy cache of each slot's own, plus a pair of symbol tables per
  * slot. The build frames stay open until {@link #clear()}, because probes read payload columns
@@ -939,7 +939,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
 
     /**
      * True when the open cursor's execution translates the key-th SYMBOL key pair through each
-     * slot's own cache, as a probe of fewer rows than one per 256 probe keys does; see
+     * slot's own cache, as a probe of few rows next to the probe dictionary does; see
      * {@link SymbolKeyTranslator}. False until the translation is bound, and for a stage without
      * that many SYMBOL key pairs.
      */
@@ -1600,20 +1600,23 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
 
     /**
      * Opens each SYMBOL key column's translation for a probe of {@code probeRowCount} rows, and
-     * gives every slot its own pair of symbol tables over it. A probe of at least one row per 256
-     * keys of the probe dictionary gets a shared cache sized by that dictionary, filled from the
-     * build dictionary when that one is small; any other leaves each slot to translate through a
-     * lazy cache of its own, of at most {@code cairo.sql.join.symbol.translation.cache.capacity}
-     * entries, which the server may reload, so every execution reads it. Symbol tables are not
+     * gives every slot its own pair of symbol tables over it. A probe that reads enough rows per
+     * key of the probe dictionary, by the operator's rule, see
+     * {@link SymbolKeyTranslator#of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)},
+     * gets a shared cache sized by that dictionary, filled from the build dictionary when that one
+     * is small; any other leaves each slot to translate through a lazy cache of its own, of at most
+     * {@code cairo.sql.join.symbol.translation.cache.capacity} entries, which the server may
+     * reload, so every execution reads it. Symbol tables are not
      * thread safe, so a worker cannot share one; the shared cache is a function of the two
      * dictionaries alone, so every worker does share that. On failure the caller runs
      * {@link #clear()}, which releases both. Runs once per execution, after the build and once the
      * probe scan has cut its frames, on the thread that then dispatches the probes, before the
      * payload copy and the first probe task.
      *
-     * @param probeRowCount the probe's frame rows, or fewer when the execution reads fewer first
+     * @param probeRowCount      the probe's frame rows, or fewer when the execution reads fewer first
+     * @param isParallelHashJoin true for a parallel hash join's stage, false for the fused GROUP BY's
      */
-    void bindSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+    void bindSymbolKeyTranslation(long probeRowCount, boolean isParallelHashJoin, SqlExecutionCircuitBreaker circuitBreaker) {
         for (int key = 0, keyCount = symbolKeyCaches.size(); key < keyCount; key++) {
             final int probeColumn = symbolKeyProbeColumns.getQuick(key);
             final int buildColumn = symbolKeyBuildColumns.getQuick(key);
@@ -1625,7 +1628,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             // The probe's shared table is the dictionary that its views read: a table's symbol map,
             // or the in-memory overlay of a live view, which can hold a text under two keys.
             final boolean isProbeDictionaryEligible = SymbolKeyTranslator.isEligibleProbeDictionary(probeSymbols.getSymbolTable(probeColumn));
-            cache.of(ownerProbeTable, ownerBuildTable, isProbeDictionaryEligible, probeRowCount,
+            cache.of(ownerProbeTable, ownerBuildTable, isProbeDictionaryEligible, probeRowCount, isParallelHashJoin,
                     configuration.getSqlJoinSymbolTranslationCacheCapacity(), memoryTracker, circuitBreaker);
             for (int i = 0, n = slots.size(); i < n; i++) {
                 final SymbolTable probeTable = i == 0 ? ownerProbeTable : probeSymbols.newSymbolTable(probeColumn);

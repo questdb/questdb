@@ -44,7 +44,7 @@ import org.jetbrains.annotations.TestOnly;
  * probe key the frame never reads costs nothing. A probe that reads many distinct keys against a
  * small build dictionary would then look up far more texts than the build holds, so in that case
  * the cache opens filled from the build side instead; see
- * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
+ * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
  * <p>
  * The cache is a dense, tracked native array indexed by probe symbol key and sized by the probe
  * dictionary. Every worker shares one cache, because an entry is a function of the two
@@ -56,7 +56,11 @@ import org.jetbrains.annotations.TestOnly;
  * releases it and leaves the instance reusable.
  * <p>
  * Opening the shared cache costs work and memory that grow with the probe dictionary, whatever
- * the probe reads, so it opens only for a probe that reads at least one row per 256 probe keys.
+ * the probe reads, so it opens only for a probe that reads enough rows per probe key: for the fused
+ * GROUP BY, at least one row per 256 probe keys, and for the parallel hash join, whose serial plan
+ * opens no such cache, at least one row per 16 probe keys when the cache fills from the build, and
+ * one per probe key when it opens unresolved; see
+ * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
  * For a probe of fewer rows, the translator allocates nothing, and each {@link View} translates
  * through a lazy cache of its own instead, as the ordinary join's SymbolTranslatingRecord does:
  * it opens on the view's first miss, keeps each probe key it resolves, and stops allocating once
@@ -87,10 +91,24 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     // Fills from the build only when that takes at most an eighth of the lookups that resolving
     // every probe key would.
     private static final int FILL_FROM_BUILD_MIN_PROBE_RATIO = 8;
-    // The shared cache opens only for a probe that reads at least one row per this many probe keys.
-    // Clearing an entry took 0.09 to 1.4 ns, the latter on fresh pages of a large array, and a lookup
-    // 40 to 420 ns, so at this bound the clear costs about one lookup per probe row, and below it the
-    // views make at most one lookup per probe row instead.
+    // The parallel hash join's shared cache, once filled from the build, opens only for a probe that
+    // reads at least one row per this many probe keys. Its serial plan opens no cache, and the
+    // views' caches cost about 25 ns per distinct probe key on each of four workers, so a filled
+    // cache, which costs about 1.6 ns per probe key when its pages are fresh, as glibc maps them for
+    // a large array, and 0.15 ns when warm, as jemalloc reuses them, pays off from about one row per
+    // 14 probe keys on fresh pages and per 128 on warm ones. Measured with
+    // ParallelHashJoinBenchmark's SYMBOL_10M_PREFIX_D1K over 10M probe keys; at this bound the join
+    // takes at most about 2.1x the serial plan's time under either allocator.
+    private static final int JOIN_FILLED_CACHE_MAX_KEYS_PER_PROBE_ROW = 16;
+    // The parallel hash join's shared cache, opened unresolved, makes the views' lookups itself, so it
+    // spares the views only their repeats of a key across slots, and costs no less than their caches
+    // until the probe reads about one row per two probe keys, under either allocator; it opens for at
+    // least one row per probe key. Measured with ParallelHashJoinBenchmark's SYMBOL_10M_PREFIX_D50K.
+    private static final int JOIN_UNRESOLVED_CACHE_MAX_KEYS_PER_PROBE_ROW = 1;
+    // The fused GROUP BY's shared cache opens only for a probe that reads at least one row per this
+    // many probe keys. Before the bound, it opened for every probe, so below it the views only spare
+    // the cache's clear, and at it the views' lookups would cost about what the clear does on warm
+    // pages.
     private static final int SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW = 256;
     // Translated keys are nonnegative, VALUE_IS_NULL or VALUE_NOT_FOUND, never -1.
     private static final int UNRESOLVED = -1;
@@ -190,43 +208,54 @@ public final class SymbolKeyTranslator implements QuietCloseable {
 
     /**
      * Opens the translation for a probe of {@code probeRowCount} rows over the probe dictionary's
-     * current key count, which the owner's probe table reports. A probe of fewer rows than one per
-     * 256 probe keys leaves the translation to the views' own caches, each of which stops
-     * allocating at {@code slotCacheCapacity} entries: the translator allocates nothing, looks no
-     * text up and checks no breaker.
+     * current key count, which the owner's probe table reports.
      * <p>
-     * Otherwise it allocates the shared cache. When the caller found the probe dictionary eligible,
-     * see {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at most 32,768
-     * keys and the probe dictionary at least eight times as many, the cache opens filled from the
-     * build: every entry reads VALUE_NOT_FOUND, then each build key looks its text up in the probe
-     * dictionary and writes itself at the probe key it finds. An eligible probe dictionary holds
-     * each text once, and keyOf() and valueOf() match texts exactly, so each entry then holds the
-     * build key that resolving its probe key lazily would have returned. Otherwise the cache opens
-     * unresolved, as {@link #of(int, MemoryTracker, SqlExecutionCircuitBreaker)} opens it.
+     * The shared cache opens filled from the build when the caller found the probe dictionary
+     * eligible, see {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at
+     * most 32,768 keys and the probe dictionary at least eight times as many: every entry reads
+     * VALUE_NOT_FOUND, then each build key looks its text up in the probe dictionary and writes
+     * itself at the probe key it finds. An eligible probe dictionary holds each text once, and
+     * keyOf() and valueOf() match texts exactly, so each entry then holds the build key that
+     * resolving its probe key lazily would have returned. Otherwise it opens unresolved, as
+     * {@link #of(int, MemoryTracker, SqlExecutionCircuitBreaker)} opens it.
+     * <p>
+     * It opens only for a probe of at least one row per so many probe keys: for the parallel hash
+     * join 16 when it would fill from the build and 1 when it would open unresolved, for the fused
+     * GROUP BY 256. A probe of fewer rows leaves the translation to the views' own caches, each of
+     * which stops allocating at {@code slotCacheCapacity} entries: the translator then allocates
+     * nothing, looks no text up and checks no breaker.
      *
-     * @param probeRowCount     the most probe rows whose keys the execution may translate first, or
-     *                          {@code Long.MAX_VALUE} when the caller cannot tell
-     * @param slotCacheCapacity the entries past which a view's own cache stops allocating
+     * @param probeRowCount      the most probe rows whose keys the execution may translate first, or
+     *                           {@code Long.MAX_VALUE} when the caller cannot tell
+     * @param isParallelHashJoin true for the parallel hash join, whose serial plan opens no cache,
+     *                           false for the fused GROUP BY, which opened the shared cache for any
+     *                           probe before the views' caches existed
+     * @param slotCacheCapacity  the entries past which a view's own cache stops allocating
      */
     public void of(
             StaticSymbolTable probeKeyTable,
             StaticSymbolTable buildKeyTable,
             boolean isProbeDictionaryEligible,
             long probeRowCount,
+            boolean isParallelHashJoin,
             int slotCacheCapacity,
             @Nullable MemoryTracker memoryTracker,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final int probeKeyCount = probeKeyTable.getSymbolCount();
-        if (!isSharedCacheInProbeReach(probeKeyCount, probeRowCount)) {
+        final int buildKeyCount = buildKeyTable.getSymbolCount();
+        final boolean isFilled = isProbeDictionaryEligible && isFillableFromBuild(probeKeyCount, buildKeyCount);
+        final int maxKeysPerProbeRow = !isParallelHashJoin
+                ? SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW
+                : isFilled ? JOIN_FILLED_CACHE_MAX_KEYS_PER_PROBE_ROW : JOIN_UNRESOLVED_CACHE_MAX_KEYS_PER_PROBE_ROW;
+        if (!isSharedCacheInProbeReach(probeKeyCount, probeRowCount, maxKeysPerProbeRow)) {
             close();
             this.memoryTracker = memoryTracker;
             this.slotCacheCapacity = slotCacheCapacity;
             isSlotCached = true;
             return;
         }
-        final int buildKeyCount = buildKeyTable.getSymbolCount();
-        if (!isProbeDictionaryEligible || !isFillableFromBuild(probeKeyCount, buildKeyCount)) {
+        if (!isFilled) {
             of(probeKeyCount, memoryTracker, circuitBreaker);
             return;
         }
@@ -278,10 +307,10 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 && (long) buildKeyCount * FILL_FROM_BUILD_MIN_PROBE_RATIO <= probeKeyCount;
     }
 
-    // True when the probe reads at least ceil(probeKeyCount / 256) rows, which a dictionary without
-    // keys always does. The key count is an int, so the long sum cannot overflow.
-    private static boolean isSharedCacheInProbeReach(int probeKeyCount, long probeRowCount) {
-        return probeRowCount >= ((long) probeKeyCount + SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW - 1) / SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW;
+    // True when the probe reads at least ceil(probeKeyCount / maxKeysPerProbeRow) rows, which a
+    // dictionary without keys always does. The key count is an int, so the long sum cannot overflow.
+    private static boolean isSharedCacheInProbeReach(int probeKeyCount, long probeRowCount, int maxKeysPerProbeRow) {
+        return probeRowCount >= ((long) probeKeyCount + maxKeysPerProbeRow - 1) / maxKeysPerProbeRow;
     }
 
     /**

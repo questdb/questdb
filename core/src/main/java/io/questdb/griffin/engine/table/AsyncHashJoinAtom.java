@@ -643,15 +643,16 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * Binds every stage's SYMBOL key translation for a probe of {@code probeRowCount} rows: the
      * probe's frame rows, which bound the keys of the first stage and of every later stage alike,
      * since a later stage reads its keys off the left input, whose rows a swapped execution's probe
-     * outnumbers; or fewer, under a LIMIT. A stage whose probe reads fewer rows than one per 256
-     * keys of its probe dictionary translates through each slot's own cache rather than a shared
-     * one; see {@link HashJoinBuildStage#bindSymbolKeyTranslation}. The cursor calls it once per
+     * outnumbers; or fewer, under a LIMIT. A stage whose probe reads fewer rows than one per 16
+     * keys of its probe dictionary, or than one per key when the stage's build is too large to fill
+     * the shared cache from, translates through each slot's own cache rather than a shared one; see
+     * {@link HashJoinBuildStage#bindSymbolKeyTranslation}. The cursor calls it once per
      * execution, once the probe scan has cut its frames and before the payload copy and the first
      * probe task; on failure the cursor closes, whose clear() releases what the stages opened.
      */
     void bindSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
         for (int k = 0, n = executionStages.size(); k < n; k++) {
-            executionStages.getQuick(k).bindSymbolKeyTranslation(probeRowCount, circuitBreaker);
+            executionStages.getQuick(k).bindSymbolKeyTranslation(probeRowCount, true, circuitBreaker);
         }
     }
 

@@ -532,7 +532,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
      * stage opened.
      */
     void bindSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
-        stage.bindSymbolKeyTranslation(probeRowCount, circuitBreaker);
+        stage.bindSymbolKeyTranslation(probeRowCount, false, circuitBreaker);
     }
 
     /**

@@ -175,7 +175,7 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
     }
 
     // A LEFT join on sym that probes a table of a padded dictionary, whose rows are far fewer than one
-    // per 256 of its texts: the join translates the key through the slots' own caches, and returns the
+    // per 16 of its texts: the join translates the key through the slots' own caches, and returns the
     // ordinary plan's rows.
     private static void assertSlotCachedProbe(FuzzTable probe, FuzzTable build) throws Exception {
         final String sql = "SELECT * FROM " + probe.getName() + " p LEFT JOIN " + build.getName() + " b ON p.sym = b.sym";

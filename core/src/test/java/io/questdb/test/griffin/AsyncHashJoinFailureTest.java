@@ -882,7 +882,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
     }
 
     // The probe's SYMBOL dictionary holds 5_001 texts, which the translator's shared cache is sized for:
-    // the probe reads more than one row per 256 of them.
+    // the probe reads more than one row per 16 of them.
     // The build holds 600 rows of the text 'hot' and 100 of 'warm', and t holds one row of each in
     // every frame of 64 rows, at positions 40 and 10. A task that reaches the cap of 64 tuples on
     // the frame's warm row leaves the frame to a continuation, whose first chunk ends on its hot row
@@ -1019,7 +1019,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
 
     // Sweeps the per-query memory limit over a LEFT join of t until the join fits, and counts the
     // phase that each breach landed in. With isSlotCached, t holds 200 rows over a dictionary of about
-    // 60,000 texts, fewer than one row per 256 texts, so the slots translate t's keys through caches of
+    // 60,000 texts, fewer than one row per 16 texts, so the slots translate t's keys through caches of
     // their own, which grow as the owner joins.
     private void assertMemoryLimitInEachPhase(boolean isInRounds, boolean isSlotCached) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);

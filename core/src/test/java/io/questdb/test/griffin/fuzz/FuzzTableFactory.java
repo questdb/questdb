@@ -297,8 +297,8 @@ public final class FuzzTableFactory {
      *   <li>a table that drops a column after its first rows, {@link #DROPPED_COLUMN_CHANCE};</li>
      *   <li>a partitioned table whose {@code sym} dictionary holds 60,000 more texts, of a day that it
      *   dropped, {@link #PADDED_JOIN_KEY_DICTIONARY_CHANCE}: a join that probes it reads fewer than
-     *   one row per 256 of the texts, and translates its SYMBOL key through the workers' own caches,
-     *   which its plain shadow's join does not.</li>
+     *   one row per 256 of the texts, the bound of either operator or below it, and translates its
+     *   SYMBOL key through the workers' own caches, which its plain shadow's join does not.</li>
      * </ul>
      * A late column is neither indexed, nor covered by an index, on either table, so both tables
      * create their indexes up front. Nor is it a SHORT or a temporal column: the vectorized GROUP BY

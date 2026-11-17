@@ -145,10 +145,12 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code SYMBOL_10M_INTERVAL_D50K} the March hour, {@code SYMBOL_10M_LIMIT_10} the first ten
  *       rows that match, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
  *       table's first 39,062 and 39,063 rows, one key each, either side of the 256 texts per probe row
- *       below which the join translates the key through each worker's own cache rather than a cache
- *       that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row. {@code SYMBOL_10M_PREFIX_D1K}
- *       and {@code SYMBOL_10M_PREFIX_D50K} join the table's first {@code probeRows} rows, one key
- *       each, with either dimension.
+ *       below which the fused GROUP BY translates the key through each worker's own cache rather than
+ *       a cache that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row.
+ *       {@code SYMBOL_10M_PREFIX_D1K} and {@code SYMBOL_10M_PREFIX_D50K} join the table's first
+ *       {@code probeRows} rows, one key each, with either dimension: the join opens the shared cache
+ *       from 625,000 rows, one per 16 texts, with the 1,000 texts, which fill it, and from 10,000,000
+ *       rows, one per text, with the 50,000, which leave it unresolved.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
