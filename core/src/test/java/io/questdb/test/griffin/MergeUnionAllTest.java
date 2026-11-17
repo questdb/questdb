@@ -51,7 +51,10 @@ public class MergeUnionAllTest extends AbstractCairoTest {
                 final SqlExecutionCircuitBreaker original = context.getCircuitBreaker();
                 final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
                 context.with(breaker);
-                try (RecordCursor cursor = factory.getCursor(context)) {
+                // The test opens the merge cursor without its QueryProgress wrapper: QueryProgress
+                // closes the cursor when calculateSize() fails, which ends the query, so only the
+                // bare merge cursor can resume the count once the breaker resets.
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(context)) {
                     Assert.assertTrue(cursor.hasNext());
                     breaker.cancel();
                     final RecordCursor.Counter counter = new RecordCursor.Counter();
