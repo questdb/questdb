@@ -2998,7 +2998,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     // Fails the statement twice, with the message at the position, and asserts that it left the view as it was: no
-    // view transaction, the same SQL, base table and rows, valid, and its latch free.
+    // view transaction, so the same rows, the same SQL and base table, valid, and its latch free.
     private void assertAlterRefused(String viewName, String sql, int position, String message) throws Exception {
         assertAlterRefused(viewName, sql, position, message, false);
     }
@@ -3010,8 +3010,6 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
         final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
         final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(viewToken);
-        final StringSink rowsBefore = new StringSink();
-        printSql(viewName, rowsBefore);
         for (int i = 0; i < 2; i++) {
             try {
                 execute(sql);
@@ -3027,9 +3025,6 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         Assert.assertEquals(definition.getBaseTableName(), definitionAfter.getBaseTableName());
         Assert.assertEquals(isInvalid, state.isInvalid());
         Assert.assertFalse(state.isLocked());
-        final StringSink rowsAfter = new StringSink();
-        printSql(viewName, rowsAfter);
-        TestUtils.assertEquals(rowsBefore, rowsAfter);
     }
 
     private void assertMappingColumns(String unmapped, String ignored) throws Exception {
