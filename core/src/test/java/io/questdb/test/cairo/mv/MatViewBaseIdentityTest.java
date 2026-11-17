@@ -746,6 +746,117 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLoadAfterFailedFirstStateWriteKeepsRowsOverDroppedBasePartition() throws Exception {
+        // The apply of the view's first refresh commit fails to write _mv.s, which keeps the never-refreshed position
+        // of the base id event before it. After a base DROP PARTITION and an applied view ADD COLUMN, the load takes
+        // the position from the refresh commit, so the next refresh keeps the view's rows over the dropped partition
+        // instead of rebuilding the view as a first build.
+        final AtomicInteger stateOpensToPass = new AtomicInteger(-1);
+        final AtomicInteger stateWriteFailures = new AtomicInteger();
+        assertMemoryLeak(newStateWriteFailingFacade(stateOpensToPass, stateWriteFailures), () -> {
+            createBase();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, '2024-01-02T00:10:00.000000Z'),
+                    ('c', 3.0, '2024-01-03T00:10:00.000000Z')
+                    """);
+            createView("MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainMatViewQueue(engine);
+            Assert.assertEquals("INVALIDATE,DATA", viewTxnTypes());
+            // the base id event's _mv.s write passes, the refresh commit's fails
+            stateOpensToPass.set(1);
+            drainWalQueue();
+            stateOpensToPass.set(-1);
+            Assert.assertEquals(1, stateWriteFailures.get());
+            assertPersistedRefreshBaseTxn(-1);
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+
+            execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+            drainWalQueue();
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+            drainWalQueue();
+            Assert.assertEquals("INVALIDATE,DATA,STRUCTURE", viewTxnTypes());
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice\textra
+                    2024-01-01T00:00:00.000000Z\ta\t1.0\tnull
+                    2024-01-02T00:00:00.000000Z\tb\t2.0\tnull
+                    2024-01-03T00:00:00.000000Z\tc\t3.0\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testLoadAfterFailedStateWriteTakesAppliedRefreshCommitBelowPendingAlterAs() throws Exception {
+        // The apply of a refresh commit fails to write _mv.s, which keeps the previous refresh's position, and an
+        // ALTER ... AS waits in the view's WAL above the commit. The load passes the pending definition and takes the
+        // position from the applied refresh commit, so the next refresh leaves the refreshed buckets as they are
+        // instead of recomputing them with the new SQL.
+        final AtomicInteger stateOpensToPass = new AtomicInteger(-1);
+        final AtomicInteger stateWriteFailures = new AtomicInteger();
+        assertMemoryLeak(newStateWriteFailingFacade(stateOpensToPass, stateWriteFailures), () -> {
+            refreshTwiceFailingSecondStateWrite(stateOpensToPass, stateWriteFailures);
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, first(price) AS price FROM base SAMPLE BY 1h)");
+            Assert.assertEquals("INVALIDATE,DATA,INVALIDATE,DATA," + WalTxnType.MAT_VIEW_DEFINITION, viewTxnTypes());
+            Assert.assertEquals(viewSeqTxn() - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(2, viewState().getLastRefreshBaseTxn());
+
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\t5.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testLoadAfterFailedStateWriteTakesAppliedRefreshCommitBelowViewColumnChange() throws Exception {
+        // The apply of a refresh commit fails to write _mv.s, which keeps the previous refresh's position and the
+        // cached intervals that the commit refreshed, and an applied view ADD COLUMN, a structural transaction without
+        // view state, lies above the commit. The load passes the column change and takes the state from the applied
+        // refresh commit, so the next refresh has nothing to recompute.
+        final AtomicInteger stateOpensToPass = new AtomicInteger(-1);
+        final AtomicInteger stateWriteFailures = new AtomicInteger();
+        assertMemoryLeak(newStateWriteFailingFacade(stateOpensToPass, stateWriteFailures), () -> {
+            refreshTwiceFailingSecondStateWrite(stateOpensToPass, stateWriteFailures);
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE");
+            drainWalQueue();
+            Assert.assertEquals("INVALIDATE,DATA,INVALIDATE,DATA,STRUCTURE", viewTxnTypes());
+            restart();
+            Assert.assertFalse(viewState().isInvalid());
+            Assert.assertEquals(2, viewState().getLastRefreshBaseTxn());
+            Assert.assertEquals(0, viewState().getRefreshIntervals().size());
+            Assert.assertEquals(baseTableId(), viewState().getBaseTableId());
+
+            final long viewSeqTxn = viewSeqTxn();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertViewRows("""
+                    ts\tsym\tprice\textra
+                    2024-01-01T00:00:00.000000Z\ta\t1.0\tnull
+                    2024-01-01T01:00:00.000000Z\tb\t5.0\tnull
+                    """);
+        });
+    }
+
+    @Test
     public void testLoadDoesNotOpenAppliedTxnsWithoutState() throws Exception {
         // With 10,000 applied refresh commits and three applied commits without view state above them, the load opens
         // the event of the newest one and takes the state from _mv.s, which holds the applied transactions.
@@ -795,10 +906,9 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLoadStopsAtAppliedTxnsBelowUnappliedTxnsWithoutState() throws Exception {
+    public void testLoadStopsAtNewestAppliedTxnBelowUnappliedTxnsWithoutState() throws Exception {
         // Above 10,000 applied refresh commits, three unapplied commits without view state: the load opens their three
-        // events and, at the last unapplied one, takes the state from _mv.s, which holds the applied transactions. It
-        // opens no applied transaction's event, not even the newest one's.
+        // events and the newest applied refresh commit's, which gives the state, and no other applied transaction's.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean isCounting = new AtomicBoolean();
         final AtomicInteger eventOpens = new AtomicInteger();
@@ -808,7 +918,7 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
             Assert.assertEquals(10_005, viewSeqTxn());
 
             restartCountingViewEventOpens(isCounting);
-            Assert.assertEquals(3, eventOpens.get());
+            Assert.assertEquals(4, eventOpens.get());
             Assert.assertFalse(viewState().isInvalid());
             Assert.assertEquals(1, viewState().getLastRefreshBaseTxn());
             Assert.assertEquals(9_999, viewState().getLastRefreshFinishTimestampUs());
@@ -1392,6 +1502,27 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
         });
     }
 
+    // Fails the open for write of the view's _mv.s once the given number of such opens passed; -1 never fails.
+    private static TestFilesFacadeImpl newStateWriteFailingFacade(AtomicInteger stateOpensToPass, AtomicInteger stateWriteFailures) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (Utf8s.endsWithAscii(name, MatViewState.MAT_VIEW_STATE_FILE_NAME) && Utf8s.containsAscii(name, "price_1h")) {
+                    final int opensToPass = stateOpensToPass.get();
+                    if (opensToPass == 0) {
+                        stateOpensToPass.set(-1);
+                        stateWriteFailures.incrementAndGet();
+                        return -1;
+                    }
+                    if (opensToPass > 0) {
+                        stateOpensToPass.decrementAndGet();
+                    }
+                }
+                return super.openRW(name, opts);
+            }
+        };
+    }
+
     // Counts the opens of the view's WAL event files while the flag is set.
     private static TestFilesFacadeImpl newViewEventOpenCountingFacade(AtomicBoolean isCounting, AtomicInteger eventOpens) {
         return new TestFilesFacadeImpl() {
@@ -1556,6 +1687,37 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
 
     private void insertBaseRow(String sym, String ts) throws SqlException {
         execute("INSERT INTO base VALUES ('" + sym + "', '" + ts + "')");
+    }
+
+    // A MANUAL view refreshed at base txn 1, then at base txn 2, whose refresh commit's apply fails to write _mv.s:
+    // the file keeps base txn 1 and the cached intervals of base txn 2, while the view's state in memory is at 2.
+    private void refreshTwiceFailingSecondStateWrite(AtomicInteger stateOpensToPass, AtomicInteger stateWriteFailures) throws SqlException {
+        createBase();
+        insertBaseRow("a", 1.0, "2024-01-01T00:10:00.000000Z");
+        createView("MANUAL");
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainWalAndMatViewQueues();
+        execute("INSERT INTO base VALUES ('b', 2.0, '2024-01-01T01:10:00.000000Z'), ('b', 5.0, '2024-01-01T01:20:00.000000Z')");
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+        drainMatViewQueue(engine);
+        Assert.assertEquals("INVALIDATE,DATA,INVALIDATE,DATA", viewTxnTypes());
+        // the cache event's _mv.s write passes, the refresh commit's fails
+        stateOpensToPass.set(1);
+        drainWalQueue();
+        stateOpensToPass.set(-1);
+        Assert.assertEquals(1, stateWriteFailures.get());
+        assertPersistedRefreshBaseTxn(1);
+        Assert.assertEquals(2, viewState().getLastRefreshBaseTxn());
+    }
+
+    private void assertPersistedRefreshBaseTxn(long expected) {
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getDbRoot()).concat(viewToken()).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            reader.of(path.$());
+            Assert.assertEquals(expected, new MatViewStateReader().of(reader, viewToken()).getLastRefreshBaseTxn());
+        }
     }
 
     private void restart() {
