@@ -346,6 +346,21 @@ public class LiveViewProjectionRejectTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testUnstorableColumnFirstInTheOutputIsRejected() throws Exception {
+        // The other rejects put the offending column after ts and sym. Here it is the first
+        // output column, ahead of the designated timestamp, so a check that skipped the first
+        // column would let the view through.
+        assertMemoryLeak(() -> {
+            createBase();
+            assertUnstorableColumnRejected(
+                    lv("SELECT NULL n, ts, sym, " + WINDOW + " AS a FROM base"),
+                    "NULL n",
+                    nullColumnMessage("n")
+            );
+        });
+    }
+
+    @Test
     public void testUnstorableColumnPositionWhateverSurroundsIt() throws Exception {
         // The position comes from the parsed projection, one item per output column, so it has
         // to land on the offending expression whatever names, quotes, comments, parentheses,
