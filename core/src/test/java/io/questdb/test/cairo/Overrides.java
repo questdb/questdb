@@ -135,7 +135,21 @@ public class Overrides {
     // the overrides: a setProperty on another thread that lands while a rebuild runs leaves the version newer than
     // the one that rebuild publishes, so the next read rebuilds again instead of keeping the copy that missed it.
     private final AtomicLong overridesVersion = new AtomicLong();
-    private final Properties properties = new Properties();
+    // setProperty writes the overrides only through remove and setProperty below, which run beforeOverrideWritten()
+    // just before the write lands, after anything setProperty does ahead of the write.
+    private final Properties properties = new Properties() {
+        @Override
+        public Object remove(Object key) {
+            beforeOverrideWritten();
+            return super.remove(key);
+        }
+
+        @Override
+        public Object setProperty(String key, String value) {
+            beforeOverrideWritten();
+            return super.setProperty(key, value);
+        }
+    };
     private boolean adaptiveRecoveryRollForwardEnabled = true;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
@@ -174,6 +188,7 @@ public class Overrides {
                 beforeConfigurationPublished();
                 published = new VersionedConfiguration(configuration, version);
                 propsConfig = published;
+                afterConfigurationPublished();
             }
             return published.configuration();
         } else {
@@ -314,11 +329,27 @@ public class Overrides {
     }
 
     /**
+     * Test hook: runs on the thread that rebuilt the configuration, right after it published the pair and before
+     * the read returns the configuration it built. OverridesTest parks a rebuild here so that an older rebuild
+     * publishes over it before it returns.
+     */
+    protected void afterConfigurationPublished() {
+    }
+
+    /**
      * Test hook: runs on the thread that rebuilds the configuration, after the rebuild copied the overrides and
      * before it pairs the result with the version it read ahead of the copy and publishes the pair.
      * OverridesTest parks a rebuild here to change the overrides from another thread under it.
      */
     protected void beforeConfigurationPublished() {
+    }
+
+    /**
+     * Test hook: runs on the thread that calls setProperty, inside its write to the overrides (the put of a value
+     * or the removal of a key), before the write lands. OverridesTest parks a setProperty here to read the
+     * configuration from another thread under it.
+     */
+    protected void beforeOverrideWritten() {
     }
 
     private static CairoConfiguration getTestConfiguration(String installRoot, Properties defaultProperties, Properties properties) {

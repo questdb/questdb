@@ -42,7 +42,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * Unit tests for the property override store every {@code AbstractCairoTest} subclass writes to.
  * Overrides rebuilds the configuration on the first read after a batch of setProperty() calls
  * that changed anything. A call that changes nothing must not hide an earlier change in the
- * same batch, and a call made while another thread rebuilds must reach the next read. Tests
+ * same batch, a call made while another thread rebuilds or reads the configuration must reach
+ * the next read, and a read that rebuilds returns what it built. Tests
  * that use a standalone {@code Overrides} allocate no native memory beyond what building a
  * {@code CairoConfiguration} does, so they do not use {@code assertMemoryLeak()}.
  */
@@ -73,6 +74,44 @@ public class OverridesTest extends AbstractCairoTest {
             Assert.assertEquals(0, configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows());
             Assert.assertEquals(1, configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition());
         });
+    }
+
+    /**
+     * A read that rebuilds the configuration returns the configuration it built, even when an older rebuild publishes
+     * over it before it returns. The older rebuild copies the overrides with the view not listed in
+     * cairo.wal.apply.suspended.tables and parks before it publishes. The test then lists the view, and a newer read
+     * rebuilds, publishes and parks before it returns. The older rebuild publishes its copy while the newer read is
+     * parked.
+     */
+    @Test
+    public void testReadReturnsItsOwnRebuildWhenOlderRebuildPublishesOverIt() throws Exception {
+        final ParkingOverrides overrides = new ParkingOverrides();
+        // Keeps the overrides non-empty whatever the listing, as in the soak.
+        overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, true);
+        overrides.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1_234);
+        final ConfigurationReader olderReader = new ConfigurationReader(overrides, "overrides-older-reader");
+        final ConfigurationReader newerReader = new ConfigurationReader(overrides, "overrides-newer-reader");
+        overrides.beforePublished.arm();
+        olderReader.start();
+        try {
+            Assert.assertTrue("the older rebuild must park before it publishes", overrides.beforePublished.awaitParked());
+            setListed(overrides, true);
+            overrides.afterPublished.arm();
+            newerReader.start();
+            Assert.assertTrue("the newer rebuild must park after it publishes", overrides.afterPublished.awaitParked());
+            overrides.beforePublished.release();
+            olderReader.join();
+        } finally {
+            overrides.beforePublished.release();
+            overrides.afterPublished.release();
+            olderReader.join();
+            newerReader.join();
+        }
+        Assert.assertNull("the older read", olderReader.error);
+        Assert.assertNull("the newer read", newerReader.error);
+        assertSuspensionOverrides("the older read", olderReader.result, false);
+        assertSuspensionOverrides("the newer read", newerReader.result, true);
+        assertSuspensionOverrides("a read after both", overrides.getConfiguration(root), true);
     }
 
     @Test
@@ -160,29 +199,21 @@ public class OverridesTest extends AbstractCairoTest {
             setListed(overrides, isListedBefore);
             // A change the parked rebuild copies.
             overrides.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1_234);
-            overrides.armParking();
-            final AtomicReference<CairoConfiguration> rebuilt = new AtomicReference<>();
-            final AtomicReference<Throwable> rebuildError = new AtomicReference<>();
-            final Thread rebuilder = new Thread(() -> {
-                try {
-                    rebuilt.set(overrides.getConfiguration(root));
-                } catch (Throwable th) {
-                    rebuildError.set(th);
-                }
-            }, "overrides-rebuilder");
+            overrides.beforePublished.arm();
+            final ConfigurationReader rebuilder = new ConfigurationReader(overrides, "overrides-rebuilder");
             rebuilder.start();
             try {
-                Assert.assertTrue(rowName + ": the rebuild must park after copying the overrides", overrides.awaitParked());
+                Assert.assertTrue(rowName + ": the rebuild must park after copying the overrides", overrides.beforePublished.awaitParked());
                 setListed(overrides, isListedDuring);
                 if (isNewerReadBeforeLatePublish) {
                     assertSuspensionOverrides(rowName + ", read while the rebuild is parked", overrides.getConfiguration(root), isListedDuring);
                 }
             } finally {
-                overrides.releaseParked();
+                overrides.beforePublished.release();
                 rebuilder.join();
             }
-            Assert.assertNull(rowName, rebuildError.get());
-            assertSuspensionOverrides(rowName + ", the parked rebuild's own read", rebuilt.get(), isListedBefore);
+            Assert.assertNull(rowName, rebuilder.error);
+            assertSuspensionOverrides(rowName + ", the parked rebuild's own read", rebuilder.result, isListedBefore);
 
             // Changes nothing: the overrides already hold the listing the test set during the rebuild.
             setListed(overrides, isListedDuring);
@@ -238,6 +269,52 @@ public class OverridesTest extends AbstractCairoTest {
 
         overrides.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 4_321);
         Assert.assertEquals(4_321, overrides.getConfiguration(root).getMaxUncommittedRows());
+    }
+
+    /**
+     * A setProperty() parked inside its write to the overrides, before the write lands, leaves a configuration read
+     * on another thread with the overrides as they were. Once setProperty() returns, the change reaches the next
+     * read, and repeating it, which changes nothing, keeps it there. The rows list the view in
+     * cairo.wal.apply.suspended.tables and unlist it, as the operator thread of
+     * LiveViewConcurrencyTest#testOperatorSuspendResumeUnderIngest does while the refresh workers read the
+     * configuration.
+     */
+    @Test
+    public void testSetPropertyWithReadDuringItsWriteReachesNextRead() throws Exception {
+        for (boolean isListing : new boolean[]{true, false}) {
+            final String rowName = isListing ? "list" : "unlist";
+            final ParkingOverrides overrides = new ParkingOverrides();
+            // Keeps the overrides non-empty whatever the listing, as in the soak.
+            overrides.setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, true);
+            setListed(overrides, !isListing);
+            overrides.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 1_234);
+            // Publishes a configuration, as the refresh workers' reads keep doing in the soak.
+            assertSuspensionOverrides(rowName + ", read before the write", overrides.getConfiguration(root), !isListing);
+            overrides.beforeWritten.arm();
+            final AtomicReference<Throwable> writeError = new AtomicReference<>();
+            final Thread writer = new Thread(() -> {
+                try {
+                    setListed(overrides, isListing);
+                } catch (Throwable th) {
+                    writeError.set(th);
+                }
+            }, "overrides-writer");
+            writer.start();
+            try {
+                Assert.assertTrue(rowName + ": the write must park before it lands", overrides.beforeWritten.awaitParked());
+                assertSuspensionOverrides(rowName + ", read while the write is parked", overrides.getConfiguration(root), !isListing);
+            } finally {
+                overrides.beforeWritten.release();
+                writer.join();
+            }
+            Assert.assertNull(rowName, writeError.get());
+            assertSuspensionOverrides(rowName + ", read after the write", overrides.getConfiguration(root), isListing);
+
+            // Changes nothing: the overrides already hold this listing.
+            setListed(overrides, isListing);
+            Assert.assertEquals(rowName, isListing, overrides.isPropertySet(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES));
+            assertSuspensionOverrides(rowName + ", read after repeating the write", overrides.getConfiguration(root), isListing);
+        }
     }
 
     @Test
@@ -342,6 +419,27 @@ public class OverridesTest extends AbstractCairoTest {
         SAME_VALUE, REMOVE_ABSENT_KEY, DEFAULT_OF_ABSENT_KEY
     }
 
+    // Reads the configuration on a thread of its own and keeps what the read returned or threw.
+    private static class ConfigurationReader extends Thread {
+        private final Overrides overrides;
+        private volatile Throwable error;
+        private volatile CairoConfiguration result;
+
+        ConfigurationReader(Overrides overrides, String name) {
+            super(name);
+            this.overrides = overrides;
+        }
+
+        @Override
+        public void run() {
+            try {
+                result = overrides.getConfiguration(root);
+            } catch (Throwable th) {
+                error = th;
+            }
+        }
+    }
+
     private static class CountingOverrides extends Overrides {
         private int rebuildCount;
 
@@ -351,18 +449,47 @@ public class OverridesTest extends AbstractCairoTest {
         }
     }
 
-    // Parks the first rebuild after armParking() in the hook until the test releases it.
+    // Parks the first caller of each hook after the test armed the hook's spot, until the test releases it.
     private static class ParkingOverrides extends Overrides {
-        private final AtomicBoolean isParkingArmed = new AtomicBoolean();
-        private final CountDownLatch parked = new CountDownLatch(1);
-        private final CountDownLatch released = new CountDownLatch(1);
+        private final ParkingSpot afterPublished = new ParkingSpot();
+        private final ParkingSpot beforePublished = new ParkingSpot();
+        private final ParkingSpot beforeWritten = new ParkingSpot();
+
+        @Override
+        protected void afterConfigurationPublished() {
+            afterPublished.parkIfArmed();
+        }
 
         @Override
         protected void beforeConfigurationPublished() {
-            if (isParkingArmed.compareAndSet(true, false)) {
+            beforePublished.parkIfArmed();
+        }
+
+        @Override
+        protected void beforeOverrideWritten() {
+            beforeWritten.parkIfArmed();
+        }
+    }
+
+    // Parks the first thread that reaches it after arm() until the test releases it.
+    private static class ParkingSpot {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final CountDownLatch parked = new CountDownLatch(1);
+        private final CountDownLatch released = new CountDownLatch(1);
+
+        void arm() {
+            isArmed.set(true);
+        }
+
+        boolean awaitParked() throws InterruptedException {
+            return parked.await(PARK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        }
+
+        void parkIfArmed() {
+            if (isArmed.compareAndSet(true, false)) {
                 parked.countDown();
                 try {
-                    Assert.assertTrue("the test must release the parked rebuild", released.await(PARK_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+                    Assert.assertTrue("the test must release the parked thread", released.await(PARK_TIMEOUT_SECONDS, TimeUnit.SECONDS));
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new AssertionError("interrupted while parked", e);
@@ -370,15 +497,7 @@ public class OverridesTest extends AbstractCairoTest {
             }
         }
 
-        void armParking() {
-            isParkingArmed.set(true);
-        }
-
-        boolean awaitParked() throws InterruptedException {
-            return parked.await(PARK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        }
-
-        void releaseParked() {
+        void release() {
             released.countDown();
         }
     }
