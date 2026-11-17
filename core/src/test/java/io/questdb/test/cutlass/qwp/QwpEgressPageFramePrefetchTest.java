@@ -36,11 +36,16 @@ import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.std.Files;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.Arrays;
 
 import static io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState.PAGE_FRAME_PREFETCH_ROWS;
 
@@ -51,19 +56,21 @@ import static io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState.PAGE_
  * last, because kernel readahead only runs forwards and copying column data
  * that is not in the page cache downwards would fault it in a page at a time.
  * The tests pin what the stream reads ahead: every row of a native frame once,
- * in chunks that walk down the frame ahead of the slices, and every OS page of
- * each column once; nothing for column tops, parquet frames and ascending
- * streams. Whether the rows come out in the right order is the business of
- * {@link QwpEgressPageFrameTest}.
+ * in chunks that walk down the frame ahead of the slices, start with the first
+ * batch's rows and double up to {@link QwpEgressProcessorState#PAGE_FRAME_PREFETCH_ROWS},
+ * so the first batch reads ahead only its own rows, however wide they are;
+ * every OS page of each column once; nothing for column tops, parquet frames
+ * and ascending streams. Whether the rows come out in the right order is the
+ * business of {@link QwpEgressPageFrameTest}.
  */
 public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
 
     @Test
     public void testAscendingStreamReadsNothingAhead() throws Exception {
         assertMemoryLeak(() -> {
-            createTable(3, 140_000);
-            final Stream stream = stream("SELECT * FROM t", PartitionFrameCursorFactory.ORDER_ASC, 140_000);
-            Assert.assertEquals(3 * 140_000, stream.rows);
+            createTable(3, 147_456);
+            final Stream stream = stream("SELECT * FROM t", PartitionFrameCursorFactory.ORDER_ASC, 147_456, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+            Assert.assertEquals(3 * 147_456, stream.rows);
             Assert.assertEquals(0, stream.prefetchedRows);
             Assert.assertEquals(0, stream.prefetchedPages);
         });
@@ -72,48 +79,166 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
     @Test
     public void testDescendingStreamReadsAheadEveryNativeRowOnce() throws Exception {
         assertMemoryLeak(() -> {
-            // Three partitions, one frame each, of more rows than a read-ahead chunk;
-            // the oldest one in parquet, which the memory pool decodes into memory.
-            createTable(3, 140_000);
+            // Three partitions, one frame each, of nine full batches and more rows than
+            // a read-ahead chunk; the oldest one in parquet, which the memory pool
+            // decodes into memory.
+            createTable(3, 147_456);
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
-            final Stream stream = stream("SELECT * FROM t ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, 140_000);
-            Assert.assertEquals(3 * 140_000, stream.rows);
-            Assert.assertEquals("the rows of both native frames, each once", 2 * 140_000, stream.prefetchedRows);
-            // Each native frame of 140_000 rows streams in 1_024-row slices from its
-            // top down, and is read ahead in chunks of 65_536 rows from its top down:
-            // [74_464, 140_000), [8_928, 74_464) and [0, 8_928). The first slice reads
-            // the first chunk ahead; each later chunk waits for the first slice that
-            // reaches below the chunk above it, [73_440, 74_464) and [7_904, 8_928),
-            // and the slices in between read nothing ahead. The parquet frame, last,
-            // reads nothing ahead.
+            final Stream stream = stream("SELECT * FROM t ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, 147_456, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+            Assert.assertEquals(3 * 147_456, stream.rows);
+            Assert.assertEquals("the rows of both native frames, each once", 2 * 147_456, stream.prefetchedRows);
+            // Each native frame streams in 1_024-row slices from its top down, 16 to a
+            // batch. A slice that reaches below the rows read ahead so far reads ahead
+            // the next chunk: the rows its batch still takes, or as many rows as the
+            // stream has read ahead before it, whichever is more, and at most 65_536
+            // rows; the slices in between read nothing ahead. The first frame's first
+            // chunk is thus the first batch, 16_384 rows, and its chunks double from
+            // there, 16_384, 32_768 and 65_536 rows, which the first slices of the 2nd,
+            // 3rd and 5th batch read ahead, and the 9th batch reads the frame's last
+            // 16_384. The second frame comes after 147_456 rows read ahead, so it takes
+            // 65_536-row chunks from its top down. The parquet frame, last, reads
+            // nothing ahead.
             final ObjList<String> expected = new ObjList<>();
-            for (int frame = 0; frame < 2; frame++) {
-                expected.add(readAhead(138_976, 140_000, 74_464, 140_000));
-                expected.add(readAhead(73_440, 74_464, 8_928, 74_464));
-                expected.add(readAhead(7_904, 8_928, 0, 8_928));
-            }
-            Assert.assertEquals(expected, stream.readAheads);
-            Assert.assertEquals(2 * (tablePages(74_464, 140_000) + tablePages(8_928, 74_464) + tablePages(0, 8_928)),
-                    stream.prefetchedPages);
+            expected.add(readAhead(146_432, 147_456, 131_072, 147_456));
+            expected.add(readAhead(130_048, 131_072, 114_688, 131_072));
+            expected.add(readAhead(113_664, 114_688, 81_920, 114_688));
+            expected.add(readAhead(80_896, 81_920, 16_384, 81_920));
+            expected.add(readAhead(15_360, 16_384, 0, 16_384));
+            expected.add(readAhead(146_432, 147_456, 81_920, 147_456));
+            expected.add(readAhead(80_896, 81_920, 16_384, 81_920));
+            expected.add(readAhead(15_360, 16_384, 0, 16_384));
+            Assert.assertEquals(expected, stream.readAheads());
+            Assert.assertEquals("the first batch reads ahead only its own rows", 16_384, stream.batchReadAheadRows.getQuick(0));
+            Assert.assertEquals(
+                    tablePages(131_072, 147_456) + tablePages(114_688, 131_072) + tablePages(81_920, 114_688)
+                            + tablePages(16_384, 81_920) + tablePages(0, 16_384)
+                            + tablePages(81_920, 147_456) + tablePages(16_384, 81_920) + tablePages(0, 16_384),
+                    stream.prefetchedPages
+            );
         });
     }
 
     @Test
-    public void testPrefetchChunksWalkDownTheFrame() {
+    public void testFirstBatchOfWideRowsReadsAheadOnlyItsOwnRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // 50 DOUBLE columns and the timestamp, 40_960 rows in one frame
+            final int columns = 50;
+            final int rows = 40_960;
+            final StringBuilder sql = new StringBuilder("CREATE TABLE w AS (SELECT x::TIMESTAMP ts");
+            for (int i = 0; i < columns; i++) {
+                sql.append(", x::DOUBLE d").append(i);
+            }
+            execute(sql.append(" FROM long_sequence(").append(rows).append(")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL"));
+
+            // A full batch reads ahead its 16_384 rows of every column, not 65_536 rows,
+            // in one chunk, which its first slice reads.
+            final Stream fullBatches = stream("SELECT * FROM w ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, rows, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH);
+            Assert.assertEquals(16_384, fullBatches.batchReadAheadRows.getQuick(0));
+            Assert.assertEquals((columns + 1) * pages(24_576 * 8, 40_960 * 8), fullBatches.batchReadAheadPages.getQuick(0));
+            Assert.assertEquals(16_384, fullBatches.slices.getQuick(0).rowsRead);
+            Assert.assertEquals("every row once", rows, fullBatches.prefetchedRows);
+
+            // A client that asks for batches of 100 rows gets slices of 100 rows; the
+            // first batch reads ahead its 100 rows.
+            final Stream smallBatches = stream("SELECT * FROM w ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, rows, 100);
+            Assert.assertEquals(100, smallBatches.batchReadAheadRows.getQuick(0));
+            Assert.assertEquals((columns + 1) * pages((rows - 100) * 8L, rows * 8L), smallBatches.batchReadAheadPages.getQuick(0));
+            Assert.assertEquals("every row once", rows, smallBatches.prefetchedRows);
+        });
+    }
+
+    @Test
+    public void testPrefetchChunksGrowWithTheStream() {
         final long frameRows = 150_000;
-        // the first slice of a frame reads ahead a chunk from the frame's end down
-        long prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024);
-        Assert.assertEquals(frameRows - PAGE_FRAME_PREFETCH_ROWS, prefetchedLo);
-        // the first slice below the chunk reads ahead the next chunk down
-        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1);
-        Assert.assertEquals(frameRows - 2 * PAGE_FRAME_PREFETCH_ROWS, prefetchedLo);
+        // the stream's first chunk is the rows its first batch takes
+        long prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024, 0, 16_384);
+        Assert.assertEquals(frameRows - 16_384, prefetchedLo);
+        Assert.assertEquals(frameRows - 100, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 100, 0, 100));
+        // later chunks reach as many rows down as the stream has read ahead so far
+        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1_024, 16_384, 16_384);
+        Assert.assertEquals(frameRows - 32_768, prefetchedLo);
+        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1_024, 32_768, 16_384);
+        Assert.assertEquals(frameRows - 65_536, prefetchedLo);
+        // up to PAGE_FRAME_PREFETCH_ROWS
+        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1_024, 65_536, 16_384);
+        Assert.assertEquals(frameRows - 65_536 - PAGE_FRAME_PREFETCH_ROWS, prefetchedLo);
         // the last chunk stops at the frame's first row
-        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1);
+        prefetchedLo = QwpEgressProcessorState.pageFramePrefetchLo(prefetchedLo, prefetchedLo - 1_024, 131_072, 16_384);
         Assert.assertEquals(0, prefetchedLo);
-        // a frame smaller than a chunk is read ahead whole
-        Assert.assertEquals(0, QwpEgressProcessorState.pageFramePrefetchLo(1_500, 476));
-        // a slice taller than a chunk is read ahead whole
-        Assert.assertEquals(10, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, 10));
+        // a new frame after a long stream is read ahead in chunks of no more than
+        // PAGE_FRAME_PREFETCH_ROWS, or whole
+        Assert.assertEquals(frameRows - PAGE_FRAME_PREFETCH_ROWS, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024, 1_000_000, 16_384));
+        Assert.assertEquals(0, QwpEgressProcessorState.pageFramePrefetchLo(1_500, 476, 1_000_000, 16_384));
+        // the rows the batch still takes, when more than the stream has read ahead,
+        // as after a small first frame
+        Assert.assertEquals(frameRows - 16_084, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024, 300, 16_084));
+        // and no more than PAGE_FRAME_PREFETCH_ROWS of them either
+        Assert.assertEquals(frameRows - PAGE_FRAME_PREFETCH_ROWS, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, frameRows - 1_024, 0, 100_000));
+        // a slice that reaches further down than the chunk is read ahead whole
+        Assert.assertEquals(10, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, 10, 0, 1));
+        Assert.assertEquals(10, QwpEgressProcessorState.pageFramePrefetchLo(frameRows, 10, 100_000, 16_384));
+    }
+
+    @Test
+    public void testReadAheadKeepsPaceWithTheStream() throws Exception {
+        // Random partition and frame sizes, batch sizes and a parquet partition: every
+        // native row is read ahead once, before its slice copies it, in chunks of the
+        // rows the batch still takes or as many rows as the stream has read ahead
+        // before, whichever is more, at least what the slice still needs and at most
+        // PAGE_FRAME_PREFETCH_ROWS; parquet rows never.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int[] frameRowChoices = {700, 1_024, 5_000, 70_000, 200_000};
+        final int[] batchRowChoices = {1, 7, 100, 1_000, QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH};
+        assertMemoryLeak(() -> {
+            for (int iteration = 0; iteration < 4; iteration++) {
+                execute("DROP TABLE IF EXISTS t");
+                final int partitions = 1 + rnd.nextInt(3);
+                final long[] partitionRows = new long[partitions];
+                for (int i = 0; i < partitions; i++) {
+                    partitionRows[i] = 1 + rnd.nextInt(150_000);
+                }
+                createTable(partitionRows);
+                final boolean hasParquet = partitions > 1 && rnd.nextBoolean();
+                if (hasParquet) {
+                    execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+                }
+                final int frameRows = frameRowChoices[rnd.nextInt(frameRowChoices.length)];
+                final int batchRows = batchRowChoices[rnd.nextInt(batchRowChoices.length)];
+                final String context = "partitions=" + Arrays.toString(partitionRows)
+                        + ", hasParquet=" + hasParquet + ", frameRows=" + frameRows + ", batchRows=" + batchRows;
+
+                final Stream stream = stream("SELECT * FROM t ORDER BY ts DESC", PartitionFrameCursorFactory.ORDER_DESC, frameRows, batchRows);
+                long totalRows = 0;
+                long nativeRows = 0;
+                for (int i = 0; i < partitions; i++) {
+                    totalRows += partitionRows[i];
+                    if (!hasParquet || i > 0) {
+                        nativeRows += partitionRows[i];
+                    }
+                }
+                Assert.assertEquals(context, totalRows, stream.rows);
+                Assert.assertEquals(context, nativeRows, stream.prefetchedRows);
+                // the lowest row of the current frame read ahead so far
+                long readAheadLo = 0;
+                for (int i = 0, n = stream.slices.size(); i < n; i++) {
+                    final Slice slice = stream.slices.getQuick(i);
+                    if (!slice.isNative) {
+                        Assert.assertEquals(context + ", slice " + i, 0, slice.rowsRead);
+                        continue;
+                    }
+                    if (slice.isFrameStart) {
+                        readAheadLo = slice.hi;
+                    }
+                    final long needed = Math.max(0, readAheadLo - slice.lo);
+                    final long expectedRows = needed == 0
+                            ? 0
+                            : Math.min(readAheadLo, Math.max(needed, Math.min(PAGE_FRAME_PREFETCH_ROWS, Math.max(slice.prefetchedRowsBefore, slice.batchRows))));
+                    Assert.assertEquals(context + ", slice " + i + " [" + slice.lo + ", " + slice.hi + ')', expectedRows, slice.rowsRead);
+                    readAheadLo -= slice.rowsRead;
+                    Assert.assertTrue(context + ", slice " + i + " copies rows not read ahead", readAheadLo <= slice.lo);
+                }
+            }
+        });
     }
 
     @Test
@@ -187,14 +312,22 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
     }
 
     private static void createTable(int partitions, int rowsPerPartition) throws Exception {
+        final long[] partitionRows = new long[partitions];
+        Arrays.fill(partitionRows, rowsPerPartition);
+        createTable(partitionRows);
+    }
+
+    private static void createTable(long[] partitionRows) throws Exception {
         execute("""
                 CREATE TABLE t (
                     ts TIMESTAMP, l LONG, sym SYMBOL, v VARCHAR, a DOUBLE[]
                 ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""");
-        // partition k holds the rows k * rowsPerPartition + 1 .. (k + 1) * rowsPerPartition
-        execute("INSERT INTO t SELECT (((x - 1) / " + rowsPerPartition + ") * 86_400_000_000 + (x - 1) % " + rowsPerPartition + ")::TIMESTAMP, "
-                + "x, 's' || (x % 7), lpad(x::STRING, 20, '0')::VARCHAR, ARRAY[x::DOUBLE, 2.0] "
-                + "FROM long_sequence(" + (long) partitions * rowsPerPartition + ")");
+        // partition k, day k, holds partitionRows[k] rows
+        for (int k = 0; k < partitionRows.length; k++) {
+            execute("INSERT INTO t SELECT (" + k + " * 86_400_000_000 + x - 1)::TIMESTAMP, "
+                    + "x, 's' || (x % 7), lpad(x::STRING, 20, '0')::VARCHAR, ARRAY[x::DOUBLE, 2.0] "
+                    + "FROM long_sequence(" + partitionRows[k] + ")");
+        }
         execute("ALTER TABLE t ADD COLUMN top VARCHAR");
     }
 
@@ -228,10 +361,10 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
 
     /**
      * Streams {@code sql}'s page frames in {@code order} through the state, as
-     * {@code streamResults} does, starting a fresh batch every
-     * {@link QwpEgressUpgradeProcessor#MAX_ROWS_PER_BATCH} rows.
+     * {@code streamResults} does: it asks each slice for the rows the batch still
+     * takes, and starts a fresh batch every {@code batchRows} rows.
      */
-    private Stream stream(String sql, int order, int frameRows) throws Exception {
+    private Stream stream(String sql, int order, int frameRows, int batchRows) throws Exception {
         sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
         RecordCursorFactory factory = null;
         PageFrameCursor cursor = null;
@@ -240,30 +373,41 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
             Assert.assertEquals(order, QwpEgressUpgradeProcessor.pageFrameOrder(factory, false));
             cursor = factory.getPageFrameCursor(sqlExecutionContext, order);
             final RecordMetadata metadata = factory.getMetadata();
+            final boolean isDescending = order == PartitionFrameCursorFactory.ORDER_DESC;
             state.beginStreamingPageFrame(1, factory, cursor, metadata.getColumnCount(), 0, sql, CompiledQuery.SELECT, false,
-                    order == PartitionFrameCursorFactory.ORDER_DESC);
+                    isDescending);
             factory = null;
             cursor = null;
             final QwpResultBatchBuffer buffer = beginBatch(state, metadata);
             final Stream stream = new Stream();
-            final boolean isDescending = order == PartitionFrameCursorFactory.ORDER_DESC;
-            while (state.advanceToPageFrame() != null) {
+            boolean isFrameStart = true;
+            PageFrame frame;
+            while ((frame = state.advanceToPageFrame()) != null) {
                 // the unconsumed rows of the frame; a descending stream takes its
                 // slice from their top, an ascending one from their bottom
                 final long lo = state.getStreamingPageFrameRow();
                 final long hi = state.getStreamingPageFrameRowHi();
                 final long rowsBefore = state.getStreamingPageFramePrefetchedRows();
                 final long pagesBefore = state.getStreamingPageFramePrefetchedPages();
-                final int sliceRows = state.appendPageFrameSlice(1_024);
+                final int batchRowsLeft = batchRows - buffer.getRowCount();
+                final int sliceRows = state.appendPageFrameSlice(batchRowsLeft);
                 stream.rows += sliceRows;
-                final long rowsRead = state.getStreamingPageFramePrefetchedRows() - rowsBefore;
-                final long pagesRead = state.getStreamingPageFramePrefetchedPages() - pagesBefore;
-                if (rowsRead != 0 || pagesRead != 0) {
-                    stream.readAheads.add(isDescending
-                            ? readAheadEvent(hi - sliceRows, hi, rowsRead, pagesRead)
-                            : readAheadEvent(lo, lo + sliceRows, rowsRead, pagesRead));
-                }
-                if (buffer.getRowCount() >= QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH) {
+                final long sliceLo = isDescending ? hi - sliceRows : lo;
+                stream.slices.add(new Slice(
+                        isFrameStart,
+                        frame.getFormat() == PartitionFormat.NATIVE,
+                        sliceLo,
+                        sliceLo + sliceRows,
+                        batchRowsLeft,
+                        rowsBefore,
+                        state.getStreamingPageFramePrefetchedRows() - rowsBefore,
+                        state.getStreamingPageFramePrefetchedPages() - pagesBefore
+                ));
+                // the next slice starts a frame once this one used up the frame's rows
+                isFrameStart = isDescending ? sliceLo == lo : sliceLo + sliceRows == hi;
+                if (buffer.getRowCount() >= batchRows) {
+                    stream.batchReadAheadRows.add(state.getStreamingPageFramePrefetchedRows());
+                    stream.batchReadAheadPages.add(state.getStreamingPageFramePrefetchedPages());
                     beginBatch(state, metadata);
                 }
             }
@@ -278,11 +422,41 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
         }
     }
 
+    // A slice of a frame the stream copied: rows [lo, hi) of the frame, the rows
+    // its batch still took, the rows the stream had read ahead before it, and what
+    // the slice read ahead.
+    private record Slice(
+            boolean isFrameStart,
+            boolean isNative,
+            long lo,
+            long hi,
+            long batchRows,
+            long prefetchedRowsBefore,
+            long rowsRead,
+            long pagesRead
+    ) {
+    }
+
     private static class Stream {
-        // the slices that read ahead, with what they read, in stream order
-        final ObjList<String> readAheads = new ObjList<>();
+        // pages and rows the stream had read ahead when each batch filled up
+        final LongList batchReadAheadPages = new LongList();
+        final LongList batchReadAheadRows = new LongList();
+        // every slice the stream copied, in stream order
+        final ObjList<Slice> slices = new ObjList<>();
         long prefetchedPages;
         long prefetchedRows;
         long rows;
+
+        // the slices that read ahead, with what they read, in stream order
+        ObjList<String> readAheads() {
+            final ObjList<String> readAheads = new ObjList<>();
+            for (int i = 0, n = slices.size(); i < n; i++) {
+                final Slice slice = slices.getQuick(i);
+                if (slice.rowsRead != 0 || slice.pagesRead != 0) {
+                    readAheads.add(readAheadEvent(slice.lo, slice.hi, slice.rowsRead, slice.pagesRead));
+                }
+            }
+            return readAheads;
+        }
     }
 }

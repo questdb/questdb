@@ -74,10 +74,15 @@ import java.util.concurrent.atomic.AtomicLong;
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
 
     /**
-     * Rows a descending page-frame stream reads ahead at a time, see
-     * {@link #appendPageFrameSlice}. At 8 bytes a row, 512 KiB of each column.
+     * Most rows a descending page-frame stream reads ahead at a time, see
+     * {@link #pageFramePrefetchLo}. At 8 bytes a row, 512 KiB of each column.
      */
     public static final long PAGE_FRAME_PREFETCH_ROWS = 65_536;
+    /**
+     * Most rows {@link #appendPageFrameSlice} appends at a time, so that the
+     * stream can check the batch's SYMBOL dictionary size between slices.
+     */
+    public static final int PAGE_FRAME_SLICE_ROWS = 1_024;
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
     // Test-only default overrides for the CACHE_RESET soft caps. Set these
     // before opening a connection so every new {@link QwpEgressProcessorState}
@@ -300,6 +305,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     // rows from this one up, see appendPageFrameSlice.
     private long streamingPageFramePrefetchLo;
     // Pages and rows a descending stream has read ahead since the query started.
+    // The rows size the next read-ahead chunk, see pageFramePrefetchLo.
     private long streamingPageFramePrefetchedPages;
     private long streamingPageFramePrefetchedRows;
     private long streamingPageFrameRow;
@@ -355,13 +361,20 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
 
     /**
      * Returns the first row of the next read-ahead chunk of a descending
-     * page-frame stream: {@link #PAGE_FRAME_PREFETCH_ROWS} rows below
-     * {@code prefetchedLo}, the lowest row read ahead so far, but no higher than
-     * {@code sliceLo}, the lowest row of the slice about to be copied, and no
-     * lower than the frame's first row. Exposed for unit tests.
+     * page-frame stream. The chunk reaches below {@code prefetchedLo}, the lowest
+     * row of the frame read ahead so far, by the rows the batch still takes,
+     * {@code batchRows}, or by the rows the stream has read ahead since the query
+     * started, {@code prefetchedRows}, whichever is more, up to
+     * {@link #PAGE_FRAME_PREFETCH_ROWS}. The first batch thus reads ahead only its
+     * own rows, however wide they are, and the chunks after it double, so the
+     * read-ahead never gets much further ahead of the copy than one batch or the
+     * rows the stream has taken. The chunk reaches at least {@code sliceLo}, the
+     * lowest row of the slice about to be copied, and stops at the frame's first
+     * row. Exposed for unit tests.
      */
-    public static long pageFramePrefetchLo(long prefetchedLo, long sliceLo) {
-        return Math.max(0, Math.min(sliceLo, prefetchedLo - PAGE_FRAME_PREFETCH_ROWS));
+    public static long pageFramePrefetchLo(long prefetchedLo, long sliceLo, long prefetchedRows, long batchRows) {
+        final long chunkRows = Math.min(PAGE_FRAME_PREFETCH_ROWS, Math.max(prefetchedRows, batchRows));
+        return Math.max(0, Math.min(sliceLo, prefetchedLo - chunkRows));
     }
 
     /**
@@ -431,30 +444,34 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
-     * Appends the next slice of the current page frame, at most {@code maxRows}
-     * rows, to the batch buffer and consumes it. Call after
-     * {@link #advanceToPageFrame} returns the frame.
+     * Appends the next slice of the current page frame to the batch buffer and
+     * consumes it: at most {@link #PAGE_FRAME_SLICE_ROWS} rows, and no more than
+     * the batch still takes. Call after {@link #advanceToPageFrame} returns the
+     * frame.
      * <p>
      * An ascending stream takes the slice from the bottom of the frame's
      * unconsumed rows. A descending one takes it from the top and appends it
      * last row first. Before it copies rows of a NATIVE frame that are not read
-     * ahead yet, it reads ahead the column pages of the next
-     * {@link #PAGE_FRAME_PREFETCH_ROWS} rows below those, in ascending address
-     * order, see {@link QwpResultBatchBuffer#touchPageFrameRows}: copying column
-     * data that is not in the page cache downwards would fault it in one page at
-     * a time.
+     * ahead yet, it reads ahead the column pages of a chunk of rows from those
+     * down, in ascending address order, see
+     * {@link QwpResultBatchBuffer#touchPageFrameRows}: copying column data that
+     * is not in the page cache downwards would fault it in one page at a time.
+     * The chunks start at the rows the batch takes and grow with the stream, up
+     * to {@link #PAGE_FRAME_PREFETCH_ROWS} rows, see {@link #pageFramePrefetchLo}.
      *
+     * @param batchRows the rows the batch still takes, which also size the
+     *                  read-ahead of a descending stream
      * @return rows appended
      */
-    public int appendPageFrameSlice(int maxRows) {
+    public int appendPageFrameSlice(int batchRows) {
         final long lo = streamingPageFrameRow;
         final long hi = streamingPageFrameRowHi;
-        final int sliceRows = (int) Math.min(maxRows, hi - lo);
+        final int sliceRows = (int) Math.min(Math.min(batchRows, PAGE_FRAME_SLICE_ROWS), hi - lo);
         final PageFrame frame = streamingCurrentPageFrame;
         if (isStreamingPageFrameDescending) {
             final long sliceLo = hi - sliceRows;
             if (sliceLo < streamingPageFramePrefetchLo && frame.getFormat() == PartitionFormat.NATIVE) {
-                final long prefetchLo = pageFramePrefetchLo(streamingPageFramePrefetchLo, sliceLo);
+                final long prefetchLo = pageFramePrefetchLo(streamingPageFramePrefetchLo, sliceLo, streamingPageFramePrefetchedRows, batchRows);
                 streamingPageFramePrefetchedPages += batchBuffer.touchPageFrameRows(frame, prefetchLo, streamingPageFramePrefetchLo);
                 streamingPageFramePrefetchedRows += streamingPageFramePrefetchLo - prefetchLo;
                 streamingPageFramePrefetchLo = prefetchLo;

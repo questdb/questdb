@@ -124,6 +124,27 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
         }
     }
 
+    // Streams sql and returns the rows of each batch, in stream order.
+    private static LongList collectBatchRowCounts(QwpQueryClient client, String sql) {
+        final LongList batchRows = new LongList();
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                batchRows.add(batch.getRowCount());
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("egress error: " + message);
+            }
+        });
+        return batchRows;
+    }
+
     private static long[] collectLongColumn(QwpQueryClient client, String sql) {
         final LongList values = new LongList();
         client.execute(sql, new QwpColumnBatchHandler() {
@@ -527,6 +548,42 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
                     Assert.assertEquals(1_500, ascending.length);
                     for (int i = 0; i < ascending.length; i++) {
                         Assert.assertEquals(i + 1, ascending[i]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBatchesHoldTheClientRowCap() throws Exception {
+        // A page-frame stream fills a batch slice by slice and takes no slice of more
+        // rows than the batch still takes, so every batch, forwards and backwards,
+        // carries the client's max_batch_rows until the rows run out. The rows the
+        // batch still takes also size a backward scan's read-ahead, see
+        // QwpEgressPageFramePrefetchTest.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startFragmented(SMALL_PAGE_FRAME_ENV)) {
+                serverMain.execute("CREATE TABLE cap(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                // 3 hourly partitions of 500 rows, 4 page frames each
+                serverMain.execute("INSERT INTO cap SELECT x, ((x - 1) * 7_200_000)::TIMESTAMP FROM long_sequence(1_500)");
+                serverMain.awaitTable("cap");
+                for (int batchRows : new int[]{1, 7, 100, 1_000}) {
+                    try (QwpQueryClient client = QwpQueryClient.fromConfig(
+                            "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=" + batchRows + ";"
+                    )) {
+                        client.connect();
+                        for (String sql : new String[]{"SELECT * FROM cap ORDER BY ts DESC", "SELECT * FROM cap"}) {
+                            final String context = sql + ", " + batchRows + "-row batches";
+                            final LongList batches = collectBatchRowCounts(client, sql);
+                            final int fullBatches = 1_500 / batchRows;
+                            Assert.assertEquals(context, (1_500 + batchRows - 1) / batchRows, batches.size());
+                            for (int i = 0; i < fullBatches; i++) {
+                                Assert.assertEquals(context + ", batch " + i, batchRows, batches.getQuick(i));
+                            }
+                            if (fullBatches < batches.size()) {
+                                Assert.assertEquals(context + ", last batch", 1_500 % batchRows, batches.getLast());
+                            }
+                        }
                     }
                 }
             }
@@ -956,7 +1013,6 @@ public class QwpEgressPageFrameTest extends AbstractQwpBootstrapTest {
 
     @Test
     public void testVarcharMultipleFramesSinglePartition() throws Exception {
-
         // This is the exact failure mode that slipped through the initial
         // PageFrameCursor integration: VARCHAR values read with a partition-
         // local row index against a page address that the cursor already

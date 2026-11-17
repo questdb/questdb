@@ -164,9 +164,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
-    // Most rows streamResults appends from a page frame between two checks of
-    // the batch's SYMBOL dictionary size.
-    private static final int PAGE_FRAME_SLICE_ROWS = 1024;
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
     // response buffer by onHeadersReady, to be flushed by onRequestComplete
     // (which is allowed to propagate PeerIsSlowToReadException to the
@@ -2395,11 +2392,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             boolean isCursorExhausted;
             boolean dictCapHit = false;
             if (isPageFrame) {
-                // A descending stream takes each slice from the top of the frame's
-                // unconsumed rows and appends it last row first.
+                // Slices of at most PAGE_FRAME_SLICE_ROWS rows, with a check of the
+                // dictionary size after each. A descending stream takes each slice
+                // from the top of the frame's unconsumed rows and appends it last row
+                // first. The rows the batch still takes size its read-ahead.
                 PageFrame frame = null;
                 while (rowsToAdd > 0 && (frame = state.advanceToPageFrame()) != null) {
-                    rowsToAdd -= state.appendPageFrameSlice(Math.min(rowsToAdd, PAGE_FRAME_SLICE_ROWS));
+                    rowsToAdd -= state.appendPageFrameSlice(rowsToAdd);
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {
                         dictCapHit = true;
                         break;
