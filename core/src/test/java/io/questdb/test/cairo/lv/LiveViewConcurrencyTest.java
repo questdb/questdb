@@ -1441,6 +1441,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
                 execute("ALTER LIVE VIEW lv RESUME WAL");
                 setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+                Assert.assertFalse("RESUME WAL and the unlisting must lift the view's suspension", engine.isWalApplySuspended(lvToken));
                 for (int pass = 0; pass < 4; pass++) {
                     setCurrentMicros(currentMicros + 61_000_000L);
                     driveRefreshToQuiescence(jobs);
