@@ -462,6 +462,42 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSlotModeReleasesAFilledSharedCache() throws Exception {
+        assertMemoryLeak(() -> {
+            // One translator opens a shared cache that fills from the build, then, without close(), opens
+            // for a probe that reads no row: it releases the cache, and its views translate through their
+            // own caches. Build key b holds the text of probe key 9 * b.
+            GeneratedDictionary probe = new GeneratedDictionary(300_000, 1);
+            GeneratedDictionary build = new GeneratedDictionary(1_000, 9);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(16 << 20);
+                 SymbolKeyTranslator translator = new SymbolKeyTranslator();
+                 SymbolKeyTranslator.View view = new SymbolKeyTranslator.View()) {
+                translator.of(probe, build, true, UNKNOWN_REACH, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isFilledFromBuild());
+                Assert.assertEquals(300_000 * Integer.BYTES, tracker.getUsed());
+
+                translator.of(probe, build, true, 0, false, SLOT_CACHE_CAPACITY, tracker, NOOP);
+                Assert.assertTrue(translator.isSlotCached());
+                Assert.assertFalse(translator.isFilledFromBuild());
+                Assert.assertEquals(0, translator.getSizeInBytes());
+                Assert.assertEquals(0, tracker.getUsed());
+                view.of(translator, probe, build);
+                build.keyOfCalls = 0;
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int key = 0; key < 10_000; key++) {
+                        Assert.assertEquals("pass " + pass + ", key " + key,
+                                key % 9 == 0 && key / 9 < 1_000 ? key / 9 : SymbolTable.VALUE_NOT_FOUND, view.translate(key));
+                    }
+                    // Each key looked its text up in the build dictionary once, on the first pass.
+                    Assert.assertEquals(10_000, build.keyOfCalls);
+                }
+                view.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
     public void testSlotModeTranslatesLikeTheDictionaries() throws Exception {
         assertMemoryLeak(() -> {
             final String longText = "L".repeat(1_000);

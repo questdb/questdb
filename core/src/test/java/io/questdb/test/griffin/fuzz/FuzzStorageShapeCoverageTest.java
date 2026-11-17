@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -33,6 +34,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.HashJoinPayloadLayout;
 import io.questdb.test.griffin.ParallelHashJoinTestUtils;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -41,11 +43,11 @@ import org.junit.Test;
  * {@link FuzzStorage}): over the seeds below, the factory makes non-WAL and non-partitioned tables,
  * tables with column tops, in join keys among other columns, in STRING and VARCHAR columns of native
  * partitions and in Parquet partitions, tables that dropped a column, and tables whose sym dictionary
- * holds far more texts than their rows, whose SYMBOL key a join that probes them translates through
- * the workers' own caches. Every such table holds the rows of its shadow, a plain partitioned WAL table
- * with every column from its first row, and the parallel hash join over them, as probe and as build,
- * with the build's payload read at its rows and from a copy, returns the ordinary plan's rows, in
- * order, and the rows of the same join over the shadows.
+ * holds far more texts than their rows, whose SYMBOL key a join that probes them, and the fused GROUP BY
+ * over such a join, translate through the workers' own caches. Every such table holds the rows of its
+ * shadow, a plain partitioned WAL table with every column from its first row, and the parallel hash join
+ * over them, as probe and as build, with the build's payload read at its rows and from a copy, returns
+ * the ordinary plan's rows, in order, and the rows of the same join over the shadows.
  */
 public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
     private static final String[] JOIN_KEYS = {"k", "sym", "lk", "vk"};
@@ -113,6 +115,7 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
                         }
                         if (probe.getStorage().isJoinKeyDictionaryPadded()) {
                             assertSlotCachedProbe(probe, build);
+                            assertSlotCachedGroupBy(probe, build);
                             paddedSymbolKeyProbes++;
                         }
                     }
@@ -174,6 +177,44 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
         TestUtils.assertEquals(sql, ParallelHashJoinTestUtils.ordinary(shadowSql, sqlExecutionContext), ParallelHashJoinTestUtils.ordinary(sql, sqlExecutionContext));
     }
 
+    // A GROUP BY over a LEFT join on sym that probes a table of a padded dictionary, whose rows are far
+    // fewer than one per 256 of its texts: the fused GROUP BY translates the key through the slots' own
+    // caches, and returns the rows of the plan without the fused GROUP BY and the parallel hash join.
+    private static void assertSlotCachedGroupBy(FuzzTable probe, FuzzTable build) throws Exception {
+        final String sql = "SELECT p.sym, count() c FROM " + probe.getName() + " p LEFT JOIN " + build.getName()
+                + " b ON p.sym = b.sym GROUP BY p.sym ORDER BY p.sym";
+        final boolean wasParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
+        final boolean wasFused = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+        final boolean wasJoin = sqlExecutionContext.isParallelHashJoinEnabled();
+        sqlExecutionContext.setParallelGroupByEnabled(true);
+        try {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            sqlExecutionContext.setParallelHashJoinEnabled(false);
+            final String expected;
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertNull(sql, findFused(factory));
+                expected = ParallelHashJoinTestUtils.result(factory, sqlExecutionContext);
+            }
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(true);
+            try (RecordCursorFactory factory = select(sql)) {
+                TestUtils.assertContains(ParallelHashJoinTestUtils.plan(factory, sqlExecutionContext), "Async Hash Join Group By");
+                final AsyncHashJoinGroupByRecordCursorFactory fused = findFused(factory);
+                Assert.assertNotNull(sql, fused);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.assertTrue(sql, fused.getAtom().isSymbolKeySlotCached(0));
+                }
+                TestUtils.assertEquals(sql, expected, ParallelHashJoinTestUtils.result(factory, sqlExecutionContext));
+            }
+        } finally {
+            sqlExecutionContext.setParallelGroupByEnabled(wasParallelGroupBy);
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(wasFused);
+            sqlExecutionContext.setParallelHashJoinEnabled(wasJoin);
+        }
+    }
+
     // A LEFT join on sym that probes a table of a padded dictionary, whose rows are far fewer than one
     // per 16 of its texts: the join translates the key through the slots' own caches, and returns the
     // ordinary plan's rows.
@@ -195,6 +236,17 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelHashJoinEnabled(wasEnabled);
         }
+    }
+
+    // The fused GROUP BY inside a compiled query, or null when the query does not run it.
+    @Nullable
+    private static AsyncHashJoinGroupByRecordCursorFactory findFused(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof AsyncHashJoinGroupByRecordCursorFactory fused) {
+                return fused;
+            }
+        }
+        return null;
     }
 
     // The table has the storage shape that the factory reports, and its shadow's rows.

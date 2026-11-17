@@ -999,7 +999,11 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                 int slotCache = 0;
                 for (long limit = step; ; limit += step) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    // Stays null when the breach fails the cursor's opening.
+                    MemoryTracker tracker = null;
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                         }
@@ -1023,7 +1027,11 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                             default -> throw new AssertionError("a breach outside the join's phases", e);
                         }
                     }
-                    // Each failure released everything the execution held.
+                    // Each failure released everything the execution held: every byte it charged, the
+                    // caches that the slots grew included, its build, ring, slots and readers.
+                    if (tracker != null) {
+                        Assert.assertEquals("tracked at limit " + limit, 0, tracker.getUsed());
+                    }
                     Assert.assertNull(stage.getFrozenBuild());
                     Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
                     Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());

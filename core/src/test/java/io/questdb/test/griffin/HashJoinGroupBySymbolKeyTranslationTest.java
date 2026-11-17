@@ -127,10 +127,16 @@ public class HashJoinGroupBySymbolKeyTranslationTest extends AbstractCairoTest {
                     final long checks = counting.checks.get();
                     Assert.assertTrue("checks: " + checks, checks > 2);
                     int cancellations = 0;
+                    // The cancellations of an open cursor, whose tracker tells what the execution left.
+                    int trackedCancellations = 0;
                     for (long tripAt = 1; tripAt <= checks; tripAt++) {
                         final TrippingCircuitBreaker breaker = new TrippingCircuitBreaker(previous, tripAt);
                         context.with(breaker);
+                        // Stays null when the check cancels the cursor's opening, before any slot translates.
+                        MemoryTracker tracker = null;
                         try (RecordCursor cursor = factory.getCursor(context)) {
+                            tracker = context.getMemoryTracker();
+                            Assert.assertNotNull(tracker);
                             //noinspection StatementWithEmptyBody
                             while (cursor.hasNext()) {
                             }
@@ -140,14 +146,23 @@ public class HashJoinGroupBySymbolKeyTranslationTest extends AbstractCairoTest {
                         } catch (CairoException e) {
                             Assert.assertTrue(e.getMessage(), e.isCancellation());
                             cancellations++;
+                            if (tracker != null) {
+                                trackedCancellations++;
+                            }
                         } finally {
                             context.with(previous);
+                        }
+                        // The closed cursor released every byte that its execution charged, the caches that
+                        // the slots grew before the cancellation included.
+                        if (tracker != null) {
+                            Assert.assertEquals("tracked after check " + tripAt, 0, tracker.getUsed());
                         }
                         Assert.assertNull(fused.getAtom().getFrozenBuild());
                         Assert.assertEquals(0, fused.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         Assert.assertEquals(0, db.getBusyReaderCount());
                     }
                     Assert.assertTrue("cancellations: " + cancellations, cancellations > 2);
+                    Assert.assertTrue("tracked cancellations: " + trackedCancellations, trackedCancellations > 0);
                     Assert.assertEquals(expected, result(factory, context));
                 }
             }
