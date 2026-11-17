@@ -26,8 +26,6 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,7 +40,6 @@ import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rows;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
@@ -210,21 +207,16 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
             try (RecordCursorFactory factory = db.select(STAR, context)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(starExpected, result(factory, context));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        failures++;
-                    }
-                    assertSlotsBack(join);
-                }
+                final int failures = assertMemoryLimitSweep(
+                        starExpected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, context),
+                        null,
+                        () -> {
+                            assertSlotsBack(join);
+                        }
+                );
                 Assert.assertTrue(failures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(starExpected, result(factory, context));
             }
         });
     }
@@ -461,31 +453,25 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
         Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
     }
 
-    private static void execute(WorkerPoolMode mode, Code code) throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            Assert.assertEquals(mode == WorkerPoolMode.FIBER_HOST, db.getMessageBus().getPageFrameReduceDispatcher() != null);
-            try (
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, WORKER_COUNT)
-                            .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)
-            ) {
-                db.execute("""
-                        CREATE TABLE t AS (
-                            SELECT
-                                (x % 500)::INT k,
-                                x v,
-                                (x % 300)::LONG l,
-                                ('s' || (x % 400))::SYMBOL s,
-                                timestamp_sequence('2024-01-01', 10_000_000) ts
-                            FROM long_sequence(20_000)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """, context);
-                db.execute("CREATE TABLE d AS (SELECT (x % 450)::INT k, x w FROM long_sequence(3_000))", context);
-                db.execute("CREATE TABLE d2 AS (SELECT (x % 300)::LONG l, x w2 FROM long_sequence(1_000))", context);
-                db.execute("CREATE TABLE d3 AS (SELECT ('s' || (x * 2))::SYMBOL s, x w3 FROM long_sequence(300))", context);
-                context.changePageFrameSizes(256, 256);
-                code.run(db, context);
-            }
-        }, configuration, LOG));
+    private static void execute(WorkerPoolMode mode, WorkersCode code) throws Exception {
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            db.execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            (x % 500)::INT k,
+                            x v,
+                            (x % 300)::LONG l,
+                            ('s' || (x % 400))::SYMBOL s,
+                            timestamp_sequence('2024-01-01', 10_000_000) ts
+                        FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            db.execute("CREATE TABLE d AS (SELECT (x % 450)::INT k, x w FROM long_sequence(3_000))", context);
+            db.execute("CREATE TABLE d2 AS (SELECT (x % 300)::LONG l, x w2 FROM long_sequence(1_000))", context);
+            db.execute("CREATE TABLE d3 AS (SELECT ('s' || (x * 2))::SYMBOL s, x w3 FROM long_sequence(300))", context);
+            context.changePageFrameSizes(256, 256);
+            code.run(db, context);
+        }));
     }
 
     private static boolean isOnStack(String methodName) {
@@ -505,10 +491,5 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
         } finally {
             context.setParallelHashJoinEnabled(true);
         }
-    }
-
-    @FunctionalInterface
-    private interface Code {
-        void run(CairoEngine db, SqlExecutionContextImpl context) throws Exception;
     }
 }

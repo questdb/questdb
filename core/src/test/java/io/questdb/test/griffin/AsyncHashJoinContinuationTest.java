@@ -541,14 +541,6 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
         execute("CREATE TABLE u AS (SELECT (x % 5)::INT k, x * 9 w FROM long_sequence(5))");
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     // A LEFT join of two compiled scans on their first columns, planned by hand, with a post-join
     // filter of the test's own. The factory takes the scans that the two QueryProgress factories wrap,
     // and the wrappers close them again, which is a no-op.

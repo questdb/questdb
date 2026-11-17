@@ -653,11 +653,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 }
             });
             for (boolean isCopy : new boolean[]{false, true}) {
-                if (isCopy) {
-                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(0);
-                } else {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
-                }
+                useSteppers(isCopy);
                 try (RecordCursorFactory factory = select(latched)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertEquals(isCopy, join.getStepperClass(0).isHidden());
@@ -670,8 +666,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                     }
                 } finally {
                     isFailing.set(false);
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
-                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+                    restoreSteppers();
                 }
             }
 
@@ -945,9 +940,9 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 // The row with a match fails both plans alike.
                 for (String residual : new String[]{poison, poison + " AND d.w <= t.v"}) {
                     final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND " + residual;
-                    final String expected = error(sql, false);
+                    final String expected = error(sql, false, sqlExecutionContext);
                     TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-                    Assert.assertEquals(sql, expected, error(sql, true));
+                    Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
                 }
                 // The serial join stops at the leading conjunct that drops the row, before the one that
                 // would fail on its pairs, and so does the build.
@@ -956,9 +951,9 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 // The other way round, the conjunct that fails leads, reads the probe row too and fails
                 // both plans alike, so the conjunct of the build alone stays with the pairs.
                 final String failing = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND (d.w * 2000)::DECIMAL(4,0) > t.v::DECIMAL(4,0) AND d.w < 5";
-                final String expected = error(failing, false);
+                final String expected = error(failing, false, sqlExecutionContext);
                 TestUtils.assertContains(expected, "inconvertible value: ");
-                Assert.assertEquals(failing, expected, error(failing, true));
+                Assert.assertEquals(failing, expected, error(failing, true, sqlExecutionContext));
                 try (RecordCursorFactory factory = select(failing)) {
                     Assert.assertFalse(plan(factory, sqlExecutionContext).contains("buildOnFilter"));
                 }
@@ -1019,10 +1014,10 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                         // out: each plan raises it on the thread that runs the pair.
                         if (errors[c] != null) {
                             final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND " + conjuncts[c];
-                            final String expected = error(sql, false);
+                            final String expected = error(sql, false, sqlExecutionContext);
                             TestUtils.assertContains(expected, errors[c]);
                             TestUtils.assertContains(expected, "ex=No group 2]");
-                            Assert.assertEquals(sql, expected, error(sql, true));
+                            Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
                         }
                     }
                 }
@@ -1391,25 +1386,6 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                     FROM long_sequence(6)
                 )
                 """);
-    }
-
-    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
     }
 
     // True when the HashJoinBuildStage method is on the current thread's stack.

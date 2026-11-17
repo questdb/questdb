@@ -657,14 +657,6 @@ public class AsyncHashJoinLateMaterializationTest extends AbstractCairoTest {
         }
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     private static boolean isFitting(RecordCursorFactory factory, AsyncHashJoinAtom atom, long limit, String expected) throws SqlException {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
         try {

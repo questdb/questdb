@@ -25,7 +25,6 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
@@ -220,23 +219,18 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                 // Limits from a few bytes up fail the query at each allocation in turn, the ring's
                 // entries growing among them; each failure leaves nothing, and the first limit that
                 // admits the query reads the rows.
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        failures++;
-                    }
-                    Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(0, engine.getBusyReaderCount());
-                }
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, sqlExecutionContext),
+                        null,
+                        () -> {
+                            Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, engine.getBusyReaderCount());
+                        }
+                );
                 Assert.assertTrue(failures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
             }
         });
     }

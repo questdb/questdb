@@ -331,8 +331,4 @@ public class AsyncHashJoinModesTest extends AbstractCairoTest {
         return select(sql);
     }
 
-    // A result's rows, without its metadata lines.
-    private static String rows(String result) {
-        return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
-    }
 }

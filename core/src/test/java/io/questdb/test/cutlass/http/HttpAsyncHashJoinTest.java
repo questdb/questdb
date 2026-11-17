@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.client.Fragment;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -152,7 +153,7 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
             }
         });
         newTester().withSendBufferSize(512).run(newConfiguration(true, 0), (engine, context) -> {
-            try (HttpClient httpClient = io.questdb.cutlass.http.client.HttpClientFactory.newPlainTextInstance()) {
+            try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance()) {
                 for (int run = 0; run < 3; run++) {
                     final HttpClient.Request request = httpClient.newRequest("localhost", 9001);
                     request.GET().url("/exec").query("query", STAR);

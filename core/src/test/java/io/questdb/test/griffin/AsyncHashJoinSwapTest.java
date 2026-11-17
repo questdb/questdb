@@ -455,8 +455,8 @@ public class AsyncHashJoinSwapTest extends AbstractCairoTest {
             }) {
                 assertOrdinaryPlan(sql, sqlExecutionContext);
             }
-            TestUtils.assertContains(ordinaryPlan("SELECT * FROM l JOIN (SELECT * FROM r WHERE (SELECT b FROM flag LIMIT 1)) r ON l.k = r.k"), "Filter filter: ");
-            TestUtils.assertContains(ordinaryPlan("SELECT * FROM l JOIN (SELECT * FROM ix WHERE s = 's1') i ON l.k = i.k"), "DeferredSingleSymbolFilterPageFrame");
+            TestUtils.assertContains(ordinaryPlan("SELECT * FROM l JOIN (SELECT * FROM r WHERE (SELECT b FROM flag LIMIT 1)) r ON l.k = r.k", sqlExecutionContext), "Filter filter: ");
+            TestUtils.assertContains(ordinaryPlan("SELECT * FROM l JOIN (SELECT * FROM ix WHERE s = 's1') i ON l.k = i.k", sqlExecutionContext), "DeferredSingleSymbolFilterPageFrame");
             // Over such an input, a join whose ordinary plan never swaps takes the operator: a LEFT
             // join, or an INNER one whose other input scans an interval.
             for (String sql : new String[]{
@@ -771,14 +771,6 @@ public class AsyncHashJoinSwapTest extends AbstractCairoTest {
                 " FROM long_sequence(" + rightRows + ")) TIMESTAMP(rts) PARTITION BY HOUR");
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     // An INNER join of two compiled scans on their columns k that may swap its inputs, planned by
     // hand, with the given post-join filter, if any.
     private static AsyncHashJoinRecordCursorFactory newSwapCandidate(
@@ -845,15 +837,6 @@ public class AsyncHashJoinSwapTest extends AbstractCairoTest {
         );
     }
 
-    private static String ordinaryPlan(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return plan(factory, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
     private static String printRows(RecordCursorFactory factory) throws SqlException {
         final StringSink sink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -862,11 +845,6 @@ public class AsyncHashJoinSwapTest extends AbstractCairoTest {
             }
         }
         return sink.toString();
-    }
-
-    // A result's rows, without its metadata lines.
-    private static String rows(String result) {
-        return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
     }
 
     // Writes the table's first partition to a Parquet file under the input root, for read_parquet().

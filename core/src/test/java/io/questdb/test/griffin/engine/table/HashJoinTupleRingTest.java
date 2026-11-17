@@ -375,10 +375,11 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
         }
     }
 
-    // Binds the sequence to an execution over the factory's frames and the ring to the sequence, as
-    // the join's cursor does once the builds are done: after the sequence counted its frames. The
-    // execution charges its memory to the tracker; the query registry clears the context's tracker
-    // when an execution ends, so every execution sets it again.
+    // Binds the sequence to an execution over the factory's frames and the ring to the sequence once
+    // the sequence counted its frames, as the join's cursor does once the builds are done, but with a
+    // fixed window of R entries, where the join's cursor binds a dynamic one. The execution charges
+    // its memory to the tracker; the query registry clears the context's tracker when an execution
+    // ends, so every execution sets it again.
     private static void bind(
             PageFrameSequence<RingAtom> sequence,
             RecordCursorFactory factory,

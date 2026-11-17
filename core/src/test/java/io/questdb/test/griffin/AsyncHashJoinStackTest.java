@@ -50,7 +50,6 @@ import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.griffin.engine.table.HashJoinInput;
 import io.questdb.griffin.engine.table.HashJoinStageSpec;
 import io.questdb.std.BytecodeAssembler;
-import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
@@ -684,9 +683,9 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             final String sql = "SELECT t.v, d1.w, x.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN (SELECT * FROM d2 WHERE (w2 * 1000)::DECIMAL(4,0) > 0) x ON t.lk = x.lk";
             for (long minRows : new long[]{0, Long.MAX_VALUE}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
-                final String expected = error(sql, false);
+                final String expected = error(sql, false, sqlExecutionContext);
                 TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-                Assert.assertEquals(sql, expected, error(sql, true));
+                Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(join);
@@ -838,7 +837,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                     "SELECT t.ts, t.k, d1.w, d2.w2 FROM t JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk WHERE t.v > 3 ORDER BY t.ts DESC",
             }) {
                 final String plan = assertStack(sql, sql.contains("d3") ? 3 : 2);
-                Assert.assertEquals(sql + '\n' + plan, ordinaryPlan(sql).contains("Sort"), plan.contains("Sort"));
+                Assert.assertEquals(sql + '\n' + plan, ordinaryPlan(sql, sqlExecutionContext).contains("Sort"), plan.contains("Sort"));
                 Assert.assertFalse(plan, plan.contains("Sort"));
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -908,7 +907,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                             """);
             assertStack(sql, 3);
             // The ordinary plan prints the same filters.
-            final String ordinaryPlan = ordinaryPlan(sql);
+            final String ordinaryPlan = ordinaryPlan(sql, sqlExecutionContext);
             TestUtils.assertContains(ordinaryPlan, "filter: t.v<d1.w");
             TestUtils.assertContains(ordinaryPlan, "filter: x.w2<t.v*10");
             // A plan of eight stages.
@@ -931,7 +930,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                 }) {
                     final String plan = assertStack(sql, sql.contains("d3") ? 3 : 2);
                     TestUtils.assertContains(plan, "postJoinFilter: ");
-                    Assert.assertEquals(sql + '\n' + plan, ordinaryPlan(sql).contains("Sort"), plan.contains("Sort"));
+                    Assert.assertEquals(sql + '\n' + plan, ordinaryPlan(sql, sqlExecutionContext).contains("Sort"), plan.contains("Sort"));
                 }
             }
             try (RecordCursorFactory factory = select("SELECT t.k, t.ts, d1.w, d2.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk WHERE d2.w2 IS NULL ORDER BY t.ts DESC")) {
@@ -1025,7 +1024,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // A JVM that cannot define hidden classes hands every stage the shared stepper template,
             // whose recursion into the next stage runs here, enumerated and deferred.
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+            useSteppers(false);
             try {
                 createTables();
                 sqlExecutionContext.changePageFrameSizes(3, 3);
@@ -1048,7 +1047,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         });
     }
@@ -1254,24 +1253,6 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
         execute("CREATE TABLE u2 AS (SELECT x lk, x * 7 w2 FROM long_sequence(4))");
     }
 
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
-    }
-
     // The stages that the operator's plan names; the plan text holds no line breaks.
     private static int getStageCount(String plan) {
         final int start = plan.indexOf("stages: ") + "stages: ".length();
@@ -1282,25 +1263,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
         return Integer.parseInt(plan.substring(start, end));
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     private static boolean isOnStack(String className, String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
-    }
-
-    private static String ordinaryPlan(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return plan(factory, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
     }
 
     // Up to the given number of the cursor's next rows, as CursorPrinter prints them.
@@ -1312,16 +1276,6 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    // A result's rows, without its header: the metadata lines of ParallelHashJoinTestUtils.result(),
-    // or the column names of an assertQuery() expectation.
-    private static String rows(String result) {
-        if (result.startsWith("timestamp: ")) {
-            return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
-        }
-        return result.substring(result.indexOf('\n') + 1);
-    }
-
-    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
     // A star of the given LEFT joins of d3 on t's SYMBOL key.
     private static String starOfJoins(int joinCount) {
         final StringSink sql = new StringSink();

@@ -25,19 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -111,26 +106,21 @@ public class AsyncHashJoinStackSwapWorkersTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = db.select(sql, context)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, context));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        failures++;
-                    }
-                    Assert.assertTrue(join.getAtom().isSwapped());
-                    Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    for (int k = 0; k < 4; k++) {
-                        Assert.assertNull(join.getAtom().getStage(k).getFrozenBuild());
-                    }
-                }
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, context),
+                        null,
+                        () -> {
+                            Assert.assertTrue(join.getAtom().isSwapped());
+                            Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            for (int k = 0; k < 4; k++) {
+                                Assert.assertNull(join.getAtom().getStage(k).getFrozenBuild());
+                            }
+                        }
+                );
                 Assert.assertTrue(failures > 1);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(expected, result(factory, context));
             }
         });
     }
@@ -184,48 +174,35 @@ public class AsyncHashJoinStackSwapWorkersTest extends AbstractCairoTest {
         });
     }
 
-    private static void execute(WorkerPoolMode mode, Code code) throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            // Fiber workers run the queue's tasks through the fiber dispatcher, thread workers run
-            // them on their own threads.
-            Assert.assertEquals(mode == WorkerPoolMode.FIBER_HOST, db.getMessageBus().getPageFrameReduceDispatcher() != null);
-            try (
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, WORKER_COUNT)
-                            .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)
-            ) {
-                // d, the left input, is smaller than t, so every execution hashes d and streams t. The
-                // key columns sit at other positions in every table, and e and g insert their symbols
-                // in another order than d, so equal texts have different keys.
-                db.execute("""
-                        CREATE TABLE t AS (
-                            SELECT
-                                (x % 500)::INT k,
-                                x v,
-                                timestamp_sequence('2024-01-01', 10_000_000) ts
-                            FROM long_sequence(20_000)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """, context);
-                db.execute("""
-                        CREATE TABLE d AS (
-                            SELECT
-                                x w,
-                                ('s' || (x % 40))::SYMBOL s,
-                                (x % 300)::LONG l,
-                                (x % 450)::INT k,
-                                timestamp_sequence('2023-12-01', 60_000_000) dts
-                            FROM long_sequence(3_000)
-                        ) TIMESTAMP(dts) PARTITION BY HOUR
-                        """, context);
-                db.execute("CREATE TABLE e AS (SELECT ('s' || (34 - x % 35))::SYMBOL s, x ew, 'e' || (x % 5) es FROM long_sequence(70))", context);
-                db.execute("CREATE TABLE g AS (SELECT x * 3 gw, ('s' || (39 - x % 40))::SYMBOL gs, (x % 280)::LONG l FROM long_sequence(560))", context);
-                context.changePageFrameSizes(256, 256);
-                code.run(db, context);
-            }
-        }, configuration, LOG));
-    }
-
-    @FunctionalInterface
-    private interface Code {
-        void run(CairoEngine db, SqlExecutionContextImpl context) throws Exception;
+    private static void execute(WorkerPoolMode mode, WorkersCode code) throws Exception {
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            // d, the left input, is smaller than t, so every execution hashes d and streams t. The
+            // key columns sit at other positions in every table, and e and g insert their symbols
+            // in another order than d, so equal texts have different keys.
+            db.execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            (x % 500)::INT k,
+                            x v,
+                            timestamp_sequence('2024-01-01', 10_000_000) ts
+                        FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            db.execute("""
+                    CREATE TABLE d AS (
+                        SELECT
+                            x w,
+                            ('s' || (x % 40))::SYMBOL s,
+                            (x % 300)::LONG l,
+                            (x % 450)::INT k,
+                            timestamp_sequence('2023-12-01', 60_000_000) dts
+                        FROM long_sequence(3_000)
+                    ) TIMESTAMP(dts) PARTITION BY HOUR
+                    """, context);
+            db.execute("CREATE TABLE e AS (SELECT ('s' || (34 - x % 35))::SYMBOL s, x ew, 'e' || (x % 5) es FROM long_sequence(70))", context);
+            db.execute("CREATE TABLE g AS (SELECT x * 3 gw, ('s' || (39 - x % 40))::SYMBOL gs, (x % 280)::LONG l FROM long_sequence(560))", context);
+            context.changePageFrameSizes(256, 256);
+            code.run(db, context);
+        }));
     }
 }

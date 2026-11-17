@@ -288,9 +288,9 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
                     + " LEFT JOIN d2 ON t.lk = d2.lk LEFT JOIN (SELECT * FROM d3 WHERE (w3 * 100)::DECIMAL(4,0) > 0) x ON t.sym = x.s";
             for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
-                final String expected = error(sql, false);
+                final String expected = error(sql, false, sqlExecutionContext);
                 TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-                Assert.assertEquals(sql, expected, error(sql, true));
+                Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(join);
@@ -327,9 +327,9 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
             // a task of its first round.
             final String sql = "SELECT t.v, d1.w, x.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k"
                     + " LEFT JOIN (SELECT * FROM d2 WHERE (w2 * 1000)::DECIMAL(4,0) > 0) x ON t.lk = x.lk LEFT JOIN d3 ON t.sym = d3.s";
-            final String expected = error(sql, false);
+            final String expected = error(sql, false, sqlExecutionContext);
             TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-            Assert.assertEquals(sql, expected, error(sql, true));
+            Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -564,25 +564,6 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
         execute("CREATE TABLE u1 AS (SELECT (x - 1)::INT k, x * 3 w FROM long_sequence(5))");
         // e holds no row.
         execute("CREATE TABLE e (k INT, w LONG)");
-    }
-
-    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
     }
 
     private static boolean isOnStack(String methodName) {

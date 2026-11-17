@@ -264,7 +264,7 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
     public void testSharedStepperTemplate() throws Exception {
         assertMemoryLeak(() -> {
             // A JVM that cannot define hidden classes hands every stage the shared stepper template.
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+            useSteppers(false);
             try {
                 execute("CREATE TABLE t AS (SELECT (x % 7)::INT k, (x % 7)::LONG l, ('s' || (x % 7))::SYMBOL s, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(40)) TIMESTAMP(ts) PARTITION BY HOUR");
                 // u holds one row per key, d repeats its keys, and m repeats some of them only.
@@ -284,7 +284,7 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                     Assert.assertFalse(find(factory).getStepperClass(0).isHidden());
                 }
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         });
     }
@@ -1074,14 +1074,6 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
         );
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     private static String printRows(RecordCursorFactory factory) throws SqlException {
         final StringSink sink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1092,13 +1084,9 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    // A result's rows, without its metadata lines.
-    private static String rows(String result) {
-        return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
-    }
-
     // A key column's value of a SQL type for each remainder of the given expression: NULL for zero, the
-    // type's values otherwise.
+    // type's values otherwise. A CAST rather than ::, which takes the alias after a GEOHASH(1c) type
+    // for part of the type.
     private static String keyValue(String[] type, String remainder) {
         final StringBuilder sb = new StringBuilder("CAST(CASE ").append(remainder).append(" WHEN 0 THEN NULL");
         for (int i = 1; i < type.length; i++) {

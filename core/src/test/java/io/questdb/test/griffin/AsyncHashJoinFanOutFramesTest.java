@@ -419,7 +419,7 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // The steppers' shared template, as on a JVM without hidden classes, cuts the same frames.
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+            useSteppers(false);
             try {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
                 sqlExecutionContext.changePageFrameSizes(1, 6);
@@ -437,7 +437,7 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                     assertFrames(sql, 4, 0);
                 }
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         });
     }

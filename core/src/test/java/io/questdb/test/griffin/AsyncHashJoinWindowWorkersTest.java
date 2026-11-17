@@ -387,23 +387,18 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                 // Limits from a few bytes up fail the query at each allocation in turn, the workers'
                 // ones ahead of the consumer among them; each failure leaves nothing, and the first
                 // limit that admits the query reads the rows.
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        TestUtils.assertEquals(expected, printRows(factory, context));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        failures++;
-                    }
-                    Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(0, db.getBusyReaderCount());
-                }
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> printRows(factory, context),
+                        null,
+                        () -> {
+                            Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, db.getBusyReaderCount());
+                        }
+                );
                 Assert.assertTrue(failures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                TestUtils.assertEquals(expected, printRows(factory, context));
             }
         });
     }

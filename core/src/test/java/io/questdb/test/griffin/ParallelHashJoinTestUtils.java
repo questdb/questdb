@@ -24,8 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -33,14 +39,23 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+
+import java.util.function.Consumer;
+import java.util.function.LongConsumer;
 
 /**
  * Differential checks of the parallel hash join against the ordinary plan, the plan that the same
@@ -54,6 +69,46 @@ public final class ParallelHashJoinTestUtils {
     private static final String OPERATOR = "Hash Join workers:";
 
     private ParallelHashJoinTestUtils() {
+    }
+
+    /**
+     * Reads the query's rows under query memory limits that double from 4 bytes until one admits the
+     * query, and asserts that it then reads the expected rows: each lower limit fails the query with
+     * an out-of-memory error, which {@code onFailure} sees, and {@code afterFailure} then checks what
+     * the failure left behind. Lifts the limit and reads the rows once more.
+     *
+     * @param setLimit     sets {@code cairo.query.memory.limit.bytes}, 0 to lift it
+     * @param rows         reads the query's rows
+     * @param onFailure    sees each out-of-memory error; null when nothing does
+     * @param afterFailure checks the state after each failure, such as the slots and the memory that
+     *                     the execution released
+     * @return the limits that failed the query
+     */
+    public static int assertMemoryLimitSweep(
+            String expected,
+            LongConsumer setLimit,
+            RowsReader rows,
+            @Nullable Consumer<CairoException> onFailure,
+            Checker afterFailure
+    ) throws Exception {
+        int failures = 0;
+        for (long limit = 4; ; limit *= 2) {
+            setLimit.accept(limit);
+            try {
+                Assert.assertEquals(expected, rows.read());
+                break;
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                if (onFailure != null) {
+                    onFailure.accept(e);
+                }
+                failures++;
+            }
+            afterFailure.check();
+        }
+        setLimit.accept(0);
+        Assert.assertEquals(expected, rows.read());
+        return failures;
     }
 
     /**
@@ -142,6 +197,56 @@ public final class ParallelHashJoinTestUtils {
     }
 
     /**
+     * The error that reading the query's rows ends with, under the operator, {@code isParallel}, or
+     * under the ordinary plan, as its position and message; asserts that the query compiles to the
+     * plan asked for and that reading it fails.
+     */
+    public static String error(String sql, boolean isParallel, SqlExecutionContext context) throws SqlException {
+        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(isParallel);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            Assert.assertEquals(sql, isParallel, find(factory) != null);
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                //noinspection StatementWithEmptyBody
+                while (cursor.hasNext()) {
+                }
+                Assert.fail("expected the query to fail: " + sql);
+            } catch (CairoException | ImplicitCastException e) {
+                return e.getPosition() + ": " + e.getFlyweightMessage();
+            }
+        } finally {
+            context.setParallelHashJoinEnabled(wasEnabled);
+        }
+        return null;
+    }
+
+    /**
+     * Runs the code against an engine whose queries run on a pool of the given workers, with an
+     * execution context that shares them; asserts that fiber workers run the reduce queue's tasks
+     * through the fiber dispatcher, and thread workers on their own threads.
+     *
+     * @param bindVariableService the context's bind variables, null for none
+     */
+    public static void executeOnWorkers(
+            WorkerPoolMode mode,
+            int workerCount,
+            @Nullable BindVariableService bindVariableService,
+            CairoConfiguration configuration,
+            Log log,
+            WorkersCode code
+    ) throws Exception {
+        TestUtils.execute(new TestWorkerPool(workerCount, mode), (db, compiler, ignore) -> {
+            Assert.assertEquals(mode == WorkerPoolMode.FIBER_HOST, db.getMessageBus().getPageFrameReduceDispatcher() != null);
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, workerCount)
+                            .with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null)
+            ) {
+                code.run(db, context);
+            }
+        }, configuration, log);
+    }
+
+    /**
      * The operator inside a compiled query, or null when the query does not run it.
      */
     @Nullable
@@ -155,6 +260,17 @@ public final class ParallelHashJoinTestUtils {
     }
 
     /**
+     * The columns 0 to {@code columnCount - 1}, in order.
+     */
+    public static IntList identity(int columnCount) {
+        final IntList columns = new IntList();
+        for (int i = 0; i < columnCount; i++) {
+            columns.add(i);
+        }
+        return columns;
+    }
+
+    /**
      * The result of the query's ordinary plan, which runs no operator.
      */
     public static String ordinary(String sql, SqlExecutionContext context) throws SqlException {
@@ -163,6 +279,19 @@ public final class ParallelHashJoinTestUtils {
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             Assert.assertFalse(sql, plan(factory, context).contains(OPERATOR));
             return result(factory, context);
+        } finally {
+            context.setParallelHashJoinEnabled(wasEnabled);
+        }
+    }
+
+    /**
+     * The query's plan with the operator off.
+     */
+    public static String ordinaryPlan(String sql, SqlExecutionContext context) throws SqlException {
+        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(false);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            return plan(factory, context);
         } finally {
             context.setParallelHashJoinEnabled(wasEnabled);
         }
@@ -230,6 +359,17 @@ public final class ParallelHashJoinTestUtils {
     }
 
     /**
+     * A result's rows, without its header: the metadata lines of {@link #result}, or the column
+     * names of an {@code assertQuery()} expectation.
+     */
+    public static String rows(String result) {
+        if (result.startsWith("timestamp: ")) {
+            return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
+        }
+        return result.substring(result.indexOf('\n') + 1);
+    }
+
+    /**
      * Makes the factories that compile from here on run the stages' hidden stepper copies from their
      * first task, {@code isCopy}, or the shared template, as a JVM without hidden classes runs it;
      * {@link #restoreSteppers()} undoes it.
@@ -237,5 +377,20 @@ public final class ParallelHashJoinTestUtils {
     public static void useSteppers(boolean isCopy) {
         AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(isCopy);
         AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(isCopy ? 0 : AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+    }
+
+    @FunctionalInterface
+    public interface Checker {
+        void check() throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface RowsReader {
+        String read() throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface WorkersCode {
+        void run(CairoEngine db, SqlExecutionContextImpl context) throws Exception;
     }
 }

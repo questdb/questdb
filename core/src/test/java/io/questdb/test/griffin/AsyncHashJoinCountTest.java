@@ -166,7 +166,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // A JVM that cannot define hidden classes hands every stage the shared stepper template,
             // whose count runs here.
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+            useSteppers(false);
             try {
                 createTables();
                 sqlExecutionContext.changePageFrameSizes(4, 4);
@@ -186,7 +186,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                     assertCancelledInsideIndexPass(sql, 0);
                 }
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         });
     }
@@ -209,11 +209,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             for (boolean isCopy : new boolean[]{false, true}) {
                 // The factories that compile from here on run the stages' hidden copies from their first
                 // task, or, as on a JVM that cannot define hidden classes, the shared template.
-                if (isCopy) {
-                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(0);
-                } else {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
-                }
+                useSteppers(isCopy);
                 try {
                     assertCancelledAfterIndexPass(sql, 0, 1, firstFrameRows, join -> {
                         Assert.assertEquals(sql, isCopy, join.getStepperClass(0).isHidden());
@@ -227,8 +223,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                         Assert.assertEquals(sql, isCopy ? 10 : 0, atom.getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_COUNT_TASK, true));
                     });
                 } finally {
-                    AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
-                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+                    restoreSteppers();
                 }
             }
         });
@@ -935,9 +930,9 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                     "SELECT tp.k, tp.p, d1.w FROM tp JOIN d1 ON tp.k = d1.k WHERE " + poison,
             }) {
                 for (String query : new String[]{"SELECT count(*) FROM (" + sql + ")", sql + " LIMIT -3"}) {
-                    final String expected = error(query, false);
+                    final String expected = error(query, false, sqlExecutionContext);
                     TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-                    Assert.assertEquals(query, expected, error(query, true));
+                    Assert.assertEquals(query, expected, error(query, true, sqlExecutionContext));
                 }
                 // The count of the rows after the first one fails as well, and the factory reads its rows
                 // when the filter passes them.
@@ -1333,25 +1328,6 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         execute("CREATE TABLE u1 AS (SELECT (x - 1)::INT k, x * 3 w FROM long_sequence(5))");
         // m holds three rows of key 1, two of key 3 and one of keys 2, 4 and 5.
         execute("CREATE TABLE m AS (SELECT CASE WHEN x <= 3 THEN 1 WHEN x = 4 THEN 2 WHEN x <= 6 THEN 3 ELSE x - 3 END::INT k, x w FROM long_sequence(8))");
-    }
-
-    // The error that counting the query's rows ends with, under the operator or under the ordinary plan.
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
     }
 
     private static boolean isOnStack(String methodName) {

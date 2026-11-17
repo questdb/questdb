@@ -25,14 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
@@ -41,7 +37,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -173,22 +168,17 @@ public class AsyncHashJoinFilterWorkersTest extends AbstractCairoTest {
                 // Limits from a few bytes up fail the query at every allocation in turn: the build's
                 // filtered round tasks, the payload copy and the filtered probe tasks. Each failure
                 // leaves every slot back, and the first limit that admits the query reads the rows.
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, context));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        failures++;
-                    }
-                    Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                }
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, context),
+                        null,
+                        () -> {
+                            Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        }
+                );
                 Assert.assertTrue(failures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(expected, result(factory, context));
             }
         });
     }
@@ -269,42 +259,29 @@ public class AsyncHashJoinFilterWorkersTest extends AbstractCairoTest {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE) && frame.getMethodName().equals(methodName)));
     }
 
-    private static void execute(WorkerPoolMode mode, Code code) throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            // Fiber workers run the queue's tasks through the fiber dispatcher, thread workers run
-            // them on their own threads.
-            Assert.assertEquals(mode == WorkerPoolMode.FIBER_HOST, db.getMessageBus().getPageFrameReduceDispatcher() != null);
-            try (
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, WORKER_COUNT)
-                            .with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null)
-            ) {
-                db.execute("""
-                        CREATE TABLE t AS (
-                            SELECT
-                                (x % 500)::INT k,
-                                x v,
-                                ('s' || (x % 40))::SYMBOL s,
-                                timestamp_sequence('2024-01-01', 10_000_000) ts
-                            FROM long_sequence(20_000)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """, context);
-                db.execute("""
-                        CREATE TABLE d AS (
-                            SELECT
-                                (x % 450)::INT k,
-                                x w,
-                                ('s' || (x % 35))::SYMBOL s
-                            FROM long_sequence(3_000)
-                        )
-                        """, context);
-                context.changePageFrameSizes(256, 256);
-                code.run(db, context);
-            }
-        }, configuration, LOG));
-    }
-
-    @FunctionalInterface
-    private interface Code {
-        void run(CairoEngine db, SqlExecutionContextImpl context) throws Exception;
+    private static void execute(WorkerPoolMode mode, WorkersCode code) throws Exception {
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
+            db.execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            (x % 500)::INT k,
+                            x v,
+                            ('s' || (x % 40))::SYMBOL s,
+                            timestamp_sequence('2024-01-01', 10_000_000) ts
+                        FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            db.execute("""
+                    CREATE TABLE d AS (
+                        SELECT
+                            (x % 450)::INT k,
+                            x w,
+                            ('s' || (x % 35))::SYMBOL s
+                        FROM long_sequence(3_000)
+                    )
+                    """, context);
+            context.changePageFrameSizes(256, 256);
+            code.run(db, context);
+        }));
     }
 }

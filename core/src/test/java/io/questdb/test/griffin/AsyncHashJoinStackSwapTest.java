@@ -208,23 +208,17 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
                 // builds of l and of the later stages, their probes and translations, and the tuples.
                 // Each failure releases every build and slot, and the first limit that admits the
                 // query reads the rows.
-                int failures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                        failures++;
-                    }
-                    Assert.assertTrue(join.getAtom().isSwapped());
-                    assertReleased(join);
-                }
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, sqlExecutionContext),
+                        e -> TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded"),
+                        () -> {
+                            Assert.assertTrue(join.getAtom().isSwapped());
+                            assertReleased(join);
+                        }
+                );
                 Assert.assertTrue(failures > 1);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
-                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
                 // Cancelled before the builds, then while the workers join the frames.
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
                 for (int rowsBeforeCancel = 0; rowsBeforeCancel < 2; rowsBeforeCancel++) {
@@ -466,7 +460,7 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
                 final String plan = assertSwappedStack(sql, 3, false);
                 Assert.assertFalse(plan, plan.contains(INPUT_SWAP));
                 Assert.assertFalse(plan, isSorted(plan));
-                Assert.assertFalse(isSorted(ordinaryPlan(sql)));
+                Assert.assertFalse(isSorted(ordinaryPlan(sql, sqlExecutionContext)));
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(join);
@@ -773,14 +767,6 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
         execute("CREATE TABLE x AS (SELECT x xv, timestamp_sequence('2024-01-01', 1_200_000_000) xts FROM long_sequence(4))");
     }
 
-    private static IntList identity(int columnCount) {
-        final IntList columns = new IntList();
-        for (int i = 0; i < columnCount; i++) {
-            columns.add(i);
-        }
-        return columns;
-    }
-
     // An input over the scan that a compiled query wraps, unfiltered, whose compiled columns are the
     // given frame columns; the factory takes the scan, and the wrapper closes it again, a no-op.
     private static HashJoinInput newInput(RecordCursorFactory query, IntList columnMap) {
@@ -911,15 +897,6 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
         return plan.contains("Sort") || plan.contains("sort");
     }
 
-    private static String ordinaryPlan(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return plan(factory, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
     private static String printRows(RecordCursorFactory factory) throws SqlException {
         final StringSink sink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -930,8 +907,4 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
         return sink.toString();
     }
 
-    // A result's rows, without its metadata lines.
-    private static String rows(String result) {
-        return result.substring(result.indexOf('\n', result.indexOf('\n') + 1) + 1);
-    }
 }

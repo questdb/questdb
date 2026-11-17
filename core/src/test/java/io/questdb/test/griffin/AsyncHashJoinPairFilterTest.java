@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -259,9 +258,9 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
             };
             sqlExecutionContext.changePageFrameSizes(3, 3);
             for (String sql : queries) {
-                final String expected = error(sql, false);
+                final String expected = error(sql, false, sqlExecutionContext);
                 TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
-                Assert.assertEquals(sql, expected, error(sql, true));
+                Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
             }
             // The tables still work, and so does the join with a filter that passes the row.
             final String safe = "(tp.p * 100)::DECIMAL(4,0) > d.w::DECIMAL(4,0)";
@@ -379,7 +378,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
                         "SELECT t.k, t.v, t.ts, d.w FROM t JOIN d ON t.k = d.k WHERE t.v > 3 AND d.w < t.v ORDER BY " + orderBy,
                 }) {
                     final String plan = assertParallelHashJoin(sql, sqlExecutionContext);
-                    final String ordinaryPlan = ordinaryPlan(sql);
+                    final String ordinaryPlan = ordinaryPlan(sql, sqlExecutionContext);
                     Assert.assertEquals(sql + '\n' + plan + '\n' + ordinaryPlan, ordinaryPlan.contains("Sort"), plan.contains("Sort"));
                 }
             }
@@ -408,7 +407,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
             final String sql = "SELECT t.k, sum(CASE WHEN t.v > (SELECT max(d.w) FROM t t2 LEFT JOIN d ON t2.k = d.k WHERE d.w IS NULL OR d.s <> t2.sym) THEN t.v ELSE 0 END) s FROM t ORDER BY 1";
             final String plan = planText(sql);
             TestUtils.assertContains(plan, "postJoinFilter: (d.w=null or d.s!=t2.sym)");
-            final String ordinaryPlan = ordinaryPlan(sql);
+            final String ordinaryPlan = ordinaryPlan(sql, sqlExecutionContext);
             final String tail = ordinaryPlan.substring(ordinaryPlan.lastIndexOf("Frame forward scan on: d") + "Frame forward scan on: d".length());
             Assert.assertTrue(ordinaryPlan, tail.startsWith(",v,0]))]"));
             Assert.assertTrue(plan, plan.endsWith(tail));
@@ -473,7 +472,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
                                             Frame forward scan on: d
                             """);
             // The ordinary plan of the same SQL prints the same filters.
-            final String ordinaryPlan = ordinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v WHERE d.w IS NULL OR d.s <> t.sym");
+            final String ordinaryPlan = ordinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v WHERE d.w IS NULL OR d.s <> t.sym", sqlExecutionContext);
             TestUtils.assertContains(ordinaryPlan, "filter: (d.w=null or d.s!=t.sym)");
             TestUtils.assertContains(ordinaryPlan, "filter: t.v<d.w");
         });
@@ -485,7 +484,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
             // A JVM that cannot define hidden classes hands every stage the shared stepper template,
             // whose loops over a stage's matches run here, under residuals and post-join filters, with
             // unique and repeated keys, INT, SYMBOL and staged keys, and both scan directions.
-            AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(false);
+            useSteppers(false);
             try {
                 createTables();
                 sqlExecutionContext.changePageFrameSizes(3, 3);
@@ -510,7 +509,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
                     }
                 }
             } finally {
-                AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+                restoreSteppers();
             }
         });
     }
@@ -616,34 +615,6 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
                     FROM long_sequence(6)
                 )
                 """);
-    }
-
-    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
-    }
-
-    private static String ordinaryPlan(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return plan(factory, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
     }
 
     private static String planText(String sql) throws SqlException {

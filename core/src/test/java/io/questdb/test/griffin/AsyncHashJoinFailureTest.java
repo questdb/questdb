@@ -517,7 +517,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                 final String sql = "SELECT t.k, t.v, b.p FROM t" + join + "(SELECT * FROM bf WHERE (p * $1)::DECIMAL(4,0) > 0::DECIMAL(4,0)) b ON t.k = b.k";
                 bindVariableService.clear();
                 bindVariableService.setLong(0, 1_000);
-                final String expected = error(sql, false);
+                final String expected = error(sql, false, sqlExecutionContext);
                 TestUtils.assertContains(expected, "inconvertible value: 10000 [LONG -> DECIMAL(4,0)]");
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
@@ -759,20 +759,14 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         Assert.assertEquals(label, 0, engine.getBusyReaderCount());
     }
 
-    // A breach of the consumer's output reader: its decode of a Parquet row group of the build, on
-    // the consumer's thread, outside every probe task, build and payload copy.
-    private static boolean isOutputReaderDecode(Throwable e) {
-        boolean isReader = false;
-        for (StackTraceElement frame : e.getStackTrace()) {
-            final String className = frame.getClassName();
-            if (className.equals(ATOM) || className.equals(STAGE)) {
-                return false;
-            }
-            if (className.equals(READER) && frame.getMethodName().equals("record")) {
-                isReader = true;
-            }
+    private static void assertReleased(AsyncHashJoinRecordCursorFactory join) {
+        for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
+            Assert.assertNull("stage " + k, join.getAtom().getStage(k).getFrozenBuild());
         }
-        return isReader;
+        Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
+        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        Assert.assertEquals(0, engine.getBusyReaderCount());
     }
 
     // Nothing of the failed execution stays behind: no build of any stage, no slot, no ring byte and
@@ -786,92 +780,6 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         Assert.assertEquals(0, db.getBusyReaderCount());
     }
 
-    // Whether the thread waits, inside a cursor's close(), for the frames that workers still reduce.
-    private static boolean isAwaitingFrames(Thread thread) {
-        for (StackTraceElement frame : thread.getStackTrace()) {
-            if (frame.getClassName().equals(PageFrameSequence.class.getName()) && frame.getMethodName().equals("await")) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static void assertReleased(AsyncHashJoinRecordCursorFactory join) {
-        for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
-            Assert.assertNull("stage " + k, join.getAtom().getStage(k).getFrozenBuild());
-        }
-        Assert.assertEquals(0, join.getAtom().getRing().getAllocatedBytes());
-        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
-        Assert.assertEquals(0, engine.getBusyReaderCount());
-    }
-
-    private void assertTableFileFailure(String sql, TableFilesFacade ff, String table, boolean isMmap) throws Exception {
-        final String label = sql + ", " + table + (isMmap ? ", mmap" : ", open");
-        final String expected = ordinary(sql, sqlExecutionContext);
-        try (RecordCursorFactory factory = select(sql)) {
-            final AsyncHashJoinRecordCursorFactory join = find(factory);
-            Assert.assertNotNull(label, join);
-            for (int run = 0; run < 2; run++) {
-                // The readers open the partitions anew, through the failing facade.
-                engine.releaseAllReaders();
-                ff.arm();
-                final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
-                try {
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) {
-                    }
-                    Assert.fail("expected the table's files to fail: " + label);
-                } catch (CairoException e) {
-                    if (isMmap) {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
-                    } else {
-                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
-                        TestUtils.assertContains(e.getFlyweightMessage(), table);
-                    }
-                    // The failure released everything before the caller closes the cursor.
-                    assertReleased(join);
-                } finally {
-                    ff.disarm();
-                    cursor.close();
-                }
-                Assert.assertTrue(label, ff.getFailures() > 0);
-                assertReleased(join);
-                Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
-            }
-        }
-    }
-
-    private void assertFileFailure(String sql, AtomicBoolean isArmed, String error) throws Exception {
-        final String expected = ordinary(sql, sqlExecutionContext);
-        try (RecordCursorFactory factory = select(sql)) {
-            final AsyncHashJoinRecordCursorFactory join = find(factory);
-            Assert.assertNotNull(sql, join);
-            for (int run = 0; run < 2; run++) {
-                // The readers open the build's partitions anew, through the failing facade.
-                engine.releaseAllReaders();
-                isArmed.set(true);
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    //noinspection StatementWithEmptyBody
-                    while (cursor.hasNext()) {
-                    }
-                    Assert.fail("expected the build's frames to fail: " + sql);
-                } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), error);
-                    TestUtils.assertContains(e.getFlyweightMessage(), "build_tab");
-                } finally {
-                    isArmed.set(false);
-                }
-                Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
-                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                Assert.assertEquals(0, engine.getBusyReaderCount());
-                Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
-            }
-        }
-        // The tables still work on their own.
-        assertQuery("SELECT count() FROM build_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n200\n");
-    }
-
     // The failure released every slot, reader and build, and the same factory reads the ordinary
     // plan's rows again.
     private static void assertReused(RecordCursorFactory factory, AsyncHashJoinRecordCursorFactory join, String sql, String expected) throws SqlException {
@@ -879,6 +787,11 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
         Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
         Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+    }
+
+    private static void createFileTables() throws Exception {
+        execute("CREATE TABLE probe_tab AS (SELECT (x % 9)::INT k, (x % 5)::LONG l, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE build_tab AS (SELECT (x % 7)::INT k, (x % 6)::LONG l, x w, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
     }
 
     // The probe's SYMBOL dictionary holds 5_001 texts, which the translator's shared cache is sized for:
@@ -925,11 +838,6 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         }
     }
 
-    private static void createFileTables() throws Exception {
-        execute("CREATE TABLE probe_tab AS (SELECT (x % 9)::INT k, (x % 5)::LONG l, x v, timestamp_sequence('2024-01-01', 600_000_000) ts FROM long_sequence(400)) TIMESTAMP(ts) PARTITION BY DAY");
-        execute("CREATE TABLE build_tab AS (SELECT (x % 7)::INT k, (x % 6)::LONG l, x w, timestamp_sequence('2024-01-01', 1_800_000_000) ts FROM long_sequence(200)) TIMESTAMP(ts) PARTITION BY DAY");
-    }
-
     private static void createTables() throws Exception {
         execute("""
                 CREATE TABLE t AS (
@@ -945,8 +853,44 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                 """);
     }
 
+    // Whether the thread waits, inside a cursor's close(), for the frames that workers still reduce.
+    private static boolean isAwaitingFrames(Thread thread) {
+        for (StackTraceElement frame : thread.getStackTrace()) {
+            if (frame.getClassName().equals(PageFrameSequence.class.getName()) && frame.getMethodName().equals("await")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isOnStack(String className, String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
+    }
+
+    // A breach of the consumer's output reader: its decode of a Parquet row group of the build, on
+    // the consumer's thread, outside every probe task, build and payload copy.
+    private static boolean isOutputReaderDecode(Throwable e) {
+        boolean isReader = false;
+        for (StackTraceElement frame : e.getStackTrace()) {
+            final String className = frame.getClassName();
+            if (className.equals(ATOM) || className.equals(STAGE)) {
+                return false;
+            }
+            if (className.equals(READER) && frame.getMethodName().equals("record")) {
+                isReader = true;
+            }
+        }
+        return isReader;
+    }
+
+    // True when the method was on the stack where the exception was thrown.
+    private static boolean isThrownIn(Throwable e, String className, String methodName) {
+        for (StackTraceElement frame : e.getStackTrace()) {
+            if (frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // The rows of the query's ordinary plan.
@@ -962,35 +906,6 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelHashJoinEnabled(true);
         }
-    }
-
-    // The error that reading the query's rows ends with, under the operator or under the ordinary plan.
-    private static String error(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                }
-                Assert.fail("expected the filter to fail: " + sql);
-            } catch (CairoException | ImplicitCastException e) {
-                return e.getPosition() + ": " + e.getFlyweightMessage();
-            }
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-        return null;
-    }
-
-    // True when the method was on the stack where the exception was thrown.
-    private static boolean isThrownIn(Throwable e, String className, String methodName) {
-        for (StackTraceElement frame : e.getStackTrace()) {
-            if (frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     // The phase of a parallel hash join's execution that threw the exception, by its stack.
@@ -1015,6 +930,36 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             }
         }
         return phase;
+    }
+
+    private void assertFileFailure(String sql, AtomicBoolean isArmed, String error) throws Exception {
+        final String expected = ordinary(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            for (int run = 0; run < 2; run++) {
+                // The readers open the build's partitions anew, through the failing facade.
+                engine.releaseAllReaders();
+                isArmed.set(true);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected the build's frames to fail: " + sql);
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), error);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "build_tab");
+                } finally {
+                    isArmed.set(false);
+                }
+                Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+            }
+        }
+        // The tables still work on their own.
+        assertQuery("SELECT count() FROM build_tab").noLeakCheck().noRandomAccess().expectSize().returns("count\n200\n");
     }
 
     // Sweeps the per-query memory limit over a LEFT join of t until the join fits, and counts the
@@ -1104,6 +1049,42 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             }
             assertQuery("SELECT count() FROM d").noLeakCheck().noRandomAccess().expectSize().returns("count\n2000\n");
         });
+    }
+
+    private void assertTableFileFailure(String sql, TableFilesFacade ff, String table, boolean isMmap) throws Exception {
+        final String label = sql + ", " + table + (isMmap ? ", mmap" : ", open");
+        final String expected = ordinary(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(label, join);
+            for (int run = 0; run < 2; run++) {
+                // The readers open the partitions anew, through the failing facade.
+                engine.releaseAllReaders();
+                ff.arm();
+                final RecordCursor cursor = factory.getCursor(sqlExecutionContext);
+                try {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected the table's files to fail: " + label);
+                } catch (CairoException e) {
+                    if (isMmap) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                    } else {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                        TestUtils.assertContains(e.getFlyweightMessage(), table);
+                    }
+                    // The failure released everything before the caller closes the cursor.
+                    assertReleased(join);
+                } finally {
+                    ff.disarm();
+                    cursor.close();
+                }
+                Assert.assertTrue(label, ff.getFailures() > 0);
+                assertReleased(join);
+                Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+            }
+        }
     }
 
     private boolean isFitting(RecordCursorFactory factory, AsyncHashJoinRecordCursorFactory join, long limit, String expected) throws SqlException {
