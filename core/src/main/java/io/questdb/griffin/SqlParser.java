@@ -1017,23 +1017,6 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
-    // whether the declarations give a value to one of the variables
-    private static boolean isAnyDeclared(
-            @NotNull LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
-            @NotNull LowerCaseCharSequenceHashSet variableNames
-    ) {
-        if (variableNames.size() == 0) {
-            return false;
-        }
-        final ObjList<CharSequence> declaredNames = decls.keys();
-        for (int i = 0, n = declaredNames.size(); i < n; i++) {
-            if (variableNames.contains(declaredNames.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -2699,13 +2682,17 @@ public class SqlParser {
     }
 
     // Flags the reads of the views the parser is expanding, see flagViewReads(), when the declarations in effect where
-    // one of them is read give a value to one of the variables, which the innermost of them declares OVERRIDABLE.
+    // one of them is read give a value to one of the variables, which the innermost of them declares OVERRIDABLE. A
+    // view declares few variables, while the declarations in effect where it is read hold those of the statement and of
+    // every view around the read, so this looks each variable up in the declarations, rather than each declaration up
+    // in the variables.
     private void flagOverridableVariablesSet(LowerCaseCharSequenceHashSet variableNames) {
         if (variableNames.size() == 0) {
             return;
         }
-        for (int i = viewReadFrameLo, n = viewReadDecls.size(); i < n; i++) {
-            if (isAnyDeclared(viewReadDecls.getQuick(i), variableNames)) {
+        for (int i = 0, n = variableNames.getKeyCount(); i < n; i++) {
+            final CharSequence variableName = variableNames.getKey(i);
+            if (variableName != null && isDeclaredWhereViewIsRead(variableName)) {
                 flagViewReads();
                 return;
             }
@@ -2802,6 +2789,16 @@ public class SqlParser {
                 return true;
             }
             throw SqlException.$(lexer.lastTokenPosition(), "'row' expected");
+        }
+        return false;
+    }
+
+    // whether the declarations where one of the views the parser is expanding is read give the variable a value
+    private boolean isDeclaredWhereViewIsRead(CharSequence variableName) {
+        for (int i = viewReadFrameLo, n = viewReadDecls.size(); i < n; i++) {
+            if (viewReadDecls.getQuick(i).contains(variableName)) {
+                return true;
+            }
         }
         return false;
     }
