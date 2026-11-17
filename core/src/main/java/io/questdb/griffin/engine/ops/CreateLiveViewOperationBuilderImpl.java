@@ -54,6 +54,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
     private int partitionBy = Numbers.INT_NULL;
     private IQueryModel selectModel;
     private String selectSql;
+    private int selectSqlPosition;
     // The START FROM mode the user asked for. The parser always sets one - the clause is
     // mandatory - so START_FROM_UNSET only survives a builder that was never parsed into.
     private byte startFromKind = LiveViewDefinition.START_FROM_UNSET;
@@ -77,6 +78,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
                 baseTableName,
                 baseTableNamePosition,
                 selectSql,
+                selectSqlPosition,
                 Chars.toString(sqlText),
                 flushEveryInterval,
                 flushEveryIntervalUnit,
@@ -106,6 +108,7 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         selectColumnPositions.clear();
         selectModel = null;
         selectSql = null;
+        selectSqlPosition = 0;
         startFromKind = LiveViewDefinition.START_FROM_UNSET;
         startFromTimestamp = null;
         startFromTimestampPosition = 0;
@@ -163,8 +166,9 @@ public class CreateLiveViewOperationBuilderImpl implements CreateLiveViewOperati
         this.selectModel = selectModel;
     }
 
-    public void setSelectSql(String selectSql) {
+    public void setSelectSql(String selectSql, int selectSqlPosition) {
         this.selectSql = selectSql;
+        this.selectSqlPosition = selectSqlPosition;
     }
 
     public void setStartFromBeginning() {

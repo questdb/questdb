@@ -250,17 +250,16 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
                         {"WHERE visible_col < (SELECT count() FROM (SHOW TABLES))", "SHOW TABLES", "catalogue statement cannot be used in live view without SYSTEM ADMIN: SHOW TABLES"}
                 };
                 for (String[] filter : filters) {
-                    final String selectSql = select + filter[0];
-                    // CREATE LIVE VIEW compiles the SELECT on its own, so the position is relative to it
+                    final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select + filter[0];
                     assertExceptionNoLeakCheck(
-                            "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + selectSql,
-                            selectSql.indexOf(filter[1]),
+                            createSql,
+                            createSql.indexOf(filter[1]),
                             filter[2],
                             nonAdmin
                     );
                     Assert.assertNull(filter[0], engine.getTableTokenIfExists("lv"));
 
-                    execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + selectSql);
+                    execute(createSql);
                     drainWalAndViewQueues();
                     Assert.assertNotNull(filter[0], engine.getTableTokenIfExists("lv"));
                     execute("DROP LIVE VIEW lv");

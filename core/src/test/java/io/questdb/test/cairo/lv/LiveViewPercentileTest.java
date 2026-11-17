@@ -264,24 +264,24 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
         // itself when CREATE compiles the SELECT.
         assertMemoryLeak(() -> {
             createBaseTable();
-            assertRejectedAtSelectToken(
+            assertRejectedAtStatementToken(
                     "SELECT ts, v, percentile_disc(v, 0.5) OVER w p FROM base "
                             + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')",
                     "percentile_disc",
                     "percentile_disc window function only supports whole partition frames"
             );
-            assertRejectedAtSelectToken(
+            assertRejectedAtStatementToken(
                     "SELECT ts, v, percentile_cont(v, ARRAY[0.25, 0.75]) OVER w p FROM base "
                             + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))",
                     "percentile_cont",
                     "percentile_cont window function only supports whole partition frames"
             );
-            assertRejectedAtSelectToken(
+            assertRejectedAtStatementToken(
                     "SELECT ts, v, percentile_cont(v, 0.5) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) p FROM base",
                     "percentile_cont",
                     "percentile_cont window function only supports whole partition frames"
             );
-            assertRejectedAtSelectToken(
+            assertRejectedAtStatementToken(
                     "SELECT ts, v, percentile_disc(v, ARRAY[0.25, 0.75]) OVER (ORDER BY ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) p FROM base",
                     "percentile_disc",
                     "percentile_disc window function only supports whole partition frames"
@@ -654,14 +654,8 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
         );
     }
 
-    // CairoEngine.createLiveView() compiles the SELECT text on its own, so a reject raised while compiling it
-    // carries a position into the SELECT rather than into the whole statement.
-    private static void assertRejectedAtSelectToken(String selectSql, String token, String message) throws Exception {
-        assertExceptionNoLeakCheck(CREATE_LIVE_VIEW + selectSql, selectSql.indexOf(token), message);
-        assertLiveViewNotCreated();
-    }
-
-    // The parser and the factory validation report positions into the whole CREATE statement.
+    // The parser, the compile of the SELECT and the factory validation all report positions into the whole
+    // CREATE statement.
     private static void assertRejectedAtStatementToken(String selectSql, String token, String message) throws Exception {
         final String createSql = CREATE_LIVE_VIEW + selectSql;
         assertExceptionNoLeakCheck(createSql, createSql.indexOf(token), message);

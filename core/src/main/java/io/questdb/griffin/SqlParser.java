@@ -2274,7 +2274,7 @@ public class SqlParser {
         while (selectTextEnd > selectTextStart && isLexerWhitespace(content.charAt(selectTextEnd - 1))) {
             selectTextEnd--;
         }
-        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd));
+        builder.setSelectSql(Chars.toString(content, selectTextStart, selectTextEnd), selectTextStart);
         builder.setSelectModel(queryModel);
 
         // extract base table name from query model

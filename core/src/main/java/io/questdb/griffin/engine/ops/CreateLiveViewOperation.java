@@ -51,6 +51,9 @@ public class CreateLiveViewOperation implements Operation {
     // statement executes it again).
     private final IntList selectColumnPositions;
     private final String selectSql;
+    // Where selectSql starts in the text the CREATE statement was parsed from. CairoEngine.createLiveView
+    // compiles selectSql on its own and adds this to the positions of the errors that compile raises.
+    private final int selectSqlPosition;
     private final String sqlText;
     private final byte startFromKind;
     // Unquoted START FROM '<timestamp>' text, null for NOW and BEGINNING. Parsed against the
@@ -67,6 +70,7 @@ public class CreateLiveViewOperation implements Operation {
             String baseTableName,
             int baseTableNamePosition,
             String selectSql,
+            int selectSqlPosition,
             @NotNull String sqlText,
             long flushEveryInterval,
             char flushEveryIntervalUnit,
@@ -85,6 +89,7 @@ public class CreateLiveViewOperation implements Operation {
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
         this.selectSql = selectSql;
+        this.selectSqlPosition = selectSqlPosition;
         this.sqlText = sqlText;
         this.flushEveryInterval = flushEveryInterval;
         this.flushEveryIntervalUnit = flushEveryIntervalUnit;
@@ -160,6 +165,10 @@ public class CreateLiveViewOperation implements Operation {
 
     public String getSelectSql() {
         return selectSql;
+    }
+
+    public int getSelectSqlPosition() {
+        return selectSqlPosition;
     }
 
     public String getSqlText() {

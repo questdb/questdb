@@ -33,6 +33,7 @@ import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
 
 import java.sql.PreparedStatement;
+import java.sql.Statement;
 
 /**
  * Live views over the PostgreSQL wire protocol.
@@ -77,6 +78,68 @@ public class PGLiveViewTest extends BasePGTest {
                         + "2026-04-01T01:00:00.000000Z\t2\t2\n");
             }
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testCreateWithCompileErrorInScriptReportsScriptPosition() throws Exception {
+        // In simple mode the server parses the whole script, so an error position is an offset into the
+        // script, one-based on the wire. A CREATE LIVE VIEW after another statement reports an error from
+        // compiling its SELECT there too.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String script = "SELECT 1; CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS SELECT ts, sym, rnd_double() + "
+                    + "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING) s FROM base";
+            try (Statement statement = connection.createStatement()) {
+                try {
+                    statement.execute(script);
+                    Assert.fail("the script must refuse the non-deterministic function");
+                } catch (PSQLException e) {
+                    final ServerErrorMessage serverError = e.getServerErrorMessage();
+                    Assert.assertNotNull(serverError);
+                    Assert.assertEquals("non-deterministic function cannot be used in live view: rnd_double", serverError.getMessage());
+                    Assert.assertEquals(script.indexOf("rnd_double") + 1, serverError.getPosition());
+                }
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+        });
+    }
+
+    @Test
+    public void testCreateWithCompileErrorReportsStatementPositionOnEveryExecution() throws Exception {
+        // A prepared CREATE LIVE VIEW whose SELECT fails to compile, executed twice, for each kind of error
+        // the compile raises: an SqlException, a CairoException and an ImplicitCastException. Both
+        // executions report the offending token's position in the statement, which the server sends
+        // one-based, and neither leaves a view behind.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // {projection item, the token it fails at, the message}
+            final String[][] cases = {
+                    {"rnd_double() r", "rnd_double", "non-deterministic function cannot be used in live view: rnd_double"},
+                    {"1.00m / 0.00m q", "/", "'/' operation failed: Division by zero"},
+                    {"12345::DECIMAL(4,2) d", "12345", "inconvertible value: 12345 [INT -> DECIMAL(4,2)]"}
+            };
+            for (String[] c : cases) {
+                final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, " + c[0] + ", "
+                        + "count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
+                Assert.assertEquals(sql.indexOf(c[1]), sql.lastIndexOf(c[1]));
+                try (PreparedStatement create = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < 2; i++) {
+                        try {
+                            create.execute();
+                            Assert.fail("execution " + i + " must refuse the SELECT: " + sql);
+                        } catch (PSQLException e) {
+                            final ServerErrorMessage serverError = e.getServerErrorMessage();
+                            Assert.assertNotNull(serverError);
+                            Assert.assertEquals(c[2], serverError.getMessage());
+                            Assert.assertEquals(sql, sql.indexOf(c[1]) + 1, serverError.getPosition());
+                        }
+                        Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                    }
+                }
+            }
         });
     }
 

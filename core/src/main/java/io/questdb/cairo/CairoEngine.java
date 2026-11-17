@@ -1693,6 +1693,21 @@ public class CairoEngine implements Closeable, WriterSource {
             CompiledQuery cq;
             try {
                 cq = compiler.compile(op.getSelectSql(), executionContext);
+            } catch (SqlException e) {
+                // compile() reads the stored SELECT text alone: map its positions into the CREATE statement
+                e.setPosition(e.getPosition() + op.getSelectSqlPosition());
+                throw e;
+            } catch (ImplicitCastException e) {
+                throw e.position(e.getPosition() + op.getSelectSqlPosition());
+            } catch (CairoException e) {
+                // Only CairoException itself is created per throw and positioned in the SELECT text. Its
+                // subclasses carry no position of the text, and some are shared: PoolClosedException.INSTANCE
+                // and the fiber-local EntryLockedException / LimitOverflowException flyweights never reset
+                // their position, so writing one would leak into later throws.
+                if (e.getClass() == CairoException.class) {
+                    e.position(e.getPosition() + op.getSelectSqlPosition());
+                }
+                throw e;
             } finally {
                 executionContext.setLiveViewCompile(false);
                 executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
