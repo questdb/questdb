@@ -2156,6 +2156,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlCoveringMultiKeyScanChoiceMaxSelectivity() {
+        return 0.0075;
+    }
+
+    @Override
     public int getSqlParallelIndexGroupByFrameRows() {
         return Map.BATCH_ROW_INDEX_MASK + 1;
     }

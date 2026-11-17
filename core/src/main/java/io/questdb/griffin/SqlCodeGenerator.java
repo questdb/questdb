@@ -657,7 +657,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // an input of an ASOF, LT or SPLICE JOIN, while it is generated, see isAsOfInput()
     private IQueryModel asOfInputModel;
     // {selected, scanned} of the last covering-index selection estimate, see estimateSelection()
-    private final long[] coveringEstimate = new long[2];
+    private final long[] coveringEstimate = new long[3];
     // the state of the models a generation consumes, for the sites that generate a model, or
     // compile an expression, more than once, see QueryModelSnapshots
     private final QueryModelSnapshots modelSnapshots = new QueryModelSnapshots();
@@ -21947,11 +21947,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
         try {
             // the one estimate of this compilation, bounded, see estimateSelection()
-            // a GROUP BY's input is aggregated as the covered values are decoded, which pays off up to
-            // a larger share of the table than rows the query returns
-            final double maxSelectivity = isGroupByInput(model)
-                    ? configuration.getSqlCoveringGroupByScanChoiceMaxSelectivity()
-                    : configuration.getSqlCoveringScanChoiceMaxSelectivity();
             if (covering == null) {
                 return coveringPlan;
             }
@@ -21968,9 +21963,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && coveringEstimate[0] <= ASOF_INPUT_COVERING_MAX_SELECTIVITY * coveringEstimate[1]) {
                     return coveringPlan;
                 }
-            } else if (!covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
-                    || coveringEstimate[0] <= maxSelectivity * coveringEstimate[1]) {
-                return coveringPlan;
+            } else {
+                if (!covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)) {
+                    return coveringPlan;
+                }
+                // A GROUP BY's input is aggregated as the covered values are decoded, which pays off
+                // up to a larger share of the table than rows the query returns. Returned rows of
+                // more than one key are merged back into table order, about ten times a single key's
+                // cost per row, so they pay off only up to a much smaller share.
+                final double maxSelectivity = isGroupByInput(model)
+                        ? configuration.getSqlCoveringGroupByScanChoiceMaxSelectivity()
+                        : coveringEstimate[2] > 1
+                        ? configuration.getSqlCoveringMultiKeyScanChoiceMaxSelectivity()
+                        : configuration.getSqlCoveringScanChoiceMaxSelectivity();
+                if (coveringEstimate[0] <= maxSelectivity * coveringEstimate[1]) {
+                    return coveringPlan;
+                }
             }
         } catch (Throwable th) {
             Misc.free(coveringPlan);
@@ -21979,6 +21987,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         LOG.debug().$("covering or scan [table=").$(reader.getTableToken())
                 .$(", selected=").$(coveringEstimate[0])
                 .$(", scanned=").$(coveringEstimate[1])
+                .$(", keys=").$(coveringEstimate[2])
                 .$(", plan=scan")
                 .I$();
         Misc.free(coveringPlan);

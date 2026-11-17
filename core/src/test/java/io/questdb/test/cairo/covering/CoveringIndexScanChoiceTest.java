@@ -169,6 +169,38 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testMultiKeyReturnedRowsHaveTheirOwnThreshold() throws Exception {
+        // k5 selects ~0.6% and R ~0.4%. One key keeps the covering plan under the 15% threshold;
+        // the two together, ~1%, are past the multi-key one (0.75%): their rows are merged back
+        // into table order, about ten times a single key's cost per row, so the scan is faster.
+        // A GROUP BY of the same keys has its own threshold and keeps the covering plan
+        assertMemoryLeak(() -> {
+            createTable();
+            final String one = "select ts, v, w from t where sym = 'k5'";
+            assertPlanContains(one, "CoveringIndex");
+            assertSameResult(one, one.replace("select ", "select /*+ no_index */ "));
+            final String two = "select ts, sym, v, w from t where sym in ('R', 'k5')";
+            assertPlanLacks(two, "CoveringIndex");
+            assertSameResult(two, two.replace("select ", "select /*+ no_index */ "));
+            final String groupBy = "select sym, avg(v), count() from t where sym in ('R', 'k5') order by sym";
+            assertPlanContains(groupBy, "CoveringIndex");
+            assertSameResult(groupBy, groupBy.replace("select ", "select /*+ no_index */ "));
+        });
+    }
+
+    @Test
+    public void testMultiKeyThresholdIsConfigurable() throws Exception {
+        // under a 2% multi-key threshold the two keys' ~1% keep the covering plan
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_MULTI_KEY_SCAN_CHOICE_MAX_SELECTIVITY, "0.02");
+        assertMemoryLeak(() -> {
+            createTable();
+            final String two = "select ts, sym, v, w from t where sym in ('R', 'k5')";
+            assertPlanContains(two, "CoveringIndex");
+            assertSameResult(two, two.replace("select ", "select /*+ no_index */ "));
+        });
+    }
+
+    @Test
     public void testManyKeysOverANarrowIntervalTakeTheScan() throws Exception {
         // a 10-hour interval scans ~167K rows: 30 keys would cost a seek each for ~5.6K rows, so the interval is
         // read instead (COVERING_MIN_ROWS_PER_KEY_SEEK); one key over the same interval keeps the covering plan,
