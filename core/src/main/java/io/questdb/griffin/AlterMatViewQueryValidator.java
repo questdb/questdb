@@ -83,38 +83,6 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
     private RecordMetadata viewMetadata;
     private TableToken viewToken;
 
-    /**
-     * @param baseTableToken the base table of the new definition: the table WITH BASE names, or the view's current one
-     */
-    AlterMatViewQueryValidator of(
-            TableToken viewToken,
-            MatViewDefinition viewDefinition,
-            RecordMetadata viewMetadata,
-            SqlParser.AlterMatViewQuery query,
-            TableToken baseTableToken,
-            BytecodeAssembler asm,
-            CairoEngine engine
-    ) {
-        this.viewToken = viewToken;
-        this.viewDefinition = viewDefinition;
-        this.viewMetadata = viewMetadata;
-        this.query = query;
-        this.baseTableToken = baseTableToken;
-        this.asm = asm;
-        this.engine = engine;
-        this.columnMappingSummary = null;
-        this.isTimestampFromBase = false;
-        return this;
-    }
-
-    /**
-     * Returns what the mapping of the checked query leaves out, see {@link MatViewColumnMapping#summarize}.
-     */
-    @Nullable
-    MatViewColumnMapping.Summary getColumnMappingSummary() {
-        return columnMappingSummary;
-    }
-
     @Override
     public void validateMetadata(RecordMetadata queryMetadata, boolean hasGeneratedColumnNames) throws SqlException {
         final int viewTimestampIndex = viewMetadata.getTimestampIndex();
@@ -252,5 +220,37 @@ final class AlterMatViewQueryValidator implements MatViewQueryValidator {
                 }
             }
         }
+    }
+
+    /**
+     * Returns what the mapping of the checked query leaves out, see {@link MatViewColumnMapping#summarize}.
+     */
+    @Nullable
+    MatViewColumnMapping.Summary getColumnMappingSummary() {
+        return columnMappingSummary;
+    }
+
+    /**
+     * @param baseTableToken the base table of the new definition: the table WITH BASE names, or the view's current one
+     */
+    AlterMatViewQueryValidator of(
+            TableToken viewToken,
+            MatViewDefinition viewDefinition,
+            RecordMetadata viewMetadata,
+            SqlParser.AlterMatViewQuery query,
+            TableToken baseTableToken,
+            BytecodeAssembler asm,
+            CairoEngine engine
+    ) {
+        this.viewToken = viewToken;
+        this.viewDefinition = viewDefinition;
+        this.viewMetadata = viewMetadata;
+        this.query = query;
+        this.baseTableToken = baseTableToken;
+        this.asm = asm;
+        this.engine = engine;
+        this.columnMappingSummary = null;
+        this.isTimestampFromBase = false;
+        return this;
     }
 }

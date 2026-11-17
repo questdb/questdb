@@ -1402,6 +1402,31 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         }
     }
 
+    // Reads the base table id from the view's _mv.s state file, the table directory path given. A state file that is
+    // missing or cannot be read gives an unknown id, which skips the base identity check: only a stale id is harmful.
+    private int readMatViewBaseTableId(Path tablePath, TableToken viewToken) {
+        final int tablePathLen = tablePath.size();
+        try {
+            final LPSZ statePath = tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+            if (!config.getFilesFacade().exists(statePath)) {
+                return MatViewState.BASE_TABLE_ID_UNKNOWN;
+            }
+            try {
+                matViewStateBlockReader.of(statePath);
+                return MatViewStateReader.readBaseTableId(matViewStateBlockReader);
+            } finally {
+                matViewStateBlockReader.close();
+            }
+        } catch (Throwable th) {
+            LOG.error().$("could not read base table id of materialized view, keeping it unknown [view=").$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            return MatViewState.BASE_TABLE_ID_UNKNOWN;
+        } finally {
+            tablePath.trimTo(tablePathLen);
+        }
+    }
+
     // A FULL refresh of an invalid view waits until the view's own WAL is applied, so that it rebuilds under the
     // latest definition, and parks its request on the view's pending marker meanwhile. Once this job has applied the
     // view's WAL, the store redelivers it, as RESUME WAL does. The WAL apply has already committed, so a task the store
@@ -1464,31 +1489,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     backlogLostReason,
                     stateWriter
             );
-        }
-    }
-
-    // Reads the base table id from the view's _mv.s state file, the table directory path given. A state file that is
-    // missing or cannot be read gives an unknown id, which skips the base identity check: only a stale id is harmful.
-    private int readMatViewBaseTableId(Path tablePath, TableToken viewToken) {
-        final int tablePathLen = tablePath.size();
-        try {
-            final LPSZ statePath = tablePath.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
-            if (!config.getFilesFacade().exists(statePath)) {
-                return MatViewState.BASE_TABLE_ID_UNKNOWN;
-            }
-            try {
-                matViewStateBlockReader.of(statePath);
-                return MatViewStateReader.readBaseTableId(matViewStateBlockReader);
-            } finally {
-                matViewStateBlockReader.close();
-            }
-        } catch (Throwable th) {
-            LOG.error().$("could not read base table id of materialized view, keeping it unknown [view=").$(viewToken)
-                    .$(", ex=").$(th)
-                    .I$();
-            return MatViewState.BASE_TABLE_ID_UNKNOWN;
-        } finally {
-            tablePath.trimTo(tablePathLen);
         }
     }
 

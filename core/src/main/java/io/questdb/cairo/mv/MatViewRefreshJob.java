@@ -296,6 +296,78 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return null;
     }
 
+    /**
+     * Verifies that the recompiled view query still projects the view's schema, for a view whose SQL relies on
+     * generated column names. Its record-to-row copier maps cursor columns onto view columns by position, so a
+     * query that quietly changes shape would write each value into the neighbouring column. Refusing the refresh
+     * here leaves the view invalid, which is what an operator can see and act on; a copy by position produces a
+     * view that reports itself valid and holds garbage. A view whose SQL names its columns maps them by name
+     * instead, see {@link MatViewColumnMapping}.
+     * <p>
+     * The column count must always match. Column names are compared only when the query has a wildcard in
+     * its top-level select list, for example {@code SELECT * FROM v} over a regular view that ALTER VIEW can
+     * reorder: the expansion then decides which column lands at each position. Without a wildcard the stored
+     * query text fixes what every column computes; CREATE stores a passthrough view's query with its wildcard
+     * expanded for that reason.
+     * <p>
+     * The names can also differ in how the alias rules in effect name columns. QuestDB 8.x and
+     * {@code cairo.sql.column.alias.expression.enabled=false} name {@code avg(price)} "avg" and a repeated
+     * {@code sym} "sym1", the expression rules name them "avg(price)" and "sym_2", and only the expression
+     * rules cut a long column reference to {@code cairo.sql.column.alias.generated.max.size}. A wildcard can
+     * carry such names, as in {@code SELECT * FROM (SELECT ts, avg(price) FROM t SAMPLE BY 1d)}. So a column
+     * fails the check only when its name belongs to a view column at a different position, which marks a
+     * moved column. A name that matches no view column is copied by position: an alias the rules now
+     * generate differently, or a column the source view renamed or replaced in place. A name can't tell the
+     * latter from a redefinition of the column under its old name, which the check accepts as well. A
+     * generated name that collides with another view column's name reads as a moved column. Comparing names
+     * exactly would invalidate healthy views after an upgrade or a configuration change, and neither
+     * REFRESH ... FULL nor any ALTER could repair them.
+     * <p>
+     * Column types are left to the copier, which converts between them.
+     *
+     * @throws CairoException if the query no longer matches the view schema
+     */
+    public static void validateViewSchema(
+            TableToken viewToken,
+            RecordMetadata queryMetadata,
+            RecordMetadata viewMetadata,
+            boolean hasTopLevelProjectionWildcard
+    ) {
+        final int queryColumnCount = queryMetadata.getColumnCount();
+        final int viewColumnCount = viewMetadata.getColumnCount();
+        if (queryColumnCount != viewColumnCount) {
+            throw CairoException.nonCritical()
+                    .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
+                    .put(", queryColumnCount=").put(queryColumnCount)
+                    .put(", viewColumnCount=").put(viewColumnCount)
+                    .put(']');
+        }
+        if (!hasTopLevelProjectionWildcard) {
+            return;
+        }
+        for (int i = 0; i < viewColumnCount; i++) {
+            final CharSequence queryColumnName = queryMetadata.getColumnName(i);
+            final CharSequence viewColumnName = viewMetadata.getColumnName(i);
+            if (Chars.equalsIgnoreCase(queryColumnName, viewColumnName)) {
+                continue;
+            }
+            if (viewMetadata.getColumnIndexQuiet(queryColumnName) > -1) {
+                throw CairoException.nonCritical()
+                        .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
+                        .put(", columnIndex=").put(i)
+                        .put(", queryColumn=").put(queryColumnName)
+                        .put(", viewColumn=").put(viewColumnName)
+                        .put(']');
+            }
+            LOG.info().$("materialized view column name differs from query column name, copying by position [view=")
+                    .$(viewToken)
+                    .$(", columnIndex=").$(i)
+                    .$(", queryColumn=").$safe(queryColumnName)
+                    .$(", viewColumn=").$safe(viewColumnName)
+                    .I$();
+        }
+    }
+
     @Override
     public Job cloneInstance() {
         final FiberRuntime runtime = fiberRuntime;
@@ -567,6 +639,17 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return write / 2;
     }
 
+    private static void checkTimestampType(RecordCursorFactory factory, WalWriter walWriter) {
+        final int timestampType = factory.getMetadata().getTimestampType();
+        if (timestampType != walWriter.getMetadata().getTimestampType()) {
+            throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
+                    .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
+                    .put(", query=")
+                    .put(ColumnType.nameOf(timestampType))
+                    .put(']');
+        }
+    }
+
     /**
      * Estimates how many buckets are needed to contain a target number of rows.
      */
@@ -682,52 +765,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    /**
-     * Intersects {@code workingIntervals} (sorted, disjoint, inclusive [lo, hi] pairs that lie within
-     * {@code [minTs, maxTs]}) with the union of the base reader's partition ranges, in place. A partition
-     * covers the half-open range {@code [partitionTs, partitionCeil)}, so its inclusive range is
-     * {@code [partitionTs, partitionCeil - 1]}. The reader lists partitions in ascending timestamp order,
-     * so the ranges come out sorted: the parts of a split partition, and contiguous partitions, merge into
-     * one range, and a missing partition leaves a gap between ranges. On return, {@code workingIntervals}
-     * holds only the parts that overlap an existing base partition, and is empty when none does.
-     */
-    private void clipToPartitionRanges(
-            @NotNull TableReader baseTableReader,
-            @NotNull TimestampDriver.TimestampCeilMethod partitionCeilMethod,
-            @NotNull LongList workingIntervals,
-            long minTs,
-            long maxTs
-    ) {
-        partitionIntervals.clear();
-        final int partitionCount = baseTableReader.getPartitionCount();
-        // The partitions before the one that holds minTs end before minTs, and those that start after maxTs
-        // begin after it, so neither can overlap the working intervals and the scan skips them. An incremental
-        // refresh then reads one or two partitions, however many the base has.
-        for (int i = Math.max(0, baseTableReader.getPartitionIndexByTimestamp(minTs)); i < partitionCount; i++) {
-            final long partitionTs = baseTableReader.getPartitionTimestampByIndex(i);
-            if (partitionTs > maxTs) {
-                break;
-            }
-            final long partitionHi = partitionCeilMethod.ceil(partitionTs) - 1;
-            final int size = partitionIntervals.size();
-            // Merge a partition that overlaps the previous range (the next part of a split partition) or
-            // starts right after it (the next partition, with no gap), so that a dense base yields one
-            // range. The previous range ends at a partition ceiling minus one, so the + 1 cannot overflow.
-            if (size > 0 && partitionTs <= partitionIntervals.getQuick(size - 1) + 1) {
-                if (partitionHi > partitionIntervals.getQuick(size - 1)) {
-                    partitionIntervals.setQuick(size - 1, partitionHi);
-                }
-            } else {
-                partitionIntervals.add(partitionTs, partitionHi);
-            }
-        }
-        // Without a partition in range, partitionIntervals is empty and the intersection empties
-        // workingIntervals, so nothing is left to refresh.
-        final int dividerIndex = workingIntervals.size();
-        workingIntervals.addAll(partitionIntervals);
-        IntervalUtils.intersectInPlace(workingIntervals, dividerIndex);
-    }
-
     // A refresh that fixed its base reader, or is about to compile the view's SQL, stops without writing when an
     // invalidation is pending. The bare-name guard publishes it before the base column change it guards against
     // applies, so a reader that sees the change, and the compile that reads the base through it, would read a bare
@@ -745,6 +782,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
+    // Whether a base table range that an ATTACH PARTITION or an UPDATE changed goes into the view's cache: a valid
+    // view's, unless an invalidation is pending, and an invalid view's while its backlog is tracked.
+    private static boolean isRefreshRangeAccepted(MatViewState viewState) {
+        return viewState.isInvalid() ? viewState.hasTrackedBacklog() : !viewState.hasPendingInvalidationReason();
+    }
+
     // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
     // view when cairo.wal.apply.suspended.write.denied is on. It backstops the up-front isViewWriteSuspended
     // gate: a view can be suspended in the narrow window between that gate and the getWalWriter acquire, in
@@ -753,6 +796,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume.
     private static boolean isTableSuspendedError(Throwable th) {
         return th instanceof CairoException ce && ce.isTableSuspended();
+    }
+
+    // insertAsSelect() ran the refresh to its end. A user RANGE that succeeds clears the error of the one that failed
+    // before it.
+    private static void refreshSucceeded(MatViewState viewState, int failureMode) {
+        if (failureMode == FAILURE_MODE_USER_RANGE) {
+            viewState.rangeRefreshSucceeded();
+        }
     }
 
     // A view-scoped incremental refresh task that finishes without refreshing still increments the view's
@@ -1126,6 +1177,52 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         } finally {
             finalizeAndUnlock(viewToken, viewState, false);
         }
+    }
+
+    /**
+     * Intersects {@code workingIntervals} (sorted, disjoint, inclusive [lo, hi] pairs that lie within
+     * {@code [minTs, maxTs]}) with the union of the base reader's partition ranges, in place. A partition
+     * covers the half-open range {@code [partitionTs, partitionCeil)}, so its inclusive range is
+     * {@code [partitionTs, partitionCeil - 1]}. The reader lists partitions in ascending timestamp order,
+     * so the ranges come out sorted: the parts of a split partition, and contiguous partitions, merge into
+     * one range, and a missing partition leaves a gap between ranges. On return, {@code workingIntervals}
+     * holds only the parts that overlap an existing base partition, and is empty when none does.
+     */
+    private void clipToPartitionRanges(
+            @NotNull TableReader baseTableReader,
+            @NotNull TimestampDriver.TimestampCeilMethod partitionCeilMethod,
+            @NotNull LongList workingIntervals,
+            long minTs,
+            long maxTs
+    ) {
+        partitionIntervals.clear();
+        final int partitionCount = baseTableReader.getPartitionCount();
+        // The partitions before the one that holds minTs end before minTs, and those that start after maxTs
+        // begin after it, so neither can overlap the working intervals and the scan skips them. An incremental
+        // refresh then reads one or two partitions, however many the base has.
+        for (int i = Math.max(0, baseTableReader.getPartitionIndexByTimestamp(minTs)); i < partitionCount; i++) {
+            final long partitionTs = baseTableReader.getPartitionTimestampByIndex(i);
+            if (partitionTs > maxTs) {
+                break;
+            }
+            final long partitionHi = partitionCeilMethod.ceil(partitionTs) - 1;
+            final int size = partitionIntervals.size();
+            // Merge a partition that overlaps the previous range (the next part of a split partition) or
+            // starts right after it (the next partition, with no gap), so that a dense base yields one
+            // range. The previous range ends at a partition ceiling minus one, so the + 1 cannot overflow.
+            if (size > 0 && partitionTs <= partitionIntervals.getQuick(size - 1) + 1) {
+                if (partitionHi > partitionIntervals.getQuick(size - 1)) {
+                    partitionIntervals.setQuick(size - 1, partitionHi);
+                }
+            } else {
+                partitionIntervals.add(partitionTs, partitionHi);
+            }
+        }
+        // Without a partition in range, partitionIntervals is empty and the intersection empties
+        // workingIntervals, so nothing is left to refresh.
+        final int dividerIndex = workingIntervals.size();
+        workingIntervals.addAll(partitionIntervals);
+        IntervalUtils.intersectInPlace(workingIntervals, dividerIndex);
     }
 
     private void commitMatView(
@@ -2190,17 +2287,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    private static void checkTimestampType(RecordCursorFactory factory, WalWriter walWriter) {
-        final int timestampType = factory.getMetadata().getTimestampType();
-        if (timestampType != walWriter.getMetadata().getTimestampType()) {
-            throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
-                    .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
-                    .put(", query=")
-                    .put(ColumnType.nameOf(timestampType))
-                    .put(']');
-        }
-    }
-
     private void deferRefreshSameKind(TableToken viewToken, MatViewRefreshTask refreshTask) {
         refreshQueueDeferred = true;
         if (refreshTask == null || refreshTask.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
@@ -3136,34 +3222,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 && (!isRefreshDueRequired || viewState.isRefreshDue(microsecondClock.getTicks()));
     }
 
-    /**
-     * Returns the inclusive high boundary of the complete periods of a period view at {@code now}, in the base table's
-     * timestamp units: the end of the last period that its delay has passed, minus one. The caller holds the view
-     * latch, which guards the view definition's period sampler.
-     */
-    static long getCompletePeriodHi(@NotNull MatViewDefinition viewDefinition, long now) throws SqlException {
-        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
-        TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
-        if (periodSampler == null) {
-            periodSampler = TimestampSamplerFactory.getInstance(
-                    MicrosTimestampDriver.INSTANCE,
-                    viewDefinition.getPeriodLength(),
-                    viewDefinition.getPeriodLengthUnit(),
-                    -1
-            );
-            viewDefinition.setPeriodSampler(periodSampler);
-        }
-        periodSampler.setStart(viewDefinition.getTimerStartUs());
-
-        // A period is complete once its delay has passed since its end, as the period timer has it, so the
-        // last complete period ends where the period that holds now - delay starts. Period hi is exclusive,
-        // but maxTs is inclusive, so we align them.
-        final long delayUs = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
-        return driver.fromMicros(
-                MatViewPeriods.periodStart(periodSampler, viewDefinition.getTimerTzRulesUs(), driver.toMicros(now) - delayUs)
-        ) - 1;
-    }
-
     // True while the view's own WAL has transactions the WAL apply job has not applied yet.
     private boolean hasUnappliedViewWal(TableToken viewToken) {
         final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
@@ -3271,12 +3329,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // cairo.mat.view.max.refresh.intervals intervals, the newest ones merge into one.
     private void mergeIntoCachedIntervals(MatViewState viewState, LongList intervals) {
         MatViewBacklog.mergeIntoCachedIntervals(configuration, viewState, intervals);
-    }
-
-    // Whether a base table range that an ATTACH PARTITION or an UPDATE changed goes into the view's cache: a valid
-    // view's, unless an invalidation is pending, and an invalid view's while its backlog is tracked.
-    private static boolean isRefreshRangeAccepted(MatViewState viewState) {
-        return viewState.isInvalid() ? viewState.hasTrackedBacklog() : !viewState.hasPendingInvalidationReason();
     }
 
     private boolean processNotifications() {
@@ -4147,14 +4199,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return false;
     }
 
-    // insertAsSelect() ran the refresh to its end. A user RANGE that succeeds clears the error of the one that failed
-    // before it.
-    private static void refreshSucceeded(MatViewState viewState, int failureMode) {
-        if (failureMode == FAILURE_MODE_USER_RANGE) {
-            viewState.rangeRefreshSucceeded();
-        }
-    }
-
     private void refreshSuccessNoRows(
             MatViewState viewState,
             @Nullable WalWriter walWriter,
@@ -4586,78 +4630,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Verifies that the recompiled view query still projects the view's schema, for a view whose SQL relies on
-     * generated column names. Its record-to-row copier maps cursor columns onto view columns by position, so a
-     * query that quietly changes shape would write each value into the neighbouring column. Refusing the refresh
-     * here leaves the view invalid, which is what an operator can see and act on; a copy by position produces a
-     * view that reports itself valid and holds garbage. A view whose SQL names its columns maps them by name
-     * instead, see {@link MatViewColumnMapping}.
-     * <p>
-     * The column count must always match. Column names are compared only when the query has a wildcard in
-     * its top-level select list, for example {@code SELECT * FROM v} over a regular view that ALTER VIEW can
-     * reorder: the expansion then decides which column lands at each position. Without a wildcard the stored
-     * query text fixes what every column computes; CREATE stores a passthrough view's query with its wildcard
-     * expanded for that reason.
-     * <p>
-     * The names can also differ in how the alias rules in effect name columns. QuestDB 8.x and
-     * {@code cairo.sql.column.alias.expression.enabled=false} name {@code avg(price)} "avg" and a repeated
-     * {@code sym} "sym1", the expression rules name them "avg(price)" and "sym_2", and only the expression
-     * rules cut a long column reference to {@code cairo.sql.column.alias.generated.max.size}. A wildcard can
-     * carry such names, as in {@code SELECT * FROM (SELECT ts, avg(price) FROM t SAMPLE BY 1d)}. So a column
-     * fails the check only when its name belongs to a view column at a different position, which marks a
-     * moved column. A name that matches no view column is copied by position: an alias the rules now
-     * generate differently, or a column the source view renamed or replaced in place. A name can't tell the
-     * latter from a redefinition of the column under its old name, which the check accepts as well. A
-     * generated name that collides with another view column's name reads as a moved column. Comparing names
-     * exactly would invalidate healthy views after an upgrade or a configuration change, and neither
-     * REFRESH ... FULL nor any ALTER could repair them.
-     * <p>
-     * Column types are left to the copier, which converts between them.
-     *
-     * @throws CairoException if the query no longer matches the view schema
-     */
-    public static void validateViewSchema(
-            TableToken viewToken,
-            RecordMetadata queryMetadata,
-            RecordMetadata viewMetadata,
-            boolean hasTopLevelProjectionWildcard
-    ) {
-        final int queryColumnCount = queryMetadata.getColumnCount();
-        final int viewColumnCount = viewMetadata.getColumnCount();
-        if (queryColumnCount != viewColumnCount) {
-            throw CairoException.nonCritical()
-                    .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
-                    .put(", queryColumnCount=").put(queryColumnCount)
-                    .put(", viewColumnCount=").put(viewColumnCount)
-                    .put(']');
-        }
-        if (!hasTopLevelProjectionWildcard) {
-            return;
-        }
-        for (int i = 0; i < viewColumnCount; i++) {
-            final CharSequence queryColumnName = queryMetadata.getColumnName(i);
-            final CharSequence viewColumnName = viewMetadata.getColumnName(i);
-            if (Chars.equalsIgnoreCase(queryColumnName, viewColumnName)) {
-                continue;
-            }
-            if (viewMetadata.getColumnIndexQuiet(queryColumnName) > -1) {
-                throw CairoException.nonCritical()
-                        .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
-                        .put(", columnIndex=").put(i)
-                        .put(", queryColumn=").put(queryColumnName)
-                        .put(", viewColumn=").put(viewColumnName)
-                        .put(']');
-            }
-            LOG.info().$("materialized view column name differs from query column name, copying by position [view=")
-                    .$(viewToken)
-                    .$(", columnIndex=").$(i)
-                    .$(", queryColumn=").$safe(queryColumnName)
-                    .$(", viewColumn=").$safe(viewColumnName)
-                    .I$();
-        }
-    }
-
-    /**
      * The base identity check of every refresh except FULL, and of the tasks that update a view's cached refresh
      * intervals, under the view latch once the caller resolved the base table. A view's refresh position and cached
      * intervals are transaction numbers of one table. When the view's state knows that table's id and the table now
@@ -4733,6 +4705,34 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return null;
         }
         return baseTableToken;
+    }
+
+    /**
+     * Returns the inclusive high boundary of the complete periods of a period view at {@code now}, in the base table's
+     * timestamp units: the end of the last period that its delay has passed, minus one. The caller holds the view
+     * latch, which guards the view definition's period sampler.
+     */
+    static long getCompletePeriodHi(@NotNull MatViewDefinition viewDefinition, long now) throws SqlException {
+        final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
+        TimestampSampler periodSampler = viewDefinition.getPeriodSampler();
+        if (periodSampler == null) {
+            periodSampler = TimestampSamplerFactory.getInstance(
+                    MicrosTimestampDriver.INSTANCE,
+                    viewDefinition.getPeriodLength(),
+                    viewDefinition.getPeriodLengthUnit(),
+                    -1
+            );
+            viewDefinition.setPeriodSampler(periodSampler);
+        }
+        periodSampler.setStart(viewDefinition.getTimerStartUs());
+
+        // A period is complete once its delay has passed since its end, as the period timer has it, so the
+        // last complete period ends where the period that holds now - delay starts. Period hi is exclusive,
+        // but maxTs is inclusive, so we align them.
+        final long delayUs = MicrosTimestampDriver.INSTANCE.from(viewDefinition.getPeriodDelay(), viewDefinition.getPeriodDelayUnit());
+        return driver.fromMicros(
+                MatViewPeriods.periodStart(periodSampler, viewDefinition.getTimerTzRulesUs(), driver.toMicros(now) - delayUs)
+        ) - 1;
     }
 
     private static class FiberRefreshTask extends FiberTask implements QuietCloseable {

@@ -268,11 +268,6 @@ public final class MatViewBacklog {
         return false;
     }
 
-    // A base table the view cannot refresh from: not a WAL table, or a regular or live view.
-    static boolean isUnusableBase(TableToken baseTableToken) {
-        return !baseTableToken.isWal() || baseTableToken.isView() || baseTableToken.isLiveView();
-    }
-
     // Writes the view's state, invalid flag and reason included, with the cache and the backlog-lost marker.
     private static void persist(
             CairoEngine engine,
@@ -310,5 +305,10 @@ public final class MatViewBacklog {
             intervals.setQuick(cacheCapacity - 1, intervals.getQuick(intervals.size() - 1));
             intervals.setPos(cacheCapacity);
         }
+    }
+
+    // A base table the view cannot refresh from: not a WAL table, or a regular or live view.
+    static boolean isUnusableBase(TableToken baseTableToken) {
+        return !baseTableToken.isWal() || baseTableToken.isView() || baseTableToken.isLiveView();
     }
 }

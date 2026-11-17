@@ -129,6 +129,10 @@ public class MatViewState implements QuietCloseable {
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Serializes the writers of bareNameSwitches: the WAL apply threads of the view's base tables.
     private final Object bareNameSwitchesLock = new Object();
+    // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+    // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
+    // the new SQL. Kept in memory only: a restart loses it.
+    private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
     // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
     // itself deferred. See MatViewRefreshJob#tryLockForFullRefresh.
@@ -293,10 +297,6 @@ public class MatViewState implements QuietCloseable {
     // claims these bits and retries only the failed facets, avoiding duplicate queue amplification when
     // one facet succeeded before another allocation failed.
     private volatile int pendingTaskRetryFlags;
-    // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
-    // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
-    // the new SQL. Kept in memory only: a restart loses it.
-    private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // Highest backfillFrontier value already written to the _mv.s state file. Lets the
     // backfill apply path skip a redundant state-file rewrite when no new backfill has
     // advanced the frontier since the last persist. Mutated only from the (single-threaded
@@ -607,6 +607,13 @@ public class MatViewState implements QuietCloseable {
         return factory;
     }
 
+    /**
+     * Records the telemetry event of ALTER MATERIALIZED VIEW ... AS, once its definition event is in the view's WAL.
+     */
+    void alterSuccess(boolean isBaseTableChange) {
+        telemetryFacade.store(MAT_VIEW_ALTER, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, isBaseTableChange ? "base change" : null, 0);
+    }
+
     public long getRecordFactoryExpiryPolicyVersion() {
         assert latch.get();
         return cursorFactoryExpiryPolicyVersion;
@@ -643,6 +650,15 @@ public class MatViewState implements QuietCloseable {
 
     int claimPendingTaskRetryFlags() {
         return PENDING_TASK_RETRY_FLAGS_UPDATER.getAndSet(this, 0);
+    }
+
+    /**
+     * Clears the backlog-lost marker, for REFRESH ... FULL, which rebuilds the view from its base table and so has no
+     * backlog to keep. The caller holds the latch.
+     */
+    void clearBacklogLost() {
+        assert latch.get();
+        this.backlogLostReason = null;
     }
 
     boolean clearPendingFullRefresh(Object expectedOwner) {
@@ -771,6 +787,30 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Returns the cause of a lost backlog, see {@link MatViewBacklog}, or null while the view's backlog is tracked or
+     * the view is valid.
+     */
+    public @Nullable String getBacklogLostReason() {
+        return backlogLostReason;
+    }
+
+    /**
+     * Returns the bare-name switches recorded on the view, see {@link #recordBareNameSwitch}. The caller must not
+     * change the list.
+     */
+    ObjList<BareNameSwitch> getBareNameSwitches() {
+        return bareNameSwitches;
+    }
+
+    /**
+     * Returns the id of the base table that the refresh position and the cached refresh intervals belong to, or
+     * {@link #BASE_TABLE_ID_UNKNOWN} when the view's state carries none.
+     */
+    public int getBaseTableId() {
+        return baseTableId;
+    }
+
+    /**
      * Returns what the column mapping that the last compile of the view's SQL built leaves out: the view columns the
      * SQL does not produce and the SQL's columns the view lacks. Returns null before the first such compile in this
      * process and after one that failed. Refresh compiles the SQL, and so does view ADD COLUMN's check.
@@ -864,30 +904,6 @@ public class MatViewState implements QuietCloseable {
         return backfillFrontier.get();
     }
 
-    /**
-     * Returns the cause of a lost backlog, see {@link MatViewBacklog}, or null while the view's backlog is tracked or
-     * the view is valid.
-     */
-    public @Nullable String getBacklogLostReason() {
-        return backlogLostReason;
-    }
-
-    /**
-     * Returns the id of the base table that the refresh position and the cached refresh intervals belong to, or
-     * {@link #BASE_TABLE_ID_UNKNOWN} when the view's state carries none.
-     */
-    public int getBaseTableId() {
-        return baseTableId;
-    }
-
-    /**
-     * Returns the bare-name switches recorded on the view, see {@link #recordBareNameSwitch}. The caller must not
-     * change the list.
-     */
-    ObjList<BareNameSwitch> getBareNameSwitches() {
-        return bareNameSwitches;
-    }
-
     public long getLastRefreshFrozenBoundaryFloor() {
         return lastRefreshFrozenBoundaryFloor;
     }
@@ -907,6 +923,14 @@ public class MatViewState implements QuietCloseable {
 
     public long getLastRefreshStartTimestampUs() {
         return lastRefreshStartTimestampUs;
+    }
+
+    /**
+     * Returns the sequencer txn of the definition event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+     * or -1 when it ran none since it started.
+     */
+    public long getPendingDefinitionSeqTxn() {
+        return pendingDefinitionSeqTxn.get();
     }
 
     Object getPendingFullRefreshOwner(Object marker) {
@@ -1167,46 +1191,6 @@ public class MatViewState implements QuietCloseable {
         return retryAfter == Numbers.LONG_NULL || nowMicros >= retryAfter;
     }
 
-    /**
-     * Makes the view valid again after REFRESH MATERIALIZED VIEW ... RESUME persisted its new state: the refresh
-     * position, the last refreshed period and the base table id that the state event carried. Catching up keeps the
-     * cached refresh intervals, the view's backlog, for its next incremental refresh; a jump clears them. Either way
-     * the backlog-lost marker goes. The caller holds the latch.
-     */
-    void resumeSuccess(
-            long lastRefreshBaseTxn,
-            long lastPeriodHi,
-            int baseTableId,
-            boolean isCatchUp,
-            @NotNull CharSequence mode
-    ) {
-        assert latch.get();
-        markAsValid();
-        this.lastRefreshBaseTxn = lastRefreshBaseTxn;
-        this.lastPeriodHi = lastPeriodHi;
-        this.baseTableId = baseTableId;
-        if (!isCatchUp) {
-            this.refreshIntervalsBaseTxn = -1;
-            refreshIntervals.clear();
-        }
-        telemetryFacade.store(MAT_VIEW_RESUME, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, mode, 0);
-    }
-
-    /**
-     * Records the telemetry event of ALTER MATERIALIZED VIEW ... AS, once its definition event is in the view's WAL.
-     */
-    void alterSuccess(boolean isBaseTableChange) {
-        telemetryFacade.store(MAT_VIEW_ALTER, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, isBaseTableChange ? "base change" : null, 0);
-    }
-
-    /**
-     * Returns the sequencer txn of the definition event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
-     * or -1 when it ran none since it started.
-     */
-    public long getPendingDefinitionSeqTxn() {
-        return pendingDefinitionSeqTxn.get();
-    }
-
     public void markAsDropped() {
         dropped = true;
         telemetryFacade.store(MAT_VIEW_DROP, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, null, 0);
@@ -1331,6 +1315,15 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    public void markAsValid() {
+        this.invalid = false;
+        this.invalidationReason = null;
+        // A valid view has no backlog; it starts a tracked one when it goes invalid.
+        this.backlogLostReason = null;
+        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
+        this.refreshRetryCount = 0;
+    }
+
     /**
      * Records that the view's backlog is lost, with its cause, see {@link MatViewBacklog}. The view stops tracking its
      * base table's changes, and REFRESH MATERIALIZED VIEW ... RESUME refuses it until SKIP BACKLOG is given. The
@@ -1339,24 +1332,6 @@ public class MatViewState implements QuietCloseable {
     void markBacklogLost(@NotNull String cause) {
         assert latch.get();
         this.backlogLostReason = cause;
-    }
-
-    /**
-     * Clears the backlog-lost marker, for REFRESH ... FULL, which rebuilds the view from its base table and so has no
-     * backlog to keep. The caller holds the latch.
-     */
-    void clearBacklogLost() {
-        assert latch.get();
-        this.backlogLostReason = null;
-    }
-
-    public void markAsValid() {
-        this.invalid = false;
-        this.invalidationReason = null;
-        // A valid view has no backlog; it starts a tracked one when it goes invalid.
-        this.backlogLostReason = null;
-        this.refreshRetryAfterMicros = Numbers.LONG_NULL;
-        this.refreshRetryCount = 0;
     }
 
     /**
@@ -1507,6 +1482,14 @@ public class MatViewState implements QuietCloseable {
     void recordFullRefreshSuccess(TableToken baseTableToken, long baseTableTxn) {
         assert latch.get();
         lastFullRefreshCoverage = new FullRefreshCoverage(baseTableToken, baseTableTxn);
+    }
+
+    /**
+     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, see
+     * {@link #getPendingDefinitionSeqTxn()}. The record only grows.
+     */
+    void recordPendingDefinitionSeqTxn(long seqTxn) {
+        pendingDefinitionSeqTxn.accumulateAndGet(seqTxn, Math::max);
     }
 
     /**
@@ -1665,17 +1648,92 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, see
-     * {@link #getPendingDefinitionSeqTxn()}. The record only grows.
+     * Makes the view valid again after REFRESH MATERIALIZED VIEW ... RESUME persisted its new state: the refresh
+     * position, the last refreshed period and the base table id that the state event carried. Catching up keeps the
+     * cached refresh intervals, the view's backlog, for its next incremental refresh; a jump clears them. Either way
+     * the backlog-lost marker goes. The caller holds the latch.
      */
-    void recordPendingDefinitionSeqTxn(long seqTxn) {
-        pendingDefinitionSeqTxn.accumulateAndGet(seqTxn, Math::max);
+    void resumeSuccess(
+            long lastRefreshBaseTxn,
+            long lastPeriodHi,
+            int baseTableId,
+            boolean isCatchUp,
+            @NotNull CharSequence mode
+    ) {
+        assert latch.get();
+        markAsValid();
+        this.lastRefreshBaseTxn = lastRefreshBaseTxn;
+        this.lastPeriodHi = lastPeriodHi;
+        this.baseTableId = baseTableId;
+        if (!isCatchUp) {
+            this.refreshIntervalsBaseTxn = -1;
+            refreshIntervals.clear();
+        }
+        telemetryFacade.store(MAT_VIEW_RESUME, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, mode, 0);
     }
 
-    // Keeps the summary of a column mapping that a compile of the view's SQL built, or null after one that failed, see
-    // getColumnMappingSummary().
-    public void setColumnMappingSummary(@Nullable MatViewColumnMapping.Summary columnMappingSummary) {
-        this.columnMappingSummary = columnMappingSummary;
+    void runAlterValidatedSeamForTesting() {
+        final Runnable seam = onAlterValidatedForTesting;
+        if (seam != null) {
+            onAlterValidatedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runBareNameSwitchRecordedSeamForTesting() {
+        final Runnable seam = onBareNameSwitchRecordedForTesting;
+        if (seam != null) {
+            onBareNameSwitchRecordedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runDefinitionWaitSeamForTesting() {
+        final Runnable seam = onDefinitionWaitForTesting;
+        if (seam != null) {
+            onDefinitionWaitForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeFlagSetSeamForTesting() {
+        final Runnable seam = onResumeFlagSetForTesting;
+        if (seam != null) {
+            onResumeFlagSetForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeHoldingLockSeamForTesting() {
+        final Runnable seam = onResumeHoldingLockForTesting;
+        if (seam != null) {
+            onResumeHoldingLockForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeLatchBusySeamForTesting() {
+        final Runnable seam = onResumeLatchBusyForTesting;
+        if (seam != null) {
+            onResumeLatchBusyForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeWalAppliedSeamForTesting() {
+        final Runnable seam = onResumeWalAppliedForTesting;
+        if (seam != null) {
+            onResumeWalAppliedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeWalWaitSeamForTesting() {
+        final Runnable seam = onResumeWalWaitForTesting;
+        if (seam != null) {
+            onResumeWalWaitForTesting = null;
+            seam.run();
+        }
     }
 
     /**
@@ -1685,6 +1743,12 @@ public class MatViewState implements QuietCloseable {
     public void setBaseTableId(int baseTableId) {
         assert latch.get();
         this.baseTableId = baseTableId;
+    }
+
+    // Keeps the summary of a column mapping that a compile of the view's SQL built, or null after one that failed, see
+    // getColumnMappingSummary().
+    public void setColumnMappingSummary(@Nullable MatViewColumnMapping.Summary columnMappingSummary) {
+        this.columnMappingSummary = columnMappingSummary;
     }
 
     public void setLastPeriodHi(long lastPeriodHi) {
@@ -1923,16 +1987,16 @@ public class MatViewState implements QuietCloseable {
         this.avgScanRangeTsUnits = Math.max(0, scanRangeTsUnits);
     }
 
-    public void setViewDefinition(MatViewDefinition viewDefinition) {
-        this.viewDefinition = viewDefinition;
-    }
-
     /**
      * Sets or clears the resuming flag, see {@link #isResuming()}. The caller holds the latch.
      */
     void setResuming(boolean isResuming) {
         assert latch.get();
         this.isResuming = isResuming;
+    }
+
+    public void setViewDefinition(MatViewDefinition viewDefinition) {
+        this.viewDefinition = viewDefinition;
     }
 
     public void tryCloseIfClosed() {
@@ -1962,70 +2026,6 @@ public class MatViewState implements QuietCloseable {
 
     public boolean tryLock() {
         return latch.compareAndSet(false, true);
-    }
-
-    void runAlterValidatedSeamForTesting() {
-        final Runnable seam = onAlterValidatedForTesting;
-        if (seam != null) {
-            onAlterValidatedForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runBareNameSwitchRecordedSeamForTesting() {
-        final Runnable seam = onBareNameSwitchRecordedForTesting;
-        if (seam != null) {
-            onBareNameSwitchRecordedForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runDefinitionWaitSeamForTesting() {
-        final Runnable seam = onDefinitionWaitForTesting;
-        if (seam != null) {
-            onDefinitionWaitForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runResumeFlagSetSeamForTesting() {
-        final Runnable seam = onResumeFlagSetForTesting;
-        if (seam != null) {
-            onResumeFlagSetForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runResumeHoldingLockSeamForTesting() {
-        final Runnable seam = onResumeHoldingLockForTesting;
-        if (seam != null) {
-            onResumeHoldingLockForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runResumeLatchBusySeamForTesting() {
-        final Runnable seam = onResumeLatchBusyForTesting;
-        if (seam != null) {
-            onResumeLatchBusyForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runResumeWalWaitSeamForTesting() {
-        final Runnable seam = onResumeWalWaitForTesting;
-        if (seam != null) {
-            onResumeWalWaitForTesting = null;
-            seam.run();
-        }
-    }
-
-    void runResumeWalAppliedSeamForTesting() {
-        final Runnable seam = onResumeWalAppliedForTesting;
-        if (seam != null) {
-            onResumeWalAppliedForTesting = null;
-            seam.run();
-        }
     }
 
     public void unlock() {

@@ -296,44 +296,6 @@ public final class MatViewResume {
         return viewSeqTracker.getWriterTxn() < viewSeqTracker.getSeqTxn();
     }
 
-    // Takes the view latch, waiting while another holder has it. Every other holder of an invalid view's latch is
-    // short, so RESUME polls the latch within the statement timeout instead of refusing a busy latch at once, and
-    // refuses with "retry later" only when the timeout expires first. A cancelled statement stops. The base change of
-    // ALTER MATERIALIZED VIEW ... WITH BASE takes the latch the same way, see MatViewAlter.
-    //
-    // pg-wire re-executes a prepared statement under the role-switch read lock (PGPipelineEntry.executeFenced()). A
-    // latch holder that commits takes that read lock at the commit fence on its own thread, which waits while a role
-    // switch, such as a demote, waits for the write lock, and the role switch waits for the statement's read hold. So
-    // the statement stops waiting with "retry later" as soon as a role switch waits for its read hold: neither the
-    // role switch nor the fenced commits queued behind it wait for the statement's timeout. Under that read hold the
-    // statement sleeps between its polls, since its fiber must not park there, see pauseWait().
-    static void lockView(
-            CairoEngine engine,
-            MatViewState viewState,
-            SqlExecutionCircuitBreaker circuitBreaker,
-            TableToken viewToken,
-            int viewNamePosition
-    ) throws SqlException {
-        if (viewState.tryLock()) {
-            return;
-        }
-        viewState.runResumeLatchBusySeamForTesting();
-        while (!viewState.tryLock()) {
-            if (engine.isRoleSwitchWaitingForCurrentReadHold()) {
-                throw busy(viewToken, viewNamePosition);
-            }
-            try {
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            } catch (CairoException e) {
-                if (e.getInterruptionReason() == SqlExecutionCircuitBreaker.STATE_TIMEOUT) {
-                    throw busy(viewToken, viewNamePosition);
-                }
-                throw e;
-            }
-            pauseWait(engine);
-        }
-    }
-
     // Returns false when the fiber cannot park; throws when its runtime or the engine's timers shut down.
     private static boolean parkOnTimer(CairoEngine engine, Fiber fiber) {
         final long token = fiber.tryBeginWaitBuild(1);
@@ -352,18 +314,6 @@ public final class MatViewResume {
             return reason != FiberWaitCoordinator.REASON_NONE;
         } finally {
             coordinator.teardownWait(token);
-        }
-    }
-
-    // Pauses a wait loop of RESUME, ALTER ... WITH BASE or REFRESH for about a millisecond; the loop then checks its
-    // condition and the statement's circuit breaker again. A statement that runs on a mounted fiber, as pg-wire, HTTP
-    // and QWP run one, parks the fiber on a timer, which leaves the network worker to other connections. Off a fiber,
-    // and on a fiber that holds the role-switch read lock (pg-wire's PGPipelineEntry.executeFenced() runs a
-    // re-executed prepared statement so), where a fiber must not park, or when the fiber cannot park, it sleeps.
-    static void pauseWait(CairoEngine engine) {
-        final Fiber fiber = SqlExecutionSuspension.currentFiber();
-        if (fiber == null || !parkOnTimer(engine, fiber)) {
-            Os.sleep(1);
         }
     }
 
@@ -645,5 +595,55 @@ public final class MatViewResume {
                     .put(']');
         }
         viewState.setColumnMappingSummary(MatViewColumnMapping.summarize(queryMetadata, viewMetadata, isPositional));
+    }
+
+    // Takes the view latch, waiting while another holder has it. Every other holder of an invalid view's latch is
+    // short, so RESUME polls the latch within the statement timeout instead of refusing a busy latch at once, and
+    // refuses with "retry later" only when the timeout expires first. A cancelled statement stops. The base change of
+    // ALTER MATERIALIZED VIEW ... WITH BASE takes the latch the same way, see MatViewAlter.
+    //
+    // pg-wire re-executes a prepared statement under the role-switch read lock (PGPipelineEntry.executeFenced()). A
+    // latch holder that commits takes that read lock at the commit fence on its own thread, which waits while a role
+    // switch, such as a demote, waits for the write lock, and the role switch waits for the statement's read hold. So
+    // the statement stops waiting with "retry later" as soon as a role switch waits for its read hold: neither the
+    // role switch nor the fenced commits queued behind it wait for the statement's timeout. Under that read hold the
+    // statement sleeps between its polls, since its fiber must not park there, see pauseWait().
+    static void lockView(
+            CairoEngine engine,
+            MatViewState viewState,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            TableToken viewToken,
+            int viewNamePosition
+    ) throws SqlException {
+        if (viewState.tryLock()) {
+            return;
+        }
+        viewState.runResumeLatchBusySeamForTesting();
+        while (!viewState.tryLock()) {
+            if (engine.isRoleSwitchWaitingForCurrentReadHold()) {
+                throw busy(viewToken, viewNamePosition);
+            }
+            try {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            } catch (CairoException e) {
+                if (e.getInterruptionReason() == SqlExecutionCircuitBreaker.STATE_TIMEOUT) {
+                    throw busy(viewToken, viewNamePosition);
+                }
+                throw e;
+            }
+            pauseWait(engine);
+        }
+    }
+
+    // Pauses a wait loop of RESUME, ALTER ... WITH BASE or REFRESH for about a millisecond; the loop then checks its
+    // condition and the statement's circuit breaker again. A statement that runs on a mounted fiber, as pg-wire, HTTP
+    // and QWP run one, parks the fiber on a timer, which leaves the network worker to other connections. Off a fiber,
+    // and on a fiber that holds the role-switch read lock (pg-wire's PGPipelineEntry.executeFenced() runs a
+    // re-executed prepared statement so), where a fiber must not park, or when the fiber cannot park, it sleeps.
+    static void pauseWait(CairoEngine engine) {
+        final Fiber fiber = SqlExecutionSuspension.currentFiber();
+        if (fiber == null || !parkOnTimer(engine, fiber)) {
+            Os.sleep(1);
+        }
     }
 }

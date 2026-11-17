@@ -180,6 +180,61 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
+    /**
+     * Returns the node of the sampling interval of a materialized view's optimised query: the interval of its SAMPLE
+     * BY, or that of its GROUP BY timestamp_floor(), or null when it has neither, as a non-aggregating passthrough
+     * view. ALTER MATERIALIZED VIEW ... AS requires the interval of the view's.
+     */
+    public static @Nullable ExpressionNode findSamplingIntervalNode(@NotNull IQueryModel queryModel) {
+        // the optimiser rewrites a materialized view's SAMPLE BY to GROUP BY timestamp_floor()
+        final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
+        return queryColumn != null ? SqlUtil.getTimestampFloorInterval(queryColumn.getAst()) : findSampleByNode(queryModel);
+    }
+
+    /**
+     * Returns true when an output column of an aggregating view's optimised query buckets the base table's designated
+     * timestamp: it references that timestamp through aliases, nested selects, the master of a join and the floored
+     * argument of timestamp_floor(), which SAMPLE BY lowers to, with no other transformation. Refresh recomputes the
+     * buckets of the base table's intervals of that timestamp, so a view whose designated timestamp buckets another
+     * column, as under TIMESTAMP(ts2), would miss rows while it reports valid. ALTER MATERIALIZED VIEW ... AS applies
+     * the rule as CREATE MATERIALIZED VIEW does.
+     */
+    public static boolean isBucketedBaseTimestampColumn(
+            @NotNull IQueryModel queryModel,
+            @NotNull QueryColumn column,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        // The projection AST references the input model, not its own output aliases.
+        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, true)
+                == baseTableMetadata.getTimestampIndex();
+    }
+
+    /**
+     * Returns true when a materialized view's optimised query, which has no sampling interval, is a non-aggregating
+     * passthrough query over one table, as CREATE MATERIALIZED VIEW tells it.
+     */
+    public static boolean isPassthroughQuery(@NotNull FunctionFactoryCache functionFactoryCache, @NotNull IQueryModel queryModel) {
+        return isPassthrough(functionFactoryCache, queryModel, new IntList(), new LowerCaseCharSequenceHashSet(), new ArrayDeque<>());
+    }
+
+    /**
+     * Returns true when an output column of a passthrough view's optimised query references the base table's designated
+     * timestamp without transformation, through aliases and nested selects, as a passthrough view's designated timestamp
+     * must: refresh replaces the base table's intervals of that timestamp in the view. ALTER MATERIALIZED VIEW ... AS
+     * applies the rule as CREATE MATERIALIZED VIEW does.
+     */
+    public static boolean isPassthroughTimestampColumn(
+            @NotNull IQueryModel queryModel,
+            @NotNull QueryColumn column,
+            @NotNull CharSequence baseTableName,
+            @NotNull TableMetadata baseTableMetadata
+    ) {
+        // The projection AST references the input model, not its own output aliases.
+        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, false)
+                == baseTableMetadata.getTimestampIndex();
+    }
+
     @Override
     public void close() {
         createTableOperation = Misc.free(createTableOperation);
@@ -668,61 +723,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
     }
 
-    /**
-     * Returns the node of the sampling interval of a materialized view's optimised query: the interval of its SAMPLE
-     * BY, or that of its GROUP BY timestamp_floor(), or null when it has neither, as a non-aggregating passthrough
-     * view. ALTER MATERIALIZED VIEW ... AS requires the interval of the view's.
-     */
-    public static @Nullable ExpressionNode findSamplingIntervalNode(@NotNull IQueryModel queryModel) {
-        // the optimiser rewrites a materialized view's SAMPLE BY to GROUP BY timestamp_floor()
-        final QueryColumn queryColumn = findTimestampFloorColumn(queryModel);
-        return queryColumn != null ? SqlUtil.getTimestampFloorInterval(queryColumn.getAst()) : findSampleByNode(queryModel);
-    }
-
-    /**
-     * Returns true when an output column of an aggregating view's optimised query buckets the base table's designated
-     * timestamp: it references that timestamp through aliases, nested selects, the master of a join and the floored
-     * argument of timestamp_floor(), which SAMPLE BY lowers to, with no other transformation. Refresh recomputes the
-     * buckets of the base table's intervals of that timestamp, so a view whose designated timestamp buckets another
-     * column, as under TIMESTAMP(ts2), would miss rows while it reports valid. ALTER MATERIALIZED VIEW ... AS applies
-     * the rule as CREATE MATERIALIZED VIEW does.
-     */
-    public static boolean isBucketedBaseTimestampColumn(
-            @NotNull IQueryModel queryModel,
-            @NotNull QueryColumn column,
-            @NotNull CharSequence baseTableName,
-            @NotNull TableMetadata baseTableMetadata
-    ) {
-        // The projection AST references the input model, not its own output aliases.
-        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, true)
-                == baseTableMetadata.getTimestampIndex();
-    }
-
-    /**
-     * Returns true when a materialized view's optimised query, which has no sampling interval, is a non-aggregating
-     * passthrough query over one table, as CREATE MATERIALIZED VIEW tells it.
-     */
-    public static boolean isPassthroughQuery(@NotNull FunctionFactoryCache functionFactoryCache, @NotNull IQueryModel queryModel) {
-        return isPassthrough(functionFactoryCache, queryModel, new IntList(), new LowerCaseCharSequenceHashSet(), new ArrayDeque<>());
-    }
-
-    /**
-     * Returns true when an output column of a passthrough view's optimised query references the base table's designated
-     * timestamp without transformation, through aliases and nested selects, as a passthrough view's designated timestamp
-     * must: refresh replaces the base table's intervals of that timestamp in the view. ALTER MATERIALIZED VIEW ... AS
-     * applies the rule as CREATE MATERIALIZED VIEW does.
-     */
-    public static boolean isPassthroughTimestampColumn(
-            @NotNull IQueryModel queryModel,
-            @NotNull QueryColumn column,
-            @NotNull CharSequence baseTableName,
-            @NotNull TableMetadata baseTableMetadata
-    ) {
-        // The projection AST references the input model, not its own output aliases.
-        return resolveBaseColumnIndex(column.getAst(), queryModel.getNestedModel(), baseTableName, baseTableMetadata, false)
-                == baseTableMetadata.getTimestampIndex();
-    }
-
     private static void copyBaseTableSymbolColumnCapacity(
             @Nullable ExpressionNode columnNode,
             @Nullable IQueryModel queryModel,
@@ -801,6 +801,77 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         return null;
     }
 
+    private static boolean hasNoAggregates(
+            FunctionFactoryCache functionFactoryCache,
+            IQueryModel queryModel,
+            int columnIndex,
+            IntList tmpColumnIndexes,
+            LowerCaseCharSequenceHashSet tmpLiterals,
+            ArrayDeque<ExpressionNode> sqlNodeStack
+    ) {
+        tmpColumnIndexes.clear();
+        tmpColumnIndexes.add(columnIndex);
+
+        for (; ; ) {
+            // First, check the columns for aggregate functions
+            // and accumulate all literals we've met on the way.
+            tmpLiterals.clear();
+            for (int i = 0, n = tmpColumnIndexes.size(); i < n; i++) {
+                final int idx = tmpColumnIndexes.getQuick(i);
+                ExpressionNode node = queryModel.getBottomUpColumns().getQuick(idx).getAst();
+                // pre-order iterative tree traversal
+                // see: http://en.wikipedia.org/wiki/Tree_traversal
+                sqlNodeStack.clear();
+                while (!sqlNodeStack.isEmpty() || node != null) {
+                    if (node != null) {
+                        switch (node.type) {
+                            case LITERAL:
+                                tmpLiterals.add(node.token);
+                                node = null;
+                                continue;
+                            case FUNCTION:
+                                if (functionFactoryCache.isGroupBy(node.token)) {
+                                    return false;
+                                }
+                                break;
+                            default:
+                                for (int j = 0, m = node.args.size(); j < m; j++) {
+                                    sqlNodeStack.add(node.args.getQuick(j));
+                                }
+                                if (node.rhs != null) {
+                                    sqlNodeStack.push(node.rhs);
+                                }
+                                break;
+                        }
+                        node = node.lhs;
+                    } else {
+                        node = sqlNodeStack.poll();
+                    }
+                }
+            }
+
+            // If the model is not an outer select, we're done.
+            if (queryModel.getNestedModel() == null || SqlUtil.isNotPlainSelectModel(queryModel)) {
+                return true;
+            }
+
+            // OK, it's a simple select model, so we need to check the nested model
+            // as the column may reference nested aggregates.
+            // Example:
+            //   SELECT c FROM (SELECT count() AS c FROM x);
+            queryModel = queryModel.getNestedModel();
+
+            // Collect column indexes to check in the next iteration and carry on.
+            tmpColumnIndexes.clear();
+            for (int i = 0, n = queryModel.getBottomUpColumns().size(); i < n; i++) {
+                final QueryColumn column = queryModel.getBottomUpColumns().getQuick(i);
+                if (tmpLiterals.contains(column.getAlias())) {
+                    tmpColumnIndexes.add(i);
+                }
+            }
+        }
+    }
+
     /**
      * Inherits the base table's SYMBOL index (type, value block capacity, and available covering columns)
      * into {@code columnModel}
@@ -859,6 +930,55 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
             }
         }
+    }
+
+    // The scratch collections are hasNoAggregates()'s.
+    private static boolean isPassthrough(
+            FunctionFactoryCache functionFactoryCache,
+            IQueryModel queryModel,
+            IntList tmpColumnIndexes,
+            LowerCaseCharSequenceHashSet tmpLiterals,
+            ArrayDeque<ExpressionNode> sqlNodeStack
+    ) {
+        // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
+        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject anything
+        // whose rows are not 1:1 with the base: a top-level table name / GROUP BY / top-level JOIN / LATEST
+        // ON / UNION here (isNotPlainSelectModel), then the same features on nested models in the walk
+        // below, and any aggregate in a column. (isNotPlainSelectModel does NOT catch DISTINCT or window
+        // functions - the nested-chain walk is what rejects DISTINCT.)
+        if (SqlUtil.isNotPlainSelectModel(queryModel)) {
+            return false;
+        }
+        if (queryModel.getJoinModels().size() > 1) {
+            return false;
+        }
+        // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
+        // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
+        // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
+        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it. DISTINCT
+        // has three shapes to catch: a SELECT_MODEL_DISTINCT model, the isDistinct() flag, and - once
+        // isSqlDistinctGroupByRewriteEnabled() has rewritten DISTINCT to an implicit group-by - a
+        // SELECT_MODEL_GROUP_BY model whose explicit getGroupBy() list is empty. Rejecting every
+        // SELECT_MODEL_GROUP_BY covers that last shape and every other aggregating model; a genuine
+        // aggregating view never reaches here (intervalExpr would be set).
+        for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
+            if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
+                    || m.getUnionModel() != null
+                    || m.getGroupBy().size() > 0
+                    || m.getJoinModels().size() > 1
+                    || m.isDistinct()
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT
+                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+                return false;
+            }
+        }
+        final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            if (!hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // Returns the index of the base table column whose values an expression over the columns of queryModel takes
@@ -938,6 +1058,21 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         );
     }
 
+    // Returns the name of the column a reference to a column of queryModel names, without the prefix of the model's
+    // name, or null when the reference carries the prefix of another model.
+    private static @Nullable CharSequence resolveColumnName(CharSequence columnRef, IQueryModel queryModel) {
+        final int dotIndex = Chars.indexOfLastUnquoted(columnRef, '.');
+        if (dotIndex > -1) {
+            final CharSequence modelName = queryModel.getName();
+            if (modelName != null && Chars.equalsIgnoreCase(modelName, columnRef, 0, dotIndex)) {
+                return columnRef.subSequence(dotIndex + 1, columnRef.length());
+            }
+        } else {
+            return columnRef;
+        }
+        return null;
+    }
+
     private static int resolveDenseColumnIndex(TableMetadata metadata, int writerIndex) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getWriterIndex(i) == writerIndex) {
@@ -945,55 +1080,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             }
         }
         return -1;
-    }
-
-    // The scratch collections are hasNoAggregates()'s.
-    private static boolean isPassthrough(
-            FunctionFactoryCache functionFactoryCache,
-            IQueryModel queryModel,
-            IntList tmpColumnIndexes,
-            LowerCaseCharSequenceHashSet tmpLiterals,
-            ArrayDeque<ExpressionNode> sqlNodeStack
-    ) {
-        // A non-aggregating projection over a single table (e.g. SELECT * FROM base [WHERE ...]).
-        // The caller has already established there is no SAMPLE BY / timestamp_floor(). Reject anything
-        // whose rows are not 1:1 with the base: a top-level table name / GROUP BY / top-level JOIN / LATEST
-        // ON / UNION here (isNotPlainSelectModel), then the same features on nested models in the walk
-        // below, and any aggregate in a column. (isNotPlainSelectModel does NOT catch DISTINCT or window
-        // functions - the nested-chain walk is what rejects DISTINCT.)
-        if (SqlUtil.isNotPlainSelectModel(queryModel)) {
-            return false;
-        }
-        if (queryModel.getJoinModels().size() > 1) {
-            return false;
-        }
-        // LATEST ON / UNION / GROUP BY / DISTINCT lower onto a NESTED model, which the top-level
-        // isNotPlainSelectModel() check above does not see. Walk the whole nested chain so a DERIVED view
-        // (e.g. SELECT * FROM base LATEST ON ts PARTITION BY k) is NOT misclassified as passthrough: its
-        // rows are not 1:1 with the base, so EXPIRE ROWS physical cleanup must never run on it. DISTINCT
-        // has three shapes to catch: a SELECT_MODEL_DISTINCT model, the isDistinct() flag, and - once
-        // isSqlDistinctGroupByRewriteEnabled() has rewritten DISTINCT to an implicit group-by - a
-        // SELECT_MODEL_GROUP_BY model whose explicit getGroupBy() list is empty. Rejecting every
-        // SELECT_MODEL_GROUP_BY covers that last shape and every other aggregating model; a genuine
-        // aggregating view never reaches here (intervalExpr would be set).
-        for (IQueryModel m = queryModel; m != null; m = m.getNestedModel()) {
-            if (m.getLatestByType() != IQueryModel.LATEST_BY_NONE
-                    || m.getUnionModel() != null
-                    || m.getGroupBy().size() > 0
-                    || m.getJoinModels().size() > 1
-                    || m.isDistinct()
-                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_DISTINCT
-                    || m.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-                return false;
-            }
-        }
-        final ObjList<QueryColumn> cols = queryModel.getBottomUpColumns();
-        for (int i = 0, n = cols.size(); i < n; i++) {
-            if (!hasNoAggregates(functionFactoryCache, queryModel, i, tmpColumnIndexes, tmpLiterals, sqlNodeStack)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     // Where the view's designated timestamp is named in the statement: at TIMESTAMP(...) after the query, or at the
@@ -1018,92 +1104,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // rows-per-query estimate sizes each query step, independently of this granularity.
         samplingInterval = 1;
         samplingIntervalUnit = 'U';
-    }
-
-    // Returns the name of the column a reference to a column of queryModel names, without the prefix of the model's
-    // name, or null when the reference carries the prefix of another model.
-    private static @Nullable CharSequence resolveColumnName(CharSequence columnRef, IQueryModel queryModel) {
-        final int dotIndex = Chars.indexOfLastUnquoted(columnRef, '.');
-        if (dotIndex > -1) {
-            final CharSequence modelName = queryModel.getName();
-            if (modelName != null && Chars.equalsIgnoreCase(modelName, columnRef, 0, dotIndex)) {
-                return columnRef.subSequence(dotIndex + 1, columnRef.length());
-            }
-        } else {
-            return columnRef;
-        }
-        return null;
-    }
-
-    private static boolean hasNoAggregates(
-            FunctionFactoryCache functionFactoryCache,
-            IQueryModel queryModel,
-            int columnIndex,
-            IntList tmpColumnIndexes,
-            LowerCaseCharSequenceHashSet tmpLiterals,
-            ArrayDeque<ExpressionNode> sqlNodeStack
-    ) {
-        tmpColumnIndexes.clear();
-        tmpColumnIndexes.add(columnIndex);
-
-        for (; ; ) {
-            // First, check the columns for aggregate functions
-            // and accumulate all literals we've met on the way.
-            tmpLiterals.clear();
-            for (int i = 0, n = tmpColumnIndexes.size(); i < n; i++) {
-                final int idx = tmpColumnIndexes.getQuick(i);
-                ExpressionNode node = queryModel.getBottomUpColumns().getQuick(idx).getAst();
-                // pre-order iterative tree traversal
-                // see: http://en.wikipedia.org/wiki/Tree_traversal
-                sqlNodeStack.clear();
-                while (!sqlNodeStack.isEmpty() || node != null) {
-                    if (node != null) {
-                        switch (node.type) {
-                            case LITERAL:
-                                tmpLiterals.add(node.token);
-                                node = null;
-                                continue;
-                            case FUNCTION:
-                                if (functionFactoryCache.isGroupBy(node.token)) {
-                                    return false;
-                                }
-                                break;
-                            default:
-                                for (int j = 0, m = node.args.size(); j < m; j++) {
-                                    sqlNodeStack.add(node.args.getQuick(j));
-                                }
-                                if (node.rhs != null) {
-                                    sqlNodeStack.push(node.rhs);
-                                }
-                                break;
-                        }
-                        node = node.lhs;
-                    } else {
-                        node = sqlNodeStack.poll();
-                    }
-                }
-            }
-
-            // If the model is not an outer select, we're done.
-            if (queryModel.getNestedModel() == null || SqlUtil.isNotPlainSelectModel(queryModel)) {
-                return true;
-            }
-
-            // OK, it's a simple select model, so we need to check the nested model
-            // as the column may reference nested aggregates.
-            // Example:
-            //   SELECT c FROM (SELECT count() AS c FROM x);
-            queryModel = queryModel.getNestedModel();
-
-            // Collect column indexes to check in the next iteration and carry on.
-            tmpColumnIndexes.clear();
-            for (int i = 0, n = queryModel.getBottomUpColumns().size(); i < n; i++) {
-                final QueryColumn column = queryModel.getBottomUpColumns().getQuick(i);
-                if (tmpLiterals.contains(column.getAlias())) {
-                    tmpColumnIndexes.add(i);
-                }
-            }
-        }
     }
 
     private void updateMatViewTablePartitionBy(int timestampType, int basePartitionBy) throws SqlException {

@@ -56,6 +56,22 @@ public class MatViewStateReader implements Mutable {
     private long lastRefreshTimestampUs = Numbers.LONG_NULL;
     private long refreshIntervalsBaseTxn = -1;
 
+    /**
+     * Reads only the base table id from a {@code _mv.s} state file, for the WAL apply job, which keeps it when it
+     * rewrites the file for a refresh commit. Returns {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the file has
+     * no base table block.
+     */
+    public static int readBaseTableId(@NotNull BlockFileReader reader) {
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
+                return readBaseTableId(block);
+            }
+        }
+        return MatViewState.BASE_TABLE_ID_UNKNOWN;
+    }
+
     @Override
     public void clear() {
         invalid = false;
@@ -82,22 +98,6 @@ public class MatViewStateReader implements Mutable {
      */
     public @Nullable CharSequence getBacklogLostReason() {
         return hasBacklogLostReason ? backlogLostReason : null;
-    }
-
-    /**
-     * Reads only the base table id from a {@code _mv.s} state file, for the WAL apply job, which keeps it when it
-     * rewrites the file for a refresh commit. Returns {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the file has
-     * no base table block.
-     */
-    public static int readBaseTableId(@NotNull BlockFileReader reader) {
-        final BlockFileReader.BlockCursor cursor = reader.getCursor();
-        while (cursor.hasNext()) {
-            final ReadableBlock block = cursor.next();
-            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
-                return readBaseTableId(block);
-            }
-        }
-        return MatViewState.BASE_TABLE_ID_UNKNOWN;
     }
 
     /**

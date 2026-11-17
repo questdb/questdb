@@ -279,6 +279,8 @@ public class SqlParser {
     private boolean isMatViewQueryEnclosed;
     private int matViewQueryHi;
     private int matViewQueryLo;
+    // Whether parseSelectClause() records where each column's expression ends, see setRecordingColumnExprEnds().
+    private boolean isRecordingColumnExprEnds;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
@@ -315,8 +317,6 @@ public class SqlParser {
     // lookupExpiryPredicate), so the keep-filter rewrite can null-safely flip only timestamp comparisons.
     private CharSequence expiryTimestampColumnName;
     private boolean isParsingExpiryPredicate;
-    // Whether parseSelectClause() records where each column's expression ends, see setRecordingColumnExprEnds().
-    private boolean isRecordingColumnExprEnds;
     // For each table (by id) whose EXPIRE ROWS policy this parse read straight from the table metadata while a
     // SET/DROP EXPIRE was still in flight: the metadata version that read saw. The optimiser compares it
     // against the version the reader opens and rejects the compile if they differ, so a filter chosen from the
@@ -4729,45 +4729,6 @@ public class SqlParser {
                 && (token.charAt(11) | 32) == 'p';
     }
 
-    // Parses the AS block that CREATE MATERIALIZED VIEW and ALTER MATERIALIZED VIEW ... AS share, the lexer standing
-    // after AS: the SELECT, in parentheses or not, which may read no view with a row-expiry policy. Leaves where the
-    // SQL text starts and ends in matViewQueryLo and matViewQueryHi, and whether parentheses enclose it in
-    // isMatViewQueryEnclosed; the caller reads the closing parenthesis.
-    private IQueryModel parseMatViewQuery(
-            GenericLexer lexer,
-            SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback,
-            CharSequence matViewName
-    ) throws SqlException {
-        int startOfQuery = lexer.getPosition();
-        CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
-        final boolean enclosedInParentheses = Chars.equals(tok, '(');
-        if (enclosedInParentheses) {
-            startOfQuery = lexer.getPosition();
-            tok = tok(lexer, "'with' or 'select'");
-        }
-
-        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-        final IQueryModel queryModel;
-        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
-        try {
-            if (isWithKeyword(tok)) {
-                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                // CTEs require SELECT to be specified
-                expectTok(lexer, "select");
-            }
-            lexer.unparseLast();
-            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
-        } finally {
-            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-        }
-        matViewQueryLo = startOfQuery;
-        matViewQueryHi = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
-        isMatViewQueryEnclosed = enclosedInParentheses;
-        return queryModel;
-    }
-
     // Where each named column of the outermost SELECT of a materialized view's SQL starts in the statement, for the
     // errors that the checks of the compile report, which see the optimised query. Wildcard columns have no entry.
     private static void collectMatViewColumnPositions(IQueryModel queryModel, LowerCaseCharSequenceIntHashMap sink) {
@@ -8019,6 +7980,45 @@ public class SqlParser {
         if (tok != null) {
             lexer.unparseLast();
         }
+    }
+
+    // Parses the AS block that CREATE MATERIALIZED VIEW and ALTER MATERIALIZED VIEW ... AS share, the lexer standing
+    // after AS: the SELECT, in parentheses or not, which may read no view with a row-expiry policy. Leaves where the
+    // SQL text starts and ends in matViewQueryLo and matViewQueryHi, and whether parentheses enclose it in
+    // isMatViewQueryEnclosed; the caller reads the closing parenthesis.
+    private IQueryModel parseMatViewQuery(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence matViewName
+    ) throws SqlException {
+        int startOfQuery = lexer.getPosition();
+        CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
+        final boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+        }
+
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final IQueryModel queryModel;
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
+        try {
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
+            }
+            lexer.unparseLast();
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        matViewQueryLo = startOfQuery;
+        matViewQueryHi = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+        isMatViewQueryEnclosed = enclosedInParentheses;
+        return queryModel;
     }
 
     /**

@@ -131,20 +131,6 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         onMatViewDefinitionCheckpointedForTesting = seam;
     }
 
-    private static void runSeamForTesting(boolean isIntervalMerge) {
-        final Runnable seam;
-        if (isIntervalMerge) {
-            seam = onBeforeMatViewIntervalMergeForTesting;
-            onBeforeMatViewIntervalMergeForTesting = null;
-        } else {
-            seam = onMatViewDefinitionCheckpointedForTesting;
-            onMatViewDefinitionCheckpointedForTesting = null;
-        }
-        if (seam != null) {
-            seam.run();
-        }
-    }
-
     @TestOnly
     public void clear() {
         lock.lock();
@@ -226,6 +212,20 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             } else {
                 LOG.info().$("_preferences~store restored from checkpoint").$();
             }
+        }
+    }
+
+    private static void runSeamForTesting(boolean isIntervalMerge) {
+        final Runnable seam;
+        if (isIntervalMerge) {
+            seam = onBeforeMatViewIntervalMergeForTesting;
+            onBeforeMatViewIntervalMergeForTesting = null;
+        } else {
+            seam = onMatViewDefinitionCheckpointedForTesting;
+            onMatViewDefinitionCheckpointedForTesting = null;
+        }
+        if (seam != null) {
+            seam.run();
         }
     }
 

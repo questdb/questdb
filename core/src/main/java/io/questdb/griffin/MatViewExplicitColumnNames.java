@@ -81,6 +81,81 @@ final class MatViewExplicitColumnNames implements Mutable {
         hasTopLevelWildcard = false;
     }
 
+    private static boolean isPlainIdentifier(CharSequence name) {
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            final boolean isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+            if (!isLetter && (i == 0 || c < '0' || c > '9')) {
+                return false;
+            }
+        }
+        // a column name is never empty
+        return true;
+    }
+
+    private void addEdit(int lo, int hi, String text) {
+        edits.add(lo);
+        edits.add(hi);
+        edits.add(editTexts.size());
+        editTexts.add(text);
+    }
+
+    // Returns the name column i takes, see the class comment.
+    private CharSequence chooseName(int i, RecordMetadata output, ObjList<CharSequence> viewColumnNames) {
+        final String generatedName = generatedNames.getQuick(i);
+        if (isTopLevel.getQuick(i) == 1) {
+            // The output names its columns after the top-level select list. A wildcard that brings up a column
+            // of the same name takes the name in the column's stead, never away from both.
+            final int index = SqlUtil.getColumnIndexQuiet(output, generatedName);
+            assert index > -1;
+            return viewColumnNames.getQuick(index);
+        }
+        if (hasTopLevelWildcard) {
+            final int index = SqlUtil.getColumnIndexQuiet(output, generatedName);
+            if (index > -1) {
+                return viewColumnNames.getQuick(index);
+            }
+        }
+        return generatedName;
+    }
+
+    private void collect(@Nullable IQueryModel model, boolean isTopLevelModel) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getViewNameExpr() != null) {
+                // a regular view's text, which the SQL cannot change
+                return;
+            }
+            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                final ExpressionNode ast = column.getAst();
+                if (ast.isWildcard()) {
+                    hasTopLevelWildcard |= isTopLevelModel;
+                    continue;
+                }
+                if (column.getAliasPosition() != QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                    continue;
+                }
+                final CharSequence alias = column.getAlias();
+                astPositions.add(ast.position);
+                exprEnds.add(column.getExprEndPosition());
+                generatedNames.add(Chars.toString(alias));
+                isNameGenerated.add(ast.type != ExpressionNode.LITERAL || !SqlParser.isNamedAfterReferencedColumn(alias, ast.token) ? 1 : 0);
+                isTopLevel.add(isTopLevelModel ? 1 : 0);
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    collect(joinModel, false);
+                }
+            }
+            collect(m.getUnionModel(), false);
+            isTopLevelModel = false;
+        }
+    }
+
     // Writes name as an identifier SQL reads back as the same name: as it is when it is a plain identifier and not
     // a keyword, and double-quoted otherwise. No column name has a double quote, and a generated name with one,
     // such as that of a string constant, makes a quoted identifier that the compile of the result rejects.
@@ -163,80 +238,5 @@ final class MatViewExplicitColumnNames implements Mutable {
         }
         sink.put(sql, copied, sql.length());
         return sink.toString();
-    }
-
-    private static boolean isPlainIdentifier(CharSequence name) {
-        for (int i = 0, n = name.length(); i < n; i++) {
-            final char c = name.charAt(i);
-            final boolean isLetter = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
-            if (!isLetter && (i == 0 || c < '0' || c > '9')) {
-                return false;
-            }
-        }
-        // a column name is never empty
-        return true;
-    }
-
-    private void addEdit(int lo, int hi, String text) {
-        edits.add(lo);
-        edits.add(hi);
-        edits.add(editTexts.size());
-        editTexts.add(text);
-    }
-
-    // Returns the name column i takes, see the class comment.
-    private CharSequence chooseName(int i, RecordMetadata output, ObjList<CharSequence> viewColumnNames) {
-        final String generatedName = generatedNames.getQuick(i);
-        if (isTopLevel.getQuick(i) == 1) {
-            // The output names its columns after the top-level select list. A wildcard that brings up a column
-            // of the same name takes the name in the column's stead, never away from both.
-            final int index = SqlUtil.getColumnIndexQuiet(output, generatedName);
-            assert index > -1;
-            return viewColumnNames.getQuick(index);
-        }
-        if (hasTopLevelWildcard) {
-            final int index = SqlUtil.getColumnIndexQuiet(output, generatedName);
-            if (index > -1) {
-                return viewColumnNames.getQuick(index);
-            }
-        }
-        return generatedName;
-    }
-
-    private void collect(@Nullable IQueryModel model, boolean isTopLevelModel) {
-        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
-            if (m.getViewNameExpr() != null) {
-                // a regular view's text, which the SQL cannot change
-                return;
-            }
-            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                final QueryColumn column = columns.getQuick(i);
-                final ExpressionNode ast = column.getAst();
-                if (ast.isWildcard()) {
-                    hasTopLevelWildcard |= isTopLevelModel;
-                    continue;
-                }
-                if (column.getAliasPosition() != QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
-                    continue;
-                }
-                final CharSequence alias = column.getAlias();
-                astPositions.add(ast.position);
-                exprEnds.add(column.getExprEndPosition());
-                generatedNames.add(Chars.toString(alias));
-                isNameGenerated.add(ast.type != ExpressionNode.LITERAL || !SqlParser.isNamedAfterReferencedColumn(alias, ast.token) ? 1 : 0);
-                isTopLevel.add(isTopLevelModel ? 1 : 0);
-            }
-
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel != m) {
-                    collect(joinModel, false);
-                }
-            }
-            collect(m.getUnionModel(), false);
-            isTopLevelModel = false;
-        }
     }
 }

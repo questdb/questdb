@@ -1515,6 +1515,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 || engine.getConfiguration().isAllPartitionOperationsAllowed();
     }
 
+    private static boolean isSameNullableName(@Nullable CharSequence l, @Nullable CharSequence r) {
+        return l == null ? r == null : r != null && Chars.equalsIgnoreCase(l, r);
+    }
+
     private static boolean isTimestampUpdateCast(int from, int to) {
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
     }
@@ -1522,6 +1526,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private static void logExplicitColumnNamesFailure(TableToken viewToken, CharSequence error) {
         LOG.info().$("could not write explicit column names into materialized view SQL, showing it as stored [view=")
                 .$(viewToken).$(", error=").$safe(error).I$();
+    }
+
+    private static CharSequence nullToEmpty(@Nullable CharSequence value) {
+        return value != null ? value : "";
     }
 
     /**
@@ -2005,14 +2013,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 columnMappingSummary
         );
         compiledQuery.ofAlterView();
-    }
-
-    private static boolean isSameNullableName(@Nullable CharSequence l, @Nullable CharSequence r) {
-        return l == null ? r == null : r != null && Chars.equalsIgnoreCase(l, r);
-    }
-
-    private static CharSequence nullToEmpty(@Nullable CharSequence value) {
-        return value != null ? value : "";
     }
 
     // The base table of ALTER MATERIALIZED VIEW ... AS must be a WAL table or a materialized view, not a regular or live
@@ -9126,12 +9126,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 : Math.floorDiv(timestamp, Micros.MICRO_NANOS);
     }
 
-    // A check of the optimised query of a materialized view's SQL, see compileMatViewQuery().
-    @FunctionalInterface
-    private interface MatViewModelCheck {
-        void check(IQueryModel queryModel) throws SqlException;
-    }
-
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
@@ -9407,6 +9401,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @FunctionalInterface
     public interface KeywordBasedExecutor {
         void execute(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException;
+    }
+
+    // A check of the optimised query of a materialized view's SQL, see compileMatViewQuery().
+    @FunctionalInterface
+    private interface MatViewModelCheck {
+        void check(IQueryModel queryModel) throws SqlException;
     }
 
     public final static class PartitionAction {

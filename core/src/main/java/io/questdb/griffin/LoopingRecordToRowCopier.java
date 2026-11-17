@@ -111,6 +111,38 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         return -1;
     }
 
+    private static ColumnFilter copyColumnFilter(ColumnFilter from) {
+        ListColumnFilter copy = new ListColumnFilter();
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            copy.add(from.getColumnIndex(i));
+        }
+        return copy;
+    }
+
+    private static ColumnTypes copyColumnTypes(ColumnTypes from) {
+        ArrayColumnTypes copy = new ArrayColumnTypes();
+        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
+            copy.add(from.getColumnType(i));
+        }
+        return copy;
+    }
+
+    private static boolean isArrayParserRequired(ColumnTypes from, IntList toColumnTypes) {
+        for (int i = 0, n = toColumnTypes.size(); i < n; i++) {
+            int toColumnType = toColumnTypes.getQuick(i);
+            int fromColumnType = from.getColumnType(i);
+            int fromTag = ColumnType.tagOf(fromColumnType);
+            if (fromTag == ColumnType.VARCHAR_SLICE) {
+                fromTag = ColumnType.VARCHAR;
+            }
+            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
+                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Copies the columns at positions [lo, hi) of the column filter.
     private void copy(SqlExecutionContext context, Record record, TableWriter.Row row, int lo, int hi) {
         final Decimal128 decimal128 = context.getDecimal128();
@@ -160,38 +192,6 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             copyColumn(record, row, i, toColumnWriterIndex, fromColumnTypeTag, toColumnTypeTag,
                     fromColumnType, toColumnType, timestampDriver, decimal128, decimal256);
         }
-    }
-
-    private static ColumnFilter copyColumnFilter(ColumnFilter from) {
-        ListColumnFilter copy = new ListColumnFilter();
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            copy.add(from.getColumnIndex(i));
-        }
-        return copy;
-    }
-
-    private static ColumnTypes copyColumnTypes(ColumnTypes from) {
-        ArrayColumnTypes copy = new ArrayColumnTypes();
-        for (int i = 0, n = from.getColumnCount(); i < n; i++) {
-            copy.add(from.getColumnType(i));
-        }
-        return copy;
-    }
-
-    private static boolean isArrayParserRequired(ColumnTypes from, IntList toColumnTypes) {
-        for (int i = 0, n = toColumnTypes.size(); i < n; i++) {
-            int toColumnType = toColumnTypes.getQuick(i);
-            int fromColumnType = from.getColumnType(i);
-            int fromTag = ColumnType.tagOf(fromColumnType);
-            if (fromTag == ColumnType.VARCHAR_SLICE) {
-                fromTag = ColumnType.VARCHAR;
-            }
-            if (ColumnType.tagOf(toColumnType) == ColumnType.ARRAY &&
-                    (fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private void copyColumn(
