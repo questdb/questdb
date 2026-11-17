@@ -791,7 +791,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // narrow the window, down to one frame. A cap of one tuple per task leaves frames to
     // continuations, and the partial reads of the cursor-verify axis then meet stacked, swapped and
     // continued executions. A third of the queries run the stages' stepper copies from the first
-    // task, and another third switch to them once their first execution collected a frame. Half of
+    // task, and another third switch to them once their first execution collected a frame, within
+    // the first pass over the cursor for some: the copies run stacked joins in the query's
+    // orientation, and swapped ones, stacked among them, on copies defined as they compiled. Half of
     // the queries open their cursors under the rows that a client reads first, which the parallel
     // hash join whose rows are the query's own takes.
     @Test
@@ -799,8 +801,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
-                        {"questdb.fuzz.s0", "5151"},
-                        {"questdb.fuzz.s1", "6262"},
+                        {"questdb.fuzz.s0", "48514"},
+                        {"questdb.fuzz.s1", "630374"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
                         {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
@@ -816,7 +818,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             + ", swapped " + runner.getParallelJoinPartialReadSwapped()
                             + ", continued " + runner.getParallelJoinPartialReadContinued() + ")"
                             + ", stepper copies " + runner.getParallelJoinStepperCopyRuns()
-                            + " (switched " + runner.getParallelJoinStepperSwitchRuns() + ")"
+                            + " (stacked " + runner.getParallelJoinStepperCopyStackedRuns()
+                            + ", swapped " + runner.getParallelJoinStepperCopySwappedRuns()
+                            + " of which stacked " + runner.getParallelJoinStepperCopySwappedStackedRuns()
+                            + ", switched " + runner.getParallelJoinStepperSwitchRuns()
+                            + " of which swapped " + runner.getParallelJoinStepperSwitchSwappedRuns()
+                            + ", in the first pass " + runner.getParallelJoinStepperFirstPassSwitchRuns() + ")"
                             + ", first reads " + runner.getParallelJoinFirstReadRuns();
                     Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
@@ -826,13 +833,20 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchRuns() > 0);
+                    // Some queries define their copies as they compile, apart from those that switch.
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > runner.getParallelJoinStepperSwitchRuns());
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopyStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopySwappedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperCopySwappedStackedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperFirstPassSwitchRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinFirstReadRuns() > 0);
                 })
         );
     }
 
     // A ring budget below one frame's tuples leaves the ring one entry, and a dispatch limit of zero
-    // reduces every frame on the owner.
+    // reduces every frame on the owner. A query of the pinned seed swaps its first join's inputs and
+    // defines the stages' stepper copies while it runs.
     @Test
     public void testParallelJoinSingleEntryRingAxis() throws Exception {
         withSystemProperties(
@@ -849,12 +863,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 () -> runQueryFuzz(runner -> {
                     final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
                             + ", single frame window " + runner.getParallelJoinSingleFrameWindowRuns()
-                            + ", partial reads " + runner.getParallelJoinPartialReadChecks();
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks()
+                            + ", stepper copies swapped and switched " + runner.getParallelJoinStepperSwitchSwappedRuns();
                     // A dispatch limit of zero leaves one entry, which no frame shares with another
                     // in flight.
                     Assert.assertEquals(counts, 0, runner.getParallelJoinAliasedRuns());
                     Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadChecks() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchSwappedRuns() > 0);
                 })
         );
     }
@@ -1571,8 +1587,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
                 .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first; ")
-                .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies, ")
-                .$(runner.getParallelJoinStepperSwitchRuns()).$(" of them defined after the compile")
+                .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies (")
+                .$(runner.getParallelJoinStepperCopyStackedRuns()).$(" stacked in the query's orientation, ")
+                .$(runner.getParallelJoinStepperCopySwappedRuns()).$(" swapped on copies defined as they compiled, ")
+                .$(runner.getParallelJoinStepperCopySwappedStackedRuns()).$(" of them stacked), ")
+                .$(runner.getParallelJoinStepperSwitchRuns()).$(" of them defined after the compile (")
+                .$(runner.getParallelJoinStepperSwitchSwappedRuns()).$(" swapped, ")
+                .$(runner.getParallelJoinStepperFirstPassSwitchRuns()).$(" switched within the first pass)")
                 .$();
         LOG.info().$("fuzz parallel join storage: ").$(runner.getParallelJoinOverColumnTopKeys()).$(" executions over a column top join key, ")
                 .$(runner.getParallelJoinOverParquetColumnTops()).$(" over column tops in Parquet tables, ")

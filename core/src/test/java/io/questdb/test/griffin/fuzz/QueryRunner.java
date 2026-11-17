@@ -288,6 +288,18 @@ public final class QueryRunner {
     // those of them whose factory defined the copies while it ran; see stepperWarmUpRows().
     private int parallelJoinStepperCopyRuns;
     private int parallelJoinStepperSwitchRuns;
+    // Of the queries whose join's last execution ran the copies, each stage its own, see
+    // isOwnCopyChain(): those that stacked two joins or more and kept the query's orientation, those
+    // that swapped the first join's inputs on copies that the factory defined as it compiled, those
+    // of them that stacked two joins or more, and those that swapped them and defined the copies
+    // while they ran.
+    private int parallelJoinStepperCopyStackedRuns;
+    private int parallelJoinStepperCopySwappedRuns;
+    private int parallelJoinStepperCopySwappedStackedRuns;
+    private int parallelJoinStepperSwitchSwappedRuns;
+    // Queries whose parallel hash join switched from the shared stepper template to the copies within
+    // the first pass over the cursor, which reads every row once, before any other pass.
+    private int parallelJoinStepperFirstPassSwitchRuns;
     // Executions of the parallel hash join, on any axis, whose window ended narrower than it was when
     // the cursor returned its first row.
     private int parallelJoinNarrowedWindowRuns;
@@ -639,11 +651,53 @@ public final class QueryRunner {
     }
 
     /**
+     * Queries whose parallel hash join stacked two joins or more and ran the stages' hidden stepper
+     * copies in the query's orientation, each stage its own.
+     */
+    public int getParallelJoinStepperCopyStackedRuns() {
+        return parallelJoinStepperCopyStackedRuns;
+    }
+
+    /**
+     * Queries whose parallel hash join swapped its first join's inputs and ran the hidden stepper
+     * copies that its factory defined as it compiled, from the swapped first stage's own, each later
+     * stage its own.
+     */
+    public int getParallelJoinStepperCopySwappedRuns() {
+        return parallelJoinStepperCopySwappedRuns;
+    }
+
+    /**
+     * Of {@link #getParallelJoinStepperCopySwappedRuns()}, the queries whose join stacked two joins or
+     * more.
+     */
+    public int getParallelJoinStepperCopySwappedStackedRuns() {
+        return parallelJoinStepperCopySwappedStackedRuns;
+    }
+
+    /**
+     * Queries whose parallel hash join ran both the shared stepper template and the stages' hidden
+     * copies in the first pass over its cursor: the factory defined the copies while the frames
+     * after the one that completed the warm-up were still to be joined.
+     */
+    public int getParallelJoinStepperFirstPassSwitchRuns() {
+        return parallelJoinStepperFirstPassSwitchRuns;
+    }
+
+    /**
      * Queries whose parallel hash join switched from the shared stepper template to the stages'
      * hidden copies, which its factory defined while it ran, after it compiled.
      */
     public int getParallelJoinStepperSwitchRuns() {
         return parallelJoinStepperSwitchRuns;
+    }
+
+    /**
+     * Of {@link #getParallelJoinStepperSwitchRuns()}, the queries whose join swapped its first join's
+     * inputs and ran the copies from the swapped first stage's own, each later stage its own.
+     */
+    public int getParallelJoinStepperSwitchSwappedRuns() {
+        return parallelJoinStepperSwitchSwappedRuns;
     }
 
     /**
@@ -1272,6 +1326,11 @@ public final class QueryRunner {
             rows.put('\n');
             rowsRead++;
         }
+        // The tasks and chunks of the first pass ran both steppers once the factory defined its copies
+        // within the pass.
+        if (stepperRuns(join.getAtom(), false) > 0 && stepperRuns(join.getAtom(), true) > 0) {
+            parallelJoinStepperFirstPassSwitchRuns++;
+        }
         // An operator under a parent that closed it, or one whose INNER join met an empty build,
         // holds no ring.
         final int entryCount = ring.getEntryCount();
@@ -1693,6 +1752,25 @@ public final class QueryRunner {
             case 2 -> 1 + (hash >>> 3) % 2_000;
             default -> Long.MAX_VALUE;
         };
+    }
+
+    // True when the tasks of the join's last execution, once they ran the stepper copies, started from
+    // the first stage's copy of the execution's orientation, the swapped first stage's own in a
+    // swapped execution, and handed their matches on to each later stage's own copy. Steppers wired
+    // otherwise may write the same rows, which a comparison of rows does not tell apart.
+    private static boolean isOwnCopyChain(AsyncHashJoinRecordCursorFactory join) {
+        final AsyncHashJoinAtom atom = join.getAtom();
+        final Class<?> first = atom.getCopyChainClass(0);
+        final boolean isFirstOwn = atom.isSwapped() ? first != join.getStepperClass(0) : first == join.getStepperClass(0);
+        if (first == null || !isFirstOwn) {
+            return false;
+        }
+        for (int k = 1, n = join.getSpec().getStageCount(); k < n; k++) {
+            if (atom.getCopyChainClass(k) != join.getStepperClass(k)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // The frames and chunks of the join's last execution that ran the shared stepper template, or,
@@ -2482,6 +2560,21 @@ public final class QueryRunner {
                 parallelJoinStepperCopyRuns++;
                 if (stepperCopiesAtCompile == 0) {
                     parallelJoinStepperSwitchRuns++;
+                }
+                if (isOwnCopyChain(compiledJoin)) {
+                    final boolean isStacked = compiledJoin.getSpec().getStageCount() > 1;
+                    if (!compiledJoin.getAtom().isSwapped()) {
+                        if (isStacked) {
+                            parallelJoinStepperCopyStackedRuns++;
+                        }
+                    } else if (stepperCopiesAtCompile > 0) {
+                        parallelJoinStepperCopySwappedRuns++;
+                        if (isStacked) {
+                            parallelJoinStepperCopySwappedStackedRuns++;
+                        }
+                    } else {
+                        parallelJoinStepperSwitchSwappedRuns++;
+                    }
                 }
             }
             planSink.of(factory, executionContext);
