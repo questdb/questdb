@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.model;
 
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -412,21 +411,36 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                         } else {
                             // This is subtraction or intersection with a string interval (not a single timestamp)
                             final CharSequence strInterval = dynamicFunction.getStrA(null);
-                            final CairoConfiguration configuration = sqlExecutionContext.getCairoEngine().getConfiguration();
-                            if (operation == IntervalOperation.INTERSECT_INTERVALS) {
-                                // This is an intersection
-                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                    // return an empty set
+                            if (strInterval == null) {
+                                if (operation == IntervalOperation.INTERSECT_INTERVALS) {
+                                    // a null interval matches nothing: return an empty set
                                     outIntervals.clear();
                                     return;
                                 }
-                            } else {
-                                // This is a subtraction
-                                if (tryParseInterval(outIntervals, strInterval, configuration)) {
-                                    // full set
-                                    negatedNothing(outIntervals, divider, firstFuncApplied);
-                                    continue;
-                                }
+                                // nothing to subtract: full set
+                                negatedNothing(outIntervals, divider, firstFuncApplied);
+                                continue;
+                            }
+                            // An interval that does not parse fails the query, as a literal does, with
+                            // the parser's message at the position of the function, which the entry
+                            // carries in its lo
+                            final int functionPosition = (int) IntervalUtils.decodeIntervalLo(intervals, i);
+                            try {
+                                IntervalUtils.parseTickExprAndIntersect(
+                                        timestampDriver,
+                                        sqlExecutionContext.getCairoEngine().getConfiguration(),
+                                        strInterval,
+                                        outIntervals,
+                                        functionPosition,
+                                        sink,
+                                        true
+                                );
+                            } catch (SqlException e) {
+                                // the parser can point into the value, which is not part of the SQL text
+                                e.setPosition(functionPosition);
+                                throw e;
+                            }
+                            if (operation == IntervalOperation.SUBTRACT_INTERVALS) {
                                 IntervalUtils.invert(outIntervals, divider);
                             }
                         }
@@ -551,17 +565,5 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
             outIntervals.extendAndSet(1, Long.MAX_VALUE);
             outIntervals.extendAndSet(0, Long.MIN_VALUE);
         }
-    }
-
-    private boolean tryParseInterval(LongList outIntervals, CharSequence strInterval, CairoConfiguration configuration) {
-        if (strInterval != null) {
-            try {
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, strInterval, outIntervals, 0, sink, true);
-            } catch (SqlException e) {
-                return true;
-            }
-            return false;
-        }
-        return true;
     }
 }

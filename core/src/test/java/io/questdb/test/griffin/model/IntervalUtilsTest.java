@@ -208,6 +208,28 @@ public class IntervalUtilsTest {
     }
 
     @Test
+    public void testInvertEmpty() {
+        // the complement of no interval at all is every timestamp, and back
+        LongList intervals = new LongList();
+        // A
+        add(intervals, 1, 2);
+
+        // B is empty
+
+        runTestInvertInplace(intervals, 2, "[null,9223372036854775807]");
+    }
+
+    @Test
+    public void testInvertFullRange() {
+        LongList intervals = new LongList();
+        // B
+        add(intervals, Long.MIN_VALUE, Long.MAX_VALUE);
+
+        IntervalUtils.invert(intervals, 0);
+        Assert.assertEquals(0, intervals.size());
+    }
+
+    @Test
     public void testInvertSimple() {
         LongList intervals = new LongList();
         // A

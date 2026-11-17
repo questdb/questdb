@@ -34,10 +34,12 @@ package io.questdb.test.tools;
  * needed to verify that a shared factory survives repeated re-executions as its input grows.
  */
 public class MutationStep {
+    private final Runnable action;
     private final String expected;
     private final String mutation;
 
-    private MutationStep(String mutation, String expected) {
+    private MutationStep(Runnable action, String mutation, String expected) {
+        this.action = action;
         this.mutation = mutation;
         this.expected = expected;
     }
@@ -47,7 +49,21 @@ public class MutationStep {
      * @param expected the result the held factory must produce once {@code mutation} has been applied
      */
     public static MutationStep of(String mutation, String expected) {
-        return new MutationStep(mutation, expected);
+        return new MutationStep(null, mutation, expected);
+    }
+
+    /**
+     * A step that runs {@code action} before {@code mutation}, for a change the statement cannot make on
+     * its own, such as moving the test clock forward to check that the held factory follows the time of
+     * each execution rather than the time it compiled at.
+     *
+     * @param action   runs before {@code mutation}
+     * @param mutation a statement to execute against the live engine before re-asserting (e.g. an INSERT)
+     * @param expected the result the held factory must produce once {@code action} and {@code mutation}
+     *                 have been applied
+     */
+    public static MutationStep of(Runnable action, String mutation, String expected) {
+        return new MutationStep(action, mutation, expected);
     }
 
     public String getExpected() {
@@ -56,5 +72,11 @@ public class MutationStep {
 
     public String getMutation() {
         return mutation;
+    }
+
+    public void runAction() {
+        if (action != null) {
+            action.run();
+        }
     }
 }
