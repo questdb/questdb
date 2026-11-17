@@ -42,6 +42,12 @@ public class LogCaptureTest {
     private static final String MARKER = "log-capture-test-stop-marker";
     private static final String POISON = "log-capture-test-poison-marker";
     private static final long RELEASE_DELAY_MS = 100;
+    // Must exceed LogCapture.DRAIN_TIMEOUT_MS: released sooner, POISON drains inside
+    // start()'s deadline and the test passes without pinning anything. Released later,
+    // start() has already given up on its sentinel and cleared the sink, so POISON is
+    // still in flight and lands in the fresh capture -- the cross-test leak this test
+    // pins.
+    private static final long START_RELEASE_DELAY_MS = LogCapture.DRAIN_TIMEOUT_MS + 1_000;
 
     /**
      * A record an earlier test enqueued must not land in a later test's capture.
@@ -74,10 +80,13 @@ public class LogCaptureTest {
 
             LOG.advisory().$(POISON).$();
 
-            // should start() lag past the delay, POISON drains ahead of the window
-            // and the test passes without proving anything -- it cannot fail spuriously
+            // Released only after DRAIN_TIMEOUT_MS has elapsed, so a start() that
+            // gives up on its sentinel that early clears an empty sink and lets POISON
+            // land in the new capture (red). A start() that drains with the stop
+            // deadline waits past the release, POISON drains ahead of the clear, and
+            // the window stays clean (green).
             releaser = new Thread(() -> {
-                Os.sleep(RELEASE_DELAY_MS);
+                Os.sleep(START_RELEASE_DELAY_MS);
                 release.countDown();
             }, "log-capture-test-releaser");
             releaser.start();
@@ -128,8 +137,12 @@ public class LogCaptureTest {
             );
 
             // start() drains against the parked worker and gives up after
-            // DRAIN_TIMEOUT_MS. The release is scheduled only after that, so it
-            // lands while stop() below is draining.
+            // STOP_DRAIN_TIMEOUT_MS, so this test parks through start()'s full
+            // deadline. The release is scheduled only after that, so it lands
+            // while stop() below is draining -- which is what pins stop()'s
+            // drain: released any earlier, MARKER would be delivered before
+            // stop() and the assertion could no longer tell a draining stop()
+            // from one that drops the record on the console.
             capture.start();
             LOG.advisory().$(MARKER).$();
 

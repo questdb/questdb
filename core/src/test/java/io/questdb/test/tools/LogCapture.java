@@ -102,7 +102,14 @@ public class LogCapture {
     public void start() {
         consoleWriter.setInterceptor(interceptor);
         isCapturing = true;
-        drain();
+        // Same deadline and reasoning as stop(): a record an earlier test enqueued
+        // must not leak into this capture. A short deadline here clears the sink
+        // while the logging worker is still behind, and records queued before
+        // start() then land in the fresh capture. The sentinel is never lost
+        // (advisory() waits for a ring slot), so this costs nothing when the
+        // worker keeps up; the deadline only bounds delivery once the record is
+        // queued.
+        drain(STOP_DRAIN_TIMEOUT_MS);
         sink.clear();
     }
 
