@@ -1008,6 +1008,23 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
+    /**
+     * Whether the client sent variables with the text the lexer parses, see
+     * {@link SqlExecutionContext#getQueryVariables()}.
+     * <p>
+     * The variables belong to the text the client sent them with, as a DECLARE block belongs to
+     * the text it opens. A compile of that text parses it again on a retry, which reads them
+     * again, but also parses SQL of its own with the same context: the body of a view that ALTER
+     * VIEW defines, the query that checks an EXPIRE ROWS policy. Those texts are stored or made
+     * up, and no DECLARE block of the statement reaches them, so the variables do not either.
+     */
+    private static boolean hasQueryVariables(GenericLexer lexer, SqlExecutionContext executionContext) {
+        final CharSequence variables = executionContext.getQueryVariables();
+        return variables != null
+                && variables.length() > 0
+                && Chars.equalsNc(lexer.getContent(), executionContext.getQueryVariablesSqlText());
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -2994,15 +3011,17 @@ public class SqlParser {
         expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
         securityContext = executionContext.getSecurityContext();
         // The client's variables reach the statements that read: queries, and the query of an
-        // INSERT. Statements that keep their text for later skip them, because the text is all
-        // that is parsed again: CREATE TABLE AS, views and materialized views keep it as their
-        // definition, and UPDATE as what the WAL applies.
-        final LowerCaseCharSequenceObjHashMap<ExpressionNode> variableDecls = parseQueryVariables(lexer, executionContext, sqlParserCallback);
+        // INSERT. Statements that keep their text for later never parse them, because the text
+        // is all that is parsed again: CREATE TABLE AS, views and materialized views keep it as
+        // their definition, and UPDATE as what the WAL applies. Parsing them for such a statement
+        // would fail it on variables it does not read, and would record the views their values
+        // read as views the statement reads.
+        queryVariablesModel = null;
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
             int format = parseExplainOptions(lexer, tok);
-            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback, variableDecls);
+            ExecutionModel model = parseExplain(lexer, executionContext, sqlParserCallback);
             ExplainModel explainModel = explainModelPool.next();
             explainModel.setFormat(format);
             explainModel.setModel(model);
@@ -3010,7 +3029,7 @@ public class SqlParser {
         }
 
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, variableDecls);
+            return parseSelect(lexer, sqlParserCallback, parseQueryVariables(lexer, executionContext, sqlParserCallback));
         }
 
         if (isCreateKeyword(tok)) {
@@ -3026,7 +3045,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, variableDecls);
+            return parseInsert(lexer, sqlParserCallback, null, executionContext);
         }
 
         if (isCopyKeyword(tok)) {
@@ -3034,7 +3053,7 @@ public class SqlParser {
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, variableDecls);
+            return parseWith(lexer, executionContext, sqlParserCallback);
         }
 
         if (isCompileKeyword(tok)) {
@@ -3045,7 +3064,7 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "Did you mean 'select * from'?");
         }
 
-        return parseSelect(lexer, sqlParserCallback, variableDecls);
+        return parseSelect(lexer, sqlParserCallback, parseQueryVariables(lexer, executionContext, sqlParserCallback));
     }
 
     /**
@@ -6368,13 +6387,13 @@ public class SqlParser {
     private ExecutionModel parseExplain(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> variableDecls
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
         final CharSequence tok = tok(lexer, "'create', 'format', 'insert', 'update', 'select' or 'with'");
 
+        // the client's variables reach the statements parse0() lets read them, see there
         if (isSelectKeyword(tok)) {
-            return parseSelect(lexer, sqlParserCallback, variableDecls);
+            return parseSelect(lexer, sqlParserCallback, parseQueryVariables(lexer, executionContext, sqlParserCallback));
         }
 
         if (isCreateKeyword(tok)) {
@@ -6386,11 +6405,11 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, variableDecls);
+            return parseInsert(lexer, sqlParserCallback, null, executionContext);
         }
 
         if (isWithKeyword(tok)) {
-            return parseWith(lexer, sqlParserCallback, variableDecls);
+            return parseWith(lexer, executionContext, sqlParserCallback);
         }
 
         if (isDropKeyword(tok) || isAlterKeyword(tok) || isRefreshKeyword(tok)) {
@@ -6399,7 +6418,7 @@ public class SqlParser {
             ).put(" expected");
         }
 
-        return parseSelect(lexer, sqlParserCallback, variableDecls);
+        return parseSelect(lexer, sqlParserCallback, parseQueryVariables(lexer, executionContext, sqlParserCallback));
     }
 
     private int parseExplainOptions(GenericLexer lexer, CharSequence prevTok) throws SqlException {
@@ -7335,10 +7354,19 @@ public class SqlParser {
         } while (true);
     }
 
+    /**
+     * @param decls            the declarations in scope, those of the WITH clause that heads the
+     *                         INSERT
+     * @param variablesContext the context of a statement the INSERT opens, whose variables, see
+     *                         {@link #parseQueryVariables}, its query reads; null when a WITH
+     *                         clause heads the INSERT and has read them already. VALUES does not
+     *                         read them.
+     */
     private ExecutionModel parseInsert(
             GenericLexer lexer,
             SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
+            @Nullable SqlExecutionContext variablesContext
     ) throws SqlException {
         final InsertModel model = insertModelPool.next();
         CharSequence tok = tok(lexer, "atomic or into or batch");
@@ -7400,7 +7428,10 @@ public class SqlParser {
         if (isSelectKeyword(tok)) {
             model.setSelectKeywordPosition(lexer.lastTokenPosition());
             lexer.unparseLast();
-            final IQueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, decls, false, true);
+            final LowerCaseCharSequenceObjHashMap<ExpressionNode> queryDecls = variablesContext != null
+                    ? parseQueryVariables(lexer, variablesContext, sqlParserCallback)
+                    : decls;
+            final IQueryModel queryModel = parseDml(lexer, null, lexer.lastTokenPosition(), true, sqlParserCallback, queryDecls, false, true);
             model.setQueryModel(queryModel);
             tok = optTok(lexer);
             // no more tokens or ';' should indicate end of statement
@@ -8140,7 +8171,8 @@ public class SqlParser {
     /**
      * Parses the variables the client declared for the statement outside its text, see
      * {@link SqlExecutionContext#getQueryVariables()}: the assignments of a DECLARE block that
-     * opens the statement. Returns null when the client declared none.
+     * opens the statement. Returns null when the client declared none. Only a statement that
+     * reads them calls this, once it knows it reads them, see parse0().
      * <p>
      * The assignments are parsed from a text of their own: the statement's text, a newline, and
      * the assignments, read from past the newline. So everything parsed from them takes a
@@ -8156,19 +8188,10 @@ public class SqlParser {
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
         queryVariablesModel = null;
+        if (!hasQueryVariables(lexer, executionContext)) {
+            return null;
+        }
         final CharSequence variables = executionContext.getQueryVariables();
-        if (variables == null || variables.length() == 0) {
-            return null;
-        }
-        // The variables belong to the text the client sent them with, as a DECLARE block belongs
-        // to the text it opens. A compile of that text parses it again on a retry, which reads
-        // them again, but also parses SQL of its own with the same context: the body of a view
-        // that ALTER VIEW defines, the query that checks an EXPIRE ROWS policy. Those texts are
-        // stored or made up, and no DECLARE block of the statement reaches them, so the variables
-        // do not either.
-        if (!Chars.equalsNc(lexer.getContent(), executionContext.getQueryVariablesSqlText())) {
-            return null;
-        }
         queryVariablesSource.clear();
         queryVariablesSource.put(lexer.getContent()).put('\n');
         final int assignmentsLo = queryVariablesSource.length();
@@ -8191,7 +8214,7 @@ public class SqlParser {
         // The model becomes the root of the statement that reads the variables, see parseDml0(),
         // so it keeps everything this parse leaves in it, as the root keeps what the DECLARE block
         // that opens a statement leaves: the sub-queries of the values among it, which the
-        // optimiser reaches through the root. A statement that reads no variables never takes it.
+        // optimiser reaches through the root.
         final IQueryModel model = queryModelPool.next();
         // a sub-query in a value resolves table names against tables only, as one in a DECLARE
         // block that opens a statement does
@@ -9007,16 +9030,16 @@ public class SqlParser {
     @NotNull
     private ExecutionModel parseWith(
             GenericLexer lexer,
-            SqlParserCallback sqlParserCallback,
-            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        // only parse0() and parseExplain() pass declarations here: the client's variables
-        assert decls == null || (queryVariablesModel != null && decls == queryVariablesModel.getDecls());
-        if (decls != null && isUpdateAfterWith(lexer)) {
-            // The WAL applies an UPDATE by parsing its text again, without the client's
-            // variables, so neither the UPDATE nor its CTEs read them, see parse0().
-            decls = null;
-        }
+        // The WAL applies an UPDATE by parsing its text again, without the client's variables,
+        // so neither the UPDATE nor its CTEs read them, see parse0(). The scan for the UPDATE
+        // runs only when there are variables to skip.
+        final LowerCaseCharSequenceObjHashMap<ExpressionNode> decls =
+                hasQueryVariables(lexer, executionContext) && !isUpdateAfterWith(lexer)
+                        ? parseQueryVariables(lexer, executionContext, sqlParserCallback)
+                        : null;
         parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, decls);
         CharSequence tok = tok(lexer, "'select', 'update' or name expected");
         if (isSelectKeyword(tok)) {
@@ -9028,7 +9051,7 @@ public class SqlParser {
         }
 
         if (isInsertKeyword(tok)) {
-            return parseInsert(lexer, sqlParserCallback, decls);
+            return parseInsert(lexer, sqlParserCallback, decls, null);
         }
 
         throw SqlException.$(lexer.lastTokenPosition(), "'select' | 'update' | 'insert' expected");

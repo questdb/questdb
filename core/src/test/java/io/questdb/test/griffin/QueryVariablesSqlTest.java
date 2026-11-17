@@ -24,9 +24,13 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SCSequence;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -371,6 +375,76 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             withVariables("@a := 1", update, () -> assertExceptionNoLeakCheck(update, 17, "Invalid column: @a"));
             final String withUpdate = "WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c";
             withVariables("@a := 1", withUpdate, () -> assertExceptionNoLeakCheck(withUpdate, 18, "Invalid column: @a"));
+        });
+    }
+
+    @Test
+    public void testStatementsThatIgnoreVariablesDoNotParseThem() throws Exception {
+        assertMemoryLeak(() -> {
+            // "a := 1" is no assignment: a statement that reads the variables fails on it, one
+            // that does not read them runs as it does without the parameter
+            final String variables = "a := 1";
+            final String select = "SELECT 1 x";
+            withVariables(variables, select, () -> assertExceptionNoLeakCheck(select, select.length() + 1, "unexpected token [a]"));
+            final String insertSelect = "INSERT INTO x SELECT 1";
+            withVariables(variables, insertSelect, () -> assertExceptionNoLeakCheck(insertSelect, insertSelect.length() + 1, "unexpected token [a]"));
+
+            final String[] statements = {
+                    "CREATE TABLE x (a INT)",
+                    "INSERT INTO x VALUES (1)",
+                    "UPDATE x SET a = a + 1",
+                    "WITH c AS (SELECT 10 y) UPDATE x SET a = a + c.y FROM c",
+                    "CREATE TABLE y AS (SELECT a FROM x)",
+                    "CREATE VIEW vx AS (SELECT a FROM x)",
+            };
+            for (String sql : statements) {
+                executeWithVariables(variables, sql);
+            }
+            final String explainUpdate = "EXPLAIN UPDATE x SET a = 0";
+            final StringSink expected = new StringSink();
+            printSql(explainUpdate, expected);
+            final StringSink actual = new StringSink();
+            withVariables(variables, explainUpdate, () -> printSql(explainUpdate, actual));
+            TestUtils.assertEquals(expected, actual);
+
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n12\n");
+            assertQuery("SELECT * FROM y").noLeakCheck().expectSize().returns("a\n12\n");
+            assertQuery("SELECT * FROM vx").noLeakCheck().expectSize().returns("a\n12\n");
+        });
+    }
+
+    @Test
+    public void testUpdateDoesNotReadViewsOfVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // A view that only the variables read is no view the UPDATE reads: dropping it
+            // between the compile and the execution of the UPDATE leaves the UPDATE as it is
+            // without the parameter. The table is not WAL, so the compiled UPDATE runs as is.
+            final String variables = "@x := (SELECT max(a) FROM vw)";
+            final String[][] cases = {
+                    {"UPDATE t SET v = 5", "a\tv\n1\t5\n2\t5\n"},
+                    {"WITH c AS (SELECT 7 x) UPDATE t SET v = c.x FROM c", "a\tv\n1\t7\n2\t7\n"},
+            };
+            for (String[] c : cases) {
+                final String sql = c[0];
+                execute("CREATE TABLE t (a INT, v INT)");
+                execute("INSERT INTO t VALUES (1, 0), (2, 0)");
+                execute("CREATE VIEW vw AS (SELECT a FROM t)");
+                drainWalAndViewQueues();
+                final SCSequence eventSubSequence = new SCSequence();
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final CompiledQuery[] cq = new CompiledQuery[1];
+                    withVariables(variables, sql, () -> cq[0] = compiler.compile(sql, sqlExecutionContext));
+                    Assert.assertEquals(CompiledQuery.UPDATE, cq[0].getType());
+                    execute("DROP VIEW vw");
+                    try (OperationFuture fut = cq[0].execute(eventSubSequence)) {
+                        fut.await();
+                        Assert.assertEquals(2, fut.getAffectedRowsCount());
+                    }
+                }
+                assertQuery("SELECT * FROM t").noLeakCheck().expectSize().returns(c[1]);
+                execute("DROP TABLE t");
+            }
         });
     }
 

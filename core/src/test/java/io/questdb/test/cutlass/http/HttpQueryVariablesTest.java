@@ -126,6 +126,10 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final Utf8StringSink sink = new Utf8StringSink();
             testHttpClient.get("CREATE TABLE x AS (SELECT @a v)", variables, sink);
             TestUtils.assertContains(sink.toString(), "\"error\"");
+            // they do not parse the variables either: a parameter that holds no assignment
+            // fails no CREATE
+            final String response = assertSameResponse("/query", "CREATE TABLE IF NOT EXISTS z (a INT)", "a := 1");
+            TestUtils.assertEquals("{\"ddl\":\"OK\"}", response);
         }));
     }
 
@@ -353,6 +357,34 @@ public class HttpQueryVariablesTest extends AbstractTest {
             final String variables = "@a := 1";
             assertSameResponse("UPDATE t SET v = @a", variables);
             assertSameResponse("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", variables);
+            // nor does it parse them: a parameter that holds no assignment fails no UPDATE
+            for (String sql : new String[]{"UPDATE t SET v = 1", "WITH c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c"}) {
+                final String response = assertSameResponse("/query", sql, "a := 1");
+                TestUtils.assertEquals("{\"dml\":\"OK\",\"updated\":0}", response);
+            }
+        }));
+    }
+
+    @Test
+    public void testCachedViewReadWithAndWithoutVariables() throws Exception {
+        // A view's OVERRIDABLE variable makes the same text compile with and without the
+        // parameter, to queries that return other rows. The select cache that /exec and /exp
+        // share keeps them apart, whichever request compiles the text first.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE k (l LONG)", sqlExecutionContext);
+            engine.execute("INSERT INTO k VALUES (1), (2), (3)", sqlExecutionContext);
+            engine.execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)", sqlExecutionContext);
+            final String sql = "SELECT * FROM v_ovl";
+            final String variables = "@lim := 1";
+            final String plainJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1],[2]],\"count\":2}";
+            final String overriddenJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}";
+            for (int i = 0; i < 2; i++) {
+                // without the parameter first, then with it, on each endpoint
+                assertGet(plainJson, sql, null);
+                assertGet(overriddenJson, sql, variables);
+                assertSameExport("SELECT l FROM k WHERE l <= 2", sql, null, null);
+                assertSameExport("SELECT l FROM k WHERE l <= 1", sql, variables, null);
+            }
         }));
     }
 
@@ -373,6 +405,13 @@ public class HttpQueryVariablesTest extends AbstractTest {
                 assertSameExport("SELECT v FROM t WHERE v > 1", "SELECT v FROM t WHERE v > @min", "@min := 1", null);
                 assertSameExport("SELECT v FROM t WHERE v > 2", "SELECT v FROM t WHERE v > @min", "@min := 2", null);
             }
+            // the same text without the variables reads no @min, cached or not
+            final Utf8StringSink sink = new Utf8StringSink();
+            Assert.assertEquals("400", testHttpClient.get("/exp", "SELECT v FROM t WHERE v > @min", null, null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT v FROM t WHERE v > @min\",\"error\":\"Invalid column: @min\",\"position\":26}",
+                    sink.toString()
+            );
         }));
     }
 
