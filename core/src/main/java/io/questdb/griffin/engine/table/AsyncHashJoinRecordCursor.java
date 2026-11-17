@@ -494,13 +494,18 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             atom.getRing().release(entryFrame);
         }
         if (cursor > -1) {
-            // The frame's rows count toward the factory's stepper warm-up, whatever its task did.
-            atom.addProbedRows(frameSequence.getTask(cursor).getFrameRowCount());
-            frameSequence.collect(cursor, forceCollect);
-            cursor = -1;
-            // The record reads the task's frame memory, which the task releases on collection.
-            probeRecord.clear();
-            tuples = null;
+            try {
+                // The frame's rows count toward the factory's stepper warm-up, whatever its task did,
+                // before the collection lets the frames after it start. The warm-up may define the
+                // stepper copies, and a failure to define them still collects the frame.
+                atom.addProbedRows(frameSequence.getTask(cursor).getFrameRowCount());
+            } finally {
+                frameSequence.collect(cursor, forceCollect);
+                cursor = -1;
+                // The record reads the task's frame memory, which the task releases on collection.
+                probeRecord.clear();
+                tuples = null;
+            }
         }
     }
 

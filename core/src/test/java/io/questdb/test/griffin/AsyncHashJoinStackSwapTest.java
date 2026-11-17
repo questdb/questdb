@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinSpec;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
@@ -314,30 +315,47 @@ public class AsyncHashJoinStackSwapTest extends AbstractCairoTest {
             final String sql = "SELECT l.ik, l.k, l.s, l.lk, l.v, l.ts, r.w, r.k, r.rs, r.rts, a.q, a.w1, a.ik, c.w3, c.str, c.s, h.w2, h.vc, h.q, h.lk"
                     + " FROM (SELECT ik, k, s, lk, v, ts FROM l) l JOIN r ON l.k = r.k JOIN d1 a ON l.ik = a.ik"
                     + " LEFT JOIN d3 c ON l.s = c.s LEFT JOIN d2 h ON l.lk = h.lk AND l.s = h.q";
-            for (int frameRows : new int[]{1, 3, 1_000_000}) {
-                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
-                try (
-                        RecordCursorFactory leftQuery = select("SELECT * FROM l");
-                        RecordCursorFactory leftProjection = select("SELECT ik, k, s, lk, v, ts FROM l");
-                        RecordCursorFactory rightQuery = select("SELECT * FROM r");
-                        RecordCursorFactory d1Query = select("SELECT * FROM d1");
-                        RecordCursorFactory d3Query = select("SELECT * FROM d3");
-                        RecordCursorFactory d2Query = select("SELECT * FROM d2");
-                        AsyncHashJoinRecordCursorFactory join = newRemappedStack(leftQuery, leftProjection, rightQuery, d1Query, d3Query, d2Query)
-                ) {
-                    Assert.assertTrue(join.getSpec().isSwapCandidate());
-                    Assert.assertEquals(1, countMatches(plan(join, sqlExecutionContext), "inputSwap"));
-                    // l, the smaller, swaps, until it grows past r.
-                    Assert.assertEquals(rows(ordinary(sql, sqlExecutionContext)), rows(result(join, sqlExecutionContext)));
-                    assertHandPlannedExecution(join, true);
-                    execute("INSERT INTO l SELECT CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 3)::INT END, 100 + x, (x % 5)::LONG, ('s' || (x % 4))::SYMBOL,"
-                            + " CASE WHEN x % 6 = 0 THEN NULL ELSE (x % 6)::INT END, 'str' || (x % 3), ('vc' || (x % 4))::VARCHAR,"
-                            + " timestamp_sequence('2024-01-01T03', 60_000_000) FROM long_sequence(40)");
-                    Assert.assertEquals(rows(ordinary(sql, sqlExecutionContext)), rows(result(join, sqlExecutionContext)));
-                    assertHandPlannedExecution(join, false);
+            // Under the default warm-up, the executions run the shared stepper template. A warm-up of 20
+            // rows defines the stepper copies within the first execution, which swaps and probes r's 40
+            // rows, so that the copies, bound to the swapped orientation's key columns then, run the
+            // execution that does not swap.
+            for (long warmUpRows : new long[]{AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS, 20}) {
+                AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(warmUpRows);
+                try {
+                    for (int frameRows : new int[]{1, 3, 1_000_000}) {
+                        sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                        try (
+                                RecordCursorFactory leftQuery = select("SELECT * FROM l");
+                                RecordCursorFactory leftProjection = select("SELECT ik, k, s, lk, v, ts FROM l");
+                                RecordCursorFactory rightQuery = select("SELECT * FROM r");
+                                RecordCursorFactory d1Query = select("SELECT * FROM d1");
+                                RecordCursorFactory d3Query = select("SELECT * FROM d3");
+                                RecordCursorFactory d2Query = select("SELECT * FROM d2");
+                                AsyncHashJoinRecordCursorFactory join = newRemappedStack(leftQuery, leftProjection, rightQuery, d1Query, d3Query, d2Query)
+                        ) {
+                            Assert.assertTrue(join.getSpec().isSwapCandidate());
+                            Assert.assertEquals(1, countMatches(plan(join, sqlExecutionContext), "inputSwap"));
+                            // l, the smaller, swaps, until it grows past r.
+                            Assert.assertEquals(rows(ordinary(sql, sqlExecutionContext)), rows(result(join, sqlExecutionContext)));
+                            assertHandPlannedExecution(join, true);
+                            final boolean isWarm = warmUpRows < AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS;
+                            // Four stages, and the first one's swapped orientation.
+                            Assert.assertEquals(isWarm ? 5 : 0, join.getAtom().getStepperCopyCount());
+                            execute("INSERT INTO l SELECT CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 3)::INT END, 100 + x, (x % 5)::LONG, ('s' || (x % 4))::SYMBOL,"
+                                    + " CASE WHEN x % 6 = 0 THEN NULL ELSE (x % 6)::INT END, 'str' || (x % 3), ('vc' || (x % 4))::VARCHAR,"
+                                    + " timestamp_sequence('2024-01-01T03', 60_000_000) FROM long_sequence(40)");
+                            Assert.assertEquals(rows(ordinary(sql, sqlExecutionContext)), rows(result(join, sqlExecutionContext)));
+                            Assert.assertFalse(join.getAtom().isSwapped());
+                            Assert.assertEquals(0, join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_TASK, !isWarm));
+                            Assert.assertTrue(join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_TASK, isWarm) > 0);
+                            assertHandPlannedExecution(join, false);
+                        }
+                        dropTables();
+                        createTables(12, 40);
+                    }
+                } finally {
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
                 }
-                dropTables();
-                createTables(12, 40);
             }
         });
     }

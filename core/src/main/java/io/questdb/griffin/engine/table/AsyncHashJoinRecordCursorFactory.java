@@ -339,12 +339,13 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * The class of the stage's stepper, a hidden copy of the stepper template that no other factory
-     * shares.
+     * The class of the stepper that the stage's tasks run from here on: once the factory is warmed
+     * up, the stage's own copy, a hidden class that no other factory shares, and before, the shared
+     * stepper template; see {@link AsyncHashJoinAtom#getStepperClass(int)}.
      */
     @TestOnly
     public Class<?> getStepperClass(int stage) {
-        return spec.getStage(stage).getStepper().getClass();
+        return getAtom().getStepperClass(stage);
     }
 
     /**
@@ -522,9 +523,10 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * Makes every stage take the shared stepper template rather than a hidden copy of it, as a JVM
-     * that cannot define hidden classes does; coverage tools, which do not see hidden classes, then
-     * see the template's code run.
+     * Makes the stages of the factories that define their stepper copies from here on, as they warm
+     * up, take instances of the shared stepper template rather than hidden copies of it, as a JVM that
+     * cannot define hidden classes does; coverage tools, which do not see hidden classes, then see the
+     * template's code run.
      */
     @TestOnly
     public static void setStepperCopiesEnabledForTesting(boolean isEnabled) {

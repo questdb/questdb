@@ -597,7 +597,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                 // A parent asks the first factory about its order, which fixes it.
                 Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, join.getScanDirection());
                 Assert.assertTrue(join.getSpec().isOrderDetermined());
-                final Class<?> firstStepper = join.getStepperClass(0);
+                // A factory that is not warmed up defines no stepper copy.
+                Assert.assertEquals(0, join.getAtom().getStepperCopyCount());
                 // A later join steals the spec, as the planner does, and appends its stage.
                 final AsyncHashJoinSpec spec = join.stealSpec();
                 join.halfClose();
@@ -636,15 +637,15 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                                 1
                         )
                 ) {
-                    // The order answer and the first stage's stepper went on with the spec, and the
-                    // new stage has a stepper class of its own.
+                    // The order answer went on with the spec. The stack defines no stepper copy
+                    // either, until it is warmed up.
                     Assert.assertTrue(stack.getSpec().isOrderDetermined());
-                    Assert.assertSame(firstStepper, stack.getStepperClass(0));
-                    Assert.assertNotSame(firstStepper, stack.getStepperClass(1));
-                    Assert.assertTrue(stack.getStepperClass(1).isHidden());
                     TestUtils.assertContains(plan(stack, sqlExecutionContext), "stages: 2");
                     Assert.assertEquals(expected, rows(result(stack, sqlExecutionContext)));
                     Assert.assertEquals(expected, rows(result(stack, sqlExecutionContext)));
+                    Assert.assertEquals(0, stack.getAtom().getStepperCopyCount());
+                    Assert.assertFalse(stack.getStepperClass(0).isHidden());
+                    Assert.assertFalse(stack.getStepperClass(1).isHidden());
                 }
             }
             // A first join that may swap its inputs keeps a parent's answer through a rebuild over
@@ -1062,6 +1063,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             final String fullPlan = assertStack(full, AsyncHashJoinSpec.MAX_STAGE_COUNT);
             Assert.assertEquals(fullPlan, AsyncHashJoinSpec.MAX_STAGE_COUNT, countMatches(fullPlan, " Build "));
             Assert.assertFalse(fullPlan, fullPlan.contains("Hash Left Outer Join Light"));
+            // The factory runs its copies from the first task, so it defines them as it compiles.
+            useSteppers(true);
             try (RecordCursorFactory factory = select(full)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -1072,6 +1075,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                     stepperClasses.add(join.getStepperClass(k));
                 }
                 Assert.assertEquals(AsyncHashJoinSpec.MAX_STAGE_COUNT, stepperClasses.size());
+            } finally {
+                restoreSteppers();
             }
             // A 33rd join wraps the operator of the first 32 as an ordinary join's master.
             final String plan = assertParallelHashJoin(starOfJoins(AsyncHashJoinSpec.MAX_STAGE_COUNT + 1), sqlExecutionContext);
@@ -1109,6 +1114,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                     assertStack(EIGHT_STAGES + " LIMIT -7", 8);
                 }
             }
+            useSteppers(true);
             try (RecordCursorFactory factory = select(EIGHT_STAGES)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -1117,6 +1123,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                     stepperClasses.add(join.getStepperClass(k));
                 }
                 Assert.assertEquals(8, stepperClasses.size());
+            } finally {
+                restoreSteppers();
             }
         });
     }

@@ -945,6 +945,8 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createProbeAndBuild();
             final String sql = "SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k";
+            // The factories run their copies from the first task, so they define them as they compile.
+            useSteppers(true);
             try (RecordCursorFactory first = select(sql); RecordCursorFactory second = select(sql)) {
                 final Class<?> firstClass = find(first).getStepperClass(0);
                 final Class<?> secondClass = find(second).getStepperClass(0);
@@ -952,6 +954,8 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                 Assert.assertNotEquals(firstClass, secondClass);
                 Assert.assertTrue(firstClass.isHidden());
                 Assert.assertTrue(secondClass.isHidden());
+            } finally {
+                restoreSteppers();
             }
         });
     }

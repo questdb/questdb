@@ -36,6 +36,9 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.HashSet;
+import java.util.Set;
+
 import static io.questdb.griffin.engine.table.AsyncHashJoinAtom.*;
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
@@ -56,6 +59,9 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
     private static final int FRAME_COUNT = 8;
     private static final int FRAME_ROWS = 4;
     private static final String SINGLE = "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k";
+    // s is smaller than t, so the first join hashes s and probes t's frames; the second join reads its
+    // key from the first join's build rows.
+    private static final String SWAPPED_STACK = "SELECT s.k, s.sv, t.v, u.w FROM s JOIN t ON s.k = t.k JOIN u ON s.lk = u.k";
 
     @Override
     @Before
@@ -142,6 +148,128 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopiesDefinedOnWarmUp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A factory defines no stepper copy as it compiles or while it runs the template: the
+            // execution that collects the warm-up's 40 rows, the second, defines them, one per stage
+            // and one more for a first join that may swap its inputs, each a class of its own.
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(40);
+            for (String sql : new String[]{SINGLE, SWAPPED_STACK}) {
+                final int stageCount = sql.equals(SINGLE) ? 1 : 2;
+                final int copyCount = sql.equals(SINGLE) ? 1 : 3;
+                final String expected = ordinary(sql, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    final AsyncHashJoinAtom atom = join.getAtom();
+                    Assert.assertEquals(sql, 0, atom.getStepperCopyCount());
+                    Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                    Assert.assertEquals(sql, 0, atom.getStepperCopyCount());
+                    for (int k = 0; k < stageCount; k++) {
+                        Assert.assertFalse(sql, join.getStepperClass(k).isHidden());
+                    }
+                    Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                    Assert.assertEquals(sql, copyCount, atom.getStepperCopyCount());
+                    final Set<Class<?>> classes = new HashSet<>();
+                    for (int k = 0; k < stageCount; k++) {
+                        Assert.assertTrue(sql, join.getStepperClass(k).isHidden());
+                        classes.add(join.getStepperClass(k));
+                    }
+                    Assert.assertEquals(sql, stageCount, classes.size());
+                    // Later executions keep the copies.
+                    Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
+                    Assert.assertEquals(sql, copyCount, atom.getStepperCopyCount());
+                    for (int k = 0; k < stageCount; k++) {
+                        Assert.assertTrue(sql, classes.contains(join.getStepperClass(k)));
+                    }
+                    assertRuns(atom, STEPPER_RUN_TASK, 0, FRAME_COUNT);
+                }
+            }
+            // Under the default threshold, executions define none.
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(STEPPER_WARM_UP_ROWS);
+            try (RecordCursorFactory factory = select(SWAPPED_STACK)) {
+                final AsyncHashJoinAtom atom = getAtom(factory);
+                Assert.assertEquals(0, atom.getStepperCopyCount());
+                result(factory, sqlExecutionContext);
+                Assert.assertEquals(0, atom.getStepperCopyCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesRunInTheOtherOrientation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A factory defines its copies within an execution, after its third frame, as each copy's
+            // stage is bound then: in the orientation the execution picked, enumerated or not. The
+            // copies then run an execution that picks the other orientation, whose first stage walks
+            // its matches only when swapped, and whose later stage reads its key from the probe rows
+            // rather than from the first stage's build rows, or the other way round. See
+            // AsyncHashJoinStackSwapTest#testHandPlannedStackOverRemappedLeftInput for keys that sit
+            // at other columns in the two orientations.
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(10);
+            final String sql = SWAPPED_STACK;
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinAtom atom = getAtom(factory);
+                // s holds 4 rows and t 32: the execution hashes s and probes t's eight frames.
+                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertTrue(atom.isSwapped());
+                assertRuns(atom, STEPPER_RUN_TASK, 3, FRAME_COUNT - 3);
+                // s grows to 40 rows, past t: the execution hashes t and probes s's ten frames.
+                execute("INSERT INTO s SELECT (x % 5)::INT k, (x % 4)::INT lk, x * 13 sv FROM long_sequence(36)");
+                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertFalse(atom.isSwapped());
+                assertRuns(atom, STEPPER_RUN_TASK, 0, 10);
+            }
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinAtom atom = getAtom(factory);
+                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertFalse(atom.isSwapped());
+                assertRuns(atom, STEPPER_RUN_TASK, 3, 10 - 3);
+                // t grows to 48 rows, past s: the execution swaps the inputs again, and probes t's
+                // twelve frames.
+                execute("INSERT INTO t SELECT (x % 5)::INT k, (x % 3)::INT lk, x + 1_000 v, timestamp_sequence('2024-01-02', 60_000_000) ts FROM long_sequence(16)");
+                Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                Assert.assertTrue(atom.isSwapped());
+                assertRuns(atom, STEPPER_RUN_TASK, 0, 12);
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesWalkAsEachExecutionDecides() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // g's regex conjunct reads g alone, so an execution runs it over g's rows when g holds no
+            // more rows than t, and over the pairs otherwise, which makes the workers walk both
+            // stages' matches. The copies, defined while the first execution walks none, walk them
+            // in the second.
+            execute("CREATE TABLE g AS (SELECT (x % 3)::INT k, x * 1_000 w, ('a' || (x % 4))::VARCHAR name FROM long_sequence(24))");
+            final String sql = "SELECT t.v, d.w, g.w gw FROM t JOIN d ON t.k = d.k LEFT JOIN g ON t.lk = g.k AND g.name ~ 'a[12]'";
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(10);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final AsyncHashJoinAtom atom = join.getAtom();
+                for (int run = 0; run < 2; run++) {
+                    Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
+                    assertRuns(atom, STEPPER_RUN_TASK, run == 0 ? 3 : 0, run == 0 ? FRAME_COUNT - 3 : FRAME_COUNT);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertFalse(atom.isSwapped());
+                        Assert.assertEquals(run == 0, atom.getStage(1).isBuildOnFilterApplied());
+                    }
+                    if (run == 0) {
+                        // g grows to 40 rows, past t's 32.
+                        execute("INSERT INTO g SELECT (x % 3)::INT k, x * 1_000 + 7 w, ('a' || (x % 4))::VARCHAR name FROM long_sequence(16)");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCountOnlyTasksAndCountedRest() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -212,9 +340,7 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
                     "SELECT t.v, u.w, d.w dw, e.w ew FROM t LEFT JOIN u ON t.k = u.k JOIN d ON t.k = d.k LEFT JOIN d e ON t.lk = e.k",
                     "SELECT t.v, u.w, d.w dw FROM t LEFT JOIN u ON t.k = u.k AND u.w > t.v LEFT JOIN d ON t.k = d.k WHERE d.w <> t.v",
                     "SELECT t.v, d.w, u.w uw FROM t JOIN d ON t.k = d.k LEFT JOIN u ON t.lk = u.k AND u.w < d.w",
-                    // s is smaller than t, so the first join hashes s and probes t's frames; the second
-                    // join reads its key from the first join's build rows.
-                    "SELECT s.k, s.sv, t.v, u.w FROM s JOIN t ON s.k = t.k JOIN u ON s.lk = u.k",
+                    SWAPPED_STACK,
                     "SELECT count(*) FROM t JOIN d ON t.k = d.k LEFT JOIN u ON t.lk = u.k",
             };
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);

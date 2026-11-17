@@ -143,6 +143,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * the copies' warm-up, and the copies from then on: each task, count-only task and continuation
  * picks one by the rows collected when it starts, see {@link #addProbedRows(long)}. Both write the
  * same tuples and counts, so an execution may switch from one to the other between two of them.
+ * The factory defines the copies only when it switches, so that one that never collects that many
+ * rows defines no class: defining a copy takes about as long as compiling a small join.
  * <p>
  * {@link #clear()} requires every task to have finished and the consumer to be done with the tuples
  * and the payload readers.
@@ -258,16 +260,26 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     private volatile boolean isWarmedUp;
     // The probe rows of the frames that the consumer collected over the factory's executions.
     private long probedRowCount;
-    // The first stage's stepper in the execution's orientation: its hidden copy, and the shared
-    // template's instance, which the tasks run until the factory is warmed up.
+    // The first stage's stepper in the execution's orientation: its hidden copy, null until the
+    // factory defines its copies, and the shared template's instance, which the tasks run until the
+    // factory is warmed up.
+    @Nullable
     private HashJoinStageStepper stepper;
+    // The stages' hidden stepper copies in the query's orientation, which the factory defines once it
+    // is warmed up; null until then. See defineStepperCopies().
+    @Nullable
+    private ObjList<HashJoinStageStepper> stepperCopies;
+    // The hidden copy of the first stage's stepper in the swapped orientation; null until the factory
+    // defines its copies, and for a join that never swaps.
+    @Nullable
+    private HashJoinStageStepper swapStepperCopy;
     private HashJoinStageStepper templateStepper;
 
     /**
-     * Borrows the spec's inputs, filter contexts and steppers. The key layouts borrow the inputs'
-     * metadata, so construct the atom while the inputs are open. Nothing here allocates native
-     * memory, which the stages, the slots and the ring take only when an execution opens them, so a
-     * failure leaves nothing to release.
+     * Borrows the spec's inputs, filter contexts and stepper template instances. The key layouts
+     * borrow the inputs' metadata, so construct the atom while the inputs are open. Nothing here
+     * allocates native memory, which the stages, the slots and the ring take only when an execution
+     * opens them, so a failure leaves nothing to release.
      */
     AsyncHashJoinAtom(CairoConfiguration configuration, AsyncHashJoinSpec spec, int workerCount) {
         this.workerCount = workerCount;
@@ -309,11 +321,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             specs.add(stageSpec);
             scanBySource[k + 1] = k + 1;
             stageSpec.setPayloadCopyable(stage.isPayloadCopyable());
-            // Each stage's matches go on to the next stage's stepper, the hidden copies' to the next
-            // copy and the shared template's to the next stage's instance of it. Which steppers walk
+            // Each stage's matches go on to the next stage's instance of the shared template, as the
+            // hidden copies' go on to the next copy, see defineStepperCopies(). Which steppers walk
             // their matches, each execution decides; see ofEnumeration().
             final HashJoinStageSpec nextSpec = k + 1 < stageCount ? spec.getStage(k + 1) : null;
-            ofStepper(stageSpec.getStepper(), keyLayout, stageSpec.isOuter(), nextSpec != null ? nextSpec.getStepper() : null);
             ofStepper(stageSpec.getTemplateStepper(), keyLayout, stageSpec.isOuter(), nextSpec != null ? nextSpec.getTemplateStepper() : null);
         }
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
@@ -331,11 +342,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
                     leftInput.getOrder(),
                     workerCount
             );
-            final HashJoinStageStepper swapStepper = firstSpec.getSwapStepper();
             final HashJoinStageStepper swapTemplateStepper = firstSpec.getSwapTemplateStepper();
-            assert swapStepper != null && swapTemplateStepper != null && !firstSpec.isOuter();
+            assert swapTemplateStepper != null && !firstSpec.isOuter();
             final HashJoinStageSpec secondSpec = stageCount > 1 ? spec.getStage(1) : null;
-            ofStepper(swapStepper, swapKeyLayout, false, secondSpec != null ? secondSpec.getStepper() : null);
             ofStepper(swapTemplateStepper, swapKeyLayout, false, secondSpec != null ? secondSpec.getTemplateStepper() : null);
         } else {
             swapStage = null;
@@ -357,6 +366,9 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             slots.add(slot);
         }
         ofOrientation0(false);
+        if (isWarmedUp) {
+            defineStepperCopies();
+        }
     }
 
     /**
@@ -530,6 +542,25 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * The class of the stepper that the stage's tasks run from here on in the query's orientation:
+     * the stage's own copy, a hidden class that no other factory shares, once the factory is warmed
+     * up, and the shared template before.
+     */
+    @TestOnly
+    public Class<?> getStepperClass(int stage) {
+        return (stepperCopies != null ? stepperCopies.getQuick(stage) : specs.getQuick(stage).getTemplateStepper()).getClass();
+    }
+
+    /**
+     * The stepper copies that the factory defined: none until it is warmed up, then one per stage,
+     * and one more for a first join that may swap its inputs.
+     */
+    @TestOnly
+    public int getStepperCopyCount() {
+        return (stepperCopies != null ? stepperCopies.size() : 0) + (swapStepperCopy != null ? 1 : 0);
+    }
+
+    /**
      * The frames and chunks of the last execution since its cursor opened that ran the shared
      * stepper template, or, {@code isWarm}, the stages' hidden copies, of one kind:
      * {@link #STEPPER_RUN_TASK} for the probe tasks that wrote tuples, {@link #STEPPER_RUN_COUNT_TASK}
@@ -628,13 +659,15 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * Counts the rows of a probe frame that the consumer collected toward the factory's stepper
      * warm-up: once the factory's executions collected {@link #STEPPER_WARM_UP_ROWS} probe rows, the
      * tasks and continuation chunks that start from then on run the stages' hidden stepper copies
-     * rather than the shared template. The owner calls it for every frame it collects, whatever the
-     * frame's task did with it, in every execution, so that a cached factory goes on from where its
-     * last execution left off.
+     * rather than the shared template, which the factory defines then. The owner calls it for every
+     * frame it collects, whatever the frame's task did with it, in every execution, so that a cached
+     * factory goes on from where its last execution left off.
      */
     void addProbedRows(long rows) {
         probedRowCount += rows;
         if (!isWarmedUp && probedRowCount >= stepperWarmUpRows) {
+            defineStepperCopies();
+            // The flag publishes the copies to the workers: a task that reads it set reads them too.
             isWarmedUp = true;
         }
     }
@@ -813,7 +846,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     long getProbeFrameRowCap() {
         double fanOut = 1;
         for (int k = 0, n = executionStages.size(); k < n; k++) {
-            final HashJoinStageStepper stageStepper = k == 0 ? stepper : specs.getQuick(k).getStepper();
+            // The template's instances walk their matches as the copies do.
+            final HashJoinStageStepper stageStepper = k == 0 ? templateStepper : specs.getQuick(k).getTemplateStepper();
             if (stageStepper.isEnumerated) {
                 final FrozenHashJoinBuild build = executionStages.getQuick(k).getFrozenBuild();
                 final long keyCount = build.getKeyCount();
@@ -847,7 +881,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     void indexChainLengths(SqlExecutionCircuitBreaker circuitBreaker) {
         for (int k = 0, n = executionStages.size(); k < n; k++) {
             // The stepper of the execution's orientation, as getProbeFrameRowCap() picks it.
-            final HashJoinStageStepper stageStepper = k == 0 ? stepper : specs.getQuick(k).getStepper();
+            final HashJoinStageStepper stageStepper = k == 0 ? templateStepper : specs.getQuick(k).getTemplateStepper();
             final HashJoinBuildStage stage = executionStages.getQuick(k);
             if (!stageStepper.isEnumerated && !stage.isBuildUnique()) {
                 stage.indexChainLengths(circuitBreaker);
@@ -1183,6 +1217,34 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         }
     }
 
+    // Defines the stages' hidden stepper copies once the factory is warmed up, as the owner, which
+    // then sets isWarmedUp, the flag that publishes them to the workers. Each copy takes the binding
+    // of its stage's instance of the shared template, as the owner last bound it, see
+    // HashJoinStageStepper.ofCopy(), and its matches go on to the next stage's copy; the owner binds
+    // the copies along with the template's instances from here on. The atom takes the copies only
+    // once all of them are defined, so that a JVM that fails to define one, with an Error, leaves the
+    // factory on the template.
+    private void defineStepperCopies() {
+        assert stepperCopies == null && swapStepperCopy == null;
+        final int stageCount = specs.size();
+        final ObjList<HashJoinStageStepper> copies = new ObjList<>(stageCount);
+        for (int k = 0; k < stageCount; k++) {
+            copies.add(HashJoinStageStepper.newInstance());
+        }
+        for (int k = 0; k < stageCount; k++) {
+            copies.getQuick(k).ofCopy(specs.getQuick(k).getTemplateStepper(), k + 1 < stageCount ? copies.getQuick(k + 1) : null);
+        }
+        final HashJoinStageStepper swapTemplateStepper = specs.getQuick(0).getSwapTemplateStepper();
+        HashJoinStageStepper swapCopy = null;
+        if (swapTemplateStepper != null) {
+            swapCopy = HashJoinStageStepper.newInstance();
+            swapCopy.ofCopy(swapTemplateStepper, stageCount > 1 ? copies.getQuick(1) : null);
+        }
+        stepperCopies = copies;
+        swapStepperCopy = swapCopy;
+        stepper = isSwapped ? swapCopy : copies.getQuick(0);
+    }
+
     // Initializes the owner's filter, if any, against the joined rows' symbol tables, and its
     // workers' copies, which take tables of their own.
     private void initFilter(@Nullable Function ownerFilter, @Nullable ObjList<Function> workerFilters, SqlExecutionContext executionContext) throws SqlException {
@@ -1297,14 +1359,18 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     // reads them.
     private void ofEnumeration(int lastFilteredStage) {
         final int stageCount = specs.size();
+        final ObjList<HashJoinStageStepper> copies = stepperCopies;
         final boolean isFirstEnumerated = lastFilteredStage > -1 || (isSwapped && stageCount > 1);
-        stepper.ofEnumerated(isFirstEnumerated);
         templateStepper.ofEnumerated(isFirstEnumerated);
+        if (stepper != null) {
+            stepper.ofEnumerated(isFirstEnumerated);
+        }
         for (int k = 1; k < stageCount; k++) {
-            final HashJoinStageSpec stageSpec = specs.getQuick(k);
             final boolean isEnumerated = k <= lastFilteredStage;
-            stageSpec.getStepper().ofEnumerated(isEnumerated);
-            stageSpec.getTemplateStepper().ofEnumerated(isEnumerated);
+            specs.getQuick(k).getTemplateStepper().ofEnumerated(isEnumerated);
+            if (copies != null) {
+                copies.getQuick(k).ofEnumerated(isEnumerated);
+            }
         }
     }
 
@@ -1323,16 +1389,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         isProbeFiltered = probeInput.hasStolenFilter();
         isProbeDescending = probeInput.getOrder() == ORDER_DESC;
         final HashJoinStageSpec firstSpec = specs.getQuick(0);
-        stepper = isSwapped ? firstSpec.getSwapStepper() : firstSpec.getStepper();
         templateStepper = isSwapped ? firstSpec.getSwapTemplateStepper() : firstSpec.getTemplateStepper();
+        final ObjList<HashJoinStageStepper> copies = stepperCopies;
+        stepper = copies != null ? (isSwapped ? swapStepperCopy : copies.getQuick(0)) : null;
         if (swapStage != null) {
             for (int k = 1, n = specs.size(); k < n; k++) {
                 final HashJoinStageSpec stageSpec = specs.getQuick(k);
                 final HashJoinKeyLayout keyLayout = isSwapped ? stageSpec.getSwapKeySourceLayout() : stageSpec.getKeyLayout();
                 assert keyLayout != null;
                 final int keyColumn = keyLayout.isKeyStaged() ? -1 : keyLayout.getProbeKeyColumn();
-                stageSpec.getStepper().ofKeyColumn(keyColumn);
                 stageSpec.getTemplateStepper().ofKeyColumn(keyColumn);
+                if (copies != null) {
+                    copies.getQuick(k).ofKeyColumn(keyColumn);
+                }
                 stages.getQuick(k).setKeySourceSwapped(isSwapped);
             }
         }

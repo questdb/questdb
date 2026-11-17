@@ -63,18 +63,18 @@ import org.jetbrains.annotations.Nullable;
  * The first join of a parallel hash join may swap its inputs at execution, as the serial hash join
  * does, see {@link AsyncHashJoinSpec#isSwapCandidate()}: it then hashes its left input and streams
  * its build input. Such a stage also holds its keys with the inputs' roles swapped, its swap key
- * layout, and a stepper of its own for that orientation. A later join of a stack over such a first
+ * layout, and a stepper instance of its own for that orientation. A later join of a stack over such a first
  * join reads its keys off the left input's columns, which a swapped execution holds in the first
  * stage's build rather than in the probe scan: the later stage then also holds its keys as they read
  * the first stage's payload, its swap key source layout, whose probe side lays the left input's
  * columns out as the payload does, in the order the left input as compiled lists them.
  * <p>
- * The stage owns its build input, its filters with their worker copies, and its steppers, the
- * hidden-class copies of {@link HashJoinStageStepperTemplate} that probe the stage's build on the
- * workers, so that every stage's lookups profile its own key and probe classes alone. A hidden copy
- * starts cold, so the stage also keeps an instance of the shared template, which every query's
- * stages share the profile of and which the JVM has long compiled: the operator runs those until it
- * has probed enough rows to repay the copies' warm-up; see {@link AsyncHashJoinAtom}.
+ * The stage owns its build input, its filters with their worker copies, and its instances of the
+ * shared stepper template, {@link HashJoinStageStepperTemplate}, which probe the stage's build on the
+ * workers: every query's stages share the template's profile, and the JVM has long compiled it. Once
+ * the operator has probed enough rows to repay their warm-up, it defines hidden-class copies of the
+ * template, whose lookups profile the stage's own key and probe classes alone, and runs those
+ * instead; see {@link AsyncHashJoinAtom}.
  * <p>
  * The planner also records which columns of the joined row each filter reads, so that a probe task
  * decodes the probe columns that the filters read before it joins a Parquet frame; see
@@ -101,10 +101,8 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     private final HashJoinKeyLayout keyLayout;
     // Every build column, in build order.
     private final IntList payloadColumns = new IntList();
-    private final HashJoinStageStepper stepper = HashJoinStageStepper.newInstance();
     // The keys with the inputs' roles swapped, which a first join that may swap its inputs builds its
-    // left input by and probes its build input with, and the stepper of that orientation; both null
-    // for a stage that never swaps.
+    // left input by and probes its build input with; null for a stage that never swaps.
     @Nullable
     private final HashJoinKeyLayout swapKeyLayout;
     // The keys of a later join of a stack whose first join may swap its inputs, as a swapped execution
@@ -112,8 +110,6 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
     // stage that never reads its keys there.
     @Nullable
     private final HashJoinKeyLayout swapKeySourceLayout;
-    @Nullable
-    private final HashJoinStageStepper swapStepper;
     // The shared template's instance that the swapped orientation runs while the operator warms up;
     // null for a stage that never swaps.
     @Nullable
@@ -227,7 +223,6 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
         this.keyLayout = keyLayout;
         this.swapKeyLayout = swapKeyLayout;
         this.swapKeySourceLayout = swapKeySourceLayout;
-        this.swapStepper = swapKeyLayout != null ? HashJoinStageStepper.newInstance() : null;
         this.swapTemplateStepper = swapKeyLayout != null ? new HashJoinStageStepperTemplate() : null;
         this.isOuter = isOuter;
         this.condition = condition;
@@ -480,16 +475,6 @@ public final class HashJoinStageSpec implements Plannable, QuietCloseable {
             sink.setMetadata(callerMetadata);
         }
         sink.child(buildFactory);
-    }
-
-    HashJoinStageStepper getStepper() {
-        return stepper;
-    }
-
-    // The stepper of the swapped orientation; null for a stage that never swaps.
-    @Nullable
-    HashJoinStageStepper getSwapStepper() {
-        return swapStepper;
     }
 
     // The shared template's instance of the swapped orientation; null for a stage that never swaps.

@@ -42,7 +42,9 @@ import org.jetbrains.annotations.TestOnly;
  * {@link HiddenClassCopies}. {@link #newInstance()} therefore hands every stage a hidden copy of
  * {@link HashJoinStageStepperTemplate} of its own. A copy starts cold, so every stage also keeps an
  * instance of the shared template, whose code the JVM has long compiled, and the operator runs those
- * until it has probed enough rows to repay the copies' warm-up; see {@link AsyncHashJoinAtom}.
+ * until it has probed enough rows to repay the copies' warm-up. Only then does it define the copies,
+ * see {@link #ofCopy(HashJoinStageStepper, HashJoinStageStepper)} and {@link AsyncHashJoinAtom}, so
+ * that a factory that never probes that many rows defines no class.
  * <p>
  * A stage's entry in a tuple is the locator of the build row that the probe row matches, see
  * {@code HashJoinPayloadSource.Reader.locator()}, {@link #NO_MATCH} for a LEFT join's miss, or a
@@ -158,7 +160,7 @@ abstract class HashJoinStageStepper {
 
     /**
      * Returns a stepper whose class no other stage shares, or the shared template when the JVM
-     * cannot define hidden classes.
+     * cannot define hidden classes or a test turned the copies off.
      */
     static HashJoinStageStepper newInstance() {
         return isCopiesEnabled ? COPIES.newInstance() : new HashJoinStageStepperTemplate();
@@ -190,6 +192,22 @@ abstract class HashJoinStageStepper {
         this.keyColumn = keyColumn;
         this.isOuter = isOuter;
         this.next = next;
+    }
+
+    /**
+     * Binds the stepper, a stage's hidden copy, as the stage's instance of the shared template is
+     * bound: its key, its join type, the key column of the execution's orientation and whether it
+     * walks the key's matches in the open cursor's execution, so that a copy that the owner defines
+     * in the middle of an execution joins the execution's frames as the template does. The owner
+     * calls it before it publishes the copy to the workers.
+     *
+     * @param template the stage's instance of the shared template
+     * @param next     the next stage's copy, null for the last stage
+     */
+    final void ofCopy(HashJoinStageStepper template, @Nullable HashJoinStageStepper next) {
+        assert (next == null) == (template.next == null);
+        of(template.keyKind, template.keyColumn, template.isOuter, next);
+        isEnumerated = template.isEnumerated;
     }
 
     /**

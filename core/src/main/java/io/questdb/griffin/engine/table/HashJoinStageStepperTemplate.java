@@ -31,9 +31,9 @@ import io.questdb.std.DirectLongList;
 
 /**
  * The bytecode that {@link HashJoinStageStepper#newInstance()} defines a hidden class from, once per
- * stage of a parallel hash join. It must stay a top-level class without lambdas, nested classes or
- * static state, since each hidden copy shares nothing with this class but its bytecode; the
- * constants it reads compile into it.
+ * stage of a parallel hash join that warms up. It must stay a top-level class without lambdas,
+ * nested classes or static state, since each hidden copy shares nothing with this class but its
+ * bytecode; the constants it reads compile into it.
  */
 final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
 
