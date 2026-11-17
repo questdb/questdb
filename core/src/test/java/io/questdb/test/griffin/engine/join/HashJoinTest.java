@@ -45,7 +45,7 @@ public class HashJoinTest extends AbstractCairoTest {
     @Before
     public void setUp() {
         // The tests cover the serial hash join factories. The parallel hash join, on by default,
-        // would run their INNER and LEFT joins.
+        // would run their INNER and LEFT joins; AsyncHashJoinKeyCollisionTest runs those on it.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, "false");
         super.setUp();
     }
