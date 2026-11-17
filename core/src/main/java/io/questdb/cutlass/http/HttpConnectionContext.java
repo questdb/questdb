@@ -139,6 +139,8 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
+    // true when the current request asks to close the connection after its response
+    private boolean isConnectionCloseRequested;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
     // true when the authenticator has just verified the Authorization header of the request
     private boolean isRequestCredentialVerified;
@@ -285,6 +287,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             this.multipartContentHeaderParser.close();
         }
         this.forceDisconnectOnComplete = false;
+        this.isConnectionCloseRequested = false;
         this.localValueMap.disconnect();
         // SECURITY: these unconditional resets are the safety net for the conditional skips in
         // reset(), which preserve securityContext and the circuit breaker while isProtocolSwitched
@@ -492,17 +495,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             default -> throw registerDispatcherDisconnect(DISCONNECT_REASON_UNKNOWN_OPERATION);
         };
 
-        boolean useful = keepGoing;
         if (keepGoing) {
-            if (keepConnectionAlive()) {
-                do {
-                    keepGoing = handleClientRecv(selector, rescheduleContext);
-                } while (keepGoing);
-            } else {
-                throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
-            }
+            serveNextRequests(selector, rescheduleContext);
         }
-        return useful;
+        return keepGoing;
     }
 
     @Override
@@ -599,6 +595,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     public void switchProtocol() {
         this.isProtocolSwitched = true;
         this.resumeHandlerId = currentHandlerId;
+        // the upgrade answers the request, and the close option of HTTP does not carry over to
+        // the protocol the connection switches to
+        this.isConnectionCloseRequested = false;
     }
 
     @Override
@@ -688,15 +687,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return failQwpBrowserAuthentication(QWP_CREDENTIAL_NOT_AUTHENTICATED);
     }
 
-    @SuppressWarnings("StatementWithEmptyBody")
     private void busyRcvLoop(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
             throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
         reset();
-        if (keepConnectionAlive()) {
-            while (handleClientRecv(selector, rescheduleContext)) ;
-        } else {
-            throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
-        }
+        serveNextRequests(selector, rescheduleContext);
     }
 
     private HttpRequestProcessor checkConnectionLimit(HttpRequestProcessor processor) {
@@ -1289,6 +1283,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     headerEnd = headerParser.parse(recvBuffer, recvBuffer + read, true, false);
                 }
                 requestValidator.of(headerParser);
+                // A client that sends the close option reads the response until the connection
+                // ends, so the server closes it once the response has been sent (RFC 9112, 9.6).
+                isConnectionCloseRequested = HttpKeywords.isConnectionClose(headerParser.getHeader(HEADER_CONNECTION));
+                responseSink.setConnectionCloseRequested(isConnectionCloseRequested);
             }
 
             requestValidator.validateRequestHeader(rejectProcessor);
@@ -1509,7 +1507,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private boolean keepConnectionAlive() {
-        return !forceDisconnectOnComplete && configuration.getHttpContextConfiguration().getServerKeepAlive();
+        return !forceDisconnectOnComplete
+                && !isConnectionCloseRequested
+                && configuration.getHttpContextConfiguration().getServerKeepAlive();
     }
 
     private boolean parseMultipartResult(
@@ -1544,6 +1544,18 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
         HttpRequestProcessor processor = selector.resolveProcessorById(resumeHandlerId, headerParser);
         return processor != null ? processor : rejectProcessor;
+    }
+
+    // Serves the requests that follow on this connection until no whole request is left to read. Before
+    // each, it ends the connection when the server does not keep connections alive, or when the request
+    // just served asked to close it.
+    private void serveNextRequests(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext)
+            throws PeerIsSlowToReadException, ServerDisconnectException, PeerIsSlowToWriteException {
+        do {
+            if (!keepConnectionAlive()) {
+                throw registerDispatcherDisconnect(DISCONNECT_REASON_KEEPALIVE_OFF);
+            }
+        } while (handleClientRecv(selector, rescheduleContext));
     }
 
     private void shiftReceiveBufferUnprocessedBytes(long start, int receivedBytes) {
