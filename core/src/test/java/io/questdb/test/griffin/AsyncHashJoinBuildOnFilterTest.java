@@ -135,20 +135,42 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // test_latched_counter() reads no column, so it leads the residual's conjuncts of the build
-            // alone, and fails on the build's rows alone, as a value it cannot convert would: the build
-            // gives the conjuncts up, and the pairs run the whole residual, which never fails on them.
+            // alone, and fails on the build's rows alone, as a value it cannot convert or compute would:
+            // the build gives the conjuncts up, and the pairs run the whole residual, which never fails
+            // on them. A function raises such a failure in any form: a non-critical error, a cast's, a
+            // critical one, as regexp_replace() raises its own, a stack overflow, as a regex raises
+            // it on a long value, or any other runtime exception.
             final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND test_latched_counter() AND d.w % 3 = 0";
+            final Runnable[] failures = {
+                    () -> {
+                        throw CairoException.nonCritical().put("test value failure");
+                    },
+                    () -> {
+                        throw ImplicitCastException.inconvertibleValue(1, ColumnType.INT, ColumnType.BOOLEAN);
+                    },
+                    () -> {
+                        throw CairoException.critical(0).put("test critical value failure");
+                    },
+                    () -> {
+                        throw CairoException.critical(5).put("test critical failure");
+                    },
+                    () -> {
+                        throw new StackOverflowError();
+                    },
+                    () -> {
+                        throw new UnsupportedOperationException("test runtime failure");
+                    },
+            };
             final AtomicInteger buildCalls = new AtomicInteger();
             final AtomicInteger pairCalls = new AtomicInteger();
             final int[] failingCall = {0};
+            final int[] failureKind = {0};
             final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
                 @Override
                 public boolean onGet(Record rec, int count) {
                     if (rec instanceof PageFrameMemoryRecord) {
                         if (buildCalls.incrementAndGet() == failingCall[0]) {
-                            throw failingCall[0] % 2 == 0
-                                    ? CairoException.nonCritical().put("test value failure")
-                                    : ImplicitCastException.inconvertibleValue(count, ColumnType.INT, ColumnType.BOOLEAN);
+                            failures[failureKind[0]].run();
                         }
                     } else if (rec instanceof MultiHashJoinRecord) {
                         pairCalls.incrementAndGet();
@@ -165,7 +187,9 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                     final HashJoinBuildStage stage = find(factory).getAtom().getStage(0);
                     // d's 40 rows: the first build row, one in the middle of a frame, and the last row;
                     // an execution without failures between them runs the conjuncts again.
-                    for (int failing : new int[]{0, 1, 0, 20, 40, 0}) {
+                    for (int execution = 0; execution < failures.length * 6; execution++) {
+                        final int failing = new int[]{0, 1, 0, 20, 40, 0}[execution % 6];
+                        failureKind[0] = execution / 6;
                         failingCall[0] = failing;
                         buildCalls.set(0);
                         pairCalls.set(0);
@@ -383,8 +407,9 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
     public void testNonAbandonableFailuresFailTheQuery() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // A cancellation, a memory limit breach and a critical error that the pushed conjuncts meet
-            // fail the query, as they fail any build, rather than leave the conjuncts to the pairs.
+            // A cancellation, a memory limit breach and a JVM error other than a stack overflow that the
+            // pushed conjuncts meet fail the query, as they fail any build, rather than leave the
+            // conjuncts to the pairs.
             final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND test_latched_counter() AND d.w > t.v";
             final String expected = ordinary(sql, sqlExecutionContext);
             final int[] failureKind = {-1};
@@ -395,7 +420,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                         switch (failureKind[0]) {
                             case 0 -> throw CairoException.queryCancelled();
                             case 1 -> throw CairoException.nonCritical().setOutOfMemory(true).put("test memory limit");
-                            case 2 -> throw CairoException.critical(5).put("test critical failure");
+                            case 2 -> throw new AssertionError("test assertion failure");
                             default -> {
                             }
                         }
@@ -404,7 +429,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 }
             };
             TestLatchedCounterFunctionFactory.reset(callback);
-            final String[] messages = {"cancelled by user", "test memory limit", "test critical failure"};
+            final String[] messages = {"cancelled by user", "test memory limit", "test assertion failure"};
             sqlExecutionContext.changePageFrameSizes(3, 3);
             for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
@@ -415,16 +440,29 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                         failureKind[0] = kind;
                         // Restarts the count.
                         TestLatchedCounterFunctionFactory.reset(callback);
+                        Throwable failure = null;
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             //noinspection StatementWithEmptyBody
                             while (cursor.hasNext()) {
                             }
-                            Assert.fail("expected the build to fail: " + messages[kind]);
-                        } catch (CairoException e) {
+                        } catch (Throwable th) {
+                            failure = th;
+                        }
+                        Assert.assertNotNull("expected the build to fail: " + messages[kind], failure);
+                        if (kind < 2) {
+                            final CairoException e = (CairoException) failure;
                             TestUtils.assertContains(e.getFlyweightMessage(), messages[kind]);
                             Assert.assertEquals(kind == 0, e.isInterruption());
                             Assert.assertEquals(kind == 1, e.isOutOfMemory());
-                            Assert.assertEquals(kind == 2, e.isCritical());
+                        } else if (minRows == 0) {
+                            // A round's task fails on its worker, and the round reports the error
+                            // that its sequence recorded, see AsyncQueryErrorState.
+                            final CairoException e = (CairoException) failure;
+                            TestUtils.assertEquals("unexpected reduce error: test assertion failure", e.getFlyweightMessage());
+                        } else {
+                            // The owner's build throws the error itself.
+                            Assert.assertEquals(AssertionError.class, failure.getClass());
+                            Assert.assertEquals("test assertion failure", failure.getMessage());
                         }
                         Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
                         failureKind[0] = -1;
@@ -923,6 +961,70 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 Assert.assertEquals(failing, expected, error(failing, true));
                 try (RecordCursorFactory factory = select(failing)) {
                     Assert.assertFalse(plan(factory, sqlExecutionContext).contains("buildOnFilter"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testThrowingRegexConjuncts() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // regexp_replace() raises a replacement that names a missing group as a critical error,
+            // and a regex raises a stack overflow on a long value. Each dr row of key 20, which t
+            // does not hold, raises one of them in the conjuncts below; dq holds the same rows under
+            // key 2, which t holds.
+            final String longValue = "ab".repeat(100_000);
+            for (String table : new String[]{"dr", "dq"}) {
+                final int key = table.equals("dr") ? 20 : 2;
+                execute("CREATE TABLE " + table + " (k INT, s STRING, vch VARCHAR, sym SYMBOL, w LONG)");
+                execute("INSERT INTO " + table + " VALUES"
+                        + " (1, 'x', 'x', 'x', 1),"
+                        + " (2, 'y', 'y', 'y', 2),"
+                        + " (" + key + ", 'ab', 'ab', 'ab', 3),"
+                        + " (3, 'x', 'x', 'x', 4),"
+                        + " (" + key + ", '" + longValue + "', 'x', 'x', 5),"
+                        + " (2, 'x', 'x', 'x', 6),"
+                        + " (4, 'xy', 'xy', 'xy', 7)");
+            }
+            final String[] conjuncts = {
+                    "regexp_replace(d.s, 'a(b)', '$2') = 'x'",
+                    "regexp_replace(d.vch, 'a(b)', '$2') = 'x'",
+                    "regexp_replace(d.sym, 'a(b)', '$2') = 'x'",
+                    "NOT d.s ~ '(a|b)*c'",
+            };
+            final String[] errors = {
+                    "regexp_replace failed [position=",
+                    "regexp_replace failed [position=",
+                    "regexp_replace failed [position=",
+                    null,
+            };
+            for (int frameRows : new int[]{1, 3, 1_000_000}) {
+                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
+                    for (int c = 0; c < conjuncts.length; c++) {
+                        // The serial join never runs the conjunct over the rows without a match, so
+                        // neither plan fails: the build gives the conjunct up and the pairs run the
+                        // residual, whole or after the conjunct.
+                        for (String residual : new String[]{conjuncts[c], conjuncts[c] + " AND d.w <= t.v"}) {
+                            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dr d ON t.k = d.k AND " + residual;
+                            TestUtils.assertContains(assertParallelHashJoin(sql, sqlExecutionContext), "buildOnFilter: ");
+                            assertParallelHashJoin(sql + " LIMIT 1", sqlExecutionContext);
+                            try (RecordCursorFactory factory = select(sql)) {
+                                assertBuildRows(factory, 0, false, -1);
+                            }
+                        }
+                        // The rows with a match fail both plans alike. A pair's stack overflow is left
+                        // out: each plan raises it on the thread that runs the pair.
+                        if (errors[c] != null) {
+                            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND " + conjuncts[c];
+                            final String expected = error(sql, false);
+                            TestUtils.assertContains(expected, errors[c]);
+                            TestUtils.assertContains(expected, "ex=No group 2]");
+                            Assert.assertEquals(sql, expected, error(sql, true));
+                        }
+                    }
                 }
             }
         });

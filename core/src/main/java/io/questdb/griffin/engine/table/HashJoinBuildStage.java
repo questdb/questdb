@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
@@ -1069,12 +1068,19 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
 
     /**
      * True when a failure of a parallel hash join's build ON filter on a row leaves the filter to
-     * the pairs, see {@link #applyAbandonableBuildOnFilter}: a value that the filter cannot
-     * convert, compute or compare, rather than a cancellation, a memory limit breach or a critical
-     * error, which fail the build as they fail any.
+     * the pairs, see {@link #applyAbandonableBuildOnFilter}: whatever a function raises for a value
+     * that it cannot convert, compute or compare, rather than a cancellation or a memory limit
+     * breach, which fail the build as they fail any, or a JVM error other than a stack overflow.
+     * Functions raise such failures in many forms: regexp_replace() raises its own as critical
+     * errors, and a regex raises a stack overflow on a long value, which unwinds the stack to the
+     * build's loop. Should a failure of the environment pass for one, the pairs raise it again, as
+     * they run the filter where the serial join does.
      */
-    private static boolean isAbandonable(CairoException e) {
-        return !e.isInterruption() && !e.isOutOfMemory() && !e.isCritical();
+    private static boolean isAbandonable(Throwable th) {
+        if (th instanceof CairoException e) {
+            return !e.isInterruption() && !e.isOutOfMemory();
+        }
+        return th instanceof RuntimeException || th instanceof StackOverflowError;
     }
 
     /**
@@ -1148,12 +1154,10 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
             final boolean isPassed;
             try {
                 isPassed = onFilter.getBool(record);
-            } catch (CairoException e) {
-                if (!isAbandonable(e)) {
-                    throw e;
+            } catch (Throwable th) {
+                if (!isAbandonable(th)) {
+                    throw th;
                 }
-                break;
-            } catch (ImplicitCastException e) {
                 break;
             }
             if (isPassed) {
