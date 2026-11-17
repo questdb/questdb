@@ -81,6 +81,40 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAllNullCaseCastRefreshes() throws Exception {
+        // The view's NULL-column refusal suggests a cast; this is that cast over an all-NULL CASE.
+        // Every refresh read the CASE as a DOUBLE, which threw until the CASE folded to the NULL
+        // literal, so the view faulted and invalidated itself.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String select = "SELECT ts, sym, (CASE WHEN px > 0 THEN NULL END)::double c, px - avg(px) OVER (" + FRAME + ") AS dev FROM base";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
+            insertFourRows();
+            refresh();
+            assertAllNullCaseViewMatches(select);
+            assertQuery("SELECT ts, sym, c FROM lv")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tc
+                            2026-08-07T12:00:00.000000Z\tA\tnull
+                            2026-08-07T12:00:01.000000Z\tA\tnull
+                            2026-08-07T12:00:02.000000Z\tB\tnull
+                            2026-08-07T12:00:03.000000Z\tA\tnull
+                            """);
+
+            // a restart compiles the stored SQL again; then an in-order and an out-of-order row
+            restartLiveViewsAndRecover();
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:04.000000Z','A',16.0)");
+            refresh();
+            execute("INSERT INTO base (ts, sym, px) VALUES ('2026-08-07T12:00:00.500000Z','B',-3.0)");
+            refresh();
+            assertAllNullCaseViewMatches(select);
+        });
+    }
+
+    @Test
     public void testAnchoredWindowPartitionedByAnAliasedColumn() throws Exception {
         // The anchor expression and the window's PARTITION BY keys resolve against the
         // window's input, which an alias reshapes. Resolving them against the base scan
@@ -1286,6 +1320,20 @@ public class LiveViewProjectionTest extends AbstractLiveViewTest {
         execute("CREATE LIVE VIEW lv_probe FLUSH EVERY 1s START FROM NOW AS " + selectSql);
         execute("DROP LIVE VIEW lv_probe");
         drainWalQueue();
+    }
+
+    private void assertAllNullCaseViewMatches(String select) throws Exception {
+        assertNoRefreshFaults("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertFalse(instance.isInvalid());
+        assertQuery("SELECT \"column\", type FROM table_columns('lv') WHERE \"column\" = 'c'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        column\ttype
+                        c\tDOUBLE
+                        """);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, select, "SELECT * FROM lv", LOG);
     }
 
     private void createBase() throws Exception {

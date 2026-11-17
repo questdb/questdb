@@ -1,0 +1,125 @@
+# A CASE whose every THEN and ELSE value is NULL is NULL on every row, whatever its conditions say.
+# Casts, arithmetic, filters and aggregates read it as they read the NULL literal.
+
+statement ok
+CREATE TABLE t (x INT);
+
+statement ok
+INSERT INTO t VALUES (1), (-1), (NULL), (3);
+
+query I
+SELECT (CASE WHEN x > 0 THEN NULL END)::INT FROM t
+----
+NULL
+NULL
+NULL
+NULL
+
+query R
+SELECT (CASE WHEN x > 0 THEN NULL END)::DOUBLE FROM t
+----
+NULL
+NULL
+NULL
+NULL
+
+query T
+SELECT (CASE WHEN x > 0 THEN NULL END)::VARCHAR FROM t
+----
+NULL
+NULL
+NULL
+NULL
+
+query I
+SELECT (CASE WHEN x > 0 THEN NULL END) + 1 FROM t
+----
+NULL
+NULL
+NULL
+NULL
+
+query I
+SELECT (CASE x WHEN 1 THEN NULL END)::INT FROM t
+----
+NULL
+NULL
+NULL
+NULL
+
+query I
+SELECT count(*) FROM t WHERE (CASE WHEN x > 0 THEN NULL END) = 1
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE (CASE WHEN x > 0 THEN NULL END) IS NULL
+----
+4
+
+query I
+SELECT coalesce(CASE WHEN x > 0 THEN NULL END, 7) FROM t
+----
+7
+7
+7
+7
+
+query I
+SELECT count(CASE WHEN x > 0 THEN NULL END) FROM t
+----
+0
+
+query T
+SELECT max(CASE WHEN x > 0 THEN NULL END) FROM t
+----
+NULL
+
+# QuestDB differs on purpose below, as it does for the NULL literal; DuckDB and PostgreSQL return NULL
+# for each of these.
+
+# length(NULL) is -1
+query I
+SELECT length(CASE WHEN x > 0 THEN NULL END) FROM t
+----
+-1
+-1
+-1
+-1
+
+# NULL = NULL is true
+query I
+SELECT (CASE WHEN x > 0 THEN NULL END) = NULL FROM t
+----
+true
+true
+true
+true
+
+# || skips a NULL operand
+query T
+SELECT (CASE WHEN x > 0 THEN NULL END) || 'a' FROM t
+----
+a
+a
+a
+a
+
+# BOOLEAN and SHORT have no NULL value, so comparing NULL with one is false
+query II
+SELECT (CASE WHEN x > 0 THEN NULL END) = false, (CASE WHEN x > 0 THEN NULL END) = 0::SHORT FROM t
+----
+false	false
+false	false
+false	false
+false	false
+
+# The CASE never evaluates its conditions, so a condition that would fail raises no error; DuckDB and
+# PostgreSQL raise it. Here the scalar sub-query returns more than one row.
+query I
+SELECT (CASE WHEN x = (SELECT x FROM t) THEN NULL END)::INT FROM t
+----
+NULL
+NULL
+NULL
+NULL

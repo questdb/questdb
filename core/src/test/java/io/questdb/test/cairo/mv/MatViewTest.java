@@ -611,6 +611,42 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllNullCaseCastInDefinition() throws Exception {
+        // The refresh runs the view's SAMPLE BY, whose reduce read the all-NULL CASE as an INT and a
+        // DOUBLE; before the CASE folded to the NULL literal that read threw and invalidated the view.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String viewSql = "SELECT ts, (CASE WHEN x > 0 THEN NULL END)::int k, max((CASE WHEN x > 0 THEN NULL END)::double) m, count() c"
+                    + " FROM base_price SAMPLE BY 1h";
+            createMatView(viewSql);
+            execute("""
+                    INSERT INTO base_price VALUES
+                      ('2026-04-01T00:00:00.000000Z', 'A', 1),
+                      ('2026-04-01T00:30:00.000000Z', 'B', -1),
+                      ('2026-04-01T01:00:00.000000Z', NULL, NULL),
+                      ('2026-04-01T01:30:00.000000Z', 'A', 3)""");
+            drainQueues();
+            assertAllNullCaseMatView(viewSql, """
+                    ts\tk\tm\tc
+                    2026-04-01T00:00:00.000000Z\tnull\tnull\t2
+                    2026-04-01T01:00:00.000000Z\tnull\tnull\t2
+                    """);
+
+            execute("""
+                    INSERT INTO base_price VALUES
+                      ('2026-04-01T01:45:00.000000Z', 'B', 5),
+                      ('2026-04-01T02:00:00.000000Z', 'A', -5)""");
+            drainQueues();
+            assertAllNullCaseMatView(viewSql, """
+                    ts\tk\tm\tc
+                    2026-04-01T00:00:00.000000Z\tnull\tnull\t2
+                    2026-04-01T01:00:00.000000Z\tnull\tnull\t3
+                    2026-04-01T02:00:00.000000Z\tnull\tnull\t1
+                    """);
+        });
+    }
+
+    @Test
     public void testAlterAddIndexInvalidStatement() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -11074,6 +11110,22 @@ public class MatViewTest extends AbstractCairoTest {
                 writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
             }
         }
+    }
+
+    private void assertAllNullCaseMatView(String viewSql, String expected) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason FROM materialized_views WHERE view_name = 'price_1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tinvalidation_reason
+                        valid\t
+                        """);
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, viewSql, "price_1h", LOG);
+        assertQuery("price_1h")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expected);
     }
 
     private void assertFullRefreshAfterBaseColumnTypeChange(String type, String newAt, boolean isRehydrated) throws Exception {
