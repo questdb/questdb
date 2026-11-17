@@ -2,8 +2,8 @@
 # On demand on a PR via `/azp run macwin`, and automatically in the GitHub merge
 # queue via the CI trigger on the ephemeral merge-queue branches. It also starts the
 # full Enterprise run for the PR (stage TriggerEnterpriseCI), the only Enterprise run
-# OSS starts; that run reports the required enterprise-ci check. A PR with a same-named
-# Enterprise PR gets no Enterprise run; see templates/trigger-enterprise-job.yml.
+# OSS starts; that run reports the required enterprise-ci check. A PR with an open
+# same-named Enterprise PR gets no Enterprise run; see templates/trigger-enterprise-job.yml.
 #
 # The macOS legs run on the macOS-15-arm64 image: the plain macOS-14/15/26 Azure
 # images are Intel (x86-64), and x86-64 macOS is no longer a supported platform --
