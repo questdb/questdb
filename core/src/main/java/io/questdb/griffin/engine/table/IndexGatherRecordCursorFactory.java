@@ -151,8 +151,6 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
      */
     public void estimateSelection(SqlExecutionContext executionContext, long[] sink) throws SqlException {
         final PostingEstimateSample sample = estimateSample;
-        long sampledScanned = 0;
-        long sampledSelected = 0;
         try (PartitionFrameCursor frameCursor = delegate.partitionFrameCursorFactory.getCursor(
                 executionContext,
                 delegate.columnIndexes,
@@ -180,9 +178,8 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                     final long rowLo = frame.getRowLo();
                     final long rowHi = frame.getRowHi();
                     final long rows = rowHi - rowLo;
-                    sampledScanned += rows;
                     if (frame.getPartitionFormat() != PartitionFormat.NATIVE) {
-                        sampledSelected += rows;
+                        sample.addProbe(rows, rows);
                         continue;
                     }
                     final IndexReader indexReader = reader.getIndexReader(frame.getPartitionIndex(), readerKeyColumnIndex, IndexReader.DIR_FORWARD);
@@ -196,23 +193,20 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                         for (int k = 0; k < sampledKeyCount; k++) {
                             selected += count(posting, sample.getSampledKey(k), rows, rowLo, callerHiInclusive, clampedMax);
                         }
-                        sampledSelected += Math.min(nullSelected + sample.scaleNonNull(selected), rows);
+                        sample.addProbe(nullSelected + sample.scaleNonNull(selected), rows);
                     } else {
                         // the gather only serves a POSTING column, whose reader is a posting
                         // reader, or the stand-in of a partition that predates the column, where
                         // every row is NULL
                         assert indexReader instanceof IndexFwdNullReader;
-                        if (hasNull) {
-                            sampledSelected += rows;
-                        }
+                        sample.addProbe(hasNull ? rows : 0, rows);
                     }
                 }
             }
             sample.finish();
         }
-        final long scanned = sample.getScanned();
-        sink[0] = sampledScanned > 0 ? (long) ((double) sampledSelected * scanned / sampledScanned) : 0;
-        sink[1] = scanned;
+        sink[0] = sample.getEstimatedSelected();
+        sink[1] = sample.getScanned();
     }
 
     @Override

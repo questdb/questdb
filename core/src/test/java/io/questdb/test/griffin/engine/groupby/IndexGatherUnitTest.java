@@ -133,8 +133,9 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
     @Test
     public void testEstimateProbesStayWithinBudget() throws Exception {
         // 97 hourly partitions (x = 60,000 lands alone in hour 96) and a list of 50 keys, all
-        // present: the estimate probes 64 partitions, floor(j * 97 / 64), and counts every key in
-        // each, 3200 counts, whatever the frame dispatch switch; the result is the same
+        // present: the estimate probes 64 partitions, placed by rows at the (2j + 1) * rows / 128-th
+        // row, so never the one-row hour 96, and counts every key in each, 3200 counts, whatever the
+        // frame dispatch switch; the result is the same
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, 60_000);
             final StringBuilder in = new StringBuilder();
@@ -144,10 +145,28 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
             final String sql = "select sym, count() n, sum(z) s from t where sym in (" + in + ") order by sym";
             setFeatures(false, false);
             final String expected = runToString(engine, sqlExecutionContext, sql);
-            final io.questdb.std.IntList partitions = new io.questdb.std.IntList();
-            for (int j = 0; j < 64; j++) {
-                partitions.add(j * 97 / 64);
+            final io.questdb.std.LongList ends = new io.questdb.std.LongList();
+            try (RecordCursorFactory rows = select("select numRows from table_partitions('t')");
+                 io.questdb.cairo.sql.RecordCursor cursor = rows.getCursor(sqlExecutionContext)) {
+                long end = 0;
+                while (cursor.hasNext()) {
+                    end += cursor.getRecord().getLong(0);
+                    ends.add(end);
+                }
             }
+            Assert.assertEquals(97, ends.size());
+            final io.questdb.std.IntList partitions = new io.questdb.std.IntList();
+            for (int j = 0, g = 0; j < 64; j++) {
+                final long row = (long) ((2.0 * j + 1) * ends.getLast() / 128);
+                while (ends.getQuick(g) <= row) {
+                    g++;
+                }
+                if (partitions.size() == 0 || partitions.getLast() != g) {
+                    partitions.add(g);
+                }
+            }
+            Assert.assertEquals(64, partitions.size());
+            Assert.assertTrue(partitions.toString(), partitions.getLast() < 96);
             setFeatures(true, true);
             for (boolean dispatch : new boolean[]{false, true}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, String.valueOf(dispatch));
