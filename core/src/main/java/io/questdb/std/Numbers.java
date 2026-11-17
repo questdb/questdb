@@ -847,7 +847,7 @@ public final class Numbers {
         return (isNull(l) && isNull(r)) || Math.abs(l - r) <= DOUBLE_TOLERANCE;
     }
 
-        public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
+    public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
         int start = 0;
         int end = value.length();
         if (end == 0) {
