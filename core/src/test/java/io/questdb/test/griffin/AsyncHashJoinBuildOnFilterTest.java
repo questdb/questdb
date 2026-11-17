@@ -969,19 +969,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
             // and a regex raises a stack overflow on a long value. Each dr row of key 20, which t
             // does not hold, raises one of them in the conjuncts below; dq holds the same rows under
             // key 2, which t holds.
-            final String longValue = "ab".repeat(100_000);
-            for (String table : new String[]{"dr", "dq"}) {
-                final int key = table.equals("dr") ? 20 : 2;
-                execute("CREATE TABLE " + table + " (k INT, s STRING, vch VARCHAR, sym SYMBOL, w LONG)");
-                execute("INSERT INTO " + table + " VALUES"
-                        + " (1, 'x', 'x', 'x', 1),"
-                        + " (2, 'y', 'y', 'y', 2),"
-                        + " (" + key + ", 'ab', 'ab', 'ab', 3),"
-                        + " (3, 'x', 'x', 'x', 4),"
-                        + " (" + key + ", '" + longValue + "', 'x', 'x', 5),"
-                        + " (2, 'x', 'x', 'x', 6),"
-                        + " (4, 'xy', 'xy', 'xy', 7)");
-            }
+            createRegexTables();
             final String[] conjuncts = {
                     "regexp_replace(d.s, 'a(b)', '$2') = 'x'",
                     "regexp_replace(d.vch, 'a(b)', '$2') = 'x'",
@@ -1010,8 +998,8 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                                 assertBuildRows(factory, 0, false, -1);
                             }
                         }
-                        // The rows with a match fail both plans alike. A pair's stack overflow is left
-                        // out: each plan raises it on the thread that runs the pair.
+                        // The rows with a match fail both plans alike. A pair's stack overflow fails
+                        // each plan its own way, see testThrowingRegexConjunctsRaiseAStackOverflowInThePairs.
                         if (errors[c] != null) {
                             final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND " + conjuncts[c];
                             final String expected = error(sql, false, sqlExecutionContext);
@@ -1020,6 +1008,64 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                             Assert.assertEquals(sql, expected, error(sql, true, sqlExecutionContext));
                         }
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testThrowingRegexConjunctsRaiseAStackOverflowInThePairs() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            createRegexTables();
+            // dq's value of 200,000 characters, under key 2, which t holds, overflows the stack of the
+            // regex in the build, which gives the conjunct up, and again in each of its pairs, which
+            // the serial join runs it over too. The ordinary plan raises the overflow on the thread
+            // that reads its rows; the operator's probe task records it, and the cursor raises the
+            // task's error. dr holds the value under key 20, which t does not hold, so no pair meets it.
+            final String conjunct = "NOT d.s ~ '(a|b)*c'";
+            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dq d ON t.k = d.k AND " + conjunct;
+            final String unmatched = "SELECT t.k, t.v, d.w FROM t LEFT JOIN dr d ON t.k = d.k AND " + conjunct;
+            for (int frameRows : new int[]{1, 3, 1_000_000}) {
+                sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
+                for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
+                    sqlExecutionContext.setParallelHashJoinEnabled(false);
+                    try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertNull(find(factory));
+                        Assert.assertThrows(StackOverflowError.class, () -> {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                        });
+                    } finally {
+                        sqlExecutionContext.setParallelHashJoinEnabled(true);
+                    }
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        TestUtils.assertContains(plan(factory, sqlExecutionContext), "buildOnFilter: ");
+                        final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                        // A failed execution leaves the factory as it found it, so the next one fails alike.
+                        for (int run = 0; run < 2; run++) {
+                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                final CairoException e = Assert.assertThrows(CairoException.class, () -> {
+                                    //noinspection StatementWithEmptyBody
+                                    while (cursor.hasNext()) {
+                                    }
+                                });
+                                TestUtils.assertEquals("unexpected filter error", e.getFlyweightMessage());
+                                Assert.assertEquals(0, e.getPosition());
+                                // The build ran the conjunct, as dq holds fewer rows than t, and gave it up.
+                                Assert.assertFalse(stage.isBuildOnFilterApplied());
+                            }
+                            Assert.assertNull(stage.getFrozenBuild());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        }
+                    }
+                    // The rows without a match still fail neither plan.
+                    assertParallelHashJoin(unmatched, sqlExecutionContext);
                 }
             }
         });
@@ -1346,6 +1392,24 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertTrue(cursor.hasNext());
             return cursor.getRecord().getLong(0);
+        }
+    }
+
+    // dr and dq hold the same rows but for the key of two of them: 20 in dr, which t does not hold, and
+    // 2 in dq, which t holds. One of the two holds 'ab', and the other a STRING of 200,000 characters.
+    private static void createRegexTables() throws Exception {
+        final String longValue = "ab".repeat(100_000);
+        for (String table : new String[]{"dr", "dq"}) {
+            final int key = table.equals("dr") ? 20 : 2;
+            execute("CREATE TABLE " + table + " (k INT, s STRING, vch VARCHAR, sym SYMBOL, w LONG)");
+            execute("INSERT INTO " + table + " VALUES"
+                    + " (1, 'x', 'x', 'x', 1),"
+                    + " (2, 'y', 'y', 'y', 2),"
+                    + " (" + key + ", 'ab', 'ab', 'ab', 3),"
+                    + " (3, 'x', 'x', 'x', 4),"
+                    + " (" + key + ", '" + longValue + "', 'x', 'x', 5),"
+                    + " (2, 'x', 'x', 'x', 6),"
+                    + " (4, 'xy', 'xy', 'xy', 7)");
         }
     }
 
