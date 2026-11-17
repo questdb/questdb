@@ -1188,6 +1188,69 @@ public class ReaderPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFailedLockFreesSlotsForGetAndLock() throws Exception {
+        // A lock that meets a busy reader hands back the slot it took before it: get() can use every slot again, and
+        // another thread can lock once the reader is closed.
+        assertWithPool(pool -> {
+            final TableReader idle = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            idle.close();
+            Assert.assertFalse(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertFalse(idle.isOpen());
+            Assert.assertTrue(busy.isOpen());
+            busy.close();
+
+            // the pool holds two readers
+            try (TableReader r1 = pool.get(uTableToken); TableReader r2 = pool.get(uTableToken)) {
+                Assert.assertNotSame(r1, r2);
+                Assert.assertEquals(2, pool.getBusyCount());
+            }
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, poolConfiguration(2, 1));
+    }
+
+    @Test
+    public void testFailedLockInSecondSegmentLeavesEntryUnlocked() throws Exception {
+        // The busy reader sits past the first segment: the failed lock must still unlock the entry, whose lock sits in
+        // the first segment, or no thread could take a reader of the table again.
+        assertWithPool(pool -> {
+            final TableReader r0 = pool.get(uTableToken);
+            final TableReader r1 = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            r0.close();
+            r1.close();
+            Assert.assertFalse(lockAndUnlockInThread(pool, uTableToken));
+
+            try (TableReader r = pool.get(uTableToken)) {
+                Assert.assertTrue(r.isOpen());
+                Assert.assertEquals(2, pool.getBusyCount());
+            }
+            busy.close();
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, poolConfiguration(2, 2));
+    }
+
+    @Test
+    public void testFailedLockOnOwnBusyReaderFreesSlots() throws Exception {
+        // The thread that locks holds a busy reader itself, past an idle one
+        assertWithPool(pool -> {
+            final TableReader idle = pool.get(uTableToken);
+            final TableReader busy = pool.get(uTableToken);
+            idle.close();
+            Assert.assertFalse(pool.lock(uTableToken));
+            Assert.assertTrue(busy.isOpen());
+            busy.close();
+
+            Assert.assertTrue(lockAndUnlockInThread(pool, uTableToken));
+            try (TableReader r1 = pool.get(uTableToken); TableReader r2 = pool.get(uTableToken)) {
+                Assert.assertNotSame(r1, r2);
+            }
+        }, poolConfiguration(2, 1));
+    }
+
+    @Test
     public void testGetAndCloseRace() throws Exception {
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
@@ -1694,6 +1757,45 @@ public class ReaderPoolTest extends AbstractCairoTest {
             pool.unlock(tableToken);
             Assert.assertEquals(1, counter.get());
         });
+    }
+
+    // Locks the entry of the table on another thread, and unlocks it there when locked: the thread that locks must
+    // be the one that unlocks. Returns whether it locked.
+    private static boolean lockAndUnlockInThread(ReaderPool pool, TableToken tableToken) throws InterruptedException {
+        final AtomicBoolean isLocked = new AtomicBoolean();
+        final AtomicReference<Throwable> error = new AtomicReference<>();
+        final Thread thread = new Thread(() -> {
+            try {
+                if (pool.lock(tableToken)) {
+                    isLocked.set(true);
+                    pool.unlock(tableToken);
+                }
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        });
+        thread.start();
+        thread.join();
+        if (error.get() != null) {
+            throw new AssertionError(error.get());
+        }
+        return isLocked.get();
+    }
+
+    private static CairoConfiguration poolConfiguration(int segmentSize, int maxSegments) {
+        return new DefaultTestCairoConfiguration(root) {
+            @Override
+            public int getPoolSegmentSize() {
+                return segmentSize;
+            }
+
+            @Override
+            public int getReaderPoolMaxSegments() {
+                return maxSegments;
+            }
+        };
     }
 
     private void assertWithPool(PoolAwareCode code) throws Exception {

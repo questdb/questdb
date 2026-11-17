@@ -146,19 +146,32 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         return false;
     }
 
+    /**
+     * Locks the entry of the table: closes its idle tenants and keeps every slot, so that no tenant can be taken until
+     * {@link #unlock(TableToken)}. The thread that holds the lock may take it again. Fails when another thread holds
+     * the lock or a tenant is busy. A lock that fails, or throws, keeps nothing: it frees the slots it took and lets go
+     * of the lock of the entry if it took it; only the idle tenants it met stay closed.
+     */
     public boolean lock(TableToken tableToken) {
-        Entry<T> e = getEntry(tableToken);
+        final Entry<T> rootEntry = getEntry(tableToken);
         final long thread = Thread.currentThread().threadId();
-        if (Unsafe.cas(e, LOCK_OWNER, UNLOCKED, thread) || e.lockOwner == thread) {
+        final boolean isHeld = rootEntry.lockOwner == thread;
+        if (isHeld || Unsafe.cas(rootEntry, LOCK_OWNER, UNLOCKED, thread)) {
+            Entry<T> e = rootEntry;
             do {
                 for (int i = 0; i < segmentSize; i++) {
                     if (Unsafe.cas(e.allocations, i, UNALLOCATED, thread)) {
-                        closeTenant(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
+                        try {
+                            closeTenant(thread, e, i, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
+                        } catch (Throwable th) {
+                            releaseFailedLock(rootEntry, thread, isHeld);
+                            throw th;
+                        }
                     } else if (Unsafe.arrayGetVolatile(e.allocations, i) == thread) {
                         // same thread, don't need to order reads
                         if (e.getTenant(i) != null) {
                             // this thread has busy reader, it should close first
-                            e.lockOwner = UNLOCKED;
+                            releaseFailedLock(rootEntry, thread, isHeld);
                             return false;
                         }
                     } else {
@@ -167,7 +180,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                                 .$(", owner=").$(e.allocations[i])
                                 .$(", thread=").$(thread)
                                 .I$();
-                        e.lockOwner = UNLOCKED;
+                        releaseFailedLock(rootEntry, thread, isHeld);
                         return false;
                     }
                 }
@@ -189,7 +202,7 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
             } while (e != null);
         } else {
             LOG.error().$("already locked [table=").$(tableToken)
-                    .$(", owner=").$(e.lockOwner)
+                    .$(", owner=").$(rootEntry.lockOwner)
                     .I$();
             notifyListener(thread, tableToken, PoolListener.EV_LOCK_BUSY, -1, -1);
             return false;
@@ -290,8 +303,14 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
     private void closeTenant(long thread, Entry<T> entry, int index, short ev, int reason) {
         T tenant = entry.getTenant(index);
         if (tenant != null) {
-            tenant.goodbye();
-            tenant.close();
+            try {
+                tenant.goodbye();
+                tenant.close();
+            } catch (Throwable th) {
+                // The tenant has left the pool: a slot that kept it would hand it out again, detached
+                entry.assignTenant(index, null);
+                throw th;
+            }
             LOG.debug().$("closed [table=").$(tenant.getTableToken())
                     .$(", at=").$(entry.index).$(':').$(index)
                     .$(", reason=").$(PoolConstants.closeReasonText(reason))
@@ -461,6 +480,28 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
         }
     }
 
+    /**
+     * Undoes a {@link #lock(TableToken)} that met a busy tenant, or a tenant that did not close: hands back the slots
+     * it took, whose tenants it closed, and the lock of the entry, which sits in the root entry whichever segment the
+     * lock stopped in. Without that, no other thread could take those slots or lock the entry, and a stop past the
+     * first segment would leave the entry locked for good.
+     */
+    private void releaseFailedLock(Entry<T> rootEntry, long thread, boolean isHeld) {
+        // A thread that holds the lock holds every slot, without a tenant, and the last segment refuses a next one:
+        // taking the lock again neither fails nor closes a tenant
+        assert !isHeld : "lock() failed for the thread that holds it";
+        for (Entry<T> e = rootEntry; e != null; e = e.next) {
+            for (int i = 0; i < segmentSize; i++) {
+                // A slot this thread holds without a tenant is one this lock() took: outside lock(), a thread holds a
+                // slot only together with the tenant it took from it, and the walks of the pool hand theirs back
+                if (Unsafe.arrayGetVolatile(e.allocations, i) == thread && e.getTenant(i) == null) {
+                    Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                }
+            }
+        }
+        rootEntry.lockOwner = UNLOCKED;
+    }
+
     @Override
     protected void closePool() {
         super.closePool();
@@ -533,7 +574,13 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
                             // check if deadline violation still holds
                             if (deadline > e.releaseOrAcquireTimes[i]) {
                                 removed = true;
-                                closeTenant(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                                try {
+                                    closeTenant(thread, e, i, PoolListener.EV_EXPIRE, closeReason);
+                                } catch (Throwable th) {
+                                    // the close left the slot empty, see closeTenant(): free it as well
+                                    Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
+                                    throw th;
+                                }
                             }
                             Unsafe.arrayPutOrdered(e.allocations, i, UNALLOCATED);
                         } else {
