@@ -65,6 +65,27 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testAlterExpirePolicyIgnoresVariables() throws Exception {
+        // ALTER checks a window EXPIRE ROWS policy with a query of its own, which compiles while the
+        // statement compiles. The view keeps the policy as text, without the variables, so the
+        // statement fails as it does without the parameter, and the view keeps no policy.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)", sqlExecutionContext);
+            final String sql = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k) - @k";
+            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
+                final String response = assertSameResponse(url, sql, "@k := 1.0");
+                TestUtils.assertContains(response, "\"error\":\"invalid EXPIRE ROWS policy: Invalid column: @k\"");
+            }
+            assertGet(
+                    "{\"query\":\"SELECT count() FROM mv\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0]],\"count\":1}",
+                    "SELECT count() FROM mv",
+                    null
+            );
+        }));
+    }
+
+    @Test
     public void testCachedQueryWithOtherValues() throws Exception {
         // The select cache keeps a compiled query by its text. The compiled query holds the
         // values of the variables, so the same text with other values must not reuse it.
@@ -94,23 +115,25 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
-    public void testAlterExpirePolicyIgnoresVariables() throws Exception {
-        // ALTER checks a window EXPIRE ROWS policy with a query of its own, which compiles while the
-        // statement compiles. The view keeps the policy as text, without the variables, so the
-        // statement fails as it does without the parameter, and the view keeps no policy.
+    public void testCachedViewReadWithAndWithoutVariables() throws Exception {
+        // A view's OVERRIDABLE variable makes the same text compile with and without the
+        // parameter, to queries that return other rows. The select cache that /exec and /exp
+        // share keeps them apart, whichever request compiles the text first.
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE TABLE base (k SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            engine.execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)", sqlExecutionContext);
-            final String sql = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY k) - @k";
-            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
-                final String response = assertSameResponse(url, sql, "@k := 1.0");
-                TestUtils.assertContains(response, "\"error\":\"invalid EXPIRE ROWS policy: Invalid column: @k\"");
+            engine.execute("CREATE TABLE k (l LONG)", sqlExecutionContext);
+            engine.execute("INSERT INTO k VALUES (1), (2), (3)", sqlExecutionContext);
+            engine.execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)", sqlExecutionContext);
+            final String sql = "SELECT * FROM v_ovl";
+            final String variables = "@lim := 1";
+            final String plainJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1],[2]],\"count\":2}";
+            final String overriddenJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}";
+            for (int i = 0; i < 2; i++) {
+                // without the parameter first, then with it, on each endpoint
+                assertGet(plainJson, sql, null);
+                assertGet(overriddenJson, sql, variables);
+                assertSameExport("SELECT l FROM k WHERE l <= 2", sql, null, null);
+                assertSameExport("SELECT l FROM k WHERE l <= 1", sql, variables, null);
             }
-            assertGet(
-                    "{\"query\":\"SELECT count() FROM mv\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[0]],\"count\":1}",
-                    "SELECT count() FROM mv",
-                    null
-            );
         }));
     }
 
@@ -130,117 +153,6 @@ public class HttpQueryVariablesTest extends AbstractTest {
             // fails no CREATE
             final String response = assertSameResponse("/query", "CREATE TABLE IF NOT EXISTS z (a INT)", "a := 1");
             TestUtils.assertEquals("{\"ddl\":\"OK\"}", response);
-        }));
-    }
-
-    @Test
-    public void testLogsShowVariables() throws Exception {
-        // The log lines that show a statement's text show the variables it ran with, so the log
-        // tells what ran. A request without variables logs as before.
-        LogFactory.enableGuaranteedLogging(QueryProgress.class);
-        final LogCapture capture = new LogCapture();
-        try {
-            TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-                capture.start();
-                engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-                // a query: when it starts and when it ends, and the timings line
-                assertGet(
-                        "{\"query\":\"SELECT @a + 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
-                        "SELECT @a + 1 x",
-                        "@a := 1"
-                );
-                // an INSERT, which runs after its compile
-                assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v", "@v := 42");
-                // an error
-                assertGet(
-                        "{\"query\":\"SELECT @a FROM nope\",\"error\":\"table does not exist [table=nope]\",\"position\":15}",
-                        "SELECT @a FROM nope",
-                        "@a := 1"
-                );
-                // the export and the validation endpoints
-                assertSameExport("SELECT 3 z", "SELECT @c z", "@c := 3", null);
-                final Utf8StringSink sink = new Utf8StringSink();
-                Assert.assertEquals("200", testHttpClient.get("/api/v1/sql/validate", "SELECT @d w", "@d := 4", null, sink));
-                // a request without variables after them
-                assertGet(
-                        "{\"query\":\"SELECT 2 y\",\"columns\":[{\"name\":\"y\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
-                        "SELECT 2 y",
-                        null
-                );
-                capture.waitForRegex("fin \\[id=\\d+, sql=`SELECT 2 y`");
-
-                capture.assertOnlyOnce("exe \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
-                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
-                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT @a \\+ 1 x`, vars=`@a := 1`]");
-                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`INSERT INTO t SELECT @v`, vars=`@v := 42`, principal=");
-                capture.assertOnlyOnce("err \\[id=-1, sql=`SELECT @a FROM nope`, vars=`@a := 1`, principal=.*, msg=table does not exist \\[table=nope], errno=0, pos=15");
-                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @c z`, vars=`@c := 3`, principal=");
-                capture.assertOnlyOnce("timings \\[compiler: \\d+, q=`SELECT @d w`, vars=`@d := 4`]");
-                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 2 y`, principal=");
-                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT 2 y`]");
-                // the reference export ran without variables
-                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 3 z`, principal=");
-            }));
-        } finally {
-            capture.stop();
-            LogFactory.disableGuaranteedLogging(QueryProgress.class);
-        }
-    }
-
-    @Test
-    public void testRedefineViewIgnoresVariables() throws Exception {
-        // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
-        // the statement compiles. The body is stored as text, without the variables, so it fails
-        // as it does without the parameter, and the view keeps its definition.
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE VIEW vw AS (SELECT 1 v)", sqlExecutionContext);
-            final String variables = "@a := 1";
-            final String[] statements = {
-                    "ALTER VIEW vw AS (SELECT @a v)",
-                    "ALTER VIEW vw AS SELECT @a v",
-                    "CREATE OR REPLACE VIEW vw AS (SELECT @a v)",
-            };
-            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
-                for (String sql : statements) {
-                    final String response = assertSameResponse(url, sql, variables);
-                    TestUtils.assertContains(response, "\"error\":\"Invalid column: @a\"");
-                }
-            }
-            assertGet(
-                    "{\"query\":\"SELECT * FROM vw\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
-                    "SELECT * FROM vw",
-                    null
-            );
-        }));
-    }
-
-    @Test
-    public void testErrorWithoutPosition() throws Exception {
-        // an error in another parameter carries no position, with the variables as without
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
-            params.put("cols", "y");
-            final Utf8StringSink without = new Utf8StringSink();
-            testHttpClient.get("SELECT 1 x", null, params, without);
-            final Utf8StringSink with = new Utf8StringSink();
-            testHttpClient.get("SELECT 1 x", "@a := 1", params, with);
-            TestUtils.assertContains(with.toString(), "column not found: 'y'");
-            TestUtils.assertEquals(without.toString(), with.toString());
-        }));
-    }
-
-    @Test
-    public void testErrorWhileRowsStream() throws Exception {
-        // simulate_crash('0') fails at the first row with the fixed position 222
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final String sql = "SELECT simulate_crash('0') FROM long_sequence(1)";
-            final String prefix = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", ";
-            // a position past the variables' text is left as it is
-            assertGet(prefix + "\"errorPos\":222}", sql, "@pad := 1");
-            // Within it, it is the position in the variables parameter: the parser reads the
-            // variables past the query and a newline, from 49 on, so 222 is 173 into them.
-            final String pad = "@pad := '" + "x".repeat(200) + "'";
-            assertGet(prefix + "\"errorPos\":173,\"errorSource\":\"variables\"}", sql, pad);
         }));
     }
 
@@ -274,6 +186,18 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "SELECT @a",
                     "@a := 1 SELECT 2"
             );
+            // at the very end of the variables, 19 characters into "@a := now() at time"
+            assertGet(
+                    "{\"query\":\"SELECT 1\",\"error\":\"did you mean 'at time zone <tz>'?\",\"position\":19,\"errorSource\":\"variables\"}",
+                    "SELECT 1",
+                    "@a := now() at time"
+            );
+            // at the very end of the query, which is no position in the variables
+            assertGet(
+                    "{\"query\":\"SELECT * FROM\",\"error\":\"table name or sub-query expected\",\"position\":13}",
+                    "SELECT * FROM",
+                    "@a := 1"
+            );
             // not an assignment
             final Utf8StringSink sink = new Utf8StringSink();
             Assert.assertEquals("400", testHttpClient.get("SELECT 1", "a := 1", sink));
@@ -285,106 +209,32 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
-    public void testInsertReadsVariables() throws Exception {
+    public void testErrorWhileRowsStream() throws Exception {
+        // simulate_crash('0') fails at the first row with the fixed position 222
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE TABLE t (v INT, s VARCHAR)", sqlExecutionContext);
-            final String variables = "@v := 40 + 2, @s := 'x' || @v";
-            assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v, @s", variables);
-            assertGet("{\"dml\":\"OK\"}", "WITH c AS (SELECT @v v) INSERT INTO t SELECT v, 'cte' FROM c", variables);
-            assertGet(
-                    "{\"query\":\"SELECT * FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"},{\"name\":\"s\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[42,\"x42\"],[42,\"cte\"]],\"count\":2}",
-                    "SELECT * FROM t",
-                    null
-            );
+            final String sql = "SELECT simulate_crash('0') FROM long_sequence(1)";
+            final String prefix = "{\"query\":\"SELECT simulate_crash('0') FROM long_sequence(1)\",\"columns\":[{\"name\":\"simulate_crash\",\"type\":\"BOOLEAN\"}],\"timestamp\":-1,\"dataset\":[[]],\"count\":1,\"error\":\"simulated cairo exception\", ";
+            // a position past the variables' text is left as it is
+            assertGet(prefix + "\"errorPos\":222}", sql, "@pad := 1");
+            // Within it, it is the position in the variables parameter: the parser reads the
+            // variables past the query and a newline, from 49 on, so 222 is 173 into them.
+            final String pad = "@pad := '" + "x".repeat(200) + "'";
+            assertGet(prefix + "\"errorPos\":173,\"errorSource\":\"variables\"}", sql, pad);
         }));
     }
 
     @Test
-    public void testInvalidUtf8InVariablesParameter() throws Exception {
+    public void testErrorWithoutPosition() throws Exception {
+        // an error in another parameter carries no position, with the variables as without
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
-            final Utf8StringSink badUtf8 = new Utf8StringSink();
-            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
-            params.put("variables", badUtf8);
-            // this path sends the parameters as they are, unencoded
-            final Utf8StringSink sql = new Utf8StringSink();
-            sql.put("SELECT%201");
-            testHttpClient.assertGet(
-                    "/query",
-                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
-                    sql,
-                    params
-            );
-        }));
-    }
-
-    @Test
-    public void testSelectReadsVariables() throws Exception {
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            // the same as DECLARE @from := ..., @to := dateadd('d', 1, @from) SELECT ...
-            assertGet(
-                    "{\"query\":\"SELECT @from f, @to t\",\"columns\":[{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"2026-11-11T00:00:00.000000Z\",\"2026-11-12T00:00:00.000000Z\"]],\"count\":1}",
-                    "SELECT @from f, @to t",
-                    "@from := '2026-11-11'::TIMESTAMP, @to := dateadd('d', 1, @from)"
-            );
-            // a value with a double quote and a line comment
-            assertGet(
-                    "{\"query\":\"SELECT @a x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"say \\\"hi\\\"\"]],\"count\":1}",
-                    "SELECT @a x",
-                    "@a := 'say \"hi\"' -- quoted"
-            );
-            // the characters URL encoding gives a meaning arrive as they were sent
-            assertGet(
-                    "{\"query\":\"SELECT @s x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"a&b?c=d+e#f%g h\"]],\"count\":1}",
-                    "SELECT @s x",
-                    "@s := 'a&b?c=d+e#f%g h'"
-            );
-            // an empty parameter declares nothing
-            assertGet(
-                    "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
-                    "SELECT 1 x",
-                    ""
-            );
-        }));
-    }
-
-    @Test
-    public void testUpdateIgnoresVariables() throws Exception {
-        // The WAL applies an UPDATE by parsing its text again, without the variables: UPDATE
-        // answers as it does without the parameter.
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-            final String variables = "@a := 1";
-            assertSameResponse("UPDATE t SET v = @a", variables);
-            assertSameResponse("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", variables);
-            // nor does it parse them: a parameter that holds no assignment fails no UPDATE
-            for (String sql : new String[]{"UPDATE t SET v = 1", "WITH c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c"}) {
-                final String response = assertSameResponse("/query", sql, "a := 1");
-                TestUtils.assertEquals("{\"dml\":\"OK\",\"updated\":0}", response);
-            }
-        }));
-    }
-
-    @Test
-    public void testCachedViewReadWithAndWithoutVariables() throws Exception {
-        // A view's OVERRIDABLE variable makes the same text compile with and without the
-        // parameter, to queries that return other rows. The select cache that /exec and /exp
-        // share keeps them apart, whichever request compiles the text first.
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE TABLE k (l LONG)", sqlExecutionContext);
-            engine.execute("INSERT INTO k VALUES (1), (2), (3)", sqlExecutionContext);
-            engine.execute("CREATE VIEW v_ovl AS (DECLARE OVERRIDABLE @lim := 2 SELECT l FROM k WHERE l <= @lim)", sqlExecutionContext);
-            final String sql = "SELECT * FROM v_ovl";
-            final String variables = "@lim := 1";
-            final String plainJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1],[2]],\"count\":2}";
-            final String overriddenJson = "{\"query\":\"SELECT * FROM v_ovl\",\"columns\":[{\"name\":\"l\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}";
-            for (int i = 0; i < 2; i++) {
-                // without the parameter first, then with it, on each endpoint
-                assertGet(plainJson, sql, null);
-                assertGet(overriddenJson, sql, variables);
-                assertSameExport("SELECT l FROM k WHERE l <= 2", sql, null, null);
-                assertSameExport("SELECT l FROM k WHERE l <= 1", sql, variables, null);
-            }
+            final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+            params.put("cols", "y");
+            final Utf8StringSink without = new Utf8StringSink();
+            testHttpClient.get("SELECT 1 x", null, params, without);
+            final Utf8StringSink with = new Utf8StringSink();
+            testHttpClient.get("SELECT 1 x", "@a := 1", params, with);
+            TestUtils.assertContains(with.toString(), "column not found: 'y'");
+            TestUtils.assertEquals(without.toString(), with.toString());
         }));
     }
 
@@ -412,22 +262,6 @@ public class HttpQueryVariablesTest extends AbstractTest {
                     "{\"query\":\"SELECT v FROM t WHERE v > @min\",\"error\":\"Invalid column: @min\",\"position\":26}",
                     sink.toString()
             );
-        }));
-    }
-
-    @Test
-    public void testExportRecompilesStaleQueryWithVariables() throws Exception {
-        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
-            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
-            engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
-            final String reference = "SELECT v FROM t WHERE v > 1";
-            final String sql = "SELECT v FROM t WHERE v > @min";
-            // the select cache keeps the compiled query
-            assertSameExport(reference, sql, "@min := 1", null);
-            // The new column makes the cached query stale: opening its cursor fails, and /exp
-            // compiles the query again, with the variables.
-            engine.execute("ALTER TABLE t ADD COLUMN extra INT", sqlExecutionContext);
-            assertSameExport(reference, sql, "@min := 1", null);
         }));
     }
 
@@ -481,6 +315,186 @@ public class HttpQueryVariablesTest extends AbstractTest {
     }
 
     @Test
+    public void testExportRecompilesStaleQueryWithVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            engine.execute("INSERT INTO t VALUES (1), (2), (3)", sqlExecutionContext);
+            final String reference = "SELECT v FROM t WHERE v > 1";
+            final String sql = "SELECT v FROM t WHERE v > @min";
+            // the select cache keeps the compiled query
+            assertSameExport(reference, sql, "@min := 1", null);
+            // The new column makes the cached query stale: opening its cursor fails, and /exp
+            // compiles the query again, with the variables.
+            engine.execute("ALTER TABLE t ADD COLUMN extra INT", sqlExecutionContext);
+            assertSameExport(reference, sql, "@min := 1", null);
+        }));
+    }
+
+    @Test
+    public void testInsertReadsVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT, s VARCHAR)", sqlExecutionContext);
+            final String variables = "@v := 40 + 2, @s := 'x' || @v";
+            assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v, @s", variables);
+            assertGet("{\"dml\":\"OK\"}", "WITH c AS (SELECT @v v) INSERT INTO t SELECT v, 'cte' FROM c", variables);
+            assertGet(
+                    "{\"query\":\"SELECT * FROM t\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"},{\"name\":\"s\",\"type\":\"VARCHAR\"}],\"timestamp\":-1,\"dataset\":[[42,\"x42\"],[42,\"cte\"]],\"count\":2}",
+                    "SELECT * FROM t",
+                    null
+            );
+        }));
+    }
+
+    @Test
+    public void testInvalidUtf8InVariablesParameter() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            final CharSequenceObjHashMap<Utf8Sequence> params = new CharSequenceObjHashMap<>();
+            final Utf8StringSink badUtf8 = new Utf8StringSink();
+            badUtf8.put("@a%20%3A%3D%20").putAny((byte) 0xC3).putAny((byte) 0x28);
+            params.put("variables", badUtf8);
+            // this path sends the parameters as they are, unencoded
+            final Utf8StringSink sql = new Utf8StringSink();
+            sql.put("SELECT%201");
+            testHttpClient.assertGet(
+                    "/query",
+                    "{\"query\":\"SELECT 1\",\"error\":\"variables are not valid UTF-8\",\"position\":0,\"errorSource\":\"variables\"}",
+                    sql,
+                    params
+            );
+        }));
+    }
+
+    @Test
+    public void testLogsShowVariables() throws Exception {
+        // The log lines that show a statement's text show the variables it ran with, so the log
+        // tells what ran. A request without variables logs as before.
+        LogFactory.enableGuaranteedLogging(QueryProgress.class);
+        final LogCapture capture = new LogCapture();
+        try {
+            TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+                capture.start();
+                engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+                // a query: when it starts and when it ends, and the timings line
+                assertGet(
+                        "{\"query\":\"SELECT @a + 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                        "SELECT @a + 1 x",
+                        "@a := 1"
+                );
+                // an INSERT, which runs after its compile
+                assertGet("{\"dml\":\"OK\"}", "INSERT INTO t SELECT @v", "@v := 42");
+                // an error
+                assertGet(
+                        "{\"query\":\"SELECT @a FROM nope\",\"error\":\"table does not exist [table=nope]\",\"position\":15}",
+                        "SELECT @a FROM nope",
+                        "@a := 1"
+                );
+                // the export and the validation endpoints
+                assertSameExport("SELECT 3 z", "SELECT @c z", "@c := 3", null);
+                final Utf8StringSink sink = new Utf8StringSink();
+                Assert.assertEquals("200", testHttpClient.get("/api/v1/sql/validate", "SELECT @d w", "@d := 4", null, sink));
+                // a request without variables after them
+                assertGet(
+                        "{\"query\":\"SELECT 2 y\",\"columns\":[{\"name\":\"y\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[2]],\"count\":1}",
+                        "SELECT 2 y",
+                        null
+                );
+                // the last line the requests log: one logging thread delivers them in order, so
+                // every line asserted below has arrived once this one has
+                capture.waitForRegex("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT 2 y`]");
+
+                capture.assertOnlyOnce("exe \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @a \\+ 1 x`, vars=`@a := 1`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT @a \\+ 1 x`, vars=`@a := 1`]");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`INSERT INTO t SELECT @v`, vars=`@v := 42`, principal=");
+                capture.assertOnlyOnce("err \\[id=-1, sql=`SELECT @a FROM nope`, vars=`@a := 1`, principal=.*, msg=table does not exist \\[table=nope], errno=0, pos=15");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT @c z`, vars=`@c := 3`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, q=`SELECT @d w`, vars=`@d := 4`]");
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 2 y`, principal=");
+                capture.assertOnlyOnce("timings \\[compiler: \\d+, count: \\d+, execute: \\d+, q=`SELECT 2 y`]");
+                // the reference export ran without variables
+                capture.assertOnlyOnce("fin \\[id=\\d+, sql=`SELECT 3 z`, principal=");
+            }));
+        } finally {
+            capture.stop();
+            LogFactory.disableGuaranteedLogging(QueryProgress.class);
+        }
+    }
+
+    @Test
+    public void testRedefineViewIgnoresVariables() throws Exception {
+        // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
+        // the statement compiles. The body is stored as text, without the variables, so it fails
+        // as it does without the parameter, and the view keeps its definition.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE VIEW vw AS (SELECT 1 v)", sqlExecutionContext);
+            final String variables = "@a := 1";
+            final String[] statements = {
+                    "ALTER VIEW vw AS (SELECT @a v)",
+                    "ALTER VIEW vw AS SELECT @a v",
+                    "CREATE OR REPLACE VIEW vw AS (SELECT @a v)",
+            };
+            for (String url : new String[]{"/query", "/api/v1/sql/validate"}) {
+                for (String sql : statements) {
+                    final String response = assertSameResponse(url, sql, variables);
+                    TestUtils.assertContains(response, "\"error\":\"Invalid column: @a\"");
+                }
+            }
+            assertGet(
+                    "{\"query\":\"SELECT * FROM vw\",\"columns\":[{\"name\":\"v\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    "SELECT * FROM vw",
+                    null
+            );
+        }));
+    }
+
+    @Test
+    public void testSelectReadsVariables() throws Exception {
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            // the same as DECLARE @from := ..., @to := dateadd('d', 1, @from) SELECT ...
+            assertGet(
+                    "{\"query\":\"SELECT @from f, @to t\",\"columns\":[{\"name\":\"f\",\"type\":\"TIMESTAMP\"},{\"name\":\"t\",\"type\":\"TIMESTAMP\"}],\"timestamp\":-1,\"dataset\":[[\"2026-11-11T00:00:00.000000Z\",\"2026-11-12T00:00:00.000000Z\"]],\"count\":1}",
+                    "SELECT @from f, @to t",
+                    "@from := '2026-11-11'::TIMESTAMP, @to := dateadd('d', 1, @from)"
+            );
+            // a value with a double quote and a line comment
+            assertGet(
+                    "{\"query\":\"SELECT @a x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"say \\\"hi\\\"\"]],\"count\":1}",
+                    "SELECT @a x",
+                    "@a := 'say \"hi\"' -- quoted"
+            );
+            // the characters URL encoding gives a meaning arrive as they were sent
+            assertGet(
+                    "{\"query\":\"SELECT @s x\",\"columns\":[{\"name\":\"x\",\"type\":\"STRING\"}],\"timestamp\":-1,\"dataset\":[[\"a&b?c=d+e#f%g h\"]],\"count\":1}",
+                    "SELECT @s x",
+                    "@s := 'a&b?c=d+e#f%g h'"
+            );
+            // an empty parameter declares nothing
+            assertGet(
+                    "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    "SELECT 1 x",
+                    ""
+            );
+        }));
+    }
+
+    @Test
+    public void testUpdateIgnoresVariables() throws Exception {
+        // The WAL applies an UPDATE by parsing its text again, without the variables: UPDATE
+        // answers as it does without the parameter.
+        TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
+            engine.execute("CREATE TABLE t (v INT)", sqlExecutionContext);
+            final String variables = "@a := 1";
+            assertSameResponse("UPDATE t SET v = @a", variables);
+            assertSameResponse("WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c", variables);
+            // nor does it parse them: a parameter that holds no assignment fails no UPDATE
+            for (String sql : new String[]{"UPDATE t SET v = 1", "WITH c AS (SELECT 1 x) UPDATE t SET v = c.x FROM c"}) {
+                final String response = assertSameResponse("/query", sql, "a := 1");
+                TestUtils.assertEquals("{\"dml\":\"OK\",\"updated\":0}", response);
+            }
+        }));
+    }
+
+    @Test
     public void testValidateReadsVariables() throws Exception {
         TestUtils.assertMemoryLeak(() -> getSimpleTester().run((engine, sqlExecutionContext) -> {
             final String url = "/api/v1/sql/validate";
@@ -500,6 +514,19 @@ public class HttpQueryVariablesTest extends AbstractTest {
             Assert.assertEquals("400", testHttpClient.get(url, "SELECT @a x", "@a := nope_fn()", null, sink));
             TestUtils.assertEquals(
                     "{\"query\":\"SELECT @a x\",\"error\":\"unknown function name: nope_fn()\",\"position\":6,\"errorSource\":\"variables\"}",
+                    sink.toString()
+            );
+            // an unfinished query, as the console validates it while the user types: the error at
+            // the end of the query is no error in the variables
+            Assert.assertEquals("400", testHttpClient.get(url, "SELECT * FROM", "@a := 1", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT * FROM\",\"error\":\"table name or sub-query expected\",\"position\":13}",
+                    sink.toString()
+            );
+            // and one at the end of the variables is
+            Assert.assertEquals("400", testHttpClient.get(url, "SELECT 1", "@a := now() at time", null, sink));
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT 1\",\"error\":\"did you mean 'at time zone <tz>'?\",\"position\":19,\"errorSource\":\"variables\"}",
                     sink.toString()
             );
             // an INSERT reads them; an UPDATE does not, as on /exec

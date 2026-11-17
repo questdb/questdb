@@ -180,20 +180,20 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         return query;
     }
 
-    /**
-     * Returns the variables the client declared for the query, empty without the variables
-     * parameter, see {@link QueryVariablesParameter}.
-     */
-    public CharSequence getQueryVariables() {
-        return queryVariables.getText();
-    }
-
     public CharSequence getQueryOrHidden() {
         return containsSecret ? HIDDEN : query;
     }
 
     public short getQueryType() {
         return queryType;
+    }
+
+    /**
+     * Returns the variables the client declared for the query, empty without the variables
+     * parameter, see {@link QueryVariablesParameter}.
+     */
+    public CharSequence getQueryVariables() {
+        return queryVariables.getText();
     }
 
     public Rnd getRnd() {
@@ -214,6 +214,13 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
                 .$(", q=`").$safe(getQueryOrHidden()).$('`');
         queryVariables.putLog(log);
         log.$(']').$();
+    }
+
+    /**
+     * Decodes the variables parameter of the request.
+     */
+    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
     }
 
     public void setCompilerNanos(long compilerNanos) {
@@ -241,13 +248,6 @@ public class SqlValidationProcessorState implements Mutable, Closeable {
         this.errorPosition = queryVariables.locateError(errorPosition, query.length());
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
-    }
-
-    /**
-     * Decodes the variables parameter of the request.
-     */
-    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
-        queryVariables.of(request);
     }
 
     /**

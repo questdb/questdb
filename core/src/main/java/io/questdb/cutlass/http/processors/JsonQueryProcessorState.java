@@ -333,6 +333,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return queryType;
     }
 
+    /**
+     * Returns the variables the client declared for the query: the assignments of a DECLARE
+     * block, see {@link SqlExecutionContext#getQueryVariables()}, empty without the variables
+     * parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
+     */
+    public CharSequence getQueryVariables() {
+        return queryVariables.getText();
+    }
+
     public Rnd getRnd() {
         return rnd;
     }
@@ -349,23 +358,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public long getStatementTimeout() {
         return statementTimeout;
-    }
-
-    /**
-     * Returns the variables the client declared for the query: the assignments of a DECLARE
-     * block, see {@link SqlExecutionContext#getQueryVariables()}, empty without the variables
-     * parameter. Valid after {@link #parseQueryVariables(HttpRequestHeader)}.
-     */
-    public CharSequence getQueryVariables() {
-        return queryVariables.getText();
-    }
-
-    /**
-     * Decodes the variables parameter of the request. The parser reads the text when it compiles
-     * the query.
-     */
-    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
-        queryVariables.of(request);
     }
 
     public LogRecord info() {
@@ -450,6 +442,14 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             // succeeding. The ordering is still timer first, owner second.
             unmountSqlExecutionOwner();
         }
+    }
+
+    /**
+     * Decodes the variables parameter of the request. The parser reads the text when it compiles
+     * the query.
+     */
+    public void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
     }
 
     public void resumeExecutionTimer() {
@@ -538,6 +538,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.errorMessage.put(errorMessage);
     }
 
+    public void storeInsertConfirmation() {
+        queryState = QUERY_INSERT_CONFIRMATION;
+    }
+
+    public void storeUpdateConfirmation(long updateRecords) {
+        queryState = QUERY_UPDATE_CONFIRMATION;
+        this.updateRecords = updateRecords;
+    }
+
     /**
      * Stores an error in the variables parameter itself, at a position in its text.
      */
@@ -547,15 +556,6 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.errorPosition = errorPosition;
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
-    }
-
-    public void storeInsertConfirmation() {
-        queryState = QUERY_INSERT_CONFIRMATION;
-    }
-
-    public void storeUpdateConfirmation(long updateRecords) {
-        queryState = QUERY_UPDATE_CONFIRMATION;
-        this.updateRecords = updateRecords;
     }
 
     public void suspendExecutionTimer() {

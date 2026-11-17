@@ -376,6 +376,13 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.writeCallback.of(processor, this);
     }
 
+    /**
+     * Decodes the variables parameter of the request.
+     */
+    void parseQueryVariables(HttpRequestHeader request) throws SqlException {
+        queryVariables.of(request);
+    }
+
     void resumeError(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
         response.bookmark();
         response.putAscii('{')
@@ -402,13 +409,6 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.errorPosition = queryVariables.locateError(errorPosition, sqlText.length());
         this.errorMessage.clear();
         this.errorMessage.put(errorMessage);
-    }
-
-    /**
-     * Decodes the variables parameter of the request.
-     */
-    void parseQueryVariables(HttpRequestHeader request) throws SqlException {
-        queryVariables.of(request);
     }
 
     /**

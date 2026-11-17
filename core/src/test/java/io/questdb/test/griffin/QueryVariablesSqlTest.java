@@ -58,20 +58,6 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainReadsVariables() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT)");
-            final StringSink expected = new StringSink();
-            printSql("EXPLAIN DECLARE @lim := 3 SELECT v FROM t WHERE v > @lim", expected);
-            final StringSink actual = new StringSink();
-            final String sql = "EXPLAIN SELECT v FROM t WHERE v > @lim";
-            withVariables("@lim := 3", sql, () -> printSql(sql, actual));
-            TestUtils.assertContains(expected, "filter:");
-            TestUtils.assertEquals(expected, actual);
-        });
-    }
-
-    @Test
     public void testExplainInsertAndWithReadVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
@@ -91,40 +77,16 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWithClauseOfEveryShape() throws Exception {
+    public void testExplainReadsVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
-            execute("INSERT INTO t VALUES (1)");
-            drainWalQueue();
-            // brackets inside a CTE body, and a list of CTEs
-            final String select = "WITH c AS (SELECT ((@a)) x), d AS (SELECT x + 1 y FROM c) SELECT y FROM d";
-            withVariables("@a := 2", select, () -> assertQuery(select).expectSize().returns("y\n3\n"));
-            // an UPDATE after brackets and a list of CTEs still skips the variables
-            final String update = "WITH c AS (SELECT (1) x), d AS (SELECT @a y) UPDATE t SET v = d.y FROM d";
-            withVariables("@a := 2", update, () -> assertExceptionNoLeakCheck(update, 39, "Invalid column: @a"));
-            // a WITH clause the parser rejects fails as it does without the variables
-            final String[] malformed = {
-                    "WITH",
-                    "WITH c",
-                    "WITH c x (SELECT 1)",
-                    "WITH c AS",
-                    "WITH c AS SELECT 1",
-                    "WITH c AS (SELECT 1",
-                    "WITH c AS (SELECT 1)",
-                    "WITH c AS (SELECT 1),",
-            };
-            for (String sql : malformed) {
-                final int position;
-                final String message;
-                try {
-                    execute(sql);
-                    throw new AssertionError("expected an error for " + sql);
-                } catch (SqlException e) {
-                    position = e.getPosition();
-                    message = e.getFlyweightMessage().toString();
-                }
-                withVariables("@a := 2", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
-            }
+            final StringSink expected = new StringSink();
+            printSql("EXPLAIN DECLARE @lim := 3 SELECT v FROM t WHERE v > @lim", expected);
+            final StringSink actual = new StringSink();
+            final String sql = "EXPLAIN SELECT v FROM t WHERE v > @lim";
+            withVariables("@lim := 3", sql, () -> printSql(sql, actual));
+            TestUtils.assertContains(expected, "filter:");
+            TestUtils.assertEquals(expected, actual);
         });
     }
 
@@ -190,6 +152,31 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnlyAssignments() throws Exception {
+        assertMemoryLeak(() -> {
+            final String sql = "SELECT @a";
+            // Positions in the assignments, past the statement and a newline. Each case fails as
+            // the same assignments in DECLARE <assignments> SELECT 1 do, at the same place.
+            final Object[][] cases = {
+                    {"1", 0, "unexpected token [1]"},
+                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
+                    {"@a := 1,,", 8, "missing declaration"},
+                    {"@a := 1 @b := 2", 8, "',' expected"},
+                    {"@a 1", 3, "expected variable assignment operator `:=`"},
+                    // as DECLARE @a := at the end of a statement, 8 characters into it
+                    {"@a :=", 3, "too few arguments for ':=' [found=1,expected=2]"},
+                    {"OVERRIDABLE @a := 1", 12, "variables cannot be OVERRIDABLE"},
+                    {"@b := 1, OVERRIDABLE @a := 1", 21, "variables cannot be OVERRIDABLE"},
+                    {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
+                    {"@a := @b", 6, "tried to use undeclared variable `@b`"},
+            };
+            for (Object[] c : cases) {
+                withVariables((String) c[0], sql, () -> assertQuery(sql).fails(sql.length() + 1 + (int) c[1], (String) c[2]));
+            }
+        });
+    }
+
+    @Test
     public void testQueriesOfEveryShapeReadVariables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v INT)");
@@ -212,6 +199,42 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             withVariables(variables, union, () -> assertQuery(union).expectSize().noRandomAccess().returns("x\n2\n3\n"));
             final String in = "t WHERE v IN (@a, 3)";
             withVariables(variables, in, () -> assertQuery(in).returns("v\n2\n3\n"));
+        });
+    }
+
+    @Test
+    public void testRedefineViewIgnoresVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
+            // the statement compiles. The view keeps the body as text, which no reader parses with
+            // the variables, so the body fails as it does without them.
+            execute("CREATE VIEW v AS (SELECT 1 x)");
+            final String[] statements = {
+                    "ALTER VIEW v AS (SELECT @a x)",
+                    "ALTER VIEW v AS SELECT @a x",
+                    "CREATE OR REPLACE VIEW v AS (SELECT @a x)",
+            };
+            for (String sql : statements) {
+                final int position;
+                final String message;
+                try {
+                    execute(sql);
+                    throw new AssertionError("expected an error for " + sql);
+                } catch (SqlException e) {
+                    position = e.getPosition();
+                    message = e.getFlyweightMessage().toString();
+                }
+                Assert.assertEquals("Invalid column: @a", message);
+                withVariables("@a := 1", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+            }
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
+            // a body that declares the variable itself still reads the client's value when it lets
+            // callers override it
+            executeWithVariables("@a := 2", "ALTER VIEW v AS (DECLARE OVERRIDABLE @a := 1 SELECT @a x)");
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
+            withVariables("@a := 2", "SELECT * FROM v", () -> assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n2\n"));
         });
     }
 
@@ -251,6 +274,42 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
         // last one declared, and @b keeps the value it was declared with
         final String sql = "DECLARE @a := 5 SELECT @a a, @b b";
         withVariables("@a := 1, @b := @a + 1", sql, () -> assertQuery(sql).expectSize().returns("a\tb\n5\t2\n"));
+    }
+
+    @Test
+    public void testStatementsThatIgnoreVariablesDoNotParseThem() throws Exception {
+        assertMemoryLeak(() -> {
+            // "a := 1" is no assignment: a statement that reads the variables fails on it, one
+            // that does not read them runs as it does without the parameter
+            final String variables = "a := 1";
+            final String select = "SELECT 1 x";
+            withVariables(variables, select, () -> assertExceptionNoLeakCheck(select, select.length() + 1, "unexpected token [a]"));
+            final String insertSelect = "INSERT INTO x SELECT 1";
+            withVariables(variables, insertSelect, () -> assertExceptionNoLeakCheck(insertSelect, insertSelect.length() + 1, "unexpected token [a]"));
+
+            final String[] statements = {
+                    "CREATE TABLE x (a INT)",
+                    "INSERT INTO x VALUES (1)",
+                    "UPDATE x SET a = a + 1",
+                    "WITH c AS (SELECT 10 y) UPDATE x SET a = a + c.y FROM c",
+                    "CREATE TABLE y AS (SELECT a FROM x)",
+                    "CREATE VIEW vx AS (SELECT a FROM x)",
+            };
+            for (String sql : statements) {
+                executeWithVariables(variables, sql);
+            }
+            final String explainUpdate = "EXPLAIN UPDATE x SET a = 0";
+            final StringSink expected = new StringSink();
+            printSql(explainUpdate, expected);
+            final StringSink actual = new StringSink();
+            withVariables(variables, explainUpdate, () -> printSql(explainUpdate, actual));
+            TestUtils.assertEquals(expected, actual);
+
+            drainWalAndViewQueues();
+            assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n12\n");
+            assertQuery("SELECT * FROM y").noLeakCheck().expectSize().returns("a\n12\n");
+            assertQuery("SELECT * FROM vx").noLeakCheck().expectSize().returns("a\n12\n");
+        });
     }
 
     @Test
@@ -330,91 +389,6 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRedefineViewIgnoresVariables() throws Exception {
-        assertMemoryLeak(() -> {
-            // ALTER VIEW and CREATE OR REPLACE VIEW over an existing view compile the new body while
-            // the statement compiles. The view keeps the body as text, which no reader parses with
-            // the variables, so the body fails as it does without them.
-            execute("CREATE VIEW v AS (SELECT 1 x)");
-            final String[] statements = {
-                    "ALTER VIEW v AS (SELECT @a x)",
-                    "ALTER VIEW v AS SELECT @a x",
-                    "CREATE OR REPLACE VIEW v AS (SELECT @a x)",
-            };
-            for (String sql : statements) {
-                final int position;
-                final String message;
-                try {
-                    execute(sql);
-                    throw new AssertionError("expected an error for " + sql);
-                } catch (SqlException e) {
-                    position = e.getPosition();
-                    message = e.getFlyweightMessage().toString();
-                }
-                Assert.assertEquals("Invalid column: @a", message);
-                withVariables("@a := 1", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
-            }
-            drainWalAndViewQueues();
-            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
-            // a body that declares the variable itself still reads the client's value when it lets
-            // callers override it
-            executeWithVariables("@a := 2", "ALTER VIEW v AS (DECLARE OVERRIDABLE @a := 1 SELECT @a x)");
-            drainWalAndViewQueues();
-            assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n1\n");
-            withVariables("@a := 2", "SELECT * FROM v", () -> assertQuery("SELECT * FROM v").noLeakCheck().expectSize().returns("x\n2\n"));
-        });
-    }
-
-    @Test
-    public void testUpdateIgnoresVariables() throws Exception {
-        assertMemoryLeak(() -> {
-            // The WAL applies an UPDATE by parsing its text again, without the variables.
-            execute("CREATE TABLE t (v INT)");
-            // as without the variables
-            final String update = "UPDATE t SET v = @a";
-            withVariables("@a := 1", update, () -> assertExceptionNoLeakCheck(update, 17, "Invalid column: @a"));
-            final String withUpdate = "WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c";
-            withVariables("@a := 1", withUpdate, () -> assertExceptionNoLeakCheck(withUpdate, 18, "Invalid column: @a"));
-        });
-    }
-
-    @Test
-    public void testStatementsThatIgnoreVariablesDoNotParseThem() throws Exception {
-        assertMemoryLeak(() -> {
-            // "a := 1" is no assignment: a statement that reads the variables fails on it, one
-            // that does not read them runs as it does without the parameter
-            final String variables = "a := 1";
-            final String select = "SELECT 1 x";
-            withVariables(variables, select, () -> assertExceptionNoLeakCheck(select, select.length() + 1, "unexpected token [a]"));
-            final String insertSelect = "INSERT INTO x SELECT 1";
-            withVariables(variables, insertSelect, () -> assertExceptionNoLeakCheck(insertSelect, insertSelect.length() + 1, "unexpected token [a]"));
-
-            final String[] statements = {
-                    "CREATE TABLE x (a INT)",
-                    "INSERT INTO x VALUES (1)",
-                    "UPDATE x SET a = a + 1",
-                    "WITH c AS (SELECT 10 y) UPDATE x SET a = a + c.y FROM c",
-                    "CREATE TABLE y AS (SELECT a FROM x)",
-                    "CREATE VIEW vx AS (SELECT a FROM x)",
-            };
-            for (String sql : statements) {
-                executeWithVariables(variables, sql);
-            }
-            final String explainUpdate = "EXPLAIN UPDATE x SET a = 0";
-            final StringSink expected = new StringSink();
-            printSql(explainUpdate, expected);
-            final StringSink actual = new StringSink();
-            withVariables(variables, explainUpdate, () -> printSql(explainUpdate, actual));
-            TestUtils.assertEquals(expected, actual);
-
-            drainWalAndViewQueues();
-            assertQuery("SELECT * FROM x").noLeakCheck().expectSize().returns("a\n12\n");
-            assertQuery("SELECT * FROM y").noLeakCheck().expectSize().returns("a\n12\n");
-            assertQuery("SELECT * FROM vx").noLeakCheck().expectSize().returns("a\n12\n");
-        });
-    }
-
-    @Test
     public void testUpdateDoesNotReadViewsOfVariables() throws Exception {
         assertMemoryLeak(() -> {
             // A view that only the variables read is no view the UPDATE reads: dropping it
@@ -449,34 +423,22 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testValueEndingWithLineComment() throws Exception {
-        final String sql = "SELECT @a + @b x";
-        withVariables("@a := 1 -- one\n, @b := 2", sql, () -> assertQuery(sql).expectSize().returns("x\n3\n"));
+    public void testUpdateIgnoresVariables() throws Exception {
+        assertMemoryLeak(() -> {
+            // The WAL applies an UPDATE by parsing its text again, without the variables.
+            execute("CREATE TABLE t (v INT)");
+            // as without the variables
+            final String update = "UPDATE t SET v = @a";
+            withVariables("@a := 1", update, () -> assertExceptionNoLeakCheck(update, 17, "Invalid column: @a"));
+            final String withUpdate = "WITH c AS (SELECT @a x) UPDATE t SET v = c.x FROM c";
+            withVariables("@a := 1", withUpdate, () -> assertExceptionNoLeakCheck(withUpdate, 18, "Invalid column: @a"));
+        });
     }
 
     @Test
-    public void testOnlyAssignments() throws Exception {
-        assertMemoryLeak(() -> {
-            final String sql = "SELECT @a";
-            // Positions in the assignments, past the statement and a newline. Each case fails as
-            // the same assignments in DECLARE <assignments> SELECT 1 do, at the same place.
-            final Object[][] cases = {
-                    {"1", 0, "unexpected token [1]"},
-                    {"DECLARE @a := 1", 0, "variables are the assignments of a DECLARE block, without the DECLARE keyword"},
-                    {"@a := 1,,", 8, "missing declaration"},
-                    {"@a := 1 @b := 2", 8, "',' expected"},
-                    {"@a 1", 3, "expected variable assignment operator `:=`"},
-                    // as DECLARE @a := at the end of a statement, 8 characters into it
-                    {"@a :=", 3, "too few arguments for ':=' [found=1,expected=2]"},
-                    {"OVERRIDABLE @a := 1", 12, "variables cannot be OVERRIDABLE"},
-                    {"@b := 1, OVERRIDABLE @a := 1", 21, "variables cannot be OVERRIDABLE"},
-                    {"AUDITED @a := 1", 0, "AUDITED is only allowed in the top-level DECLARE block"},
-                    {"@a := @b", 6, "tried to use undeclared variable `@b`"},
-            };
-            for (Object[] c : cases) {
-                withVariables((String) c[0], sql, () -> assertQuery(sql).fails(sql.length() + 1 + (int) c[1], (String) c[2]));
-            }
-        });
+    public void testValueEndingWithLineComment() throws Exception {
+        final String sql = "SELECT @a + @b x";
+        withVariables("@a := 1 -- one\n, @b := 2", sql, () -> assertQuery(sql).expectSize().returns("x\n3\n"));
     }
 
     @Test
@@ -513,6 +475,44 @@ public class QueryVariablesSqlTest extends AbstractCairoTest {
             final String fixed = "SELECT * FROM v_fixed";
             withVariables("@lim := 1", fixed, () -> assertQuery(fixed).noLeakCheck().fails(fixed.length() + 1 + 5, "variable is not overridable: @lim"));
             assertQuery("DECLARE @lim := 1 SELECT * FROM v_ovl").noLeakCheck().returns("l\n1\n");
+        });
+    }
+
+    @Test
+    public void testWithClauseOfEveryShape() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (1)");
+            drainWalQueue();
+            // brackets inside a CTE body, and a list of CTEs
+            final String select = "WITH c AS (SELECT ((@a)) x), d AS (SELECT x + 1 y FROM c) SELECT y FROM d";
+            withVariables("@a := 2", select, () -> assertQuery(select).expectSize().returns("y\n3\n"));
+            // an UPDATE after brackets and a list of CTEs still skips the variables
+            final String update = "WITH c AS (SELECT (1) x), d AS (SELECT @a y) UPDATE t SET v = d.y FROM d";
+            withVariables("@a := 2", update, () -> assertExceptionNoLeakCheck(update, 39, "Invalid column: @a"));
+            // a WITH clause the parser rejects fails as it does without the variables
+            final String[] malformed = {
+                    "WITH",
+                    "WITH c",
+                    "WITH c x (SELECT 1)",
+                    "WITH c AS",
+                    "WITH c AS SELECT 1",
+                    "WITH c AS (SELECT 1",
+                    "WITH c AS (SELECT 1)",
+                    "WITH c AS (SELECT 1),",
+            };
+            for (String sql : malformed) {
+                final int position;
+                final String message;
+                try {
+                    execute(sql);
+                    throw new AssertionError("expected an error for " + sql);
+                } catch (SqlException e) {
+                    position = e.getPosition();
+                    message = e.getFlyweightMessage().toString();
+                }
+                withVariables("@a := 2", sql, () -> assertExceptionNoLeakCheck(sql, position, message));
+            }
         });
     }
 
