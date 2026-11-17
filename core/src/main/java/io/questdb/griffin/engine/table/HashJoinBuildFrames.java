@@ -167,6 +167,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     // The owner writes it before the probes are dispatched, which publishes it to their workers.
     private long copyAddress;
     private long copyCapacity;
+    // The rows of the copy, which a reader's positioning asserts its locators against.
+    private long copyRowCount;
     private PageFrameCursor frameCursor;
     // True while the readers that newReader() creates read a parallel hash join's output, which take
     // the whole Parquet decode cache budget; see setOutputReaders().
@@ -333,6 +335,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         if (copyAddress != 0) {
             copyAddress = Unsafe.free(copyAddress, copyCapacity, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
             copyCapacity = 0;
+            copyRowCount = 0;
         }
         if (pendingCopyAddress != 0) {
             pendingCopyAddress = Unsafe.free(pendingCopyAddress, pendingCopySize, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
@@ -532,6 +535,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         Misc.freeObjListAndKeepObjects(copyReaders);
         copyAddress = pendingCopyAddress;
         copyCapacity = pendingCopySize;
+        copyRowCount = pendingCopySize / copyRowSize;
         pendingCopyAddress = 0;
         pendingCopySize = 0;
     }
@@ -720,8 +724,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         // payload column, and a second set for the B getters of STRING and VARCHAR; null for other
         // columns. A native frame's pages stay mapped until the execution ends, so the strings are
         // stable, as a page frame record's are over a native frame.
-        private final BorrowedArray[] arrays;
-        private final DirectByteSequenceView[] binaries;
+        private final ObjList<BorrowedArray> arrays = new ObjList<>();
+        private final ObjList<DirectByteSequenceView> binaries = new ObjList<>();
         // The bytes of the Parquet decode cache that the reader's pool caches decoded row groups in.
         private final long cacheSize;
         // Scratch sinks of the copy pass, which reads the two wide decimals through a sink alone;
@@ -730,14 +734,14 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         private final Decimal256 decimal256;
         // One flyweight per LONG256 column over the copy, and a second set for getLong256B(), whose
         // contract is that it survives a getLong256A() on the same column; null for other columns.
-        private final Long256Impl[] long256A;
-        private final Long256Impl[] long256B;
+        private final ObjList<Long256Impl> long256A = new ObjList<>();
+        private final ObjList<Long256Impl> long256B = new ObjList<>();
         private final PageFrameMemoryPool pool;
         private final BuildRecord record = new BuildRecord();
-        private final DirectString[] stringsA;
-        private final DirectString[] stringsB;
-        private final Utf8SplitString[] varcharsA;
-        private final Utf8SplitString[] varcharsB;
+        private final ObjList<DirectString> stringsA = new ObjList<>();
+        private final ObjList<DirectString> stringsB = new ObjList<>();
+        private final ObjList<Utf8SplitString> varcharsA = new ObjList<>();
+        private final ObjList<Utf8SplitString> varcharsB = new ObjList<>();
         // Where the current frame's payload addresses start in the shared table.
         private int addressBase;
         // The copied row of the current match, or zero while the reader reads the columns where they live.
@@ -757,34 +761,34 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             this.cacheSize = cacheSize;
             pool = new PageFrameMemoryPool(configuration, cacheSize);
             final int n = payloadTypes.length;
-            long256A = new Long256Impl[n];
-            long256B = new Long256Impl[n];
-            arrays = new BorrowedArray[n];
-            binaries = new DirectByteSequenceView[n];
-            stringsA = new DirectString[n];
-            stringsB = new DirectString[n];
-            varcharsA = new Utf8SplitString[n];
-            varcharsB = new Utf8SplitString[n];
+            long256A.setPos(n);
+            long256B.setPos(n);
+            arrays.setPos(n);
+            binaries.setPos(n);
+            stringsA.setPos(n);
+            stringsB.setPos(n);
+            varcharsA.setPos(n);
+            varcharsB.setPos(n);
             boolean hasDecimal128 = false;
             boolean hasDecimal256 = false;
             for (int i = 0; i < n; i++) {
                 switch (payloadTypes[i]) {
                     case ColumnType.LONG256 -> {
-                        long256A[i] = new Long256Impl();
-                        long256B[i] = new Long256Impl();
+                        long256A.setQuick(i, new Long256Impl());
+                        long256B.setQuick(i, new Long256Impl());
                     }
                     case ColumnType.DECIMAL128 -> hasDecimal128 = true;
                     case ColumnType.DECIMAL256 -> hasDecimal256 = true;
                     case ColumnType.STRING -> {
-                        stringsA[i] = new DirectString(STABLE);
-                        stringsB[i] = new DirectString(STABLE);
+                        stringsA.setQuick(i, new DirectString(STABLE));
+                        stringsB.setQuick(i, new DirectString(STABLE));
                     }
                     case ColumnType.VARCHAR -> {
-                        varcharsA[i] = new Utf8SplitString(STABLE);
-                        varcharsB[i] = new Utf8SplitString(STABLE);
+                        varcharsA.setQuick(i, new Utf8SplitString(STABLE));
+                        varcharsB.setQuick(i, new Utf8SplitString(STABLE));
                     }
-                    case ColumnType.BINARY -> binaries[i] = new DirectByteSequenceView();
-                    case ColumnType.ARRAY -> arrays[i] = new BorrowedArray();
+                    case ColumnType.BINARY -> binaries.setQuick(i, new DirectByteSequenceView());
+                    case ColumnType.ARRAY -> arrays.setQuick(i, new BorrowedArray());
                     default -> {
                     }
                 }
@@ -811,7 +815,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         public ArrayView getArray(int col, int columnType) {
             if (isDirect) {
                 // As a page frame record reads it: the aux page, absent for a column top, says NULL.
-                final BorrowedArray array = arrays[col];
+                final BorrowedArray array = arrays.getQuick(col);
                 final int index = addressBase + col;
                 final long auxAddress = payloadAuxAddresses.getQuick(index);
                 if (auxAddress != 0) {
@@ -838,7 +842,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                 final long address = varSizeValueAddress(col);
                 if (address != 0) {
                     final long len = Unsafe.getLong(address);
-                    return len != TableUtils.NULL_LEN ? binaries[col].of(address + Long.BYTES, len) : null;
+                    return len != TableUtils.NULL_LEN ? binaries.getQuick(col).of(address + Long.BYTES, len) : null;
                 }
                 return NullMemoryCMR.INSTANCE.getBin(0);
             }
@@ -1141,7 +1145,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         @Override
         public CharSequence getStrA(int col) {
             if (isDirect) {
-                return directStr(col, stringsA[col]);
+                return directStr(col, stringsA.getQuick(col));
             }
             return record().getStrA(payloadColumns[col]);
         }
@@ -1149,7 +1153,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         @Override
         public CharSequence getStrB(int col) {
             if (isDirect) {
-                return directStr(col, stringsB[col]);
+                return directStr(col, stringsB.getQuick(col));
             }
             return record().getStrB(payloadColumns[col]);
         }
@@ -1207,7 +1211,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         @Override
         public Utf8Sequence getVarcharA(int col) {
             if (isDirect) {
-                return directVarchar(col, varcharsA[col]);
+                return directVarchar(col, varcharsA.getQuick(col));
             }
             return record().getVarcharA(payloadColumns[col]);
         }
@@ -1215,7 +1219,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         @Override
         public Utf8Sequence getVarcharB(int col) {
             if (isDirect) {
-                return directVarchar(col, varcharsB[col]);
+                return directVarchar(col, varcharsB.getQuick(col));
             }
             return record().getVarcharB(payloadColumns[col]);
         }
@@ -1254,7 +1258,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         public void positionLocator(long locator) {
             final long copy = copyAddress;
             if (copy != 0) {
-                assert locator >= 0 && locator < copyCapacity / copyRowSize;
+                assert locator >= 0 && locator < copyRowCount;
                 copyRow = copy + locator * copyRowSize;
                 this.locator = locator;
                 return;
@@ -1348,8 +1352,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             return null;
         }
 
-        private Long256 copiedLong256(Long256Impl[] flyweights, int col) {
-            final Long256Impl value = flyweights[col];
+        private Long256 copiedLong256(ObjList<Long256Impl> flyweights, int col) {
+            final Long256Impl value = flyweights.getQuick(col);
             final long address = copied(col);
             value.setAll(
                     Unsafe.getLong(address),

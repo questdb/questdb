@@ -115,7 +115,6 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private final PageFrameMemoryRecord probeRecord = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER);
     private final MultiHashJoinRecord record;
     private final int stageCount;
-    private boolean allFramesActive;
     private AsyncHashJoinAtom atom;
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     // The chains the cursor walks for the current tuple; 0 when it walks none.
@@ -137,6 +136,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     // The frame whose ring entry the cursor reads, which it hands back to the ring before it
     // collects the frame, -1 for none.
     private int heldEntryFrame = -1;
+    // False once a frame the cursor collected came from a cancelled or failed execution.
+    private boolean isAllFramesActive;
     private boolean isBuilt;
     private boolean isOpen;
     // The rows of the query's LIMIT, or that the client reads first, Long.MAX_VALUE when neither
@@ -148,13 +149,6 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private long tupleIndex;
     private int tupleStride;
     private DirectLongList tuples;
-
-    // Adds joined rows to a count, which fails rather than wrap past what a LONG holds: the counter
-    // takes the rows once their sum with its count fits.
-    private static void addRows(Counter counter, long rows) {
-        final long count = counter.get();
-        counter.add(HashJoinStageStepper.addRowCounts(count, rows) - count);
-    }
 
     AsyncHashJoinRecordCursor(AsyncHashJoinSpec spec) {
         this.stageCount = spec.getStageCount();
@@ -199,7 +193,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 if (task.hasError()) {
                     throw task.buildError();
                 }
-                allFramesActive &= frameSequence.isActive();
+                isAllFramesActive &= frameSequence.isActive();
                 frameIndex = task.getFrameIndex();
                 // A cancelled or failed sequence's frames hold nothing to count.
                 if (frameSequence.isActive()) {
@@ -226,7 +220,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         }
         tupleIndex = 0;
         tupleCount = 0;
-        if (!allFramesActive) {
+        if (!isAllFramesActive) {
             throw frameSequence.buildInterruptionException();
         }
     }
@@ -306,7 +300,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 break;
             }
         }
-        if (!allFramesActive) {
+        if (!isAllFramesActive) {
             throw frameSequence.buildInterruptionException();
         }
         return false;
@@ -333,6 +327,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         atom.toTop();
         frameSequence.toTop();
         resetFrames();
+    }
+
+    // Adds joined rows to a count, which fails rather than wrap past what a LONG holds: the counter
+    // takes the rows once their sum with its count fits.
+    private static void addRows(Counter counter, long rows) {
+        final long count = counter.get();
+        counter.add(HashJoinStageStepper.addRowCounts(count, rows) - count);
     }
 
     private void build() {
@@ -404,7 +405,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             }
         }
         // A cancelled execution's frames hold nothing to read.
-        allFramesActive = false;
+        isAllFramesActive = false;
         tupleCount = 0;
         return false;
     }
@@ -478,7 +479,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     ? HashJoinStageStepper.CANCELLED
                     : atom.countFrameRest(frameSequence.getTask(cursor), circuitBreaker);
             if (restRows == HashJoinStageStepper.CANCELLED) {
-                allFramesActive = false;
+                isAllFramesActive = false;
             } else {
                 addRows(counter, restRows);
             }
@@ -486,7 +487,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         collectCursor(false);
     }
 
-    private void collectCursor(boolean forceCollect) {
+    private void collectCursor(boolean isForceCollect) {
         if (heldEntryFrame > -1) {
             // The ring's window follows the entries the cursor read.
             final int entryFrame = heldEntryFrame;
@@ -500,7 +501,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 // stepper copies, and a failure to define them still collects the frame.
                 atom.addProbedRows(frameSequence.getTask(cursor).getFrameRowCount());
             } finally {
-                frameSequence.collect(cursor, forceCollect);
+                frameSequence.collect(cursor, isForceCollect);
                 cursor = -1;
                 // The record reads the task's frame memory, which the task releases on collection.
                 probeRecord.clear();
@@ -519,7 +520,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 }
                 // Only a count dispatches count-only tasks, and it collects every frame.
                 assert !task.isCountOnly();
-                allFramesActive &= frameSequence.isActive();
+                isAllFramesActive &= frameSequence.isActive();
                 frameIndex = task.getFrameIndex();
                 // The frames after this one go out now, within the window that the next() that
                 // fetched it allowed, so that the workers join them while the consumer reads this
@@ -640,7 +641,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         tupleIndex = 0;
         tupleCount = 0;
         chainStageCount = 0;
-        allFramesActive = true;
+        isAllFramesActive = true;
     }
 
     // The frames whose count-only tasks the open execution's counts collected.

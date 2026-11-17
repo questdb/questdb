@@ -63,6 +63,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     @Nullable
     private HashJoinPayloadSource payloadSource;
     private long probeGeneration;
+    // The bytes of the snapshot's rows, which ofChain() asserts a chain head against.
+    private long rowsBytes;
     private long rowsCount;
 
     AbstractHashJoinProbe(HashJoinRowHeap rowHeap) {
@@ -149,7 +151,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     @Override
     public final void ofChain(long head) {
         assert isCurrent() && !rowHeap.hasChainLengths();
-        assert head == 0 || (head >= 8 && (head - 8) % rowHeap.getRowSize() == 0 && (head - 8) / rowHeap.getRowSize() < rowsCount);
+        // A worker sets a chain per probe row, so the check divides by nothing: a row's size is a
+        // power of two.
+        assert head == 0 || (head >= 8 && ((head - 8) & (rowHeap.getRowSize() - 1)) == 0 && head - 8 < rowsBytes);
         next = head;
     }
 
@@ -198,6 +202,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         this.handleBase = handleBase;
         this.heapAddress = rowsAddress;
         this.rowsCount = rowsCount;
+        assert Integer.bitCount(rowHeap.getRowSize()) == 1;
+        this.rowsBytes = rowsCount * rowHeap.getRowSize();
         this.probeGeneration = generation;
         next = 0;
         if (payload != null) {

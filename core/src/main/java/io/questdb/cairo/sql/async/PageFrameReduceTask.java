@@ -57,7 +57,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList auxAddresses;
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
-    private final DirectLongList filteredRows; // Used for TYPE_FILTER, TYPE_WINDOW_JOIN and TYPE_HORIZON_JOIN.
+    private final DirectLongList filteredRows; // Used for TYPE_FILTER, TYPE_WINDOW_JOIN, TYPE_HORIZON_JOIN and TYPE_HASH_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     private int errno = CairoException.NON_CRITICAL;

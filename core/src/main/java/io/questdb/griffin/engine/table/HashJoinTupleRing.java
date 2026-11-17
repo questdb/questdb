@@ -35,6 +35,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * The joined rows a parallel hash join has in flight: one entry per probe frame the join may have
@@ -61,9 +62,9 @@ import io.questdb.std.QuietCloseable;
  * limit, so that count-only frame {@code f + R} can run while the owner still reads entry
  * {@code f % R}.
  * <p>
- * The owner binds the ring with {@link #of(PageFrameSequence)} once per execution, after
- * {@link PageFrameSequence#prepareForDispatch()} and before the first dispatch, and keeps it bound
- * across {@code toTop()}. Binding creates the entries' list objects, so no worker grows the ring's
+ * The owner binds the ring with {@link #of(PageFrameSequence, boolean)}, with a dynamic window,
+ * once per execution, after {@link PageFrameSequence#prepareForDispatch()} and before the first
+ * dispatch, and keeps it bound across {@code toTop()}. Binding creates the entries' list objects, so no worker grows the ring's
  * own lists, but allocates no native memory: an entry's memory grows on the thread that first
  * writes it, charged to the execution's tracker. {@link #clear()} frees it all.
  * <p>
@@ -257,8 +258,10 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
 
     /**
      * Binds the ring to an execution of the probe sequence with a fixed window of {@code R}
-     * entries, see {@link #of(PageFrameSequence, boolean)}.
+     * entries, see {@link #of(PageFrameSequence, boolean)}. The join binds its ring with a dynamic
+     * window; tests of the ring's entry reuse bind it with this one.
      */
+    @TestOnly
     public void of(PageFrameSequence<?> probeSequence) {
         of(probeSequence, false);
     }
