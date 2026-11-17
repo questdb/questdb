@@ -791,7 +791,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // narrow the window, down to one frame. A cap of one tuple per task leaves frames to
     // continuations, and the partial reads of the cursor-verify axis then meet stacked, swapped and
     // continued executions. A third of the queries run the stages' stepper copies from the first
-    // task, and another third switch to them once their first execution collected a frame.
+    // task, and another third switch to them once their first execution collected a frame. Half of
+    // the queries open their cursors under the rows that a client reads first, which the parallel
+    // hash join whose rows are the query's own takes.
     @Test
     public void testParallelJoinFramePressureAxis() throws Exception {
         withSystemProperties(
@@ -814,7 +816,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             + ", swapped " + runner.getParallelJoinPartialReadSwapped()
                             + ", continued " + runner.getParallelJoinPartialReadContinued() + ")"
                             + ", stepper copies " + runner.getParallelJoinStepperCopyRuns()
-                            + " (switched " + runner.getParallelJoinStepperSwitchRuns() + ")";
+                            + " (switched " + runner.getParallelJoinStepperSwitchRuns() + ")"
+                            + ", first reads " + runner.getParallelJoinFirstReadRuns();
                     Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinSingleFrameWindowRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinNarrowedWindowRuns() > 0);
@@ -823,6 +826,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinFirstReadRuns() > 0);
                 })
         );
     }

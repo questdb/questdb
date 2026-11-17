@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -131,6 +132,49 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                 Assert.assertEquals(expected, printRows(factory));
             } finally {
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+            }
+        });
+    }
+
+    @Test
+    public void testChainRowsCountTowardTheFirstRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // m2 holds three rows of key 2 and one of key 3; the join has no residual, so the consumer
+            // walks the chain of key 2's matches.
+            execute("CREATE TABLE m2 AS (SELECT CASE WHEN x < 4 THEN 2 ELSE 3 END k, x * 10 w FROM long_sequence(4))");
+            final String sql = "SELECT t.v, m2.w FROM t JOIN m2 ON t.k = m2.k";
+            final String expected = ordinaryRows(sql);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                Assert.assertTrue(join.isClientRowSource());
+                // Two rows read first cap the first frame's task at t's first two rows: v = 1, of key
+                // 1, misses m2, and v = 2 meets the chain, whose three rows come from the first window.
+                try (RecordCursor cursor = openUnder(factory, 2)) {
+                    final Record record = cursor.getRecord();
+                    final RecordMetadata metadata = factory.getMetadata();
+                    final StringSink rows = new StringSink();
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(2, record.getLong(0));
+                        CursorPrinter.println(record, metadata, rows, true);
+                        Assert.assertEquals(1, join.getDispatchedFrameCount());
+                    }
+                    Assert.assertEquals(0, join.getAtom().getContinuationCount());
+                    // The chain's rows count as read, so the reader has read more than the two rows it
+                    // reads first, and the next row, v = 3, of the capped frame's continuation, opens
+                    // the full window.
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(3, record.getLong(0));
+                    CursorPrinter.println(record, metadata, rows, true);
+                    Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
+                    Assert.assertEquals(1, join.getAtom().getContinuationCount());
+                    while (cursor.hasNext()) {
+                        CursorPrinter.println(record, metadata, rows, true);
+                    }
+                    TestUtils.assertEquals(expected, rows);
+                }
             }
         });
     }
