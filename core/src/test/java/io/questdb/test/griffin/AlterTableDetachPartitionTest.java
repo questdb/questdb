@@ -44,6 +44,8 @@ import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -57,6 +59,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -78,10 +81,14 @@ import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -99,6 +106,10 @@ import static io.questdb.cairo.TableUtils.*;
 
 @RunWith(Parameterized.class)
 public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachPartitionTest {
+    // how assertAttachPartitionReadsCurrentVersionOfUpdatedColumn() attaches the partition
+    private static final int ATTACH_WITHOUT_COLUMN_VERSION_FILE = 1;
+    private static final int ATTACH_WITH_COLUMN_VERSION_FILE = 0;
+    private static final int ATTACH_WITH_KNOWN_SIZE = 2;
     private static O3PartitionPurgeJob purgeJob;
     private final TestTimestampType timestampType;
 
@@ -381,7 +392,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         // ADAPTIVE links the source; the other modes rename it
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
-        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isNullFlagReadFailing = new AtomicBoolean();
         final AtomicBoolean isRenameBackFailing = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -390,13 +401,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
 
             @Override
-            public void iterateDir(LPSZ path, FindVisitor func) {
-                // The ATTACH lists the renamed partition to pin its column versions
-                if (isPinFailing.get() && isAttachDestination(path)) {
-                    isPinFailing.set(false);
-                    throw CairoException.critical(0).put("test: could not list ").put(path);
+            public long openRO(LPSZ name) {
+                // The ATTACH reads the symbol column of the renamed partition for the column's null flag
+                if (isNullFlagReadFailing.get() && isAttachDestination(name) && Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.d")) {
+                    isNullFlagReadFailing.set(false);
+                    return -1;
                 }
-                super.iterateDir(path, func);
+                return super.openRO(name);
             }
 
             @Override
@@ -426,7 +437,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
             isEntryTypeUnknown.set(true);
             try {
-                isPinFailing.set(true);
+                isNullFlagReadFailing.set(true);
                 isRenameBackFailing.set(true);
                 execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
                 drainWalQueue();
@@ -477,17 +488,17 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         Assume.assumeFalse(Os.isWindows());
         // Only ADAPTIVE links the source; the other modes rename it
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isNullFlagReadFailing = new AtomicBoolean();
         final AtomicBoolean isUnlinkFailing = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
-            public void iterateDir(LPSZ path, FindVisitor func) {
-                // The ATTACH lists the linked partition to pin its column versions
-                if (isPinFailing.get() && isAttachDestination(path)) {
-                    isPinFailing.set(false);
-                    throw CairoException.critical(0).put("test: could not list ").put(path);
+            public long openRO(LPSZ name) {
+                // The ATTACH reads the symbol column of the linked partition for the column's null flag
+                if (isNullFlagReadFailing.get() && isAttachDestination(name) && Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.d")) {
+                    isNullFlagReadFailing.set(false);
+                    return -1;
                 }
-                super.iterateDir(path, func);
+                return super.openRO(name);
             }
 
             @Override
@@ -518,7 +529,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             final List<String> targetFiles = listFileNames(target);
 
             isUnlinkFailing.set(true);
-            isPinFailing.set(true);
+            isNullFlagReadFailing.set(true);
             execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
             drainWalQueue();
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -893,6 +904,26 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachPartitionReadsCurrentVersionOfUpdatedColumn() throws Exception {
+        assertAttachPartitionReadsCurrentVersionOfUpdatedColumn(false, ATTACH_WITH_COLUMN_VERSION_FILE);
+    }
+
+    @Test
+    public void testAttachPartitionReadsCurrentVersionOfUpdatedColumnWal() throws Exception {
+        assertAttachPartitionReadsCurrentVersionOfUpdatedColumn(true, ATTACH_WITH_COLUMN_VERSION_FILE);
+    }
+
+    @Test
+    public void testAttachPartitionWithoutColumnVersionFileReadsNewestVersionOfUpdatedColumn() throws Exception {
+        assertAttachPartitionReadsCurrentVersionOfUpdatedColumn(false, ATTACH_WITHOUT_COLUMN_VERSION_FILE);
+    }
+
+    @Test
+    public void testAttachPartitionWithKnownSizeReadsNewestVersionOfUpdatedColumn() throws Exception {
+        assertAttachPartitionReadsCurrentVersionOfUpdatedColumn(false, ATTACH_WITH_KNOWN_SIZE);
+    }
+
+    @Test
     public void testAttachPartitionDetachedWithoutTruncateReadsAddedColumnsAsNull() throws Exception {
         assertAttachPartitionReadsAddedColumnsAsNull(false, false, null);
     }
@@ -900,6 +931,98 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachPartitionDetachedWithoutTruncateReadsAddedColumnsAsNullWal() throws Exception {
         assertAttachPartitionReadsAddedColumnsAsNull(true, false, null);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterColumnDroppedAndAddedBack() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(false, false, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterColumnDroppedAndAddedBackParquet() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(false, true, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterColumnDroppedAndAddedBackParquetWal() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(true, true, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterColumnDroppedAndAddedBackWal() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(true, false, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterTypeChange() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(false, false, true);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterTypeChangeParquet() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(false, true, true);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterTypeChangeParquetWal() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(true, true, true);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedAfterTypeChangeWal() throws Exception {
+        assertAttachPartitionDetachedAfterColumnReplaced(true, false, true);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeColumnChanges() throws Exception {
+        // While the partition is detached, y is dropped and z added: the partition takes neither, and reads z as NULL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', 1, 10), ('2024-01-02T00:00:00.000000Z', 3, 30)");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE tab DROP COLUMN y");
+            execute("ALTER TABLE tab ADD COLUMN z INT");
+            execute("INSERT INTO tab VALUES ('2024-01-02T01:00:00.000000Z', 4, 40)");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            final String expected = replaceTimestampSuffix("""
+                    ts\tx\tz
+                    2024-01-01T00:00:00.000000Z\t1\tnull
+                    2024-01-02T00:00:00.000000Z\t3\tnull
+                    2024-01-02T01:00:00.000000Z\t4\t40
+                    """);
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeTypeChangeFails() throws Exception {
+        // The partition holds x as INT, while the table now reads it as LONG: the attach still refuses it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', 1, 10), ('2024-01-02T00:00:00.000000Z', 3, 30)");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE tab ALTER COLUMN x TYPE LONG");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            assertFailure(
+                    "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'",
+                    "Detached column [index=3, name=x, attribute=name] does not match current table metadata"
+            );
+            assertQuery("SELECT ts, x, y FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    ts\tx\ty
+                    2024-01-02T00:00:00.000000Z\t3\t30
+                    """));
+            // the table takes writes after the refused attach
+            execute("INSERT INTO tab VALUES ('2024-01-03T00:00:00.000000Z', 5, 50)");
+            assertQuery("SELECT ts, x, y FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    ts\tx\ty
+                    2024-01-02T00:00:00.000000Z\t3\t30
+                    2024-01-03T00:00:00.000000Z\t5\t50
+                    """));
+        });
     }
 
     @Test
@@ -4174,7 +4297,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         // Only ADAPTIVE links the source; the other modes rename it
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
-        final AtomicBoolean isPinFailing = new AtomicBoolean();
+        final AtomicBoolean isNullFlagReadFailing = new AtomicBoolean();
         final AtomicBoolean isLeftoverRemovalFailing = new AtomicBoolean();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
@@ -4183,13 +4306,13 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
 
             @Override
-            public void iterateDir(LPSZ path, FindVisitor func) {
-                // The ATTACH lists the linked partition to pin its column versions
-                if (isPinFailing.get() && isAttachDestination(path)) {
-                    isPinFailing.set(false);
-                    throw CairoException.critical(0).put("test: could not list ").put(path);
+            public long openRO(LPSZ name) {
+                // The ATTACH reads the symbol column of the linked partition for the column's null flag
+                if (isNullFlagReadFailing.get() && isAttachDestination(name) && Utf8s.endsWithAscii(name, Files.SEPARATOR + "sym.d")) {
+                    isNullFlagReadFailing.set(false);
+                    return -1;
                 }
-                super.iterateDir(path, func);
+                return super.openRO(name);
             }
 
             @Override
@@ -4217,7 +4340,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             isEntryTypeUnknown.set(true);
             try {
                 isLeftoverRemovalFailing.set(isLeftoverStuck);
-                isPinFailing.set(true);
+                isNullFlagReadFailing.set(true);
                 execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
                 drainWalQueue();
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
@@ -4458,6 +4581,164 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                     .withPlanContaining("LatestByDeferredListValuesFiltered")
                     .returns("x\ts\n2\t\n");
             Assert.assertTrue(containsSymbolNullValue("tab", "s"));
+        });
+    }
+
+    // the column name txn a file name ends with, -1 for none
+    private static long nameTxnOf(String fileName) {
+        try {
+            return Long.parseLong(fileName.substring(fileName.lastIndexOf('.') + 1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * UPDATEs supersede the versions of v while a query keeps them in use, so the partition directory holds all of them
+     * until the column purge job runs, and DETACH links them all. The directory lists them newest first, so that the
+     * version listed last is the oldest. The attach takes the version from the _cv the partition was detached with,
+     * even when a newer file is there. Without that file, and in an attach of a partition whose size the caller
+     * knows, as the parallel CSV import stages, it takes the newest version the file names show.
+     */
+    private void assertAttachPartitionReadsCurrentVersionOfUpdatedColumn(boolean isWal, int attachMode) throws Exception {
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                if (!Utf8s.containsAscii(path, "2024-01-03")) {
+                    super.iterateDir(path, func);
+                    return;
+                }
+                final List<String> names = new ArrayList<>();
+                final Map<String, Integer> types = new HashMap<>();
+                final DirectUtf8StringZ listed = new DirectUtf8StringZ();
+                super.iterateDir(path, (pUtf8NameZ, type) -> {
+                    final String name = Utf8s.toString(listed.of(pUtf8NameZ));
+                    names.add(name);
+                    types.put(name, type);
+                });
+                // the highest name txn first, so that the oldest version comes last
+                names.sort(Comparator.comparingLong(AlterTableDetachPartitionTest::nameTxnOf).reversed());
+                try (Path name = new Path()) {
+                    for (int i = 0, n = names.size(); i < n; i++) {
+                        func.onFind(name.of(names.get(i)).$().ptr(), types.get(names.get(i)));
+                    }
+                }
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            ddl(isWal, "CREATE TABLE tab (v LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+            ddl(isWal, "INSERT INTO tab VALUES (1, '2024-01-03T01:00:00.000000Z'), (4, '2024-01-04T01:00:00.000000Z')");
+            try (
+                    RecordCursorFactory factory = select("SELECT * FROM tab");
+                    RecordCursor ignored = factory.getCursor(sqlExecutionContext)
+            ) {
+                for (int i = 0; i < 6; i++) {
+                    ddl(isWal, "UPDATE tab SET v = v + 1 WHERE ts < '2024-01-04'");
+                }
+            }
+            final String expected = replaceTimestampSuffix("""
+                    v\tts
+                    7\t2024-01-03T01:00:00.000000Z
+                    4\t2024-01-04T01:00:00.000000Z
+                    """);
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            ddl(isWal, "ALTER TABLE tab DETACH PARTITION LIST '2024-01-03'");
+            final java.nio.file.Path detached = java.nio.file.Path.of(configuration.getDbRoot(), engine.verifyTableName("tab").getDirName())
+                    .resolve("2024-01-03" + DETACHED_DIR_MARKER);
+            // the superseded versions went with the partition
+            try (Stream<java.nio.file.Path> files = java.nio.file.Files.list(detached)) {
+                Assert.assertEquals(7, files.filter(file -> file.getFileName().toString().startsWith("v.d")).count());
+            }
+            switch (attachMode) {
+                case ATTACH_WITH_COLUMN_VERSION_FILE ->
+                    // a version newer than the one _cv names, as a write that failed can leave behind: _cv decides
+                        java.nio.file.Files.copy(detached.resolve("v.d"), detached.resolve("v.d.99"));
+                case ATTACH_WITHOUT_COLUMN_VERSION_FILE -> {
+                    // as a partition detached by a version that wrote no _meta or _cv
+                    java.nio.file.Files.delete(detached.resolve(TableUtils.META_FILE_NAME));
+                    java.nio.file.Files.delete(detached.resolve(TableUtils.COLUMN_VERSION_FILE_NAME));
+                }
+                default -> Assert.assertEquals(ATTACH_WITH_KNOWN_SIZE, attachMode);
+            }
+            renameDetachedToAttachable("tab", "2024-01-03");
+            if (attachMode == ATTACH_WITH_KNOWN_SIZE) {
+                try (TableWriter writer = getWriter("tab")) {
+                    Assert.assertEquals(AttachDetachStatus.OK, writer.attachPartition(timestampType.getDriver().parseFloorLiteral("2024-01-03"), 1));
+                }
+            } else {
+                ddl(isWal, "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-03'");
+            }
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            // the next UPDATE builds on the current version
+            ddl(isWal, "UPDATE tab SET v = v + 1 WHERE ts < '2024-01-04'");
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    v\tts
+                    8\t2024-01-03T01:00:00.000000Z
+                    4\t2024-01-04T01:00:00.000000Z
+                    """));
+        });
+    }
+
+    /**
+     * ALTER COLUMN TYPE, and DROP COLUMN followed by ADD COLUMN of the same name, leave the old column deleted under its
+     * name and give the name to a live column at another index. A partition detached after that matches the table,
+     * and must attach back.
+     */
+    private void assertAttachPartitionDetachedAfterColumnReplaced(boolean isWal, boolean isParquet, boolean isTypeChange) throws Exception {
+        assertMemoryLeak(() -> {
+            ddl(isWal, "CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, y INT) TIMESTAMP(ts) PARTITION BY DAY"
+                    + (isWal ? " WAL" : " BYPASS WAL"));
+            ddl(isWal, "INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', 1, 10), ('2024-01-02T00:00:00.000000Z', 3, 30)");
+            if (isParquet) {
+                ddl(isWal, "ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            if (isTypeChange) {
+                ddl(isWal, "ALTER TABLE tab ALTER COLUMN x TYPE LONG");
+            } else {
+                ddl(isWal, "ALTER TABLE tab DROP COLUMN x");
+                ddl(isWal, "ALTER TABLE tab ADD COLUMN x LONG");
+            }
+            ddl(isWal, "ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            ddl(isWal, "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+
+            final String query = "SELECT ts, x, y FROM tab";
+            final String attached = replaceTimestampSuffix(isTypeChange ? """
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\t1\t10
+                    2024-01-02T00:00:00.000000Z\t3\t30
+                    """ : """
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\tnull\t10
+                    2024-01-02T00:00:00.000000Z\tnull\t30
+                    """);
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(attached);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(attached);
+
+            // an out-of-order write merges into the attached partition
+            ddl(isWal, "INSERT INTO tab (ts, x, y) VALUES ('2024-01-01T01:00:00.000000Z', 2, 20)");
+            final String written = replaceTimestampSuffix(isTypeChange ? """
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\t1\t10
+                    2024-01-01T01:00:00.000000Z\t2\t20
+                    2024-01-02T00:00:00.000000Z\t3\t30
+                    """ : """
+                    ts\tx\ty
+                    2024-01-01T00:00:00.000000Z\tnull\t10
+                    2024-01-01T01:00:00.000000Z\t2\t20
+                    2024-01-02T00:00:00.000000Z\tnull\t30
+                    """);
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(written);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(written);
         });
     }
 

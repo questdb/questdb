@@ -466,6 +466,26 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    /**
+     * Detaches partitions and attaches them back, with a TRUNCATE or a DROP of the newest partitions between the two at
+     * times, and drops the newest partitions to write them again, among columns that come and go. Each of them moves
+     * the partition a column was added at, which tells the readers and the writer whether a partition without a
+     * column-top record holds the column.
+     */
+    @Test
+    public void testDetachAttachPartitionFuzz() throws Exception {
+        runDetachAttachPartitionFuzz(false);
+    }
+
+    /**
+     * As testDetachAttachPartitionFuzz, with CONVERT PARTITION, so that a parquet partition is detached and attached
+     * back too.
+     */
+    @Test
+    public void testDetachAttachPartitionFuzzParquet() throws Exception {
+        runDetachAttachPartitionFuzz(true);
+    }
+
     @Test
     public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
         Rnd rnd = generateRandom(LOG);
@@ -1916,6 +1936,44 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 .$(", deadMinSize=").$(deadMinSize)
                 .$(", tableDeadThreshold=").$(tableDeadThreshold)
                 .I$();
+    }
+
+    private void runDetachAttachPartitionFuzz(boolean isParquet) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        // the detached copy takes the name ATTACH looks for, so a WAL table applies a DETACH and the ATTACH after it
+        // in one go
+        node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.DETACHED_DIR_MARKER);
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.1, // colAddProb: the added columns are what the partition operations move
+                0.05,
+                0.05,
+                0.05,
+                1.0,
+                0.01,
+                0.05,
+                isParquet ? 0.2 : 0.0,
+                isParquet ? 0.1 : 0.0,
+                0.02,
+                0.0,
+                0.0, // setTtlProb: TTL drops the days a DETACH picks
+                0.0, // replaceProb: a run that detaches takes no replace commits
+                0.0,
+                0.05
+        );
+        fuzzer.setDetachAttachProbability(0.1);
+        fuzzer.setDropNewestPartitionsProbability(0.03);
+        // several days, so that a DETACH has days behind the active one to pick
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        if (isParquet) {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        }
+        runFuzz(rnd);
     }
 
     private void setTestParams(Rnd rnd) throws Exception {

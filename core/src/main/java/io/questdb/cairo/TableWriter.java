@@ -285,6 +285,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongConsumer appendTimestampSetter;
     private final IntObjHashMap<AsyncWriterCommand> asyncCommandCache = new IntObjHashMap<>();
     private final FindVisitor attachPartitionPinColumnVersionsRef = this::attachPartitionPinColumnVersions;
+    // the newest column name txn the attach found in the file names of each column, -1 for none
+    private final LongList attachPinnedColumnNameTxns = new LongList();
     private final BitSet attachSymbolNullColumns = new BitSet();
     // Pairs of (partition timestamp, commit txn) of ATTACHes whose .attachable stays in place until both save point
     // generations stand at or past the attach: a fallback to the older generation replays the ATTACH from it.
@@ -1518,9 +1520,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 attachSymbolNullColumns.clear();
                 boolean isSymbolNullKnown = !forceRenamePartitionDir;
-                if (forceRenamePartitionDir && !attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen)) {
-                    attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
-                    isSymbolNullKnown = true;
+                // whether the _cv the partition was detached with named the versions of its columns
+                boolean isColumnVersionKnown = false;
+                if (forceRenamePartitionDir) {
+                    isColumnVersionKnown = attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen);
+                    if (!isColumnVersionKnown) {
+                        attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
+                        isSymbolNullKnown = true;
+                    }
                 }
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
@@ -1561,11 +1568,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         LOG.info().$("linked partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     }
 
-                    // pin column versions
-                    // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
-                    // of the attached partition
-                    this.attachPartitionTimestamp = timestamp;
-                    ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                    // Without the detached _cv, the column files name the column versions. With it, they do not: the
+                    // files of a version that an UPDATE or ALTER COLUMN TYPE superseded stay until the column purge
+                    // job removes them, and DETACH links them too.
+                    if (!isColumnVersionKnown) {
+                        // the traversal pins the versions for the timestamp of the attached partition
+                        this.attachPartitionTimestamp = timestamp;
+                        attachPinnedColumnNameTxns.setAll(columnCount, -1L);
+                        ff.iterateDir(path.$(), attachPartitionPinColumnVersionsRef);
+                    }
 
                     // The parquet partition might be lacking the _pm file, we need to create it
                     if (!ff.exists(path.concat(PARQUET_METADATA_FILE_NAME).$())) {
@@ -6829,14 +6840,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (nameTxn > 0) {
                                 // check that this is xxx.d.234
                                 if (tmpDirectUtf8StringZ.byteAt(lastDot - 1) == 'd') {
-                                    columnVersionWriter.upsert(
-                                            attachPartitionTimestamp,
-                                            columnIndex,
-                                            nameTxn,
-                                            // column tops will have been already read from the "cv" file, we just need
-                                            // to upsert the nameTxn and keep the columnTop unchanged
-                                            getColumnTop(attachPartitionTimestamp, columnIndex, 0)
-                                    );
+                                    // the newest version of the column wins, whatever the order the directory lists
+                                    // them in
+                                    if (nameTxn > attachPinnedColumnNameTxns.getQuick(columnIndex)) {
+                                        attachPinnedColumnNameTxns.setQuick(columnIndex, nameTxn);
+                                        columnVersionWriter.upsert(
+                                                attachPartitionTimestamp,
+                                                columnIndex,
+                                                nameTxn,
+                                                // column tops will have been already read from the "cv" file, we just need
+                                                // to upsert the nameTxn and keep the columnTop unchanged
+                                                getColumnTop(attachPartitionTimestamp, columnIndex, 0)
+                                        );
+                                    }
                                 }
                             }
                         } catch (NumericException ignore) {
@@ -6988,7 +7004,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // check name
                 int detColIdx = attachMetadata.getColumnIndexQuiet(columnName);
-                if (detColIdx == -1) {
+                int tableColType = metadata.getColumnType(colIdx);
+                // A deleted column keeps its name, which ALTER COLUMN TYPE, or DROP COLUMN and ADD COLUMN of that name,
+                // gives to a live column at another index. Nothing reads the deleted column, and the live one is checked
+                // at its own index.
+                if (detColIdx == -1 || (detColIdx != colIdx && tableColType < 0)) {
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
                     continue;
                 }
@@ -6998,7 +7018,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // check type
-                int tableColType = metadata.getColumnType(colIdx);
                 int attachColType = attachMetadata.getColumnType(detColIdx);
                 if (tableColType != attachColType && tableColType != -attachColType) {
                     throw CairoException.detachedColumnMetadataMismatch(colIdx, columnName, "type");

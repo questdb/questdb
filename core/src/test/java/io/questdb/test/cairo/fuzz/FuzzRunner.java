@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.DebugUtils;
 import io.questdb.cairo.EntryUnavailableException;
@@ -40,11 +41,13 @@ import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
@@ -87,11 +90,13 @@ import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.fuzz.FuzzConvertPartitionToNativeOperation;
 import io.questdb.test.fuzz.FuzzConvertPartitionToParquetOperation;
+import io.questdb.test.fuzz.FuzzDetachAttachPartitionOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzDropIndexOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -160,7 +165,9 @@ public class FuzzRunner {
     private double colTypeChangeProb;
     private boolean createWalAsParquet;
     private double dataAddProb;
+    private double detachAttachProb;
     private double dropIndexProb;
+    private double dropNewestPartitionsProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
@@ -435,6 +442,7 @@ public class FuzzRunner {
                                 writer = TestUtils.getWriter(engine, tableName);
                             }
                         }
+                        assertColumnVersionsOnDisk(writer);
                     }
                 } catch (CairoException | CairoError e) {
                     boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
@@ -711,7 +719,9 @@ public class FuzzRunner {
                 backfillProb,
                 isNoSentinelTypeChangeEnabled,
                 isNoSentinelWideningChecked,
-                widenedColumns
+                widenedColumns,
+                detachAttachProb,
+                dropNewestPartitionsProb
         );
     }
 
@@ -1021,12 +1031,31 @@ public class FuzzRunner {
     }
 
     /**
+     * Makes the generator detach a partition and attach it back, with a TRUNCATE or a DROP of the newest partitions
+     * between the two at times, see {@link FuzzDetachAttachPartitionOperation}. The test names the detached copy as
+     * ATTACH looks for it, with {@code cairo.attach.partition.suffix} set to {@code .detached}, and takes no replace
+     * commits. Every setFuzzProbabilities() call keeps it.
+     */
+    public void setDetachAttachProbability(double detachAttachProb) {
+        this.detachAttachProb = detachAttachProb;
+    }
+
+    /**
      * Makes the generator drop the index of a symbol column, and index it again with BITMAP or a POSTING
      * kind five times in eight, see {@link FuzzDropIndexOperation}. Every setFuzzProbabilities() call
      * keeps it.
      */
     public void setDropIndexProbability(double dropIndexProb) {
         this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
+     * Makes the generator drop every partition from the day taking writes, or the one before it, on, or every partition
+     * there is, and write the dropped days again, see FuzzTransactionGenerator.generateSet(). Every
+     * setFuzzProbabilities() call keeps it.
+     */
+    public void setDropNewestPartitionsProbability(double dropNewestPartitionsProb) {
+        this.dropNewestPartitionsProb = dropNewestPartitionsProb;
     }
 
     /**
@@ -1253,6 +1282,27 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * A writer works from the _cv records it caches, while readers, and the writer itself after a reopen, read _cv
+     * from disk. A change to the cached records that commit() does not write puts the two apart, and they then
+     * disagree on which partitions hold a column: rows the writer stores read as NULL. After a commit or a rollback,
+     * the cached records must be the ones on disk.
+     */
+    private void assertColumnVersionsOnDisk(TableWriter writer) {
+        final TableToken token = writer.getTableToken();
+        try (Path path = new Path(); ColumnVersionReader onDisk = new ColumnVersionReader()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(token).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            // a facade of its own keeps the read off the fault injection of the engine's facade
+            onDisk.ofRO(TestFilesFacadeImpl.INSTANCE, path.$());
+            onDisk.readSafe(engine.getConfiguration().getMillisecondClock(), engine.getConfiguration().getSpinLockTimeout());
+            final LongList cached = writer.columnVersionReader().getCachedColumnVersionList();
+            if (!cached.equals(onDisk.getCachedColumnVersionList())) {
+                Assert.fail("the writer's _cv records are not on disk [table=" + token.getTableName()
+                        + ", writer=" + cached + ", disk=" + onDisk.getCachedColumnVersionList() + ']');
+            }
+        }
+    }
+
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
         // No memory usage check: it reads process-wide memory counters, and the shared pool's purge jobs run
         // alongside these queries, so their scratch buffers would count as the cursor's
@@ -1285,6 +1335,33 @@ public class FuzzRunner {
                                         + "\n"
                         );
             }
+        }
+    }
+
+    /**
+     * {@link #assertColumnVersionsOnDisk} for the writer the WAL apply returned to the pool. A writer that is not in
+     * the pool, or that an apply job of the worker pool holds, goes unchecked: a writer opened for the check reads
+     * _cv from disk.
+     */
+    private void assertPooledWriterColumnVersionsOnDisk(String tableName) {
+        final TableToken token = engine.getTableTokenIfExists(tableName);
+        if (token == null) {
+            return;
+        }
+        final WriterPool.Entry entry = engine.getWriterPoolEntries().get(token.getDirName());
+        if (entry == null || entry.getTableToken() == null || entry.getOwnerThread() != -1) {
+            return;
+        }
+        final TableWriter writer;
+        try {
+            writer = engine.getWriter(token, "fuzz _cv check");
+        } catch (EntryUnavailableException e) {
+            return;
+        }
+        try {
+            assertColumnVersionsOnDisk(writer);
+        } finally {
+            writer.close();
         }
     }
 
@@ -2135,6 +2212,7 @@ public class FuzzRunner {
                 if (!walApplyJob.run() && !checkWalTransactionsJob.run()) {
                     break;
                 }
+                assertPooledWriterColumnVersionsOnDisk(tableName);
                 committedAtRelease = forceReleaseTableWriter(drainRnd, tableTokenBucket, committedAtRelease);
                 purgeAndReloadReaders(drainRnd, rdr1, rdr2, purgeJob, columnPurgeJob, 0.25);
             }
@@ -2144,6 +2222,7 @@ public class FuzzRunner {
             // not just the threaded one.
             compactionJob.drain(0);
             runColumnPurgeJob(columnPurgeJob);
+            assertPooledWriterColumnVersionsOnDisk(tableName);
         }
     }
 

@@ -31,17 +31,26 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
@@ -52,11 +61,18 @@ import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
  * and its link. The command must skip it rather than fail, and a WAL table must not suspend.
  */
 public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
+    // how many links of the partition go before the one that runs the purge job first, -1 when disarmed
+    private final AtomicInteger linksBeforePurge = new AtomicInteger(-1);
     // the file name whose link runs the purge job first, null when disarmed
     private final AtomicReference<String> purgeBeforeLinking = new AtomicReference<>();
     private final AtomicReference<Throwable> purgeFailure = new AtomicReference<>();
+    // the links whose source the purge job removed before the walk reached them
+    private final AtomicInteger vanishedLinkSources = new AtomicInteger();
     private ColumnPurgeJob purgeJob;
     private volatile boolean hasPurgedLinkSource;
+    private volatile boolean hasPurgedDuringWalk;
+    // the partition whose links linksBeforePurge counts
+    private volatile String linkedDay;
     private long purgeMicros;
 
     @Override
@@ -64,6 +80,10 @@ public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
     public void setUp() {
         purgeMicros = 0;
         hasPurgedLinkSource = false;
+        hasPurgedDuringWalk = false;
+        linkedDay = "2024-01-01";
+        linksBeforePurge.set(-1);
+        vanishedLinkSources.set(0);
         purgeBeforeLinking.set(null);
         purgeFailure.set(null);
         setCurrentMicros(0);
@@ -79,6 +99,16 @@ public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
     @Test
     public void testDetachSkipsColumnFilePurgedDuringLinkWal() throws Exception {
         assertDetachSkipsColumnFilePurgedDuringLink(true);
+    }
+
+    @Test
+    public void testDetachAttachRoundsPurgeAtRandomLink() throws Exception {
+        assertDetachAttachRoundsPurgeAtRandomLink(false);
+    }
+
+    @Test
+    public void testDetachAttachRoundsPurgeAtRandomLinkWal() throws Exception {
+        assertDetachAttachRoundsPurgeAtRandomLink(true);
     }
 
     @Test
@@ -114,6 +144,134 @@ public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
                         7\ts1\tt1
                         10\ts1\tt1
                         """);
+            } finally {
+                purgeJob = null;
+            }
+        });
+    }
+
+    // the column name txn a file name ends with, -1 for none
+    private static long nameTxnOf(String fileName) {
+        try {
+            return Long.parseLong(fileName.substring(fileName.lastIndexOf('.') + 1));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Rounds of a DETACH and an ATTACH of a day whose column, variable-size and index files an UPDATE superseded while
+     * a query was open. The DETACH runs the purge job at a random link of the walk; in the first round before the first
+     * link, so that every superseded file the purge job removes vanishes before its link. Each day goes round twice:
+     * the second time its directory also holds the versions the first round's DETACH linked before the purge job
+     * removed them, which nothing purges, and the attach must still read the current version of every column.
+     */
+    private void assertDetachAttachRoundsPurgeAtRandomLink(boolean isWal) throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(purgingFacade(), () -> {
+            try (ColumnPurgeJob job = new ColumnPurgeJob(engine)) {
+                purgeJob = job;
+                // the last day takes writes and is never detached
+                final int detachedDayCount = 3;
+                execute("CREATE TABLE pq (id INT, ts TIMESTAMP, sym SYMBOL INDEX TYPE BITMAP, tag SYMBOL, v LONG, note VARCHAR) TIMESTAMP(ts) PARTITION BY DAY"
+                        + (isWal ? " WAL" : " BYPASS WAL"));
+                // 12 rows a day
+                execute("INSERT INTO pq SELECT x::INT, '2024-01-01'::TIMESTAMP + (x - 1) * 7_200_000_000L, 's' || (x % 3), 't' || (x % 3), x, 'n' || (x % 3)"
+                        + " FROM long_sequence(" + 12 * (detachedDayCount + 1) + ")");
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("pq");
+                // what each day's rows hold: the UPDATEs that ran on it, and the values they set, null for the inserted
+                final int[] updateCounts = new int[detachedDayCount];
+                final String[] syms = new String[detachedDayCount];
+                final String[] tags = new String[detachedDayCount];
+                final String[] notes = new String[detachedDayCount];
+                int skippedLinks = 0;
+                for (int round = 0; round < 2 * detachedDayCount; round++) {
+                    final int dayIndex = round % detachedDayCount;
+                    final String day = "2024-01-0" + (dayIndex + 1);
+                    final String dayFilter = "ts IN '" + day + "'";
+                    final StringSink update = new StringSink();
+                    update.put("UPDATE pq SET v = v + 1");
+                    if (rnd.nextBoolean()) {
+                        syms[dayIndex] = "s" + (10 + round);
+                        update.put(", sym = '").put(syms[dayIndex]).put('\'');
+                    }
+                    if (rnd.nextBoolean()) {
+                        tags[dayIndex] = "t" + (10 + round);
+                        update.put(", tag = '").put(tags[dayIndex]).put('\'');
+                    }
+                    if (rnd.nextBoolean()) {
+                        notes[dayIndex] = "n" + (10 + round);
+                        update.put(", note = '").put(notes[dayIndex]).put('\'');
+                    }
+                    update.put(" WHERE ").put(dayFilter);
+                    updateCounts[dayIndex]++;
+                    // a query keeps the old versions in use, so that their files wait for the purge job
+                    try (
+                            RecordCursorFactory factory = select("SELECT * FROM pq");
+                            RecordCursor ignored = factory.getCursor(sqlExecutionContext)
+                    ) {
+                        execute(update);
+                        drainWalQueue();
+                    }
+                    engine.releaseAllReaders();
+                    // a save point of the ADAPTIVE commit mode keeps the versions it names until a later one replaces it
+                    execute("INSERT INTO pq VALUES (" + (1000 + round) + ", '2024-01-04T23:00:00.000000Z', 's1', 't1', 0, 'n1')");
+                    drainWalQueue();
+                    releaseSavePointHolds("pq");
+
+                    hasPurgedDuringWalk = false;
+                    linkedDay = day;
+                    linksBeforePurge.set(round == 0 ? 0 : rnd.nextInt(8));
+                    execute("ALTER TABLE pq DETACH PARTITION LIST '" + day + "'");
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                    final Throwable failure = purgeFailure.get();
+                    if (failure != null) {
+                        throw new AssertionError("purge job failed", failure);
+                    }
+                    // the walk is shorter than the drawn link when the purge job did not run
+                    linksBeforePurge.set(-1);
+                    if (round == 0) {
+                        Assert.assertTrue(hasPurgedDuringWalk);
+                        Assert.assertTrue("no superseded file vanished before its link", vanishedLinkSources.get() > 0);
+                    }
+                    skippedLinks += vanishedLinkSources.getAndSet(0);
+                    assertQuery("SELECT count() FROM pq WHERE " + dayFilter).noLeakCheck().noRandomAccess().expectSize()
+                            .returns("count\n0\n");
+
+                    try (Path path = new Path(); Path other = new Path()) {
+                        path.of(configuration.getDbRoot()).concat(token).concat(day).put(DETACHED_DIR_MARKER).$();
+                        other.of(configuration.getDbRoot()).concat(token).concat(day).put(configuration.getAttachPartitionSuffix()).$();
+                        Assert.assertEquals(0, engine.getConfiguration().getFilesFacade().rename(path.$(), other.$()));
+                    }
+                    execute("ALTER TABLE pq ATTACH PARTITION LIST '" + day + "'");
+                    drainWalQueue();
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                    // under the ADAPTIVE commit mode, the attach keeps its source until save points cover it, and the
+                    // next round of the day renames another detached copy to that name
+                    releaseSavePointHolds("pq");
+
+                    // the attached day holds the current version of every column
+                    final StringBuilder expected = new StringBuilder("id\tv\tsym\ttag\tnote\n");
+                    for (int id = 12 * dayIndex + 1, hi = 12 * dayIndex + 12; id <= hi; id++) {
+                        expected.append(id).append('\t').append(id + updateCounts[dayIndex])
+                                .append('\t').append(syms[dayIndex] != null ? syms[dayIndex] : "s" + (id % 3))
+                                .append('\t').append(tags[dayIndex] != null ? tags[dayIndex] : "t" + (id % 3))
+                                .append('\t').append(notes[dayIndex] != null ? notes[dayIndex] : "n" + (id % 3))
+                                .append('\n');
+                    }
+                    assertQuery("SELECT id, v, sym, tag, note FROM pq WHERE " + dayFilter).noLeakCheck().returns(expected.toString());
+                    // and its index finds the rows
+                    final String sym = syms[dayIndex] != null ? syms[dayIndex] : "s1";
+                    assertQuery("SELECT count() FROM pq WHERE sym = '" + sym + "' AND " + dayFilter).noLeakCheck().noRandomAccess().expectSize()
+                            .returns("count\n" + (syms[dayIndex] != null ? 12 : 4) + "\n");
+                }
+                LOG.info().$("links skipped after the purge removed their source [count=").$(skippedLinks).I$();
+                // every UPDATE added 1 to the 12 rows of its day, and the extra rows hold 0
+                final int rowCount = 12 * (detachedDayCount + 1);
+                assertQuery("SELECT count(), sum(v) FROM pq").noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\tsum\n" + (rowCount + 2 * detachedDayCount) + "\t" + ((long) rowCount * (rowCount + 1) / 2 + 12L * 2 * detachedDayCount) + "\n");
             } finally {
                 purgeJob = null;
             }
@@ -209,6 +367,16 @@ public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
         return new TestFilesFacadeImpl() {
             @Override
             public int hardLink(LPSZ src, LPSZ hardLink) {
+                if (Utf8s.containsAscii(src, linkedDay)) {
+                    final int linksBefore = linksBeforePurge.get();
+                    if (linksBefore >= 0 && linksBeforePurge.compareAndSet(linksBefore, linksBefore - 1) && linksBefore == 0) {
+                        runPurgeJob();
+                        hasPurgedDuringWalk = true;
+                    }
+                    if (hasPurgedDuringWalk && !exists(src)) {
+                        vanishedLinkSources.incrementAndGet();
+                    }
+                }
                 final String fileName = purgeBeforeLinking.get();
                 if (
                         fileName != null
@@ -220,6 +388,29 @@ public class PartitionLinkColumnPurgeRaceTest extends AbstractCairoTest {
                     hasPurgedLinkSource = !exists(src);
                 }
                 return super.hardLink(src, hardLink);
+            }
+
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                if (!Utf8s.containsAscii(path, linkedDay)) {
+                    super.iterateDir(path, func);
+                    return;
+                }
+                // the newest column versions first, so that a walk that keeps the version it lists last keeps the oldest
+                final ArrayList<String> names = new ArrayList<>();
+                final HashMap<String, Integer> types = new HashMap<>();
+                final DirectUtf8StringZ listed = new DirectUtf8StringZ();
+                super.iterateDir(path, (pUtf8NameZ, type) -> {
+                    final String name = Utf8s.toString(listed.of(pUtf8NameZ));
+                    names.add(name);
+                    types.put(name, type);
+                });
+                names.sort(Comparator.comparingLong(PartitionLinkColumnPurgeRaceTest::nameTxnOf).reversed());
+                try (Path name = new Path()) {
+                    for (int i = 0, n = names.size(); i < n; i++) {
+                        func.onFind(name.of(names.get(i)).$().ptr(), types.get(names.get(i)));
+                    }
+                }
             }
         };
     }
