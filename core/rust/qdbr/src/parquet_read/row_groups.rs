@@ -1700,7 +1700,7 @@ pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
     )
 }
 
-/// Whether a `_pm` decode of a column chunk records its column-top rows
+/// Whether a decode of a column chunk records its column-top rows
 /// (`ColumnChunkBuffers::top_rows`) from the definition levels. A column of a source type without
 /// a NULL sentinel is NULL only in its column tops, which QuestDB writes at definition level 0
 /// wherever they sit: CONVERT TO PARQUET of a split or composite partition writes the folders, or
@@ -1974,7 +1974,7 @@ impl ParquetDecoder {
                 column_type,
                 to_column_type,
             );
-            match self.decode_column_chunk_recording_top_rows(
+            match self.decode_column_chunk(
                 ctx,
                 column_chunk_bufs,
                 row_group_index as usize,
@@ -2616,29 +2616,6 @@ impl ParquetDecoder {
 
     #[allow(clippy::too_many_arguments)]
     pub fn decode_column_chunk(
-        &self,
-        ctx: &mut DecodeContext,
-        column_chunk_bufs: &mut ColumnChunkBuffers,
-        row_group_index: usize,
-        row_group_lo: usize,
-        row_group_hi: usize,
-        column_index: usize,
-        col_info: QdbMetaCol,
-    ) -> ParquetResult<usize> {
-        self.decode_column_chunk_recording_top_rows(
-            ctx,
-            column_chunk_bufs,
-            row_group_index,
-            row_group_lo,
-            row_group_hi,
-            column_index,
-            col_info,
-            false,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn decode_column_chunk_recording_top_rows(
         &self,
         ctx: &mut DecodeContext,
         column_chunk_bufs: &mut ColumnChunkBuffers,
@@ -4283,6 +4260,7 @@ impl ParquetDecoder {
             row_hi,
             timestamp_column_index,
             col_info,
+            false,
         )?;
         let data = &bufs.data_vec;
         if data.len() < std::mem::size_of::<i64>() {
