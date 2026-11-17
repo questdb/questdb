@@ -892,6 +892,39 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testResultPastTheRowCapSkipped() throws Exception {
+        // A query stops being read at 250,000 rows, and is skipped: one key that every row of both
+        // tables holds, as a NULL key in many rows of a fuzz table does, pairs every row with every
+        // other. 501 x 500 rows, one row past the cap, skip on the JIT axis, whose runs read the
+        // parallel hash join, and on the parallel join axis, which reads the ordinary plan too;
+        // 500 x 500 rows, at the cap, compare as usual.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t0 AS (SELECT 1 k, x v FROM long_sequence(501))");
+            execute("CREATE TABLE t1 AS (SELECT 1 k, x w FROM long_sequence(500))");
+            final boolean wasParallelHashJoinEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            try {
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, true, false, false, true, null, false, new ObjList<>(), null);
+                final String pastTheCap = "SELECT l.v, r.w FROM t0 l JOIN t1 r ON l.k = r.k";
+                try (RecordCursorFactory factory = select(pastTheCap)) {
+                    Assert.assertNotNull(pastTheCap, ParallelHashJoinTestUtils.find(factory));
+                }
+                final QueryRunner.Result skipped = runner.run(new GeneratedQuery(pastTheCap, true).withShape(QueryShape.EQUI_JOIN));
+                Assert.assertFalse(skipped.getFailure() != null ? skipped.getFailure().getMessage() : "", skipped.isFailed());
+                Assert.assertTrue(skipped.isSkipped());
+                Assert.assertEquals("ResultTooLargeException: the query returned more than 250000 rows", skipped.getSkipReason());
+                final QueryRunner.Result compared = runner.run(new GeneratedQuery(pastTheCap + " WHERE l.v < 501", true).withShape(QueryShape.EQUI_JOIN));
+                Assert.assertFalse(compared.getFailure() != null ? compared.getFailure().getMessage() : "", compared.isFailed());
+                Assert.assertFalse(compared.getSkipReason(), compared.isSkipped());
+                Assert.assertEquals(2, runner.getParallelJoinAxisRuns());
+                Assert.assertEquals(1, runner.getParallelJoinAxisCompletedRuns());
+            } finally {
+                sqlExecutionContext.setParallelHashJoinEnabled(wasParallelHashJoinEnabled);
+            }
+        });
+    }
+
+    @Test
     public void testUntypedLimitBindComparedAcrossPlans() throws Exception {
         // The bind form of an equi-join reads its LIMIT and an expression of its SELECT list through
         // the positional $1, which the runner leaves undefined at compile, as a PostgreSQL Parse

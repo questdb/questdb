@@ -223,6 +223,11 @@ public final class QueryRunner {
     // A map page that cannot hold one entry fails the query with a configuration error. The axis
     // doubles the page up to this many times, so it runs with a page just above the entry size.
     private static final int MAP_PAGE_MAX_DOUBLINGS = 10;
+    // The rows a run reads before it gives up on the query, which it then skips. The generators
+    // aim at a few thousand rows, but NULL keys match in a hash join, so a star over keys that
+    // are NULL in many rows of each input pairs every such row with every other, and may return
+    // hundreds of millions of rows, which every axis would materialize.
+    private static final int MAX_MATERIALIZED_ROWS = 250_000;
     private final boolean diffFused;
     private final boolean diffJit;
     private final boolean diffParallelJoin;
@@ -956,6 +961,7 @@ public final class QueryRunner {
     private static boolean isAcceptedSkip(Throwable t) {
         return t instanceof SqlException
                 || t instanceof ImplicitCastException
+                || t instanceof ResultTooLargeException
                 || isDecimalAggregationOverflow(t);
     }
 
@@ -1218,12 +1224,16 @@ public final class QueryRunner {
      * row to {@code rows} via {@link CursorPrinter#printColumn}, and returns the
      * row count. Shared by the first pass and the {@link #checkToTop} re-iteration
      * so both materialize identically. Each cell goes through {@link #appendCell}.
+     * Throws {@link ResultTooLargeException} on a row past {@link #MAX_MATERIALIZED_ROWS}.
      */
     private static int materialize(RecordCursor cursor, RecordMetadata metadata, int columnCount, StringSink rows) {
         Record record = cursor.getRecord();
         final StringSink cell = new StringSink();
         int rowsRead = 0;
         while (cursor.hasNext()) {
+            if (rowsRead == MAX_MATERIALIZED_ROWS) {
+                throw new ResultTooLargeException();
+            }
             for (int i = 0; i < columnCount; i++) {
                 cell.clear();
                 CursorPrinter.printColumn(record, metadata, i, cell, false);
@@ -1250,6 +1260,8 @@ public final class QueryRunner {
         while (cursor.hasNext()) {
             if (rowsRead == 0) {
                 firstWindow = ring.getDispatchLimit();
+            } else if (rowsRead == MAX_MATERIALIZED_ROWS) {
+                throw new ResultTooLargeException();
             }
             for (int i = 0; i < columnCount; i++) {
                 cell.clear();
@@ -2737,6 +2749,14 @@ public final class QueryRunner {
         CursorCheckException(String message, Throwable cause, boolean tolerated) {
             super(message, cause);
             this.tolerated = tolerated;
+        }
+    }
+
+    // A query whose rows the run stopped reading past MAX_MATERIALIZED_ROWS; both runs of a
+    // comparison stop alike, and the query is skipped.
+    private static final class ResultTooLargeException extends RuntimeException {
+        ResultTooLargeException() {
+            super("the query returned more than " + MAX_MATERIALIZED_ROWS + " rows");
         }
     }
 

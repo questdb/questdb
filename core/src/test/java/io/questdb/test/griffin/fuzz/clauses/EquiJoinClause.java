@@ -134,7 +134,9 @@ public final class EquiJoinClause {
     private static final String[] CONSTANT_PREDICATES = {"1 = 0", "false", "2 < 1", "1 = 1"};
     // The estimated rows that the joins produce per left row, past which a later join takes a
     // selective key or a narrowed dimension. The fuzz tables hold up to about 150 rows, so a query
-    // returns a few thousand rows at most, which every axis materializes several times.
+    // returns a few thousand rows at most, which every axis materializes several times. The
+    // estimate leaves out NULL keys, which match each other: a star over keys that are NULL in
+    // many rows of its inputs may return far more, and QueryRunner skips it past its row cap.
     private static final double FAN_OUT_BUDGET = 24;
     // A fault query's test_fault() goes into the WHERE clause of a join's input, into the ON residual
     // of a join, or at the head of the query's WHERE clause; see generate().
