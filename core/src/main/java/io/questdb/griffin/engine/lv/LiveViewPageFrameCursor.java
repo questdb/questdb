@@ -890,6 +890,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
             return base.getPartitionLo();
         }
 
+        @Override
+        public boolean isSkipSkeleton() {
+            return base.isSkipSkeleton();
+        }
+
         PageFrame of(PageFrame base, long rows) {
             this.base = base;
             this.rows = rows;

@@ -26,6 +26,7 @@ package io.questdb.cutlass.qwp.protocol;
 
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
@@ -51,6 +52,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * }</pre>
  */
 public class QwpTableBlockCursor implements Mutable {
+    private static final int SCHEMA_CACHE_INITIAL_BYTES = 64;
 
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
@@ -61,6 +63,15 @@ public class QwpTableBlockCursor implements Mutable {
     private int booleanColumnCount;
     // Type-bucketed column indices for monomorphic advanceRow() calls
     private int[] booleanColumnIndices = new int[16];
+    // The previous block's schema section and its parse. A client sends the same
+    // columns message after message, and parsing allocates a String, two byte[]s
+    // and a QwpColumnDef per column. Survives clear(): it is a cache, not block
+    // state. A byte-identical section with the same column count is the same
+    // schema, because the section is exactly columnCount self-delimiting definitions.
+    private QwpSchema cachedSchema;
+    private byte[] cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
+    private int cachedSchemaColumnCount = -1;
+    private int cachedSchemaLen;
     // Wire position tracking
     private int columnCount;
     // Column definitions from schema
@@ -78,6 +89,10 @@ public class QwpTableBlockCursor implements Mutable {
     private int geoHashColumnCount;
     private int[] geoHashColumnIndices = new int[16];
     private boolean gorillaEnabled;
+    // True from of() until clear(). The message cursor clears this cursor when a
+    // message starts and again before each table block; the second clear of an
+    // untouched cursor has nothing to reset.
+    private boolean isDirty;
     // Table state
     private int rowCount;
     private int stringColumnCount;
@@ -97,6 +112,10 @@ public class QwpTableBlockCursor implements Mutable {
 
     @Override
     public void clear() {
+        if (!isDirty) {
+            return;
+        }
+        isDirty = false;
         tableHeader.reset();
         parseResult.clear();
         rowCount = 0;
@@ -323,6 +342,7 @@ public class QwpTableBlockCursor implements Mutable {
             ObjList<String> connectionSymbolDict,
             boolean deltaSymbolDictEnabled
     ) throws QwpParseException {
+        this.isDirty = true;
         this.gorillaEnabled = gorillaEnabled;
         this.connectionSymbolDict = connectionSymbolDict;
         this.deltaSymbolDictEnabled = deltaSymbolDictEnabled;
@@ -335,9 +355,27 @@ public class QwpTableBlockCursor implements Mutable {
         this.columnCount = tableHeader.getColumnCount();
 
         // Parse schema section (inline columns; zero-alloc: reuses parseResult)
-        QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
-        offset += parseResult.bytesConsumed;
-        QwpSchema schema = parseResult.schema;
+        final QwpSchema schema;
+        if (cachedSchema != null
+                && columnCount == cachedSchemaColumnCount
+                && dataLength - offset >= cachedSchemaLen
+                && isSameBytes(dataAddress + offset, cachedSchemaBytes, cachedSchemaLen)) {
+            schema = cachedSchema;
+            offset += cachedSchemaLen;
+        } else {
+            QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
+            final int n = parseResult.bytesConsumed;
+            if (cachedSchemaBytes.length < n) {
+                cachedSchemaBytes = new byte[Math.max(n, cachedSchemaBytes.length * 2)];
+            }
+            for (int i = 0; i < n; i++) {
+                cachedSchemaBytes[i] = Unsafe.getByte(dataAddress + offset + i);
+            }
+            cachedSchemaLen = n;
+            cachedSchemaColumnCount = columnCount;
+            cachedSchema = schema = parseResult.schema;
+            offset += n;
+        }
 
         this.columnDefs = schema.getColumns();
 
@@ -361,13 +399,11 @@ public class QwpTableBlockCursor implements Mutable {
                         "column data exceeds table block bounds before column " + i
                 );
             }
-            int consumed = initializeColumnCursor(
-                    i,
-                    dataAddress + offset,
-                    dataLength - offset,
-                    rowCount,
-                    typeCode
-            );
+            // Fixed-width columns take a method small enough for the JIT to inline;
+            // initializeColumnCursor's switch over every type is too big to inline.
+            int consumed = isFixedWidthType(typeCode)
+                    ? initializeFixedWidthCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode)
+                    : initializeColumnCursor(i, dataAddress + offset, dataLength - offset, rowCount, typeCode);
             offset += consumed;
         }
 
@@ -387,7 +423,8 @@ public class QwpTableBlockCursor implements Mutable {
     }
 
     long getRetainedCacheBytes() {
-        long bytes = 0;
+        // The cached schema section; the parsed QwpSchema it backs is of the same order.
+        long bytes = cachedSchema != null ? cachedSchemaBytes.length : 0;
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
@@ -404,6 +441,13 @@ public class QwpTableBlockCursor implements Mutable {
 
     void releaseCachedResources() {
         clear();
+        // A failed parse may have just cached a wide schema: let it go with the rest.
+        cachedSchema = null;
+        cachedSchemaColumnCount = -1;
+        cachedSchemaLen = 0;
+        if (cachedSchemaBytes.length > SCHEMA_CACHE_INITIAL_BYTES) {
+            cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
+        }
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
@@ -414,6 +458,23 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampCursor.releaseCachedResources();
             }
         }
+    }
+
+    private static boolean isFixedWidthType(byte typeCode) {
+        return switch (typeCode) {
+            case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
+                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isSameBytes(long address, byte[] bytes, int len) {
+        for (int i = 0; i < len; i++) {
+            if (Unsafe.getByte(address + i) != bytes[i]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void ensureColumnCursorCapacity(int capacity) {
@@ -456,17 +517,8 @@ public class QwpTableBlockCursor implements Mutable {
                 yield boolCursor.of(dataAddress, dataLength, rowCount);
             }
             case TYPE_BYTE, TYPE_SHORT, TYPE_CHAR, TYPE_INT, TYPE_IPV4, TYPE_LONG,
-                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 -> {
-                QwpFixedWidthColumnCursor fixedCursor;
-                if (cursor instanceof QwpFixedWidthColumnCursor c) {
-                    fixedCursor = c;
-                } else {
-                    fixedCursor = new QwpFixedWidthColumnCursor();
-                    columnCursors.setQuick(colIndex, fixedCursor);
-                }
-                fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
-                yield fixedCursor.of(dataAddress, dataLength, rowCount, typeCode);
-            }
+                 TYPE_FLOAT, TYPE_DOUBLE, TYPE_DATE, TYPE_UUID, TYPE_LONG256 ->
+                    initializeFixedWidthCursor(colIndex, dataAddress, dataLength, rowCount, typeCode);
             case TYPE_TIMESTAMP, TYPE_TIMESTAMP_NANOS -> {
                 QwpTimestampColumnCursor tsCursor;
                 if (cursor instanceof QwpTimestampColumnCursor c) {
@@ -543,5 +595,23 @@ public class QwpTableBlockCursor implements Mutable {
                     "unknown column type: " + typeCode
             );
         };
+    }
+
+    private int initializeFixedWidthCursor(
+            int colIndex,
+            long dataAddress,
+            int dataLength,
+            int rowCount,
+            byte typeCode
+    ) throws QwpParseException {
+        QwpFixedWidthColumnCursor fixedCursor;
+        if (columnCursors.getQuick(colIndex) instanceof QwpFixedWidthColumnCursor c) {
+            fixedCursor = c;
+        } else {
+            fixedCursor = new QwpFixedWidthColumnCursor();
+            columnCursors.setQuick(colIndex, fixedCursor);
+        }
+        fixedWidthColumnIndices[fixedWidthColumnCount++] = colIndex;
+        return fixedCursor.of(dataAddress, dataLength, rowCount, typeCode);
     }
 }

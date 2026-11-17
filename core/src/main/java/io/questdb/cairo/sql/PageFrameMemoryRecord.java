@@ -40,6 +40,7 @@ import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.vm.NullMemoryCMR;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -114,8 +115,9 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     protected DirectLongList auxPageAddresses;
     protected DirectLongList auxPageSizes;
     // Pool bind generation captured when boundPool was stamped. The pool bumps its
-    // generation when it closes buffers that records may still alias (failed decode,
-    // bulk release), so a stale generation forces a rebind instead of a freed read.
+    // generation when it reuses or closes buffers that records may still alias (buffer
+    // reuse for another frame, eviction, failed decode, bulk release), so a stale
+    // generation forces a rebind instead of reading another frame's or freed memory.
     protected long boundGeneration;
     // Pool that owns the parquet buffers this record currently points at, or null.
     // PageFrameMemoryPool.navigateTo() uses it to early-return only when the record
@@ -126,11 +128,11 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
     // / getLong256B / getStrB-like helper is called.
     protected int columnCount;
     protected int columnOffset;
-    // Per-column leading column-top count for the current parquet frame (reference into the
-    // frame's buffers, like pageAddresses); null for native frames. A lazy fixed->var
-    // conversion returns NULL for rows below this count, since the decoded source value of a
-    // column-top row is an in-band 0 indistinguishable from a real 0.
-    protected DirectLongList columnTops;
+    // Per-column column-top rows for the current parquet frame (reference into the frame's
+    // buffers, like pageAddresses), see PageFrameMemory.getColumnTopRows(); null for native
+    // frames. A lazy fixed->var conversion returns NULL for these rows, since the decoded source
+    // value of a column-top row is an in-band 0 indistinguishable from a real 0.
+    protected DirectLongList columnTopRows;
     protected byte frameFormat = -1;
     protected int frameIndex = -1;
     // True when any column in the current frame needs lazy fixed->var conversion.
@@ -173,7 +175,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = other.auxPageSizes;
         this.columnOffset = other.columnOffset;
         this.columnCount = other.columnCount;
-        this.columnTops = other.columnTops;
+        this.columnTopRows = other.columnTopRows;
         this.stableStrings = other.stableStrings;
         this.hasTypeCasts = other.hasTypeCasts;
         // Deep-copy the per-column conversion state. Sharing the reference would race
@@ -198,7 +200,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         auxPageSizes = null;
         boundPool = null;
         boundGeneration = 0;
-        columnTops = null;
+        columnTopRows = null;
         // Reset the type-cast gate and its backing data symmetrically: in steady state
         // the gate is what protects readers from a stale sourceColumnTypes, but clearing
         // both keeps the cleared-state invariant honest and avoids relying on every
@@ -835,7 +837,7 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         this.auxPageSizes = frameMemory.getAuxPageSizes();
         this.columnOffset = frameMemory.getColumnOffset();
         this.columnCount = frameMemory.getColumnCount();
-        this.columnTops = frameMemory.getColumnTops();
+        this.columnTopRows = frameMemory.getColumnTopRows();
         if (this.hasTypeCasts) {
             // Copy source column types from PageFrameMemory.
             if (this.sourceColumnTypes == null) {
@@ -943,11 +945,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             return null; // column top
         }
         // Only no-sentinel sources (BOOLEAN/BYTE/SHORT/CHAR) need the explicit column-top
-        // count: their column-top rows decode to an in-band 0/false the converter cannot tell
-        // from a real value. Sentinel sources store the column top as their null sentinel (and
-        // may also have scattered nulls), so the converter already returns null for them.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+        // rows: they decode to an in-band 0/false the converter cannot tell from a real value.
+        // Sentinel sources store the column top as their null sentinel (and may also have
+        // scattered nulls), so the converter already returns null for them.
+        if (ColumnType.isNoNullSentinelFixedType(srcType) && isTopRow(columnIndex)) {
             return null;
         }
         sink.clear();
@@ -975,9 +976,8 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         if (address == 0) {
             return null; // column top
         }
-        // See convertFixedToStr: only no-sentinel sources need the explicit column-top count.
-        if (columnTops != null && ColumnType.isNoNullSentinelFixedType(srcType)
-                && rowIndex < columnTops.get(columnOffset + columnIndex)) {
+        // See convertFixedToStr: only no-sentinel sources need the explicit column-top rows.
+        if (ColumnType.isNoNullSentinelFixedType(srcType) && isTopRow(columnIndex)) {
             return null;
         }
         sink.clear();
@@ -1263,6 +1263,17 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             typeCastArgs.clear();
             typeCastWidth.clear();
         }
+    }
+
+    // Whether the current row of the column is one of its column-top rows, see
+    // PageFrameMemory.getColumnTopRows(). Only a lazy conversion of a parquet frame, whose buffers publish
+    // the rows, asks: the frame of a decoded column, unlike a native one, has them.
+    private boolean isTopRow(int columnIndex) {
+        assert columnTopRows != null : "a parquet frame publishes its column-top rows";
+        final long base = (long) PageFrameMemory.COLUMN_TOP_ROWS_STRIDE * (columnOffset + columnIndex);
+        final long topRowCount = columnTopRows.get(base + 1);
+        return topRowCount > 0
+                && RowGroupBuffers.isTopRow(columnTopRows.get(base), topRowCount, rowIndex - columnTopRows.get(base + 2));
     }
 
     private @NotNull Long256Impl long256A(int columnIndex) {
@@ -1607,13 +1618,13 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
             int columnCount,
             boolean hasTypeCasts,
             IntList sourceColumnTypes,
-            DirectLongList columnTops
+            DirectLongList columnTopRows
     ) {
         this.frameIndex = frameIndex;
         this.frameFormat = frameFormat;
         this.stableStrings = (frameFormat == PartitionFormat.NATIVE);
         this.hasTypeCasts = hasTypeCasts;
-        this.columnTops = columnTops;
+        this.columnTopRows = columnTopRows;
         // The pool passes its own IntList by reference and mutates it in place on every
         // openParquet() call. Snapshot the contents so a later navigateTo() on Record B
         // does not overwrite this record's view of the per-column conversion state.

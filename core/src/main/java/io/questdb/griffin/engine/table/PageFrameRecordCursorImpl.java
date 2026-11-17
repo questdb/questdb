@@ -42,10 +42,17 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+    private static final long NO_SKIP_WALK = -1;
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
     private boolean areCursorsPrepared;
+    // The frame ordinal the LAST skip walk started at and the target it skipped, for the skip walk that
+    // shaped the frames now in the address cache. NO_SKIP_WALK when an ordinary walk shaped them. A walk
+    // that cuts frames differently than these two values say must not reuse those frames; see
+    // resetFrameCache().
+    private int cachedSkipWalkFrameCount = -1;
+    private long cachedSkipWalkTarget = NO_SKIP_WALK;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean isExhausted;
     private long maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
@@ -129,6 +136,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 return true;
             }
 
+            if (frameCount == 0 && cachedSkipWalkTarget != NO_SKIP_WALK) {
+                // This walk cuts frames where an ordinary walk cuts them, the cached ones are a skip
+                // walk's. Drop them at the first frame, before this walk reads any of them.
+                dropSkipWalkFrames();
+            }
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
                 // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
@@ -189,6 +201,8 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         rowCursor = Misc.free(rowCursor);
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        cachedSkipWalkFrameCount = -1;
+        cachedSkipWalkTarget = NO_SKIP_WALK;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
     }
@@ -223,6 +237,22 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         final long postSkipMaxRows = canClamp ? requestedMaxRowsAfterSkip : RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
 
+        // The fast path below cuts frames at the skip target, so it must not run over frames a walk that
+        // cut them elsewhere left in the address cache - it would read their addresses and page limits
+        // with this walk's row counts. Two walks cut frames the same way when neither skips, or when both
+        // skip the same rows from the top of the cursor; a skip walk is deterministic, so those frames
+        // are this walk's own and stay reusable. See resetFrameCache().
+        // Only a layout whose skips were all issued from the top can be repeated, hence the two
+        // frameCount == 0 tests: a mid-walk skip records its own ordinal, which no compare matches, so a
+        // layout it cut gets dropped rather than reused. That also keeps this compare and the record
+        // below on the SAME quantity - at frameCount == 0 toTop()/of() has freed rowCursor, so the
+        // mid-frame drain further down cannot move the target between the two.
+        final long requestedSkip = rowCount.get();
+        final boolean isCachedWalkRepeated = requestedSkip > 0
+                ? frameCount == 0 && cachedSkipWalkFrameCount == 0 && requestedSkip == cachedSkipWalkTarget
+                : cachedSkipWalkTarget == NO_SKIP_WALK;
+        final boolean hasFramesOfAnotherWalk = !isCachedWalkRepeated && frameAddressCache.getFrameCount() > frameCount;
+
         // Use slow path when:
         // - filter is present (need to evaluate each row)
         // - using index (row order may not be sequential)
@@ -230,7 +260,15 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         //   so the metadata-only frame-size accounting below would count physical rows the cursor
         //   never yields and land the skip short (re-reading already-consumed rows). The row-by-row
         //   walk skips exactly the rows hasNext() yields, matching the pruned scan.
-        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()) {
+        // - frames of an earlier walk are cached and this walk is already past its first frame: the cache
+        //   cannot be renumbered from zero without stranding the frames this walk has already handed out,
+        //   so skip row by row instead, which cuts frames exactly where the cached ones were cut. Those
+        //   leftovers are always an ORDINARY cut: a walk only gets past its first frame without dropping
+        //   the cache when it reproduced the cached layout's leading skip (or when neither walk skipped),
+        //   and a skip that ran after that point recorded its own ordinal, which stops the next walk from
+        //   reaching here at all.
+        if (filter != null || rowCursorFactory.isUsingIndex() || frameCursor.hasActivePushdownFilter()
+                || (hasFramesOfAnotherWalk && frameCount > 0)) {
             // hasNext() charges every row it yields against the clamp, but the rows this loop
             // walks are the skip itself, not reads after it. So walk unclamped and arm the
             // clamp only once the skip lands, mirroring ReadParquetRecordCursor.isInSkipRows.
@@ -246,6 +284,10 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             return;
         }
         maxRowsAfterSkip = postSkipMaxRows;
+        if (hasFramesOfAnotherWalk) {
+            // Only reachable at the top of the cursor, where nothing holds a frame ordinal yet.
+            dropSkipWalkFrames();
+        }
 
         // If we're mid-frame after hasNext() calls, exhaust current rowCursor first,
         // then fall through to the fast path for remaining frames
@@ -261,11 +303,30 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         }
 
         long skipTarget = rowCount.get();
+        if (skipTarget > 0) {
+            // A zero target makes next() below hand back the ordinary frames, leaving the cache cut as an
+            // ordinary walk cuts it. Every other skip is recorded, overwriting an earlier one: the frames
+            // it appends are cut where this skip lands and no longer where the earlier signature says, so
+            // the earlier one must not survive to match a later walk.
+            cachedSkipWalkFrameCount = frameCount;
+            cachedSkipWalkTarget = skipTarget;
+        }
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next(skipTarget)) != null) {
-            frameAddressCache.add(frameCount++, pageFrame);
+            final long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
+            // A skip-only skeleton stands for a span the scan discards, so it must not take a slot in the
+            // address cache: it carries no addresses, and its span is cut where the skip landed rather than
+            // where a readable scan cuts a frame. The cache indexes frames by their position in the scan and
+            // keeps the first entry it is given for an index, so a skeleton parked at an index would either
+            // serve its own zero addresses to a later readable scan, or push every frame after it onto the
+            // index of a different frame. Only the frames the scan goes on to read are numbered here.
+            if (!pageFrame.isSkipSkeleton()) {
+                frameAddressCache.add(frameCount++, pageFrame);
+            } else {
+                assert frameSize <= skipTarget : "skip skeleton overshot the skip target [frameSize=" + frameSize
+                        + ", skipTarget=" + skipTarget + ']';
+            }
 
-            long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();
             if (frameSize > skipTarget) {
                 rowCount.dec(skipTarget);
                 break;
@@ -312,6 +373,12 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
         super.toTop();
+    }
+
+    private void dropSkipWalkFrames() {
+        resetFrameCache();
+        cachedSkipWalkFrameCount = -1;
+        cachedSkipWalkTarget = NO_SKIP_WALK;
     }
 
     private void prepareRowCursorFactory() {

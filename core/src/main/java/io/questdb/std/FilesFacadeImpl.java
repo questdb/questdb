@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.Nullable;
 
 public class FilesFacadeImpl implements FilesFacade {
@@ -38,6 +39,15 @@ public class FilesFacadeImpl implements FilesFacade {
     public static final int _16M = 16 * 1024 * 1024;
     private final static Log LOG = LogFactory.getLog(FilesFacadeImpl.class);
     private static final long ZFS_MAGIC_NUMBER = 0x2fc12fc1;
+    // Per-thread upgrade flags for the platforms where a durable primitive is a different syscall from the
+    // overridable method it otherwise delegates to (barrierFsync and fsyncDurable on Darwin, renameDurable on
+    // Windows). The strong method sets its flag around a call to the overridable weak method (fdatasync,
+    // fsync, rename); when the call reaches this class, the flag swaps in the strong syscall. A
+    // fault-injecting facade that overrides only the weak method then still intercepts the durable variant
+    // on every platform.
+    private static final ThreadLocal<Boolean> BARRIER_FSYNC_VIA_FDATASYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<Boolean> FSYNC_DURABLE_VIA_FSYNC = ThreadLocal.withInitial(() -> Boolean.FALSE);
+    private static final ThreadLocal<Boolean> RENAME_DURABLE_VIA_RENAME = ThreadLocal.withInitial(() -> Boolean.FALSE);
     private final FsOperation copyFsOperation = this::copy;
     private final FsOperation hardLinkFsOperation = this::hardLink;
     private long mapPageSize = 0;
@@ -45,6 +55,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public boolean allocate(long fd, long size) {
         return Files.allocate(fd, size);
+    }
+
+    @Override
+    public boolean allocate(long fd, long allocatedSize, long size) {
+        return Files.allocate(fd, allocatedSize, size);
     }
 
     /**
@@ -63,6 +78,22 @@ public class FilesFacadeImpl implements FilesFacade {
             long fsStatus = Files.getFileSystemStatus(path.$());
             path.seekZ(); // useful for debugging
             // allow mixed I/O for all supported FSes except ZFS
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
+    }
+
+    /**
+     * Linux only, and never on ZFS -- same detection {@link #allowMixedIO(CharSequence)} uses.
+     */
+    @Override
+    public boolean isSyncFileRangeEffective(Utf8Sequence root) {
+        if (root == null || !Os.isLinux()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root);
+            final long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ();
             return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
         }
     }
@@ -172,23 +203,108 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void fdatasync(long fd) {
+        if (Os.isOSX() && BARRIER_FSYNC_VIA_FDATASYNC.get()) {
+            // barrierFsync routed here with the upgrade flag set: on Darwin the barrier is its own
+            // fcntl (F_BARRIERFSYNC), not fdatasync.
+            int res = Files.barrierFsync(fd);
+            if (res == 0) {
+                return;
+            }
+            final int errno = errno();
+            throw CairoException.dataSyncFailureOfFd(this, fd, errno, "barrierFsync", "could not barrierFsync");
+        }
+        int res = Files.fdatasync(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fdatasync", "could not fdatasync");
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "syncfs", "could not syncfs");
+    }
+
+    @Override
     public void fsync(long fd) {
+        if (Os.isOSX() && FSYNC_DURABLE_VIA_FSYNC.get()) {
+            // fsyncDurable routed here with the upgrade flag set: on Darwin the durable flush is
+            // F_FULLFSYNC, not fsync.
+            int res = Files.fsyncDurable(fd);
+            if (res == 0) {
+                return;
+            }
+            final int errno = errno();
+            throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fsyncDurable", "could not fsyncDurable");
+        }
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        final int errno = errno();
+        throw CairoException.dataSyncFailureOfFd(this, fd, errno, "fsync", "could not fsync");
+    }
+
+    @Override
+    public void barrierFsync(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this is fdatasync (see Files.barrierFsync). Route through the overridable method,
+            // not the static: fault-injecting facades override fdatasync, and the static would hide every
+            // WAL commit barrier from them.
+            fdatasync(fd);
+            return;
+        }
+        // On Darwin the barrier is a different fcntl. Set the per-thread upgrade flag and route through the
+        // overridable fdatasync; this class's fdatasync swaps in the barrier syscall.
+        BARRIER_FSYNC_VIA_FDATASYNC.set(Boolean.TRUE);
+        try {
+            fdatasync(fd);
+        } finally {
+            BARRIER_FSYNC_VIA_FDATASYNC.set(Boolean.FALSE);
+        }
+    }
+
+    @Override
+    public void fsyncDurable(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this is fsync; route through the overridable method, as barrierFsync does.
+            fsync(fd);
+            return;
+        }
+        // Darwin needs F_FULLFSYNC: as in barrierFsync, route through the overridable fsync with the
+        // upgrade flag set.
+        FSYNC_DURABLE_VIA_FSYNC.set(Boolean.TRUE);
+        try {
+            fsync(fd);
+        } finally {
+            FSYNC_DURABLE_VIA_FSYNC.set(Boolean.FALSE);
+        }
     }
 
     @Override
     public void fsyncAndClose(long fd) {
-        int res = Files.fsync(fd);
+        // Every directory barrier in the engine goes through here, and a directory fsync makes a new file's
+        // name durable: without it the data survives a power cut but the name pointing at it does not. So this
+        // must flush the device: Files.fsyncDurable is F_FULLFSYNC on Darwin, where plain fsync is not a
+        // barrier, and fsync everywhere else. The upgrade sits here rather than at each call site, so the call
+        // sites stay on the method that fault-injecting facades override.
+        int res = Files.fsyncDurable(fd);
         if (res == 0) {
             close(fd);
             return;
         }
+        final int errno = errno();
+        // the path is looked up while the descriptor still names the file
+        final String path = Files.findPathOfFd(fd);
         close(fd);
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(this, path, errno, "fsyncAndClose", "could not fsync [fd=" + fd + ']');
     }
 
     @Override
@@ -355,7 +471,11 @@ public class FilesFacadeImpl implements FilesFacade {
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not msync");
+        final int errno = errno();
+        if (!async) {
+            throw CairoException.dataSyncFailureOfMapping(this, addr, errno, "msync", "could not msync");
+        }
+        throw CairoException.critical(errno).put("could not msync");
     }
 
     @Override
@@ -390,6 +510,11 @@ public class FilesFacadeImpl implements FilesFacade {
     @Override
     public long openRW(LPSZ name, int opts) {
         return Files.openRW(name, opts);
+    }
+
+    @Override
+    public long openRWExisting(LPSZ name) {
+        return Files.openRWExisting(name);
     }
 
     @Override
@@ -451,7 +576,29 @@ public class FilesFacadeImpl implements FilesFacade {
 
     @Override
     public int rename(LPSZ from, LPSZ to) {
+        if (Os.isWindows() && RENAME_DURABLE_VIA_RENAME.get()) {
+            // renameDurable routed here with the upgrade flag set: on Windows the durable move is
+            // MoveFileEx with MOVEFILE_WRITE_THROUGH, not a plain rename.
+            return Files.renameDurable(from, to);
+        }
         return Files.rename(from, to);
+    }
+
+    @Override
+    public int renameDurable(LPSZ from, LPSZ to) {
+        if (!Os.isWindows()) {
+            // Off Windows this is rename(2) (see Files.renameDurable). Route through the overridable method,
+            // as barrierFsync does, so a facade that intercepts rename() intercepts this too.
+            return rename(from, to);
+        }
+        // On Windows the durable move is a different syscall. Set the per-thread upgrade flag and route
+        // through the overridable rename(); this class's rename() swaps in the write-through move.
+        RENAME_DURABLE_VIA_RENAME.set(Boolean.TRUE);
+        try {
+            return rename(from, to);
+        } finally {
+            RENAME_DURABLE_VIA_RENAME.set(Boolean.FALSE);
+        }
     }
 
     @Override
@@ -533,9 +680,10 @@ public class FilesFacadeImpl implements FilesFacade {
             if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
-            } else {
-                LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
             }
+            // A recursive remove would follow the link and delete its target's files
+            LOG.debug().$("cannot unlink [path=").$(path).$(", errno=").$(errno()).I$();
+            return false;
         }
 
         if (rmdir(path)) {
@@ -573,14 +721,14 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.size();
         int len = src.size();
         long p = findFirst(src.$());
+        // The listing is open from here on: every exit, a failed mkdir of the destination included, must close it.
+        try {
+            LPSZ lpsz = dst.$();
+            if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
+                return -1;
+            }
 
-        LPSZ lpsz = dst.$();
-        if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
-            return -1;
-        }
-
-        if (p > 0) {
-            try {
+            if (p > 0) {
                 int res;
                 do {
                     long name = findName(p);
@@ -589,7 +737,9 @@ public class FilesFacadeImpl implements FilesFacade {
                         src.trimTo(len);
                         src.concat(name);
                         dst.concat(name);
-                        if (type == Files.DT_FILE) {
+                        // A file system that reports no entry types (XFS without ftype, some FUSE and network
+                        // file systems) lists every entry as unknown: ask it whether the entry is a directory.
+                        if (type == Files.DT_FILE || (type == Files.DT_UNKNOWN && !isDirOrSoftLinkDir(src.$()))) {
                             if ((res = operation.invoke(src.$(), dst.$())) < 0) {
                                 return res;
                             }
@@ -605,11 +755,13 @@ public class FilesFacadeImpl implements FilesFacade {
                         dst.trimTo(dstLen);
                     }
                 } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-                src.trimTo(srcLen);
-                dst.trimTo(dstLen);
             }
+        } finally {
+            if (p > 0) {
+                findClose(p);
+            }
+            src.trimTo(srcLen);
+            dst.trimTo(dstLen);
         }
 
         return 0;

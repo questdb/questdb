@@ -34,6 +34,8 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.WriterPool;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
@@ -56,6 +58,8 @@ import org.junit.Test;
 import java.io.File;
 
 import static io.questdb.cairo.TableUtils.TABLE_RESERVED;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -241,10 +245,25 @@ public class TableUtilsTest extends AbstractTest {
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_WRITE_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(TableUtils.WAL_2_TABLE_RESUME_REASON));
         Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_STORAGE_POLICY)));
+        // The partition compaction sweep holds the writer to land its swap, exactly as
+        // STORAGE POLICY does; apply must not log its own scheduled work as an intruder.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_COMPOSITE_PARTITION_SWAP)));
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(getCommandName(CMD_PARQUET_PARTITION_SWAP)));
+        // A publisher that finds the writer back in the pool ticks the queue under the pool's own reason.
+        Assert.assertFalse(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_ASYNC_COMMAND));
 
         // Any other reason IS unsolicited
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("ALTER TABLE"));
         Assert.assertTrue(TableUtils.isUnsolicitedTableLock("test"));
+
+        // The pool reports OWNERSHIP_REASON_UNKNOWN while a holder is still constructing the
+        // writer and has not stamped its reason yet. That string interns to the same reference
+        // as AbstractMultiTenantPool.NO_LOCK_REASON ("unknown"), which a reference-equality
+        // escape used to misread as "no reason, treat as solicited" - silently dropping the
+        // in-flight WAL apply notification with no recovery. An unidentified holder must be
+        // unsolicited so ApplyWal2TableJob re-arms notification delivery.
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(WriterPool.OWNERSHIP_REASON_UNKNOWN));
+        Assert.assertTrue(TableUtils.isUnsolicitedTableLock(AbstractMultiTenantPool.NO_LOCK_REASON));
     }
 
     @Test
@@ -266,6 +285,13 @@ public class TableUtilsTest extends AbstractTest {
         testIsValidColumnName('%', false);
         testIsValidColumnName('~', false);
         testIsValidColumnName('\n', false);
+        // 0x10-0x1f stay legal, including 0x1f and 0x1e, which RowExpiryUtil uses as the EXPIRE ROWS
+        // policy separator and escape character. The policy encoding escapes them in its fields, so a
+        // name an earlier release accepted keeps working.
+        testIsValidColumnName((char) 0x10, true);
+        testIsValidColumnName((char) 0x1b, true);
+        testIsValidColumnName((char) 0x1e, true);
+        testIsValidColumnName((char) 0x1f, true);
         Assert.assertFalse(TableUtils.isValidColumnName("..", 127));
         Assert.assertFalse(TableUtils.isValidColumnName(".", 127));
         Assert.assertFalse(TableUtils.isValidColumnName("t\u007Ftcsv", 127));
@@ -283,6 +309,10 @@ public class TableUtilsTest extends AbstractTest {
     @Test
     public void testIsValidTableName() {
         Assert.assertFalse(TableUtils.isValidTableName("?abcd", 127));
+        // 0x10-0x1f stay legal in a table name too (see testIsValidColumnName).
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1f + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x1e + "t", 127));
+        Assert.assertTrue(TableUtils.isValidTableName("t" + (char) 0x10 + "t", 127));
         Assert.assertFalse(TableUtils.isValidTableName("", 127));
         Assert.assertFalse(TableUtils.isValidTableName(" ", 127));
         Assert.assertFalse(TableUtils.isValidTableName("./", 127));

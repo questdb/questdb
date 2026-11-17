@@ -185,7 +185,13 @@ public class EngineMigration {
                             final int firstVersion = currentTableVersion < latestTableVersion
                                     ? currentTableVersion + 1
                                     : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
-                            if (firstVersion <= latestMigrationVersion) {
+                            // A version above latestTableVersion is an elevated storage version (a table
+                            // that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION).
+                            // It is not a migration-version number, so migration must leave it alone: the table
+                            // is already current, and re-running backward-compatible migrations against it is
+                            // neither needed nor guaranteed safe. The writer folds such a table back to plain
+                            // and restores latestTableVersion on its own when composite partitions go away.
+                            if (currentTableVersion <= latestTableVersion && firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
                                         .$(", fromVersion=").$(firstVersion - 1)

@@ -230,7 +230,7 @@ public class LiveViewCheckpointScalarStatePageTest extends AbstractCairoTest {
             Assert.assertEquals(expected.length, reader.getPageStoredLength());
             final long address = reader.getPageAddress();
             for (int i = 0; i < expected.length; i++) {
-                Assert.assertEquals("byte " + i, expected[i], Unsafe.getUnsafe().getByte(address + i));
+                Assert.assertEquals("byte " + i, expected[i], Unsafe.getByte(address + i));
             }
         }
     }

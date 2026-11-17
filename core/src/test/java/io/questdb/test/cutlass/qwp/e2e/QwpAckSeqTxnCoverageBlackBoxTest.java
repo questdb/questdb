@@ -26,6 +26,8 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
+import io.questdb.client.SenderError;
+import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.client.WebSocketResponse;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -49,6 +51,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -80,6 +83,7 @@ import java.util.concurrent.TimeUnit;
 public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
 
     private static final int AUTO_FLUSH_INTERVAL_MILLIS = 3_600_000;
+    private static final int CLOSE_FLUSH_TIMEOUT_MILLIS = 5_000;
     /**
      * The batch commits as a single WAL transaction, so both the table's
      * sequencer txn and the seqTxn the acks must report are 1.
@@ -171,6 +175,59 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     }
 
     @Test
+    public void testBoundaryAndStandaloneFrameReportSeqTxnsToRealSender() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables(
+                    PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getEnvVarName(), "1000000")) {
+                server.execute("CREATE TABLE boundary_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("CREATE TABLE boundary_b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final List<byte[]> frames;
+                try (AckTee tee = new AckTee(HTTP_PORT, 0, 2)) {
+                    try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + tee.localPort())
+                            .autoFlushRows(0).autoFlushBytes(0)
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS).build()) {
+                        sender.table("boundary_a").longColumn("val", 1).at(1_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("boundary_a").longColumn("val", 2).at(2_000_000L, ChronoUnit.MICROS);
+                        sender.table("boundary_b").longColumn("val", 3).at(3_000_000L, ChronoUnit.MICROS);
+                        long last = sender.flushAndGetSequence();
+                        Assert.assertTrue("the real sender must consume the boundary/current ACKs",
+                                sender.awaitAckedFsn(last, RELAY_PROBE_TIMEOUT_MS));
+                    }
+                    tee.close();
+                    Assert.assertTrue("relay must release both actual client frames together", tee.hasCoalescedFrames);
+                    frames = tee.serverBinaryFrames();
+                }
+                TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_a", "val\n1\n2\n"));
+                TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_b", "val\n3\n"));
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_a'", "sequencerTxn\n2\n");
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_b'", "sequencerTxn\n1\n");
+                long aTxn = -1;
+                long bTxn = -1;
+                long lastAck = -1;
+                WebSocketResponse response = new WebSocketResponse();
+                for (byte[] payload : frames) {
+                    Assert.assertTrue(readResponse(response, payload));
+                    if (response.isSuccess()) {
+                        lastAck = Math.max(lastAck, response.getSequence());
+                        for (int i = 0; i < response.getTableEntryCount(); i++) {
+                            if ("boundary_a".equals(response.getTableName(i))) {
+                                aTxn = Math.max(aTxn, response.getTableSeqTxn(i));
+                            } else if ("boundary_b".equals(response.getTableName(i))) {
+                                bTxn = Math.max(bTxn, response.getTableSeqTxn(i));
+                            }
+                        }
+                    }
+                }
+                Assert.assertEquals(1, lastAck);
+                Assert.assertEquals(2, aTxn);
+                Assert.assertEquals(1, bTxn);
+            }
+        });
+    }
+
+    @Test
     public void testOkAckReportsSeqTxnBelowCap() throws Exception {
         assertMemoryLeak(() -> assertAckReportsSeqTxn("1000000", "ack_cov_below"));
     }
@@ -210,6 +267,129 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
     @Test
     public void testDeferredFrameIsNotAckedWhileItsRowsAreUncommitted() throws Exception {
         assertMemoryLeak(() -> assertDeferredFramesAcked("1000000", "ack_defer_buffered", false));
+    }
+
+    /**
+     * A frame that joins a commit batch and fails on its own value is NACKed only
+     * after the batch's earlier frames are committed and acked: the appender
+     * cancels the bad block, the batch is intact, and the server commits it before
+     * answering the bad frame with its own status.
+     */
+    @Test
+    public void testBadValueInCommitBatchIsNackedAfterEarlierFramesAreAcked() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables()) {
+                server.execute("CREATE TABLE u (id UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final List<SenderError> errors = new CopyOnWriteArrayList<>();
+                // The tee hands the server the connection's first three frames in one write.
+                // They share one schema, so the second and third join the first's commit
+                // batch, and the third fails on its own value while joining.
+                try (AckTee tee = new AckTee(HTTP_PORT, 0, 3)) {
+                    final Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + tee.localPort())
+                            .autoFlushRows(0)
+                            .autoFlushBytes(0)
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
+                            .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MILLIS)
+                            .errorHandler(errors::add)
+                            .build();
+                    try {
+                        sender.table("u").stringColumn("id", "11111111-1111-1111-1111-111111111111").at(1_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("u").stringColumn("id", "22222222-2222-2222-2222-222222222222").at(2_000_000L, ChronoUnit.MICROS);
+                        final long secondFsn = sender.flushAndGetSequence();
+                        sender.table("u").stringColumn("id", "not-a-uuid").at(3_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.assertTrue(
+                                "the frames before the bad one must be acked; errors: " + errors,
+                                sender.awaitAckedFsn(secondFsn, RELAY_PROBE_TIMEOUT_MS)
+                        );
+                        TestUtils.assertEventually(() -> {
+                            final SenderError terminal = ((QwpWebSocketSender) sender).getLastTerminalError();
+                            Assert.assertNotNull("the bad frame must latch a terminal error; errors: " + errors, terminal);
+                            Assert.assertEquals(SenderError.Category.SCHEMA_MISMATCH, terminal.getCategory());
+                        });
+                    } finally {
+                        try {
+                            sender.close();
+                        } catch (Throwable ignore) {
+                            // close rethrows the latched terminal error
+                        }
+                    }
+                    tee.close();
+                    Assert.assertTrue("the three frames never reached the server in one write", tee.hasCoalescedFrames);
+                }
+                TestUtils.assertEventually(() -> server.assertSql(
+                        "SELECT count() FROM wal_tables() WHERE writerTxn < sequencerTxn", "count\n0\n"));
+                server.assertSql("SELECT id FROM u",
+                        "id\n11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n");
+                // One commit for both: the second frame joined the first's batch.
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n1\n");
+            }
+        });
+    }
+
+    /**
+     * With one table allowed per connection, the server refuses every frame for
+     * a second table, and the sender reconnects and replays from its ack
+     * watermark. A reconnect opens with the client's rowless symbol-dictionary
+     * catch-up, so when the tee releases it together with the replayed frames,
+     * the first replayed frame closes a rowless deferred group in the same
+     * receive pass as the refused frame behind it. The server must commit AND
+     * ack that frame before the refusal, or every further replay writes its
+     * rows again until the client's poison detector halts the sender.
+     */
+    @Test
+    public void testReplayAfterReconnectDoesNotDuplicateBoundaryCommittedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TestServerMain server = startWithEnvVariables(
+                    PropertyKey.QWP_MAX_TABLES_PER_CONNECTION.getEnvVarName(), "1")) {
+                server.execute("CREATE TABLE a (s SYMBOL, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.execute("CREATE TABLE b (s SYMBOL, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final List<SenderError> errors = new CopyOnWriteArrayList<>();
+                // Connection 0 commits a's first row and is refused b's. Connection 1 is the
+                // first reconnect: its first three frames are the dictionary catch-up and the
+                // replayed b and a frames, which the tee hands the server in one write.
+                try (AckTee tee = new AckTee(HTTP_PORT, 1, 3)) {
+                    try (Sender sender = Sender.builder(Sender.Transport.WEBSOCKET)
+                            .address("localhost:" + tee.localPort())
+                            .autoFlushRows(0)
+                            .autoFlushBytes(0)
+                            .autoFlushIntervalMillis(AUTO_FLUSH_INTERVAL_MILLIS)
+                            .reconnectInitialBackoffMillis(10)
+                            .reconnectMaxBackoffMillis(50)
+                            .poisonMinEscalationWindowMillis(0)
+                            .closeFlushTimeoutMillis(CLOSE_FLUSH_TIMEOUT_MILLIS)
+                            .errorHandler(errors::add)
+                            .build()) {
+                        sender.table("a").symbol("s", "x").longColumn("val", 1).at(1_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("b").symbol("s", "y").longColumn("val", 2).at(2_000_000L, ChronoUnit.MICROS);
+                        sender.flush();
+                        sender.table("a").symbol("s", "z").longColumn("val", 3).at(3_000_000L, ChronoUnit.MICROS);
+                        final long last = sender.flushAndGetSequence();
+                        Assert.assertTrue(
+                                "the server never acked every frame; errors: " + errors,
+                                sender.awaitAckedFsn(last, RELAY_PROBE_TIMEOUT_MS)
+                        );
+                        Assert.assertNull(
+                                "the sender latched a terminal error; errors: " + errors,
+                                ((QwpWebSocketSender) sender).getLastTerminalError()
+                        );
+                    }
+                    tee.close();
+                    Assert.assertTrue(
+                            "the reconnect's catch-up and replayed frames never reached the server in one write",
+                            tee.hasCoalescedFrames
+                    );
+                }
+                // Every frame is acked, so its commit already has a sequencer txn.
+                TestUtils.assertEventually(() -> server.assertSql(
+                        "SELECT count() FROM wal_tables() WHERE writerTxn < sequencerTxn", "count\n0\n"));
+                server.assertSql("SELECT s, val FROM a", "s\tval\nx\t1\nz\t3\n");
+                server.assertSql("SELECT s, val FROM b", "s\tval\ny\t2\n");
+            }
+        });
     }
 
     private void assertDeferredFramesAcked(
@@ -252,6 +432,15 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     // commit frame that closes the group, so any ack at a LOWER
                     // sequence than the last one covered a deferred frame while
                     // the group was still open. That is the property under test.
+                    if (expectAckBeforeCommit) {
+                        // Wait for that ack before close() sends the commit frame.
+                        // Otherwise all frames may arrive in one receive pass, whose
+                        // single cumulative ack then covers the commit frame too.
+                        Assert.assertTrue(
+                                "the force-committed deferred frames were never acked while the group was open",
+                                sender.awaitAckedFsn(DEFERRED_FRAME_COUNT - 1, RELAY_PROBE_TIMEOUT_MS)
+                        );
+                    }
                 }
                 tee.close();
                 serverFrames = tee.serverBinaryFrames();
@@ -266,28 +455,18 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             final StringBuilder observed = new StringBuilder();
             final WebSocketResponse response = new WebSocketResponse();
             for (int f = 0, n = serverFrames.size(); f < n; f++) {
-                final byte[] payload = serverFrames.get(f);
-                final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < payload.length; i++) {
-                        Unsafe.putByte(ptr + i, payload[i]);
-                    }
-                    if (response.readFrom(ptr, payload.length) && response.isSuccess()) {
-                        okAckCount++;
-                        minAckSeq = Math.min(minAckSeq, response.getSequence());
-                        maxAckSeq = Math.max(maxAckSeq, response.getSequence());
-                        observed.append("[seq=").append(response.getSequence()).append(']');
-                    }
-                } finally {
-                    Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                if (readResponse(response, serverFrames.get(f)) && response.isSuccess()) {
+                    okAckCount++;
+                    minAckSeq = Math.min(minAckSeq, response.getSequence());
+                    maxAckSeq = Math.max(maxAckSeq, response.getSequence());
+                    observed.append("[seq=").append(response.getSequence()).append(']');
                 }
             }
 
             // Both arms require the group-closing ack, so its presence never
             // discriminates. What discriminates is whether anything was acked
-            // BEFORE it -- comparing sequences rather than counting frames keeps
-            // this independent of the ack batch threshold and of how many
-            // sequences the handshake consumes.
+            // BEFORE it, so the assertions compare sequences rather than count
+            // frames.
             Assert.assertTrue("the server sent no OK ack at all; acks seen: " + observed, okAckCount > 0);
             // The client sends DEFERRED_FRAME_COUNT deferred frames at sequences
             // 0..n-1, then close() sends the group-closing commit frame at n.
@@ -337,6 +516,20 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 throw new IOException("peer closed after " + read + " of " + dst.length + " bytes");
             }
             read += n;
+        }
+    }
+
+    // Parses one server frame payload; readFrom copies what it keeps, so the native
+    // copy is freed before the caller reads the response.
+    private static boolean readResponse(WebSocketResponse response, byte[] payload) {
+        final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < payload.length; i++) {
+                Unsafe.putByte(ptr + i, payload[i]);
+            }
+            return response.readFrom(ptr, payload.length);
+        } finally {
+            Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -403,30 +596,21 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             final StringBuilder observed = new StringBuilder();
             final WebSocketResponse response = new WebSocketResponse();
             for (int f = 0, n = serverFrames.size(); f < n; f++) {
-                final byte[] payload = serverFrames.get(f);
-                final long ptr = Unsafe.malloc(payload.length, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    for (int i = 0; i < payload.length; i++) {
-                        Unsafe.putByte(ptr + i, payload[i]);
-                    }
-                    if (!response.readFrom(ptr, payload.length) || !response.isSuccess()) {
-                        continue;
-                    }
-                    okAckCount++;
-                    final int entries = response.getTableEntryCount();
-                    observed.append("[seq=").append(response.getSequence())
-                            .append(" tables=").append(entries);
-                    for (int e = 0; e < entries; e++) {
-                        observed.append(' ').append(response.getTableName(e))
-                                .append("->").append(response.getTableSeqTxn(e));
-                        if (table.equals(response.getTableName(e))) {
-                            reportedSeqTxn = Math.max(reportedSeqTxn, response.getTableSeqTxn(e));
-                        }
-                    }
-                    observed.append(']');
-                } finally {
-                    Unsafe.free(ptr, payload.length, MemoryTag.NATIVE_DEFAULT);
+                if (!readResponse(response, serverFrames.get(f)) || !response.isSuccess()) {
+                    continue;
                 }
+                okAckCount++;
+                final int entries = response.getTableEntryCount();
+                observed.append("[seq=").append(response.getSequence())
+                        .append(" tables=").append(entries);
+                for (int e = 0; e < entries; e++) {
+                    observed.append(' ').append(response.getTableName(e))
+                            .append("->").append(response.getTableSeqTxn(e));
+                    if (table.equals(response.getTableName(e))) {
+                        reportedSeqTxn = Math.max(reportedSeqTxn, response.getTableSeqTxn(e));
+                    }
+                }
+                observed.append(']');
             }
 
             Assert.assertTrue("the server sent no OK ack", okAckCount > 0);
@@ -451,6 +635,12 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
      */
     private static final class AckTee implements Closeable {
         private final Thread acceptor;
+        // Zero-based accept order of the one connection whose first
+        // coalescedFrameCount client frames reach the server in one write.
+        private final int coalescedConnectionIndex;
+        private final int coalescedFrameCount;
+        // Set once the coalesced connection's held frames went out together.
+        private volatile boolean hasCoalescedFrames;
         private final ServerSocket listener;
         private final List<Thread> pumps = new ArrayList<>();
         private final ByteArrayOutputStream serverToClient = new ByteArrayOutputStream();
@@ -461,6 +651,12 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         private boolean isClosed;
 
         private AckTee(int upstreamPort) throws IOException {
+            this(upstreamPort, -1, 0);
+        }
+
+        private AckTee(int upstreamPort, int coalescedConnectionIndex, int coalescedFrameCount) throws IOException {
+            this.coalescedConnectionIndex = coalescedConnectionIndex;
+            this.coalescedFrameCount = coalescedFrameCount;
             listener = new ServerSocket(0, 4, InetAddress.getLoopbackAddress());
             acceptor = new Thread(() -> acceptLoop(upstreamPort), "qwp-ack-tee-acceptor");
             acceptor.setDaemon(true);
@@ -531,7 +727,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
          * reconnect's completed TCP handshake sitting in the backlog forever.
          */
         private void acceptLoop(int upstreamPort) {
-            for (; ; ) {
+            for (int connectionIndex = 0; ; connectionIndex++) {
                 Socket downstream = null;
                 Socket upstream = null;
                 try {
@@ -560,8 +756,9 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     sockets.add(upstream);
                 }
                 try {
-                    pump(downstream.getInputStream(), upstream.getOutputStream(), null);
-                    pump(upstream.getInputStream(), downstream.getOutputStream(), serverToClient);
+                    final int heldFrameCount = connectionIndex == coalescedConnectionIndex ? coalescedFrameCount : 0;
+                    pump(downstream.getInputStream(), upstream.getOutputStream(), null, heldFrameCount);
+                    pump(upstream.getInputStream(), downstream.getOutputStream(), serverToClient, 0);
                 } catch (IOException e) {
                     closeQuietly(downstream);
                     closeQuietly(upstream);
@@ -569,14 +766,56 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
             }
         }
 
+        // Forward the client's HTTP handshake, then hold its first frameCount
+        // frames and forward them in one transport write.
+        private void coalesceFirstFrames(InputStream in, OutputStream out, int frameCount) throws IOException {
+            int suffix = 0;
+            while (suffix != 0x0d0a0d0a) {
+                int next = in.read();
+                if (next < 0) {
+                    throw new IOException("client closed during handshake");
+                }
+                out.write(next);
+                suffix = (suffix << 8) | next;
+            }
+            out.flush();
+            ByteArrayOutputStream frames = new ByteArrayOutputStream();
+            for (int frame = 0; frame < frameCount; frame++) {
+                byte[] header = new byte[2];
+                readFully(in, header);
+                if ((header[0] & 0x0f) != 2) {
+                    throw new IOException("expected a client binary frame");
+                }
+                frames.write(header);
+                int length = header[1] & 0x7f;
+                if (length == 126) {
+                    byte[] extended = new byte[2];
+                    readFully(in, extended);
+                    frames.write(extended);
+                    length = ((extended[0] & 0xff) << 8) | (extended[1] & 0xff);
+                } else if (length == 127) {
+                    throw new IOException("unexpected large client frame");
+                }
+                byte[] payload = new byte[length + ((header[1] & 0x80) == 0 ? 0 : 4)];
+                readFully(in, payload);
+                frames.write(payload);
+            }
+            out.write(frames.toByteArray());
+            out.flush();
+            hasCoalescedFrames = true;
+        }
+
         private int localPort() {
             return listener.getLocalPort();
         }
 
-        private void pump(InputStream in, OutputStream out, ByteArrayOutputStream tee) {
+        private void pump(InputStream in, OutputStream out, ByteArrayOutputStream tee, int heldFrameCount) {
             final Thread t = new Thread(() -> {
                 final byte[] buf = new byte[8192];
                 try {
+                    if (heldFrameCount > 0) {
+                        coalesceFirstFrames(in, out, heldFrameCount);
+                    }
                     int n;
                     while ((n = in.read(buf)) > 0) {
                         if (tee != null) {

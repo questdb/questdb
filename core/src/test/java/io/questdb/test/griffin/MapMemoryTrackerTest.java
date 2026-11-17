@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
+import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -262,11 +263,23 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
             execute("CREATE TABLE master AS (SELECT cast(x AS varchar) k FROM long_sequence(20))");
             execute("CREATE TABLE slave AS (SELECT cast(x AS varchar) k, x AS v FROM long_sequence(20))");
             drainWalQueue();
-            assertQuery("SELECT count(*) FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("count\n20\n");
+            // The fused hash join GROUP BY factory takes this aggregate when it is enabled, so the
+            // test switches it off to keep the light hash join that it targets.
+            final boolean isHashJoinGroupByEnabled = sqlExecutionContext.isParallelHashJoinGroupByEnabled();
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+            try {
+                final String sql = "SELECT count(*) FROM (SELECT master.k, slave.v FROM master JOIN slave ON k)";
+                try (RecordCursorFactory factory = select(sql)) {
+                    TestUtils.assertFactoryInTree(factory, HashJoinLightRecordCursorFactory.class);
+                }
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n20\n");
+            } finally {
+                sqlExecutionContext.setParallelHashJoinGroupByEnabled(isHashJoinGroupByEnabled);
+            }
         });
     }
 

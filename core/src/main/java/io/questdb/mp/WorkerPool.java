@@ -279,6 +279,11 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(resource);
     }
 
+    @TestOnly
+    public int getAssignedJobCount() {
+        return assignedJobs.size();
+    }
+
     /**
      * The live-fiber limit of the whole pool: the sum of its groups' limits.
      */
@@ -345,6 +350,11 @@ public class WorkerPool implements Closeable {
 
     public int getGroupCount() {
         return groupCount;
+    }
+
+    @TestOnly
+    public int getFreeOnExitJobCount() {
+        return freeOnExit.size();
     }
 
     public String getPoolName() {
@@ -630,8 +640,8 @@ public class WorkerPool implements Closeable {
     public void updateWorkerMetrics() {
         final long nowNanos = System.nanoTime();
         WorkerMetrics workerMetrics = metrics.workerMetrics();
-        long min = workerMetrics.getMinElapsedMicros();
-        long max = workerMetrics.getMaxElapsedMicros();
+        long min = Long.MAX_VALUE;
+        long max = Long.MIN_VALUE;
         // Iterate the workers list under the monitor: the /metrics scrape calls this concurrently
         // with start()'s add-loop and halt()'s clear(). Without the guard a torn read returns a null
         // slot (NPE on getQuick(i).getJobStartNanos()) or a half-published pos/buffer.
@@ -644,7 +654,10 @@ public class WorkerPool implements Closeable {
                 }
             }
         }
-        workerMetrics.update(min, max);
+        // Pools without running workers, such as during startup, have no sample to report.
+        if (max != Long.MIN_VALUE) {
+            workerMetrics.update(min, max);
+        }
     }
 
     private static Throwable addCleanupFailure(@Nullable Throwable primary, Throwable failure) {

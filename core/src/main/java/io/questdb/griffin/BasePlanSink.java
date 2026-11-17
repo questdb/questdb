@@ -81,6 +81,11 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
+    public RecordMetadata getMetadata() {
+        return metadata;
+    }
+
+    @Override
     public int getOrder() {
         return order;
     }

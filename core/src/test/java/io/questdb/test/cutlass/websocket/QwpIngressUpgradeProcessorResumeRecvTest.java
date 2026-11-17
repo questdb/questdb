@@ -24,6 +24,8 @@
 
 package io.questdb.test.cutlass.websocket;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
@@ -76,6 +78,157 @@ public class QwpIngressUpgradeProcessorResumeRecvTest extends AbstractCairoTest 
     private static final byte[] DEFAULT_MASK_KEY = {0x12, 0x34, 0x56, 0x78};
     private static final int RECV_BUFFER_SIZE = 1024;
     private static final int SEND_BUFFER_SIZE = 256;
+
+    @Test
+    public void testBoundaryFailureResumesPrefixAckBeforeErrorWithoutAppendingTail() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_c (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_c")
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        if ("boundary_b".equals(token.getTableName())) {
+                            throw CairoException.authorization().put("refused boundary prefix");
+                        }
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("prefix ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getHighestProcessedSequence());
+                    Assert.assertEquals(1, state.getDeferredErrorSequence());
+                    Assert.assertTrue(state.hasUnresolvedSequence());
+                    Assert.assertEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                    Assert.assertEquals(0, Unsafe.getLong(send + 3));
+                }
+                processor.resumeSend(context);
+                Assert.assertTrue("resume drains the parked ACK before writing the error", context.resumeResponseSendCalled);
+                Assert.assertEquals(2, socket.sendCallCount);
+                Assert.assertNotEquals(QwpConstants.STATUS_OK, Unsafe.getByte(send + 2));
+                Assert.assertEquals(1, Unsafe.getLong(send + 3));
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals("no repeated error or frame processing on resume", 2, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n");
+            assertQuery("SELECT v FROM boundary_c").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    /**
+     * A client CLOSE behind a commit batch: the batch commits before the CLOSE is
+     * handled, the commit fails, and its NACK hits backpressure. The CLOSE must still
+     * be in the receive buffer, unconsumed and masked, so the resume pass answers it.
+     */
+    @Test
+    public void testClientCloseBehindFailedBatchCommitIsHandledAfterBlockedNack() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] close = createMaskedFrame(WebSocketOpcode.CLOSE, new byte[]{0x03, (byte) 0xE8});
+            byte[] wire = QwpIngressWireHarness.concat(QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"), close);
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                state.of(-1, new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeInsert(TableToken token) {
+                        throw CairoException.authorization().put("refused batch commit");
+                    }
+                });
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("the batch's NACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals(0, state.getDeferredErrorSequence());
+                    Assert.assertEquals("the CLOSE must stay buffered behind the blocked NACK", close.length, state.getRecvBufferLen());
+                }
+                try {
+                    processor.resumeSend(context);
+                    Assert.fail("the buffered CLOSE must be handled after the parked NACK");
+                } catch (ServerDisconnectException expected) {
+                    // handleClose completes the handshake and tears the connection down
+                }
+                Assert.assertEquals("the parked NACK, then the CLOSE response", 2, socket.sendCallCount);
+                Assert.assertEquals("the last frame sent is a CLOSE", (byte) 0x88, Unsafe.getByte(send));
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n");
+        });
+    }
+
+    @Test
+    public void testBoundarySuccessConsumesStandaloneFrameBeforeBlockedAck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary_a (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE boundary_b (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            HttpFullFatServerConfiguration config = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, config);
+            byte[] wire = QwpIngressWireHarness.concat(
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_a"),
+                    QwpIngressWireHarness.clientEncodedFrame(1, "boundary_b", "boundary_b")
+            );
+            MockNetworkFacade nf = new MockNetworkFacade(wire);
+            long recv = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long send = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            MockRawSocket socket = new MockRawSocket(send, SEND_BUFFER_SIZE);
+            socket.throwSlowToReadOnCall = 1;
+            try (TestableContext context = new TestableContext(config, nf, socket, recv, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = setupState(config, context);
+                try {
+                    processor.resumeRecv(context);
+                    Assert.fail("ACK must encounter injected backpressure");
+                } catch (PeerIsSlowToReadException expected) {
+                    Assert.assertEquals("both frames must finish before any send", 1, state.getHighestProcessedSequence());
+                }
+                processor.resumeSend(context);
+                try {
+                    processor.resumeRecv(context);
+                } catch (ServerDisconnectException expected) {
+                    // MockNetworkFacade returns EOF after its input is exhausted.
+                }
+                Assert.assertEquals(1, socket.sendCallCount);
+            } finally {
+                Unsafe.free(recv, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(send, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+            drainWalQueue();
+            assertQuery("SELECT v FROM boundary_a").noLeakCheck().expectSize().returns("v\n1\n");
+            assertQuery("SELECT v FROM boundary_b").noLeakCheck().expectSize().returns("v\n1\n1\n");
+        });
+    }
 
     @Test
     public void testAckBlocked() throws Exception {

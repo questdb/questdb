@@ -248,6 +248,33 @@ public class StringTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public void o3ColumnMergeWithTop(
+            long timestampMergeIndexAddr,
+            long timestampMergeIndexCount,
+            long srcDataTop,
+            long srcAuxAddr1,
+            long srcDataAddr1,
+            long srcAuxAddr2,
+            long srcDataAddr2,
+            long dstAuxAddr,
+            long dstDataAddr,
+            long dstDataOffset
+    ) {
+        Vect.oooMergeCopyStrColumnWithTop(
+                timestampMergeIndexAddr,
+                timestampMergeIndexCount,
+                srcDataTop,
+                srcAuxAddr1,
+                srcDataAddr1,
+                srcAuxAddr2,
+                srcDataAddr2,
+                dstAuxAddr,
+                dstDataAddr,
+                dstDataOffset
+        );
+    }
+
+    @Override
     public void o3copyAuxVector(
             FilesFacade ff,
             long srcAddr,
@@ -327,9 +354,29 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
+            // Crash-consistency guard, as in VarcharTypeDriver: offsets are monotonic, so an end below the
+            // start means the aux tail is torn, and the open fails rather than move the data cursor back over
+            // committed rows. The O(1) check does not catch a whole unflushed aux page.
+            // Read aux[pos-1] first, while its page is mapped, since the paged aux memory would otherwise
+            // touch an unmapped page whenever pos<<SHL lands on a page boundary.
+            long prevPos = -1;
+            if (pos > 1) {
+                auxMem.jumpTo((pos - 1) << LEGACY_VAR_SIZE_AUX_SHL);
+                prevPos = Unsafe.getLong(auxMem.getAppendAddress());
+            }
+
             // Jump to the number of records written to read length of var column correctly
             auxMem.jumpTo(pos << LEGACY_VAR_SIZE_AUX_SHL);
             long m1pos = Unsafe.getLong(auxMem.getAppendAddress());
+
+            if (prevPos != -1 && m1pos < prevPos) {
+                throw CairoException.critical(0)
+                        .put("string aux vector is damaged, possible torn write on the last entry [pos=").put(pos)
+                        .put(", dataEnd=").put(m1pos)
+                        .put(", prevDataEnd=").put(prevPos)
+                        .put(']');
+            }
+
             // Jump to the end of file to correctly trim the file
             auxMem.jumpTo((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);
             long dataSizeBytes = m1pos + ((pos + 1) << LEGACY_VAR_SIZE_AUX_SHL);

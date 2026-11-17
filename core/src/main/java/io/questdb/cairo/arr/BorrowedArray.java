@@ -40,12 +40,15 @@ public class BorrowedArray extends MutableArray implements Mutable {
     }
 
     /**
-     * Resets to an invalid array.
+     * Resets to an invalid array, flat view included. {@link #ofNull()} relies on that: a column reuses one
+     * instance for all its rows, and {@link #arrayEquals(ArrayView)} compares the flat view lengths of two NULLs.
      */
     @Override
     public void clear() {
         this.type = ColumnType.UNDEFINED;
         borrowedFlatView().reset();
+        flatViewLength = 0;
+        flatViewOffset = 0;
         shape.clear();
         strides.clear();
     }

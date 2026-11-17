@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterSegmentCopyInfo;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
@@ -37,6 +38,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -261,10 +263,38 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testDedupTimestampOnly() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(null);
+            assertDedupTimestampOnly(rnd, rnd.nextInt(100_000), false);
+        });
+    }
+
+    @Test
+    public void testDedupTimestampOnlyBoundaries() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = new Rnd(1, 2);
+            for (boolean isSkipMode : new boolean[]{false, true}) {
+                assertDedupTimestampOnly(rnd, 0, isSkipMode);
+                assertDedupTimestampOnly(rnd, 1, isSkipMode);
+                assertDedupTimestampOnly(rnd, 2, isSkipMode);
+            }
+        });
+    }
+
+    @Test
+    public void testDedupTimestampOnlySkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(null);
+            assertDedupTimestampOnly(rnd, rnd.nextInt(100_000), true);
+        });
+    }
+
+    @Test
     public void testDedupWithKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(null);
-            assertDedupWithKey(rnd, rnd.nextInt(100_000));
+            assertDedupWithKey(rnd, rnd.nextInt(100_000), false);
         });
     }
 
@@ -272,9 +302,19 @@ public class VectFuzzTest {
     public void testDedupWithKeyBoundaries() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd rnd = new Rnd(1, 2);
-            assertDedupWithKey(rnd, 0);
-            assertDedupWithKey(rnd, 1);
-            assertDedupWithKey(rnd, 2);
+            for (boolean isSkipMode : new boolean[]{false, true}) {
+                assertDedupWithKey(rnd, 0, isSkipMode);
+                assertDedupWithKey(rnd, 1, isSkipMode);
+                assertDedupWithKey(rnd, 2, isSkipMode);
+            }
+        });
+    }
+
+    @Test
+    public void testDedupWithKeySkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(null);
+            assertDedupWithKey(rnd, rnd.nextInt(100_000), true);
         });
     }
 
@@ -344,6 +384,30 @@ public class VectFuzzTest {
     }
 
     @Test
+    public void testMergeDedupColumnTopKeyNullValueAlignment() throws Exception {
+        // Two existing rows of the merge sit in the column top of a dedup key, so the merge compares the
+        // null value that dedup_column holds for the key. dedup_column is a packed record, and the null
+        // value is 16-byte aligned in some records and not in others. The test places the records at both
+        // 8-byte offsets mod 16, with the key in either slot, so that every key width meets a misaligned
+        // null value in the single-key merge and in the multi-key merge. A read of the null value that
+        // assumes alignment crashes here only if the compiler emits aligned loads for it, as GCC 16 does
+        // for 32-byte keys; dedup_tests in core/src/test/c/dedup catches the read with any compiler.
+        TestUtils.assertMemoryLeak(() -> {
+            final int[] keyTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.UUID, ColumnType.LONG256};
+            for (int keyType : keyTypes) {
+                for (int keyCount = 1; keyCount < 3; keyCount++) {
+                    for (int keySlot = 0; keySlot < keyCount; keySlot++) {
+                        for (int recordShift = 0; recordShift < 16; recordShift += 8) {
+                            assertMergeDedupColumnTopKey(keyType, keyCount, keySlot, recordShift, false);
+                            assertMergeDedupColumnTopKey(keyType, keyCount, keySlot, recordShift, true);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMergeDedupIndex() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int srcLen = 10;
@@ -371,7 +435,8 @@ public class VectFuzzTest {
                                 index.getAddress(),
                                 0,
                                 indexLen - 1,
-                                dest.getAddress()
+                                dest.getAddress(),
+                                false
                         );
                         dest.setPos(mergedCount * 2);
                         Assert.assertEquals("10 0:i, 20 1:s, 30 1:i, 40 3:s, 50 2:i, 60 5:s, 70 3:i, 80 7:s, 90 4:i, 100 9:s, 110 5:i, 130 6:i, 150 7:i, 170 8:i, 190 9:i", printMergeIndex(dest));
@@ -405,7 +470,8 @@ public class VectFuzzTest {
                                 index.getAddress(),
                                 0,
                                 indexLen - 1,
-                                dest.getAddress()
+                                dest.getAddress(),
+                                false
                         );
                         dest.setPos(mergedCount * 2);
                         Assert.assertEquals("10 0:s, 20 1:s, 30 2:s, 40 3:s, 50 4:s, 60 5:s, 70 6:s, 80 7:s, 90 8:s, 100 9:s", printMergeIndex(dest));
@@ -448,7 +514,8 @@ public class VectFuzzTest {
                                 index.getAddress(),
                                 0,
                                 indexLen - 1,
-                                dest.getAddress()
+                                dest.getAddress(),
+                                false
                         );
                         // Assert no dups found
                         Assert.assertEquals(srcLen + indexLen, mergedCount);
@@ -509,10 +576,91 @@ public class VectFuzzTest {
                                 index.getAddress(),
                                 0,
                                 indexLen - 1,
-                                dest.getAddress()
+                                dest.getAddress(),
+                                false
                         );
                         dest.setPos(mergedCount * 2);
                         Assert.assertEquals("0 0:s, 20 1:s, 20 2:s, 40 0:i, 40 0:i, 60 1:i, 60 1:i, 80 2:i, 80 2:i, 100 3:i, 120 4:i", printMergeIndex(dest));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeDedupIndexRepeatedSkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int srcLen = 10;
+            try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+                int indexLen = 5;
+                try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                    try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+                        src.setPos(srcLen);
+                        for (int i = 0; i < srcLen; i++) {
+                            src.set(i, (i + 1) / 2 * 2 * 10);
+                        }
+                        Assert.assertEquals("[0, 20, 20, 40, 40, 60, 60, 80, 80, 100]", src.toString());
+
+                        index.setPos(indexLen * 2);
+                        for (int i = 0; i < indexLen * 2; i += 2) {
+                            index.set(i, (4 + i / 2 * 2) * 10);
+                            index.set(i + 1, i / 2);
+                        }
+                        Assert.assertEquals("[40, 0, 60, 1, 80, 2, 100, 3, 120, 4]", index.toString());
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                                src.getAddress(),
+                                0,
+                                srcLen - 1,
+                                index.getAddress(),
+                                0,
+                                indexLen - 1,
+                                dest.getAddress(),
+                                true
+                        );
+                        dest.setPos(mergedCount * 2);
+                        // all existing rows stay, including the pre-existing duplicates, only the new row at 120 is added
+                        Assert.assertEquals("0 0:s, 20 1:s, 20 2:s, 40 3:s, 40 4:s, 60 5:s, 60 6:s, 80 7:s, 80 8:s, 100 9:s, 120 4:i", printMergeIndex(dest));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeDedupIndexSkip() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            int srcLen = 10;
+            try (DirectLongList src = new DirectLongList(srcLen, MemoryTag.NATIVE_DEFAULT)) {
+                int indexLen = 10;
+                try (DirectLongList index = new DirectLongList(indexLen * 2, MemoryTag.NATIVE_DEFAULT)) {
+                    try (DirectLongList dest = new DirectLongList((srcLen + indexLen) * 2, MemoryTag.NATIVE_DEFAULT)) {
+                        src.setPos(srcLen);
+                        for (int i = 0; i < srcLen; i++) {
+                            src.set(i, (i + 1) * 10);
+                        }
+                        Assert.assertEquals("[10, 20, 30, 40, 50, 60, 70, 80, 90, 100]", src.toString());
+
+                        index.setPos(indexLen * 2);
+                        for (int i = 0; i < indexLen * 2; i += 2) {
+                            index.set(i, (i + 1) * 10L);
+                            index.set(i + 1, i / 2);
+                        }
+                        Assert.assertEquals("[10, 0, 30, 1, 50, 2, 70, 3, 90, 4, 110, 5, 130, 6, 150, 7, 170, 8, 190, 9]", index.toString());
+
+                        long mergedCount = Vect.mergeDedupTimestampWithLongIndexAsc(
+                                src.getAddress(),
+                                0,
+                                srcLen - 1,
+                                index.getAddress(),
+                                0,
+                                indexLen - 1,
+                                dest.getAddress(),
+                                true
+                        );
+                        dest.setPos(mergedCount * 2);
+                        // the existing rows at 10, 30, 50, 70 and 90 stay, the new rows with the same timestamps are dropped
+                        Assert.assertEquals("10 0:s, 20 1:s, 30 2:s, 40 3:s, 50 4:s, 60 5:s, 70 6:s, 80 7:s, 90 8:s, 100 9:s, 110 5:i, 130 6:i, 150 7:i, 170 8:i, 190 9:i", printMergeIndex(dest));
                     }
                 }
             }
@@ -577,10 +725,30 @@ public class VectFuzzTest {
                                     index.size() / 2 - 1,
                                     dest.getAddress(),
                                     1,
-                                    DedupColumnCommitAddresses.getAddress(address)
+                                    DedupColumnCommitAddresses.getAddress(address),
+                                    false
                             );
                             dest.setPos(mergedCount * 2);
                             Assert.assertEquals("10 0:s, 10 0:i, 20 1:i, 20 1:i, 30 3:s, 30 2:i, 40 3:i, 40 5:s, 50 6:s", printMergeIndex(dest));
+
+                            dest.setPos(index.size() + src.size() * 2);
+                            mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                                    src.getAddress(),
+                                    0,
+                                    src.size() - 1,
+                                    index.getAddress(),
+                                    0,
+                                    index.size() / 2 - 1,
+                                    dest.getAddress(),
+                                    1,
+                                    DedupColumnCommitAddresses.getAddress(address),
+                                    true
+                            );
+                            dest.setPos(mergedCount * 2);
+                            // SKIP: the existing rows that match a new row on (ts, key), 20:0 (twice) and 40:0,
+                            // stay and the matching new rows are dropped; the new rows 10:0 and 30:0 have no
+                            // existing match and are added
+                            Assert.assertEquals("10 0:s, 10 0:i, 20 1:s, 20 2:s, 30 3:s, 30 2:i, 40 4:s, 40 5:s, 50 6:s", printMergeIndex(dest));
                         }
                     }
                 }
@@ -653,7 +821,8 @@ public class VectFuzzTest {
                                 index.size() / 2 - 1,
                                 dest.getAddress(),
                                 1,
-                                DedupColumnCommitAddresses.getAddress(block)
+                                DedupColumnCommitAddresses.getAddress(block),
+                                false
                         );
 
                         // Timestamps collide and the STRING keys are equal, so the O3 row (index 0)
@@ -1688,6 +1857,85 @@ public class VectFuzzTest {
         });
     }
 
+    private static void assertMergeDedupColumnTopKey(int keyType, int keyCount, int keySlot, int recordShift, boolean isSkipMode) {
+        final int keySize = ColumnType.sizeOf(keyType);
+        try (
+                // dedup_column records of up to 2 keys, with room to shift them by up to 16 bytes
+                DirectLongList records = new DirectLongList(128, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList src = new DirectLongList(4, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList keyData = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList index = new DirectLongList(8, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList keyO3 = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList otherKeyData = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList otherKeyO3 = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList dest = new DirectLongList(16, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            // existing rows: ts 10, 20, 20, 30; rows 0 and 1 are in the column top of the key, rows 2 and 3 hold key 1
+            src.add(10);
+            src.add(20);
+            src.add(20);
+            src.add(30);
+            TableUtils.setNull(keyType, keyData.getAddress(), 4);
+            putDedupKey(keySize, keyData.getAddress(), 2, 1);
+            putDedupKey(keySize, keyData.getAddress(), 3, 1);
+
+            // new rows, sorted by timestamp and key: 15; 20 with a null key; 20 with key 1; 20 with key 2
+            index.add(15);
+            index.add(0);
+            index.add(20);
+            index.add(1);
+            index.add(20);
+            index.add(2);
+            index.add(20);
+            index.add(3);
+            TableUtils.setNull(keyType, keyO3.getAddress(), 4);
+            putDedupKey(keySize, keyO3.getAddress(), 2, 1);
+            putDedupKey(keySize, keyO3.getAddress(), 3, 2);
+
+            // the other key is equal on all rows, so the multi-key merge compares the column-top key in either slot
+            otherKeyData.add(Numbers.encodeLowHighInts(7, 7));
+            otherKeyData.add(Numbers.encodeLowHighInts(7, 7));
+            otherKeyO3.add(Numbers.encodeLowHighInts(7, 7));
+            otherKeyO3.add(Numbers.encodeLowHighInts(7, 7));
+
+            Vect.memset(records.getAddress(), records.getCapacity() * Long.BYTES, 0);
+            final long recordsAddr = ((records.getAddress() + 15) & ~15L) + recordShift;
+            if (keyCount == 2) {
+                final long otherKeyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, 1 - keySlot, ColumnType.INT, Integer.BYTES, 0);
+                DedupColumnCommitAddresses.setColAddressValues(otherKeyAddr, otherKeyData.getAddress());
+                DedupColumnCommitAddresses.setO3DataAddressValues(otherKeyAddr, otherKeyO3.getAddress());
+            }
+            final long keyAddr = DedupColumnCommitAddresses.setColValues(recordsAddr, keySlot, keyType, keySize, 2);
+            DedupColumnCommitAddresses.setColAddressValues(keyAddr, keyData.getAddress());
+            DedupColumnCommitAddresses.setO3DataAddressValues(keyAddr, keyO3.getAddress());
+
+            dest.setPos(dest.getCapacity());
+            final long mergedCount = Vect.mergeDedupTimestampWithLongIndexIntKeys(
+                    src.getAddress(),
+                    0,
+                    src.size() - 1,
+                    index.getAddress(),
+                    0,
+                    index.size() / 2 - 1,
+                    dest.getAddress(),
+                    keyCount,
+                    recordsAddr,
+                    isSkipMode
+            );
+            dest.setPos(mergedCount * 2);
+            // existing row 1 matches new row 1 on the null key and existing row 2 matches new row 2 on key 1:
+            // UPSERT takes the new rows, SKIP keeps the existing ones
+            Assert.assertEquals(
+                    ColumnType.nameOf(keyType) + " key, keyCount=" + keyCount + ", keySlot=" + keySlot
+                            + ", recordShift=" + recordShift + ", isSkipMode=" + isSkipMode,
+                    isSkipMode
+                            ? "10 0:s, 15 0:i, 20 1:s, 20 2:s, 20 3:i, 30 3:s"
+                            : "10 0:s, 15 0:i, 20 1:i, 20 2:i, 20 3:i, 30 3:s",
+                    printMergeIndex(dest)
+            );
+        }
+    }
+
     private static long getIndexChecked(DirectLongList keyList, long p) {
         Assert.assertTrue("key index not in expected range", p >= 0 && p < keyList.size());
         return keyList.get(p);
@@ -1707,7 +1955,60 @@ public class VectFuzzTest {
         return sink.toString();
     }
 
-    private void assertDedupWithKey(Rnd rnd, int indexLen) {
+    private static void putDedupKey(int keySize, long keysAddr, int row, int value) {
+        final long keyAddr = keysAddr + (long) row * keySize;
+        Vect.memset(keyAddr, keySize, 0);
+        switch (keySize) {
+            case Byte.BYTES -> Unsafe.putByte(keyAddr, (byte) value);
+            case Short.BYTES -> Unsafe.putShort(keyAddr, (short) value);
+            case Integer.BYTES -> Unsafe.putInt(keyAddr, value);
+            // the low 8 bytes of a wider key
+            default -> Unsafe.putLong(keyAddr, value);
+        }
+    }
+
+    private void assertDedupTimestampOnly(Rnd rnd, int indexLen, boolean isSkipMode) {
+        try (
+                DirectLongList index = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT);
+                DirectLongList copy = new DirectLongList(indexLen * 2L, MemoryTag.NATIVE_DEFAULT)
+        ) {
+            // Row ids are assigned in commit order. Rows with the same timestamp are duplicates:
+            // UPSERT keeps the last of them, SKIP keeps the first.
+            LongList expected = new LongList();
+            long tsVal = 1000;
+            for (int i = 0; i < indexLen; i++) {
+                if (i > 0 && rnd.nextDouble() < 0.3) {
+                    tsVal += 1 + rnd.nextInt(50);
+                }
+                index.add(tsVal);
+                index.add(i);
+                int last = expected.size() - 2;
+                if (last < 0 || expected.getQuick(last) != tsVal) {
+                    expected.add(tsVal, i);
+                } else if (!isSkipMode) {
+                    expected.setQuick(last + 1, i);
+                }
+            }
+            copy.setPos(indexLen * 2L);
+
+            long dedupCount = Vect.dedupSortedTimestampIndexIntKeysChecked(
+                    index.getAddress(),
+                    indexLen,
+                    index.getAddress(),
+                    copy.getAddress(),
+                    0,
+                    0,
+                    isSkipMode
+            );
+            Assert.assertEquals(expected.size() / 2, dedupCount);
+            for (int i = 0; i < dedupCount; i++) {
+                Assert.assertEquals("timestamp at " + i, expected.getQuick(2 * i), getIndexChecked(index, 2L * i));
+                Assert.assertEquals("row id at " + i, expected.getQuick(2 * i + 1), getIndexChecked(index, 2L * i + 1));
+            }
+        }
+    }
+
+    private void assertDedupWithKey(Rnd rnd, int indexLen, boolean isSkipMode) {
         int keyCount = 1 + rnd.nextInt(3);
         assert keyCount > 0 && keyCount < 5;
 
@@ -1720,6 +2021,9 @@ public class VectFuzzTest {
             }
 
             LongHashSet distinctKeys = new LongHashSet();
+            // Row ids are assigned in commit order. Rows with the same timestamp and keys are duplicates:
+            // UPSERT keeps the last of them, SKIP keeps the first.
+            LongIntHashMap expectedRowByTsAndKey = new LongIntHashMap();
             LongList tsAndKey = new LongList();
 
             // Generate data
@@ -1739,7 +2043,11 @@ public class VectFuzzTest {
                     combinedKey = combinedKey << 8;
                     combinedKey += keyVal;
                 }
-                distinctKeys.add(Numbers.encodeLowHighInts(tsVal, combinedKey));
+                long distinctKey = Numbers.encodeLowHighInts(tsVal, combinedKey);
+                distinctKeys.add(distinctKey);
+                if (!isSkipMode || expectedRowByTsAndKey.excludes(distinctKey)) {
+                    expectedRowByTsAndKey.put(distinctKey, i);
+                }
                 tsAndKey.add(Numbers.encodeLowHighInts(combinedKey, tsVal));
             }
 
@@ -1794,7 +2102,8 @@ public class VectFuzzTest {
                             index.getAddress(),
                             copy.getAddress(),
                             keyCount,
-                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr)
+                            DedupColumnCommitAddresses.getAddress(dedupColBuffPtr),
+                            isSkipMode
                     );
                     if (distinctKeys.size() == indexLen && dedupCount == -2) {
                         // No duplicates detected and that's correct. Assert that index is not messed up.
@@ -1833,6 +2142,11 @@ public class VectFuzzTest {
                         }
 
                         Assert.assertEquals(expectedCombinedKey, combinedKey);
+                        Assert.assertEquals(
+                                "unexpected row kept for a duplicate group",
+                                expectedRowByTsAndKey.get(Numbers.encodeLowHighInts(Numbers.decodeHighInt(expectedValue), combinedKey)),
+                                rowIndex
+                        );
                     }
                 }
             }

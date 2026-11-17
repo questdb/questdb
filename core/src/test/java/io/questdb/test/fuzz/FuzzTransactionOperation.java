@@ -25,12 +25,34 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.std.LongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 
 public interface FuzzTransactionOperation extends QuietCloseable {
+
+    /**
+     * Formats a SQL WHERE condition, without the WHERE keyword, that selects
+     * partitions in the day before <code>cutoffTimestamp</code>, the timestamp
+     * being in the table's native unit.
+     */
+    static String partitionDayBeforeFilter(RecordMetadata metadata, long cutoffTimestamp) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getTimestampType());
+        final String tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+        final StringSink sink = new StringSink();
+        sink.put(tsColumnName).put(" > '");
+        driver.append(sink, cutoffTimestamp - driver.fromDays(1));
+        sink.put("' AND ").put(tsColumnName).put(" < '");
+        driver.append(sink, cutoffTimestamp);
+        sink.put('\'');
+        return sink.toString();
+    }
+
     boolean apply(Rnd rnd, CairoEngine engine, TableWriterAPI tableWriter, int virtualTimestampIndex, LongList excludedTsIntervals);
 
     default void close() {

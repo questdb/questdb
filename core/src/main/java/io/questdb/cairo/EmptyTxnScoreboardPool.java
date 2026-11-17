@@ -77,6 +77,11 @@ public class EmptyTxnScoreboardPool implements TxnScoreboardPool {
             }
 
             @Override
+            public int scanRangeHolders(long fromTxn, long toTxn) {
+                return RANGE_FREE;
+            }
+
+            @Override
             public boolean isTxnAvailable(long txn) {
                 return true;
             }

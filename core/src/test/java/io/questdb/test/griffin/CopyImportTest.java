@@ -482,6 +482,29 @@ public class CopyImportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCopyIntoNewTableIsNonWal() throws Exception {
+        CopyRunnable stmt = () -> runAndFetchCopyID(
+                "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +
+                        "format 'yyyy-MM-ddTHH:mm:ss.SSSUUUZ' partition by MONTH on error ABORT;",
+                sqlExecutionContext
+        );
+
+        // Parallel COPY attaches partitions outside the WAL, so the target must be non-WAL even when
+        // cairo.wal.enabled.default is on. Otherwise replication registers the table and ships none of
+        // the imported rows. tables() reads _meta, verifyTableName() reads the registry: both must agree.
+        CopyRunnable test = () -> {
+            Assert.assertFalse(engine.verifyTableName("x").isWal());
+            assertQuery("SELECT walEnabled FROM tables() WHERE table_name = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("walEnabled\nfalse\n");
+            assertQuotesTableContent();
+        };
+
+        testCopy(stmt, test);
+    }
+
+    @Test
     public void testParallelCopyIntoNewTableNoTsFormat() throws Exception {
         CopyRunnable stmt = () -> runAndFetchCopyID(
                 "copy x from 'test-quotes-big.csv' with header true timestamp 'ts' delimiter ',' " +

@@ -120,6 +120,9 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     private static final int SEND_BUFFER_SIZE = 131_072;
     private static final String TABLE_NAME = "qwp_oracle_fuzz";
     private static final String TS_COLUMN = "ts";
+    // Replays carry the same column values as the original rows, so UPSERT and SKIP
+    // collapse them into the same table content.
+    private String dedupMode;
     private int recvChunk;
     private int sendChunk;
 
@@ -134,8 +137,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // the buffer is effectively no fragmentation.
         recvChunk = 1 + rnd.nextInt(RECV_BUFFER_SIZE);
         sendChunk = 1 + rnd.nextInt(SEND_BUFFER_SIZE);
+        dedupMode = rnd.nextBoolean() ? "SKIP" : "UPSERT";
         LOG.info().$("QwpIngressOracleFuzzTest fragmentation recvChunk=").$(recvChunk)
-                .$(", sendChunk=").$(sendChunk).$();
+                .$(", sendChunk=").$(sendChunk)
+                .$(", dedupMode=").$(dedupMode).$();
     }
 
     @Test
@@ -907,9 +912,11 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
      * protocol switch in {@code resumeSend} after the framework's park-on-write
      * resumes the residual flush.
      * <p>
-     * Both the master {@link Rnd} seed AND the fragmentation chunks are pinned so
-     * this regression case is bit-for-bit reproducible -- changing the chunks back
-     * to wide (or symmetric) values would mask the bug. The asymmetry
+     * The test pins the fragmentation chunks and takes the master {@link Rnd} from
+     * {@link TestUtils#generateRandom}, so each run varies the producer, row and
+     * bounce counts but always exercises the fragmented 101 response; the logged
+     * seeds reproduce a failing run. Changing the chunks back to wide (or
+     * symmetric) values would mask the bug. The asymmetry
      * ({@code recvChunk=460}, {@code sendChunk=125}) is the load-bearing detail:
      * symmetric fragmentation at the same chunk doesn't always hit the second-send
      * branch.
@@ -920,8 +927,10 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         // setUp() so the random pick can't mask the regression.
         final int regressionRecvChunk = 460;
         final int regressionSendChunk = 125;
+        // Frozen like the chunks, the dedup mode keeps the regression bit-for-bit reproducible.
+        dedupMode = "UPSERT";
         assertMemoryLeak(() -> {
-            Rnd master = TestUtils.generateRandom(LOG, 1951343273690333L, 1779330804963L);
+            Rnd master = TestUtils.generateRandom(LOG);
             createTargetTable();
             int port = RestartableQwpServer.pickFreePort();
 
@@ -1562,7 +1571,7 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
                             + "dec256 DECIMAL(50,6), "
                             + "ts TIMESTAMP"
                             + ") TIMESTAMP(ts) PARTITION BY DAY WAL "
-                            + "DEDUP UPSERT KEYS(ts, id)"
+                            + "DEDUP " + dedupMode + " KEYS(ts, id)"
             );
         } catch (Exception e) {
             throw new AssertionError("failed to create target table", e);

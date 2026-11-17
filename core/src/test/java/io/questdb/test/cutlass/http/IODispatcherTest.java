@@ -6117,8 +6117,8 @@ public class IODispatcherTest extends AbstractTest {
                             Host: localhost:9001\r
                             \r
                             """, "HTTP/1.1 301 Moved Permanently\r\n" + responseHeaders + """
+                            Content-Length: 0\r
                             Location: /index.html?test=1\r
-                            \r
                             \r
                             """);
                     client.execute("""

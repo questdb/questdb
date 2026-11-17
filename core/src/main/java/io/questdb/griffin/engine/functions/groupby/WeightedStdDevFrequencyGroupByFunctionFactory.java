@@ -56,7 +56,7 @@ public class WeightedStdDevFrequencyGroupByFunctionFactory implements FunctionFa
         return new WeightedStdDevFrequencyGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class WeightedStdDevFrequencyGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
+    static class WeightedStdDevFrequencyGroupByFunction extends AbstractWeightedStdDevGroupByFunction {
 
         public WeightedStdDevFrequencyGroupByFunction(@NotNull Function sampleArg, @NotNull Function weightArg) {
             super(sampleArg, weightArg);

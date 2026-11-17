@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlTimeoutException;
 import io.questdb.std.str.Sinkable;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -104,6 +105,18 @@ public class SqlExceptionTest extends AbstractCairoTest {
         final Object other = position.invoke(null, 23);
         Assert.assertSame(busy, other);
         Assert.assertEquals(false, isTableBusy.invoke(other));
+    }
+
+    @Test
+    public void testTimeoutResetsOnFlyweightReuse() {
+        final SqlTimeoutException first = SqlTimeoutException.timeout("first timeout");
+        first.setPosition(5);
+        first.setTableBusy(true);
+
+        final SqlTimeoutException second = SqlTimeoutException.timeout("second timeout");
+        Assert.assertSame(first, second);
+        TestUtils.assertEquals("[0] second timeout", second.getMessage());
+        Assert.assertFalse(second.isTableBusy());
     }
 
     @Test

@@ -33,6 +33,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.api.MemoryA;
@@ -78,6 +79,13 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_EXPIRE = SET_TABLE_FORMAT + 1; // 28
+    // node-local, never written to the WAL, see isForceWalBypass()
+    public final static short FORCE_REINDEX = SET_EXPIRE + 1; // 29
+    // Same as SET_DEDUP_ENABLE, but carries the dedup mode: extraInfo is [dedupMode, dedup key writer indexes...].
+    // SET_DEDUP_ENABLE, which carries only the dedup key writer indexes, implies the UPSERT mode. The builder
+    // keeps emitting SET_DEDUP_ENABLE for UPSERT so that versions predating the dedup mode can still apply it.
+    public final static short SET_DEDUP_ENABLE_WITH_MODE = FORCE_REINDEX + 1; // 30
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -94,6 +102,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     private static final long INDEX_TYPE_MASK = 0x07L;
     private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
+    // scratch list, the dedup key writer indexes of SET_DEDUP_ENABLE / SET_DEDUP_ENABLE_WITH_MODE
+    private final LongList dedupKeyColumnIndexes = new LongList();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
     // This is only used to serialize partition name in form 2020-02-12 or 2020-02 or 2020
     // to exception message using TableUtils.setSinkForPartition.
@@ -208,10 +218,11 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
-            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
+            case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL, SET_EXPIRE ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
-            case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
+            case SET_DEDUP_ENABLE, SET_DEDUP_ENABLE_WITH_MODE ->
+                    securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
                     securityContext.authorizeAlterTableConvertPartitionToParquet(tableToken);
@@ -220,6 +231,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case SET_MAT_VIEW_REFRESH_LIMIT -> securityContext.authorizeAlterMatViewSetRefreshLimit(tableToken);
             case SET_MAT_VIEW_REFRESH_TIMER, SET_MAT_VIEW_REFRESH ->
                     securityContext.authorizeAlterMatViewSetRefreshType(tableToken);
+            case FORCE_REINDEX -> securityContext.authorizeTableReindex(tableToken, getAuthColumnNames());
             default -> {
                 // DO_NOTHING, RENAME_TABLE (handled by engine directly)
             }
@@ -312,7 +324,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     @Override
     public boolean isForceWalBypass() {
-        return command == FORCE_DROP_PARTITION;
+        return command == FORCE_DROP_PARTITION || command == FORCE_REINDEX;
     }
 
     @Override
@@ -326,7 +338,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isStructural() {
         return switch (command) {
             case ADD_COLUMN, RENAME_COLUMN, DROP_COLUMN, RENAME_TABLE, SET_DEDUP_DISABLE, SET_DEDUP_ENABLE,
-                 CHANGE_COLUMN_TYPE -> true;
+                 SET_DEDUP_ENABLE_WITH_MODE, CHANGE_COLUMN_TYPE -> true;
             default -> false;
         };
     }
@@ -493,18 +505,35 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     private void applyAttachPartition(MetadataService svc) {
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
-            final long partitionTimestamp = extraInfo.getQuick(i * 2);
-            AttachDetachStatus attachDetachStatus = svc.attachPartition(partitionTimestamp);
-            if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw attachDetachStatus.getException(
-                        (int) extraInfo.getQuick(i * 2 + 1),
-                        attachDetachStatus,
-                        tableToken,
-                        svc.getTimestampType(),
-                        svc.getPartitionBy(),
-                        partitionTimestamp
-                );
+        boolean attached = false;
+        try {
+            for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+                final long partitionTimestamp = extraInfo.getQuick(i * 2);
+                final int partitionPosition = (int) extraInfo.getQuick(i * 2 + 1);
+                final AttachDetachStatus attachDetachStatus;
+                try {
+                    attachDetachStatus = svc.attachPartition(partitionTimestamp);
+                } catch (CairoException e) {
+                    // The writer does not know the SQL text; an error it throws points at the partition literal too
+                    throw e.position(partitionPosition);
+                }
+                if (AttachDetachStatus.OK != attachDetachStatus) {
+                    throw attachDetachStatus.getException(
+                            partitionPosition,
+                            attachDetachStatus,
+                            tableToken,
+                            svc.getTimestampType(),
+                            svc.getPartitionBy(),
+                            partitionTimestamp
+                    );
+                }
+                attached = true;
+            }
+        } finally {
+            // An attach consumes its .attachable directory, so no WAL replay can redo it. One durable epoch covers
+            // the whole list, including the partitions attached before a failure.
+            if (attached) {
+                svc.advanceDurableEpochAfter("attach partition");
             }
         }
     }
@@ -525,41 +554,68 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             partitionCount = extraInfo.size() / 2;
         }
 
-        for (int i = 0; i < partitionCount; i++) {
-            long partitionTimestamp = extraInfo.getQuick(i * 2);
-            final boolean result;
-            if (toParquet) {
-                result = svc.convertPartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, fpp);
-            } else {
-                result = svc.convertPartitionParquetToNative(partitionTimestamp);
+        boolean converted = false;
+        try {
+            for (int i = 0; i < partitionCount; i++) {
+                long partitionTimestamp = extraInfo.getQuick(i * 2);
+                final boolean result;
+                if (toParquet) {
+                    result = svc.convertPartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, fpp);
+                } else {
+                    result = svc.convertPartitionParquetToNative(partitionTimestamp);
+                }
+                if (!result) {
+                    throw CairoException.partitionManipulationRecoverable()
+                            .put("could not convert partition to")
+                            .put(toParquet ? "parquet" : "native")
+                            .put("[table=")
+                            .put(getTableToken().getTableName())
+                            .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
+                            .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
+                            .put(']')
+                            .position((int) extraInfo.getQuick(i * 2 + 1));
+                }
+                converted = true;
             }
-            if (!result) {
-                throw CairoException.partitionManipulationRecoverable()
-                        .put("could not convert partition to")
-                        .put(toParquet ? "parquet" : "native")
-                        .put("[table=")
-                        .put(getTableToken().getTableName())
-                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
-                        .put(", partitionBy=").put(PartitionBy.toString(svc.getPartitionBy()))
-                        .put(']')
-                        .position((int) extraInfo.getQuick(i * 2 + 1));
+        } finally {
+            // One durable epoch covers the whole list, including the partitions converted before a failure, and
+            // lets the writer remove the superseded partition directories.
+            if (converted) {
+                svc.advanceDurableEpochAfter("partition convert");
             }
         }
     }
 
     private void applyDetachPartition(MetadataService svc) {
-        for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
-            final long partitionTimestamp = extraInfo.getQuick(i * 2);
-            AttachDetachStatus attachDetachStatus = svc.detachPartition(partitionTimestamp);
-            if (AttachDetachStatus.OK != attachDetachStatus) {
-                throw attachDetachStatus.getException(
-                        (int) extraInfo.getQuick(i * 2 + 1),
-                        attachDetachStatus,
-                        tableToken,
-                        svc.getTimestampType(),
-                        svc.getPartitionBy(),
-                        partitionTimestamp
-                );
+        boolean detached = false;
+        try {
+            for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
+                final long partitionTimestamp = extraInfo.getQuick(i * 2);
+                final int partitionPosition = (int) extraInfo.getQuick(i * 2 + 1);
+                final AttachDetachStatus attachDetachStatus;
+                try {
+                    attachDetachStatus = svc.detachPartition(partitionTimestamp);
+                } catch (CairoException e) {
+                    // The writer does not know the SQL text; an error it throws points at the partition literal too
+                    throw e.position(partitionPosition);
+                }
+                if (AttachDetachStatus.OK != attachDetachStatus) {
+                    throw attachDetachStatus.getException(
+                            partitionPosition,
+                            attachDetachStatus,
+                            tableToken,
+                            svc.getTimestampType(),
+                            svc.getPartitionBy(),
+                            partitionTimestamp
+                    );
+                }
+                detached = true;
+            }
+        } finally {
+            // One durable epoch covers the whole list, including the partitions detached before a failure, and
+            // lets the writer remove the detached partition directories.
+            if (detached) {
+                svc.advanceDurableEpochAfter("detach partition");
             }
         }
     }
@@ -598,6 +654,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyDropPartitionForce(MetadataService svc) {
         svc.forceRemovePartitions(extraInfo);
+    }
+
+    private void applyForceReindex(MetadataService svc) {
+        // extraInfo: (partition timestamp, partition name position) pairs, none for every partition
+        svc.forceReindex(
+                activeExtraStrInfo.size() > 0 ? activeExtraStrInfo.getStrA(0) : null,
+                extraInfo,
+                tableNamePosition,
+                sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null
+        );
     }
 
     private void applyParamO3MaxLag(MetadataService svc) {
@@ -644,6 +710,20 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 svc.getMetadata().getColumnIndex(columnName),
                 isCacheOn
         );
+    }
+
+    private void applySetExpire(MetadataService svc) {
+        String predicate = Chars.toString(activeExtraStrInfo.getStrA(0));
+        if (predicate != null && predicate.isEmpty()) {
+            predicate = null;
+        }
+        final long cleanupIntervalMicros = extraInfo.get(0);
+        try {
+            svc.setMetaExpiry(predicate, cleanupIntervalMicros);
+        } catch (CairoException e) {
+            e.position(tableNamePosition);
+            throw e;
+        }
     }
 
     private void applyTableFormat(MetadataService svc) {
@@ -746,6 +826,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case FORCE_DROP_PARTITION:
                 applyDropPartitionForce(svc);
                 break;
+            case FORCE_REINDEX:
+                applyForceReindex(svc);
+                break;
             case ADD_INDEX:
                 applyAddIndex(svc);
                 break;
@@ -767,6 +850,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case SET_TTL:
                 applyTtl(svc);
                 break;
+            case SET_EXPIRE:
+                applySetExpire(svc);
+                break;
             case RENAME_TABLE:
                 applyRenameTable(svc);
                 break;
@@ -774,7 +860,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 squashPartitions(svc);
                 break;
             case SET_DEDUP_ENABLE:
-                keepMatViewsValid = enableDeduplication(svc);
+                keepMatViewsValid = enableDeduplication(svc, false);
+                break;
+            case SET_DEDUP_ENABLE_WITH_MODE:
+                keepMatViewsValid = enableDeduplication(svc, true);
                 break;
             case SET_DEDUP_DISABLE:
                 svc.disableDeduplication();
@@ -813,9 +902,25 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
-    private boolean enableDeduplication(MetadataService svc) {
-        assert extraInfo.size() > 0;
-        return svc.enableDeduplicationWithUpsertKeys(extraInfo);
+    private boolean enableDeduplication(MetadataService svc, boolean hasMode) {
+        // SET_DEDUP_ENABLE_WITH_MODE carries the dedup mode ahead of the dedup key writer indexes,
+        // SET_DEDUP_ENABLE carries the indexes only and implies UPSERT
+        final int keyColumnIndexesLo = hasMode ? 1 : 0;
+        if (extraInfo.size() <= keyColumnIndexesLo) {
+            throw CairoException.critical(0).put("invalid dedup enable statement, no dedup keys [table=")
+                    .put(svc.getTableToken().getTableName()).put(']');
+        }
+        final int dedupMode = hasMode ? (int) extraInfo.getQuick(0) : TableUtils.DEDUP_MODE_UPSERT;
+        if (dedupMode != TableUtils.DEDUP_MODE_UPSERT && dedupMode != TableUtils.DEDUP_MODE_SKIP) {
+            throw CairoException.critical(0).put("invalid dedup mode [table=").put(svc.getTableToken().getTableName())
+                    .put(", mode=").put(dedupMode).put(']');
+        }
+        // copy, the service is free to modify the list, e.g. sort it
+        dedupKeyColumnIndexes.clear();
+        for (int i = keyColumnIndexesLo, n = extraInfo.size(); i < n; i++) {
+            dedupKeyColumnIndexes.add(extraInfo.getQuick(i));
+        }
+        return svc.enableDeduplication(dedupKeyColumnIndexes, dedupMode);
     }
 
     private ObjList<CharSequence> getAuthColumnNames() {

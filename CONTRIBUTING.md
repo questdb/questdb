@@ -116,7 +116,9 @@ you wish to understand how our maintainers work together, you can refer to
 - Maven 3 (latest version recommended; from your package manager on Linux/macOS
   ([Homebrew](https://github.com/Homebrew/brew)) or
   [from the jar](https://maven.apache.org/install.html) for any OS)
-- C compiler, CMake — to contribute to C libraries — _OPTIONAL_
+- Rust nightly and Cargo (the pinned toolchain is core/rust/qdbr/rust-toolchain.toml)
+- A host linker/C toolchain: GCC or Clang on Linux, macOS, and FreeBSD, or MSVC on Windows
+- CMake is optional; it is needed only to rebuild the committed C/C++ native libraries from source
 
 **Note for Apple Silicon (ARM64) users:** Tests run normally, JIT tests included —
 QuestDB compiles filters with the JIT on ARM64 as well as on x86-64, so nothing is
@@ -197,10 +199,10 @@ QuestDB with a debugger attached.
 ### Compiling the native libraries
 
 QuestDB loads two native libraries: `libquestdb` (C/C++) and `libquestdbr`
-(Rust). The repository commits a prebuilt pair for every platform CI builds and
-tests, so you need this section only when you change native code, or when you
-run on a platform the repository ships no binary for, such as x86-64 (Intel)
-macOS.
+(Rust). The repository commits the prebuilt C/C++ library for every supported
+platform, while Maven builds the Rust library from source. You need the C/C++
+steps below only when you change native code or run on a platform the repository
+ships no C/C++ binary for, such as x86-64 (Intel) macOS.
 
 Compile the C/C++ library with CMake, which also needs `JAVA_HOME`. These
 commands work on Linux/macOS:
@@ -213,13 +215,22 @@ cmake --build build/release --config Release
 
 CMake writes `libquestdb` to `core/target/classes/io/questdb/bin-local/`.
 
-Maven builds `libquestdbr` only under the `build-rust-library` profile, which
-copies it to `core/target/classes/io/questdb/rust/`; add the `qdbr-release`
-profile for a release build. A bare `cargo build` in `core/rust/qdbr` leaves the
-library in `core/rust/qdbr/target/`, which is on no classpath.
+Maven builds `libquestdbr` from source by default and copies it to
+`core/target/classes/io/questdb/bin/<platform>/`; add the `qdbr-debug` profile
+for a debug build. A bare `cargo build` in `core/rust/qdbr` leaves the library
+in `core/rust/qdbr/target/`, which is on no classpath.
 
-`io.questdb.std.Os` reads both of those paths before it falls back to the
-committed platform directory. `mvn clean` deletes them.
+`io.questdb.std.Os` reads the locally built C++ library from `bin-local/` and the
+Rust library from the platform directory. `mvn clean` deletes both outputs.
+
+An IDE-only build (IntelliJ "Rebuild Project" without delegating to Maven)
+copies resources but never runs the Rust build, so every test then fails in
+`Os.<clinit>` with `Internal error: cannot find
+/io/questdb/bin/<platform>/libquestdbr.<ext>, broken package?`. Run
+`mvn -pl core compile`, or wire the `qdbr-build` target from
+`core/rust/intellij_triggers.xml` as a before-compile Ant trigger, and rebuild.
+A locally built jar carries the Rust library only for the platform it was
+built on; official release jars bundle it for every supported platform.
 
 For more details, see [CMake build instructions](core/CMAKE_README.md).
 

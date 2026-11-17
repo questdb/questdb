@@ -345,7 +345,7 @@ public class PGUtilsTest extends AbstractCairoTest {
         @Override
         public void putDirectInt(int xValue) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(ptr, xValue);
+            Unsafe.putInt(ptr, xValue);
             ptr += Integer.BYTES;
         }
 
@@ -387,13 +387,13 @@ public class PGUtilsTest extends AbstractCairoTest {
         @Override
         public void putNetworkInt(int value) {
             checkCapacity(Integer.BYTES);
-            Unsafe.getUnsafe().putInt(ptr, Numbers.bswap(value));
+            Unsafe.putInt(ptr, Numbers.bswap(value));
             ptr += Integer.BYTES;
         }
 
         @Override
         public void putNetworkInt(long address, int value) {
-            Unsafe.getUnsafe().putInt(address, Numbers.bswap(value));
+            Unsafe.putInt(address, Numbers.bswap(value));
         }
 
         @Override

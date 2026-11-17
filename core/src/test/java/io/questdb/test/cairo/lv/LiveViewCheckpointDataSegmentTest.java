@@ -284,7 +284,7 @@ public class LiveViewCheckpointDataSegmentTest extends AbstractCairoTest {
                 final long fd = ff.openRW(dataPath(path, 10).$(), 0);
                 final long address = ff.mmap(fd, page.fileLength, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
                 try {
-                    final byte value = Unsafe.getUnsafe().getByte(address);
+                    final byte value = Unsafe.getByte(address);
                     Unsafe.getUnsafe().putByte(address, (byte) (value ^ 0x7f));
                 } finally {
                     ff.munmap(address, page.fileLength, MemoryTag.MMAP_DEFAULT);

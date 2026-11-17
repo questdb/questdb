@@ -180,9 +180,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public int collectDistinctKeys(DirectBitSet foundKeys) {
-        if (genCount == 0 || keyCount == 0) {
-            return 0;
-        }
         if (entryMaxValue >= 0) {
             // The key-directory fast path can only tell that a key has encoded
             // row ids somewhere in .pv; it cannot tell whether all of them sit
@@ -190,7 +187,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // so full-partition DISTINCT observes the same clamp as cursors.
             return collectDistinctKeysInRange(foundKeys, 0, Long.MAX_VALUE);
         }
-        int newlyFound = 0;
+        int newlyFound = collectColumnTopNullKey(foundKeys, 0, Long.MAX_VALUE);
+        if (genCount == 0 || keyCount == 0) {
+            return newlyFound;
+        }
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
@@ -205,8 +205,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public int collectDistinctKeysInRange(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        // The rows below the column top read as NULL whatever the chain entry covers, as in getCursor
+        int newlyFound = collectColumnTopNullKey(foundKeys, rowLo, rowHi);
         if (genCount == 0 || keyCount == 0) {
-            return 0;
+            return newlyFound;
         }
         // Clamp rowHi to the picked chain entry's MAX_VALUE for the same
         // reason PostingIndexFwdReader#getCursor does: dirty (key, rowId)
@@ -216,9 +218,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             rowHi = entryMaxValue;
         }
         if (rowHi < rowLo) {
-            return 0;
+            return newlyFound;
         }
-        int newlyFound = 0;
         for (int g = 0; g < genCount; g++) {
             int genKeyCount = genLookup.getGenKeyCount(g);
             long genFileOffset = genLookup.getGenFileOffset(g);
@@ -1104,6 +1105,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         sidecarFileEndOffsets.clear();
     }
 
+    // The rows below the column top predate the column: they read as NULL, key 0, and hold no posting, see getCursor.
+    // Marks key 0 when [rowLo, rowHi] reaches below the top, and returns 1 when that marks it for the first time.
+    private int collectColumnTopNullKey(DirectBitSet foundKeys, long rowLo, long rowHi) {
+        return rowLo < columnTop && rowLo <= rowHi && !foundKeys.getAndSet(0) ? 1 : 0;
+    }
+
     private int collectDenseGenKeys(long genFileOffset, int genKeyCount, DirectBitSet foundKeys) {
         long genAddr = valueMem.addressOf(genFileOffset);
         int sc = PostingIndexUtils.strideCount(genKeyCount);
@@ -1184,9 +1191,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     private void mapValueMem(Path basePath, CharSequence columnName, long columnNameTxn) {
         int pLen = basePath.size();
         try {
+            LPSZ pvName = PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn);
+            if (valueMemSize > 0) {
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
-                    PostingIndexUtils.valueFileName(basePath, columnName, columnNameTxn, valueFileTxn),
+                    pvName,
                     valueMemSize,
                     valueMemSize,
                     MemoryTag.MMAP_INDEX_READER
@@ -2142,7 +2158,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                     valueFileTxn
             );
             if (!ff.exists(pcFile)) {
-                return;
+                // The writer published bytes for this slot, so the file must exist: a miss would read as NULLs.
+                // No ENOENT errno: callers treat that as a transient or dropped-file condition, and this is neither.
+                throw CairoException.critical(0)
+                        .put("covering index data is missing, rebuild the index or use the no_covering hint [file=")
+                        .put(pcFile).put(']');
             }
             // Use the chain-published end offset rather than ff.length(fd):
             // the file may be page-pre-allocated past valid data, and the

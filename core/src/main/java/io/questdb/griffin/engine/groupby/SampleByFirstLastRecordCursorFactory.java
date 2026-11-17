@@ -575,9 +575,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         frameMemory = frameMemoryPool.navigateTo(frameCount++);
                         record.switchFrame();
 
-                        // Switch to new page frame
-                        frameNextRowId = frameLo = frame.getPartitionLo();
-                        frameHi = frame.getPartitionHi();
+                        // Switch to new page frame.
+                        frameNextRowId = frameLo = frame.getIndexRowLo();
+                        frameHi = frame.getIndexRowHi();
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
                         IndexReader symbolIndexReader = frame.getIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);

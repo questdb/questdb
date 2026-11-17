@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.std.LongSort;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized flyweight long list used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -42,20 +44,68 @@ import io.questdb.std.Vect;
  */
 public class GroupByLongList {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
+    private static final int INSERTION_SORT_THRESHOLD = 47;
+    private static final int MIN_INITIAL_CAPACITY = 2;
     private static final long SIZE_OFFSET = Integer.BYTES;
     private final int initialCapacity;
+    private final long noEntryValue;
     private GroupByAllocator allocator;
     private long ptr;
 
     public GroupByLongList(int initialCapacity) {
-        this.initialCapacity = initialCapacity;
+        this(initialCapacity, 0L);
     }
 
+    public GroupByLongList(int initialCapacity, long noEntryValue) {
+        this.initialCapacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
+        this.noEntryValue = noEntryValue;
+    }
+
+    /**
+     * Returns the number of quickselect heapsort-fallback activations since class load,
+     * counted by {@link LongSort}, which runs the selection.
+     * The counter is monotonic: capture it before a selection and assert on the delta afterwards.
+     *
+     * @return count of heapsort-fallback activations
+     */
+    @TestOnly
+    public static long getHeapSortCallCountForTesting() {
+        return LongSort.getHeapSortCallCountForTesting();
+    }
+
+    /**
+     * Adds long to list;
+     *
+     * @param value to be added.
+     */
     public void add(long value) {
-        int newSize = size() + 1;
+        final int size = size();
+        final int newSize = size + 1;
         checkCapacity(newSize);
-        set(newSize - 1, value);
-        Unsafe.putInt(ptr + SIZE_OFFSET, newSize);
+        setValueAt(size, value);
+        setSize(newSize);
+    }
+
+    public long add(GroupByLongList that) {
+        return add(that, 0, that.size());
+    }
+
+    public long add(GroupByLongList that, int lo, int hi) {
+        final int thisSize = size();
+        final int thatSize = hi - lo;
+        final int finalSize = thisSize + thatSize;
+        checkCapacity(finalSize);
+        Vect.memcpy(appendAddress(), that.addressOf(lo), thatSize * 8L);
+        setSize(finalSize);
+        return ptr();
+    }
+
+    public long addressOf(int index) {
+        return ptr() + HEADER_SIZE + 8L * index;
+    }
+
+    public long appendAddress() {
+        return addressOf(size());
     }
 
     public int capacity() {
@@ -68,12 +118,14 @@ public class GroupByLongList {
         }
 
         final int oldCapacity = capacity();
-
-        long oldPtr = ptr;
         if (capacity > oldCapacity) {
             final int newCapacity = Math.max(oldCapacity << 1, capacity);
-            ptr = allocator.realloc(oldPtr, 8L * oldCapacity + HEADER_SIZE, 8L * newCapacity + HEADER_SIZE);
-            Vect.memset(ptr + HEADER_SIZE + 8L * oldCapacity, 8L * (newCapacity - oldCapacity), 0);
+            ptr = allocator.realloc(
+                    ptr,
+                    8L * oldCapacity + HEADER_SIZE,
+                    8L * newCapacity + HEADER_SIZE
+            );
+            fillNoEntryValue(ptr + HEADER_SIZE + 8L * oldCapacity, newCapacity - oldCapacity);
             Unsafe.putInt(ptr, newCapacity);
         }
     }
@@ -83,15 +135,22 @@ public class GroupByLongList {
     }
 
     public long get(long index) {
-        return Unsafe.getLong(ptr + HEADER_SIZE + 8L * index);
+        if (index < size()) {
+            return valueAt(index);
+        }
+        throw new ArrayIndexOutOfBoundsException((int) index);
+    }
+
+    public long getQuick(long index) {
+        return valueAt(index);
     }
 
     public GroupByLongList of(long ptr) {
         if (ptr == 0) {
             this.ptr = allocator.malloc(HEADER_SIZE + 8L * initialCapacity);
-            Vect.memset(this.ptr + HEADER_SIZE, 8L * initialCapacity, 0);
-            Unsafe.putInt(this.ptr, initialCapacity);
-            Unsafe.putInt(this.ptr + SIZE_OFFSET, 0);
+            fillNoEntryValue(this.ptr + HEADER_SIZE, initialCapacity);
+            setCapacity(initialCapacity);
+            setSize(0);
         } else {
             this.ptr = ptr;
         }
@@ -102,12 +161,56 @@ public class GroupByLongList {
         return ptr;
     }
 
+    /**
+     * QuickSelect algorithm to find the k-th smallest element.
+     * After this method returns, the element at index k will be in its final sorted position,
+     * and all elements before k will be less than or equal to it, and all elements after k
+     * will be greater than or equal to it.
+     * <p>
+     * This is more efficient than full sorting when only specific elements are needed.
+     * Time complexity: O(n) average case, O(n log n) worst case, see {@link LongSort}.
+     *
+     * @param lo the index of the first element, inclusive
+     * @param hi the index of the last element, inclusive
+     * @param k  the index of the element to select
+     */
+    public void quickSelect(int lo, int hi, int k) {
+        if (lo < 0 || hi >= size() || k < lo || k > hi) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
+        }
+        if (lo < hi) {
+            LongSort.quickSelect(dataPtr(), lo, hi, k);
+        }
+    }
+
+    /**
+     * Optimized QuickSelect for multiple indices.
+     * Partitions recursively only for the partitions containing required indices.
+     * This avoids unnecessary work when selecting multiple percentiles.
+     * <p>
+     * The indices array must be sorted in ascending order.
+     * After this method returns, all elements at the specified indices will be
+     * in their final sorted positions.
+     *
+     * @param lo      the index of the first element, inclusive
+     * @param hi      the index of the last element, inclusive
+     * @param indices sorted array of indices to select
+     * @param from    start index in the indices array
+     * @param to      end index (exclusive) in the indices array
+     */
+    public void quickSelectMultiple(int lo, int hi, int[] indices, int from, int to) {
+        if (lo < 0 || hi >= size()) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
+        }
+        LongSort.quickSelectMultiple(dataPtr(), lo, hi, indices, from, to);
+    }
+
     public void resetPtr() {
         ptr = 0;
     }
 
     public void set(long index, long value) {
-        Unsafe.putLong(ptr + HEADER_SIZE + 8L * index, value);
+        setValueAt(index, value);
     }
 
     public void setAllocator(GroupByAllocator allocator) {
@@ -116,5 +219,261 @@ public class GroupByLongList {
 
     public int size() {
         return ptr != 0 ? Unsafe.getInt(ptr + SIZE_OFFSET) : 0;
+    }
+
+    public void sort() {
+        int size = size();
+        if (size > 1) {
+            sort(0, size - 1, true);
+        }
+    }
+
+    public void sortAsUnsigned() {
+        Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
+    }
+
+    private void fillNoEntryValue(long address, int count) {
+        if (noEntryValue == 0) {
+            Vect.memset(address, 8L * count, 0);
+        } else {
+            for (long p = address, lim = address + 8L * count; p < lim; p += 8L) {
+                Unsafe.putLong(p, noEntryValue);
+            }
+        }
+    }
+
+    private void setCapacity(int newCapacity) {
+        Unsafe.putInt(ptr, newCapacity);
+    }
+
+    private void setSize(int newSize) {
+        Unsafe.putInt(ptr + SIZE_OFFSET, newSize);
+    }
+
+    private void setValueAt(long index, long value) {
+        Unsafe.putLong(ptr + HEADER_SIZE + 8L * index, value);
+    }
+
+    private void sort(int left, int right, boolean leftmost) {
+        int length = right - left + 1;
+
+        if (length < INSERTION_SORT_THRESHOLD) {
+            if (leftmost) {
+                for (int i = left, j = i; i < right; j = ++i) {
+                    long ai = getQuick(i + 1);
+                    while (ai < getQuick(j)) {
+                        setValueAt(j + 1, getQuick(j));
+                        if (j-- == left) {
+                            break;
+                        }
+                    }
+                    setValueAt(j + 1, ai);
+                }
+            } else {
+                do {
+                    if (left >= right) {
+                        return;
+                    }
+                } while (getQuick(++left) >= getQuick(left - 1));
+
+                for (int k = left; ++left <= right; k = ++left) {
+                    long a1 = getQuick(k), a2 = getQuick(left);
+                    if (a1 < a2) {
+                        a2 = a1;
+                        a1 = getQuick(left);
+                    }
+                    while (a1 < getQuick(--k)) {
+                        setValueAt(k + 2, getQuick(k));
+                    }
+                    setValueAt(++k + 1, a1);
+                    while (a2 < getQuick(--k)) {
+                        setValueAt(k + 1, getQuick(k));
+                    }
+                    setValueAt(k + 1, a2);
+                }
+                long last = getQuick(right);
+                while (last < getQuick(--right)) {
+                    setValueAt(right + 1, getQuick(right));
+                }
+                setValueAt(right + 1, last);
+            }
+            return;
+        }
+
+        int seventh = (length >> 3) + (length >> 6) + 1;
+
+        int e3 = (left + right) >>> 1;
+        int e2 = e3 - seventh;
+        int e1 = e2 - seventh;
+        int e4 = e3 + seventh;
+        int e5 = e4 + seventh;
+
+        if (getQuick(e2) < getQuick(e1)) {
+            swap(e2, e1);
+        }
+        if (getQuick(e3) < getQuick(e2)) {
+            long t = getQuick(e3);
+            setValueAt(e3, getQuick(e2));
+            setValueAt(e2, t);
+            if (t < getQuick(e1)) {
+                setValueAt(e2, getQuick(e1));
+                setValueAt(e1, t);
+            }
+        }
+        if (getQuick(e4) < getQuick(e3)) {
+            long t = getQuick(e4);
+            setValueAt(e4, getQuick(e3));
+            setValueAt(e3, t);
+            if (t < getQuick(e2)) {
+                setValueAt(e3, getQuick(e2));
+                setValueAt(e2, t);
+                if (t < getQuick(e1)) {
+                    setValueAt(e2, getQuick(e1));
+                    setValueAt(e1, t);
+                }
+            }
+        }
+        if (getQuick(e5) < getQuick(e4)) {
+            long t = getQuick(e5);
+            setValueAt(e5, getQuick(e4));
+            setValueAt(e4, t);
+            if (t < getQuick(e3)) {
+                setValueAt(e4, getQuick(e3));
+                setValueAt(e3, t);
+                if (t < getQuick(e2)) {
+                    setValueAt(e3, getQuick(e2));
+                    setValueAt(e2, t);
+                    if (t < getQuick(e1)) {
+                        setValueAt(e2, getQuick(e1));
+                        setValueAt(e1, t);
+                    }
+                }
+            }
+        }
+
+        int less = left;
+        int great = right;
+
+        if (getQuick(e1) != getQuick(e2) && getQuick(e2) != getQuick(e3) && getQuick(e3) != getQuick(e4) && getQuick(e4) != getQuick(e5)) {
+            long pivot1 = getQuick(e2);
+            long pivot2 = getQuick(e4);
+
+            setValueAt(e2, getQuick(left));
+            setValueAt(e4, getQuick(right));
+
+            //noinspection StatementWithEmptyBody
+            while (getQuick(++less) < pivot1) ;
+            //noinspection StatementWithEmptyBody
+            while (getQuick(--great) > pivot2) ;
+
+            outer:
+            for (int k = less - 1; ++k <= great; ) {
+                long ak = getQuick(k);
+                if (ak < pivot1) {
+                    setValueAt(k, getQuick(less));
+                    setValueAt(less, ak);
+                    ++less;
+                } else if (ak > pivot2) {
+                    while (getQuick(great) > pivot2) {
+                        if (great-- == k) {
+                            break outer;
+                        }
+                    }
+                    if (getQuick(great) < pivot1) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else {
+                        setValueAt(k, getQuick(great));
+                    }
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            setValueAt(left, getQuick(less - 1));
+            setValueAt(less - 1, pivot1);
+            setValueAt(right, getQuick(great + 1));
+            setValueAt(great + 1, pivot2);
+
+            sort(left, less - 2, leftmost);
+            sort(great + 2, right, false);
+
+            if (less < e1 && e5 < great) {
+                while (getQuick(less) == pivot1) {
+                    ++less;
+                }
+                while (getQuick(great) == pivot2) {
+                    --great;
+                }
+
+                outer:
+                for (int k = less - 1; ++k <= great; ) {
+                    long ak = getQuick(k);
+                    if (ak == pivot1) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, ak);
+                        ++less;
+                    } else if (ak == pivot2) {
+                        while (getQuick(great) == pivot2) {
+                            if (great-- == k) {
+                                break outer;
+                            }
+                        }
+                        if (getQuick(great) == pivot1) {
+                            setValueAt(k, getQuick(less));
+                            setValueAt(less, getQuick(great));
+                            ++less;
+                        } else {
+                            setValueAt(k, getQuick(great));
+                        }
+                        setValueAt(great, ak);
+                        --great;
+                    }
+                }
+            }
+
+            sort(less, great, false);
+        } else {
+            long pivot = getQuick(e3);
+
+            for (int k = less; k <= great; ++k) {
+                if (getQuick(k) == pivot) {
+                    continue;
+                }
+                long ak = getQuick(k);
+                if (ak < pivot) {
+                    setValueAt(k, getQuick(less));
+                    setValueAt(less, ak);
+                    ++less;
+                } else {
+                    while (getQuick(great) > pivot) {
+                        --great;
+                    }
+                    if (getQuick(great) < pivot) {
+                        setValueAt(k, getQuick(less));
+                        setValueAt(less, getQuick(great));
+                        ++less;
+                    } else {
+                        setValueAt(k, getQuick(great));
+                    }
+                    setValueAt(great, ak);
+                    --great;
+                }
+            }
+
+            sort(left, less - 1, leftmost);
+            sort(great + 1, right, false);
+        }
+    }
+
+    private void swap(int a, int b) {
+        long tmp = getQuick(a);
+        setValueAt(a, getQuick(b));
+        setValueAt(b, tmp);
+    }
+
+    private long valueAt(long index) {
+        return Unsafe.getLong(ptr + HEADER_SIZE + 8L * index);
     }
 }

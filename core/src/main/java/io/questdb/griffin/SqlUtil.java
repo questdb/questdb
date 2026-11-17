@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -35,6 +36,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DoubleArrayParser;
 import io.questdb.cairo.arr.VarcharArrayParser;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -49,6 +51,7 @@ import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.FiberLocal;
@@ -63,6 +66,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Uuid;
@@ -178,7 +182,17 @@ public class SqlUtil {
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) throws SqlException {
-        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, 0));
+        addSelectStar(model, queryColumnPool, expressionNodePool, 0);
+    }
+
+    // The position is where an error about the implied projection points.
+    public static void addSelectStar(
+            IQueryModel model,
+            ObjectPool<QueryColumn> queryColumnPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            int position
+    ) throws SqlException {
+        model.addBottomUpColumn(nextColumn(queryColumnPool, expressionNodePool, "*", "*", true, position));
         model.setArtificialStar(true);
     }
 
@@ -211,13 +225,51 @@ public class SqlUtil {
         throw ImplicitCastException.inconvertibleValue(value, fromColumnType, driver.getTimestampType());
     }
 
+    /**
+     * Collects the name of every table and view the query model reads into {@code outTableNames}, with
+     * {@code viewsOnly} narrowing the result to the views. Names repeat when the query names the same
+     * object more than once; a caller that needs them distinct de-duplicates on the way out.
+     * <p>
+     * The traversal reaches every model a compiled query reads: down the nested-model chain, into each
+     * join model, into the union branch, and into the sub-query hanging off any expression the model
+     * holds. That last one carries a scalar sub-query and an {@code IN (SELECT ...)} the optimiser left
+     * as a sub-query - the shapes that name a table nowhere else in the tree. A CTE needs no case of its
+     * own: the parser inlines it as a nested model wherever it is referenced
+     * ({@code SqlParser#parseSelectFrom}).
+     * <p>
+     * A sub-query is reached two ways, because one of them is only true some of the time.
+     * {@link IQueryModel#getExpressionModels()} is the parser's index of the sub-queries an expression
+     * of that model carries, and the optimiser rewrites a model's expressions - moving a WHERE clause
+     * down into a model built fresh for it - without carrying the index across, so the index of the
+     * model that ends up owning the expression can be empty. The AST walk below is what covers those:
+     * it descends the expressions themselves, where {@link ExpressionNode#queryModel} still hangs off
+     * the node that named the sub-query. The index still earns its place for a sub-query whose
+     * expression this method's field list does not name.
+     * <p>
+     * The models form a graph, not a tree. Both routes above reach a sub-query that the index lists and
+     * an expression still holds, and the LATERAL rewrite shares a model through a
+     * {@link QueryModelWrapper}. The walk unwraps each wrapper and reads each model once, so its cost
+     * grows linearly with the number of models, however deeply the query nests them.
+     * <p>
+     * Names are flyweights over the model's own tokens, so a caller that outlives the model copies them.
+     */
     public static void collectAllTableAndViewNames(
             @NotNull IQueryModel model,
             @NotNull ObjList<CharSequence> outTableNames,
             boolean viewsOnly
     ) {
-        IQueryModel m = model;
-        do {
+        final ObjList<IQueryModel> pending = new ObjList<>();
+        final ObjHashSet<IQueryModel> visited = new ObjHashSet<>();
+        pending.add(model);
+        while (pending.size() > 0) {
+            IQueryModel m = pending.popLast();
+            if (m instanceof QueryModelWrapper wrapper) {
+                m = wrapper.getDelegate();
+            }
+            if (!visited.add(m)) {
+                continue;
+            }
+
             if (!viewsOnly) {
                 final ExpressionNode tableNameExpr = m.getTableNameExpr();
                 if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL) {
@@ -230,22 +282,53 @@ public class SqlUtil {
                 outTableNames.add(unquote(viewNameExpr.token));
             }
 
+            final ObjList<ExpressionNode> expressionModels = m.getExpressionModels();
+            for (int i = 0, n = expressionModels.size(); i < n; i++) {
+                // null once the optimiser has converted the sub-query into a join; the join model
+                // below then carries the same table.
+                final IQueryModel expressionModel = expressionModels.getQuick(i).queryModel;
+                if (expressionModel != null) {
+                    pending.add(expressionModel);
+                }
+            }
+
+            // Every expression a SELECT model can hold that the grammar lets a sub-query appear in.
+            collectSubQueryModels(m.getWhereClause(), pending);
+            collectSubQueryModels(m.getPostJoinWhereClause(), pending);
+            collectSubQueryModels(m.getConstWhereClause(), pending);
+            collectSubQueryModels(m.getOuterJoinExpressionClause(), pending);
+            collectSubQueryModels(m.getJoinCriteria(), pending);
+            collectSubQueryModels(m.getLimitLo(), pending);
+            collectSubQueryModels(m.getLimitHi(), pending);
+            collectSubQueryModels(m.getJoinColumns(), pending);
+            collectSubQueryModels(m.getGroupBy(), pending);
+            collectSubQueryModels(m.getOrderBy(), pending);
+            collectSubQueryModels(m.getSampleByFill(), pending);
+            collectSubQueryModels(m.getLatestBy(), pending);
+            collectSubQueryModels(m.getUnnestExpressions(), pending);
+            // getColumns() is whichever of these two is in play, so the pair covers it at either stage
+            collectSubQueryModelsFromColumns(m.getBottomUpColumns(), pending);
+            collectSubQueryModelsFromColumns(m.getTopDownColumns(), pending);
+
             final ObjList<IQueryModel> joinModels = m.getJoinModels();
             for (int i = 0, n = joinModels.size(); i < n; i++) {
                 final IQueryModel joinModel = joinModels.getQuick(i);
                 if (joinModel == m) {
                     continue;
                 }
-                collectAllTableAndViewNames(joinModel, outTableNames, viewsOnly);
+                pending.add(joinModel);
             }
 
             final IQueryModel unionModel = m.getUnionModel();
             if (unionModel != null) {
-                collectAllTableAndViewNames(unionModel, outTableNames, viewsOnly);
+                pending.add(unionModel);
             }
 
-            m = m.getNestedModel();
-        } while (m != null);
+            final IQueryModel nestedModel = m.getNestedModel();
+            if (nestedModel != null) {
+                pending.add(nestedModel);
+            }
+        }
     }
 
     public static void collectAllTableNames(
@@ -1034,6 +1117,22 @@ public class SqlUtil {
         return compiler.generateSelectWithRetries(queryModel, null, executionContext, false);
     }
 
+    @Nullable
+    public static Function getBindVariableFunction(@Nullable BindVariableService bindVariableService, CharSequence token) {
+        if (bindVariableService == null) {
+            return null;
+        }
+        if (Chars.startsWith(token, ':')) {
+            return bindVariableService.getFunction(token);
+        }
+        try {
+            final int index = Numbers.parseInt(token, 1, token.length());
+            return index > 0 ? bindVariableService.getFunction(index - 1) : null;
+        } catch (NumericException e) {
+            return null;
+        }
+    }
+
     /**
      * Resolves a compiler-side column reference like {@link #getColumnIndexQuiet(RecordMetadata, CharSequence)},
      * throwing {@link InvalidColumnException} when the column does not exist.
@@ -1082,6 +1181,65 @@ public class SqlUtil {
     }
 
     /**
+     * Returns the validated percentile at the given logical index of a one-dimensional
+     * percentile list. The list may be a slice or sub-array of a larger array, so this
+     * method reads through the list's stride and offset rather than its backing buffer.
+     *
+     * @param percentiles   the percentile list, checked by {@link #getPercentileCount}
+     * @param index         the logical index, below {@link #getPercentileCount}
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double getPercentile(ArrayView percentiles, int index, int percentilePos) {
+        return validatePercentile(percentiles.getDouble(index * percentiles.getStride(0)), percentilePos);
+    }
+
+    /**
+     * Returns the number of percentiles in a percentile list. A NULL list fails, as a NULL
+     * percentile does in {@link #validatePercentile}. The list must be one-dimensional: the
+     * result array of the percentile functions is always one-dimensional, so flattening a
+     * deeper list would silently lose its shape.
+     *
+     * @param percentiles   the percentile list
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the number of percentiles
+     */
+    public static int getPercentileCount(ArrayView percentiles, int percentilePos) {
+        if (percentiles.isNull()) {
+            throw CairoException.nonCritical().position(percentilePos).put("percentile array must not be NULL");
+        }
+        if (percentiles.getDimCount() != 1) {
+            throw CairoException.nonCritical().position(percentilePos).put("array is not one-dimensional");
+        }
+        return percentiles.getDimLen(0);
+    }
+
+    /**
+     * Returns the index of the percentile_disc() value in a sorted list of {@code size} values.
+     * The SQL standard defines the value as the first one whose cumulative distribution reaches
+     * the percentile; the k-th value's cumulative distribution is {@code k / size}, which this
+     * method computes in double precision, as cume_dist() does. Rounding
+     * {@code percentile * size} up alone gets it wrong when the product rounds past a whole
+     * number: {@code 0.07 * 100} is 7.000000000000001, yet the 7th of 100 values already has
+     * the cumulative distribution {@code 7 / 100 == 0.07}.
+     *
+     * @param percentile the percentile, within [0, 1]
+     * @param size       the number of values, at least 1
+     * @return the 0-based index of the percentile_disc() value
+     */
+    public static long getPercentileDiscIndex(double percentile, long size) {
+        // the product carries one rounding error, which moves its ceiling by one at most
+        long k = Math.max(1, (long) Math.ceil(percentile * size));
+        while (k > 1 && (double) (k - 1) / size >= percentile) {
+            k--;
+        }
+        while (k < size && (double) k / size < percentile) {
+            k++;
+        }
+        return k - 1;
+    }
+
+    /**
      * Extracts the interval/stride expression from a timestamp_floor or
      * timestamp_floor_utc function call, handling 2/3/5-param overloads.
      */
@@ -1093,14 +1251,27 @@ public class SqlUtil {
     }
 
     /**
-     * Extracts the timestamp column expression from a timestamp_floor or
-     * timestamp_floor_utc function call, handling 2/3/5-param overloads.
+     * Returns whether the top-level select list of a parsed query, before the optimiser expands it in
+     * place, contains a wildcard: a written one ({@code *}, {@code t.*}) or the one the parser adds for a
+     * query written without SELECT. An empty select list counts as a wildcard, so a caller that skips a
+     * check for wildcard-free queries keeps it for a shape this method cannot see into.
      */
-    public static ExpressionNode getTimestampFloorTimestampArg(ExpressionNode ast) {
-        if (ast.paramCount == 3 || ast.paramCount == 5) {
-            return ast.args.getQuick(ast.paramCount - 2);
+    public static boolean hasTopLevelWildcard(IQueryModel model) {
+        if (model.isArtificialStar()) {
+            return true;
         }
-        return ast.rhs;
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int n = columns.size();
+        if (n == 0) {
+            return true;
+        }
+        for (int i = 0; i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast != null && ast.isWildcard()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static byte implicitCastAsByte(long value, int fromType) {
@@ -1165,9 +1336,9 @@ public class SqlUtil {
     }
 
     public static byte implicitCastCharAsType(char value, int toType) {
-        byte v = (byte) (value - '0');
+        int v = value - '0';
         if (v > -1 && v < 10) {
-            return v;
+            return (byte) v;
         }
         throw ImplicitCastException.inconvertibleValue(value, ColumnType.CHAR, toType);
     }
@@ -1525,7 +1696,12 @@ public class SqlUtil {
 
     public static void implicitCastStrAsLong256(CharSequence value, Long256Acceptor long256Acceptor) {
         if (value != null) {
-            Long256FromCharSequenceDecoder.decode(value, 0, value.length(), long256Acceptor);
+            int start = 0;
+            int end = value.length();
+            if (end > 2 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+                start = 2;
+            }
+            Long256FromCharSequenceDecoder.decode(value, start, end, long256Acceptor);
         } else {
             long256Acceptor.setAll(
                     Long256Impl.NULL_LONG256.getLong0(),
@@ -1687,6 +1863,29 @@ public class SqlUtil {
         } catch (NumericException ignore) {
             throw ImplicitCastException.inconvertibleValue(value, ColumnType.VARCHAR, ColumnType.SHORT);
         }
+    }
+
+    /**
+     * Interpolates between two adjacent sorted values the way percentile_cont() does:
+     * {@code lo + (hi - lo) * fraction}. The difference {@code hi - lo} overflows to infinity
+     * when {@code lo} and {@code hi} are huge and of opposite signs, although the result lies
+     * between them. Halving both values and doubling the result is exact at that magnitude, so
+     * the method then runs the same arithmetic on the halves.
+     *
+     * @param lo       the lower value, finite
+     * @param hi       the upper value, finite and not less than {@code lo}
+     * @param fraction the position between the two values, within [0, 1]
+     * @return the interpolated value, within [lo, hi]
+     */
+    public static double interpolatePercentile(double lo, double hi, double fraction) {
+        final double delta = hi - lo;
+        if (Numbers.isFinite(delta)) {
+            return lo + delta * fraction;
+        }
+        final double halfLo = lo * 0.5;
+        final double result = (halfLo + (hi * 0.5 - halfLo) * fraction) * 2;
+        // keeps rounding at the edge of the double range from pushing the result past hi
+        return Math.max(lo, Math.min(hi, result));
     }
 
     public static boolean isNotPlainSelectModel(IQueryModel model) {
@@ -2039,6 +2238,24 @@ public class SqlUtil {
         throw SqlException.$(tokPosition, "non-persisted type: ").put(tok);
     }
 
+    /**
+     * Checks that a percentile lies within [0, 1], as the SQL standard requires of
+     * percentile_disc() and percentile_cont(), and returns it. NULL, NaN, infinities and
+     * negative values fail; negative zero passes as zero.
+     *
+     * @param percentile    the percentile
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double validatePercentile(double percentile, int percentilePos) {
+        // Numbers.isNull() is true for NaN and both infinities
+        if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
+            throw CairoException.nonCritical().position(percentilePos)
+                    .put("invalid percentile [expected=range(0.0, 1.0), actual=").put(percentile).put(']');
+        }
+        return percentile;
+    }
+
     // tableName and columnName have to be string objects,
     // they will be used in the view definition
     private static void addDependency(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap, String tableName, String columnName) {
@@ -2048,6 +2265,57 @@ public class SqlUtil {
             depMap.put(tableName, columns);
         }
         columns.add(columnName);
+    }
+
+    /**
+     * Descends one expression, adding every sub-query it carries to {@code pending}.
+     * {@link ExpressionNode#queryModel} is the sub-query the node named -
+     * {@code IN (SELECT ...)}, {@code EXISTS (SELECT ...)}, a scalar sub-select - and it stays on the
+     * node for as long as the expression itself survives, which is what makes this the reliable half
+     * of {@link #collectAllTableAndViewNames}'s sub-query coverage.
+     */
+    private static void collectSubQueryModels(
+            @Nullable ExpressionNode node,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            pending.add(node.queryModel);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            collectSubQueryModels(node.args.getQuick(i), pending);
+        }
+        collectSubQueryModels(node.lhs, pending);
+        collectSubQueryModels(node.rhs, pending);
+    }
+
+    private static void collectSubQueryModels(
+            @Nullable ObjList<ExpressionNode> nodes,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (nodes == null) {
+            return;
+        }
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            collectSubQueryModels(nodes.getQuick(i), pending);
+        }
+    }
+
+    private static void collectSubQueryModelsFromColumns(
+            @Nullable ObjList<QueryColumn> columns,
+            @NotNull ObjList<IQueryModel> pending
+    ) {
+        if (columns == null) {
+            return;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column != null) {
+                collectSubQueryModels(column.getAst(), pending);
+            }
+        }
     }
 
     private static void collectColumnReferencesFromExpression(

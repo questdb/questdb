@@ -94,6 +94,9 @@ public class LiveViewStateStoreImpl implements LiveViewStateStore {
         if (lastNotifiedTxn == null) {
             return;
         }
+        // This acknowledges the source notification, not each dependent's progress.
+        // Deferred dependents retain their watermarks; the refresh job retries lagging
+        // views through its bounded fallback scan even while notifications arrive.
         long latestTxn = notifyOnBaseTableRefreshed(lastNotifiedTxn, seqTxn);
         if (latestTxn > 0) {
             // Another txn landed while we were refreshing. Re-enqueue with the latest seqTxn

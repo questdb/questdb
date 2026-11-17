@@ -36,29 +36,41 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class TableSequencerImplTest extends AbstractCairoTest {
@@ -78,6 +90,50 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(20) + 10);
         testTableTransactionLogCanReadStructureVersion();
+    }
+
+    @Test
+    public void testCloseDroppedSequencerOutsideWriteLock() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE close_dropped (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("close_dropped");
+            final var api = engine.getTableSequencerAPI();
+            final var field = api.getClass().getDeclaredField("seqRegistry");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked") final var registry = (ConcurrentHashMap<TableSequencerImpl>) field.get(api);
+            final TableSequencerImpl entry = registry.get(token.getDirName());
+            // Leave a dropped entry in the pool: close() now takes its conditional checkClose path.
+            // There is no other thread; production dropTable normally closes the entry itself.
+            entry.dropTable();
+            Assert.assertFalse(entry.isClosed());
+            api.closeSequencer(token);
+            Assert.assertTrue(entry.isClosed());
+            Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+        });
+    }
+
+    @Test
+    public void testConstructorWriteLockOwnershipBeforePublication() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean observed = new AtomicBoolean();
+            final var listener = engine.getWalListener();
+            engine.setWalListener(new DefaultWalListener() {
+                @Override
+                public void tableCreated(TableToken token, long timestamp) {
+                    observed.set(true);
+                    Assert.assertThrows(AssertionError.class, () -> engine.getTableSequencerAPI().fdatasyncTxnLog(token));
+                    // The table token is not registered until the constructor returns.
+                    Assert.assertThrows(AssertionError.class, () -> engine.getWriterUnsafe(token, "constructor callback"));
+                }
+            });
+            try {
+                execute("CREATE TABLE ownership (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                Assert.assertTrue(observed.get());
+                Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+            } finally {
+                engine.setWalListener(listener);
+            }
+        });
     }
 
     @Test
@@ -425,6 +481,38 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A sequencer whose transaction log is gone cannot open, and neither the open nor the structure version read
+     * brings the log back as an empty file: a read never changes which files exist.
+     */
+    @Test
+    public void testOpenWithoutTxnLogNeverCreatesIt() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createWalTable(testName.getMethodName());
+            engine.clear();
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                pathToSequencerFile(path, tableToken, WalUtils.TXNLOG_FILE_NAME);
+                Assert.assertTrue(ff.removeQuiet(path.$()));
+
+                CairoException ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> engine.getTableSequencerAPI().getNextWalId(tableToken)
+                );
+                TestUtils.assertContains(ex.getFlyweightMessage(), "does not exist");
+                Assert.assertFalse("the sequencer open must not create the log", ff.exists(path.$()));
+
+                ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> TableTransactionLog.readMaxStructureVersion(ff, pathToSequencerPath(path, tableToken))
+                );
+                TestUtils.assertContains(ex.getFlyweightMessage(), "does not exist");
+                pathToSequencerFile(path, tableToken, WalUtils.TXNLOG_FILE_NAME);
+                Assert.assertFalse("the structure version read must not create the log", ff.exists(path.$()));
+            }
+        });
+    }
+
     @Test
     public void testReloadRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
         testReloadRebuildsSequencerMetaAheadOfTxnLog();
@@ -465,6 +553,159 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testWalTableScanDoesNotWaitForCloseFlush() throws Exception {
+        // NOSYNC commits leave the V1 log's hint behind its tail, so the clean close of the idle sequencer flushes
+        // the log. The facade holds that flush, as a slow device would, inside the engine maintenance job's close.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final Set<Long> txnLogFds = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        final AtomicBoolean isFlushHoldArmed = new AtomicBoolean();
+        final CountDownLatch flushHeld = new CountDownLatch(1);
+        final CountDownLatch releaseFlush = new CountDownLatch(1);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                txnLogFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public void fdatasync(long fd) {
+                if (txnLogFds.contains(fd) && isFlushHoldArmed.compareAndSet(true, false)) {
+                    flushHeld.countDown();
+                    TestUtils.await(releaseFlush);
+                }
+                super.fdatasync(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
+                    txnLogFds.add(fd);
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE idle_close (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO idle_close VALUES (1, '2024-01-01'), (2, '2024-01-02')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("idle_close");
+            final long lastTxn = engine.getTableSequencerAPI().lastTxn(token);
+            final AtomicLong scannedTxn = new AtomicLong(-1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final CountDownLatch scanned = new CountDownLatch(1);
+            // The engine maintenance job releases the idle sequencer.
+            final Thread closer = new Thread(() -> {
+                try {
+                    engine.getTableSequencerAPI().releaseInactive();
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    flushHeld.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            // CheckWalTransactionsJob and WalPurgeJob scan every WAL table this way.
+            final Thread scanner = new Thread(() -> {
+                try {
+                    engine.getTableSequencerAPI().forAllWalTables(
+                            new ObjHashSet<>(),
+                            false,
+                            (tableId, tableToken, txn) -> {
+                                if (tableToken.equals(token)) {
+                                    scannedTxn.set(txn);
+                                }
+                            }
+                    );
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    scanned.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            isFlushHoldArmed.set(true);
+            closer.start();
+            try {
+                TestUtils.await(flushHeld);
+                Assert.assertNull(failure.get());
+                Assert.assertFalse("precondition: the close flushes the log", isFlushHoldArmed.get());
+                scanner.start();
+                final boolean isScanDone = scanned.await(10, TimeUnit.SECONDS);
+                // A scanner still RUNNABLE here spins on the closed entry; WAITING or BLOCKED would mean it parks.
+                Assert.assertTrue(
+                        "the WAL table scan waits for a sequencer's close-time log flush [scanner="
+                                + scanner.getState() + ']',
+                        isScanDone
+                );
+            } finally {
+                releaseFlush.countDown();
+                closer.join();
+                scanner.join();
+            }
+            Assert.assertNull(failure.get());
+            Assert.assertEquals(lastTxn, scannedTxn.get());
+        });
+    }
+
+    @Test
+    public void testWriteLockOwnershipIsThreadLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE contested (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("contested");
+            final CountDownLatch locked = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            final CountDownLatch flushing = new CountDownLatch(1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final var listener = engine.getWalListener();
+            engine.setWalListener(new DefaultWalListener() {
+                @Override
+                public void dataTxnCommitted(TableToken table, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+                    locked.countDown();
+                    TestUtils.await(release);
+                }
+            });
+            final Thread commit = new Thread(() -> {
+                try {
+                    engine.execute("INSERT INTO contested VALUES (1, '2024-01-01')");
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    locked.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            final Thread flush = new Thread(() -> {
+                try {
+                    Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+                    flushing.countDown();
+                    engine.getTableSequencerAPI().fdatasyncTxnLog(token);
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    flushing.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            try {
+                commit.start();
+                TestUtils.await(locked);
+                Assert.assertNull(failure.get());
+                flush.start();
+                TestUtils.await(flushing);
+                Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+            } finally {
+                release.countDown();
+                commit.join();
+                flush.join();
+                engine.setWalListener(listener);
+            }
+            Assert.assertNull(failure.get());
+        });
     }
 
     private void addIntColumn(TableToken tableToken, String columnName) {

@@ -309,6 +309,18 @@ public class TableUpdateDetails implements Closeable {
         return writerAPI != null ? writerAPI.getWalId() : -1;
     }
 
+    /**
+     * The uncommitted row count at which {@link #commitIfMaxUncommittedRowsCountReached()}
+     * commits. Callers that must keep the commit from firing compare against this value,
+     * never a configuration value of their own.
+     */
+    public long getMetaMaxUncommittedRows() {
+        if (metadataService != null) {
+            return metadataService.getMetaMaxUncommittedRows();
+        }
+        return defaultMaxUncommittedRows;
+    }
+
     public MillisecondClock getMillisecondClock() {
         return millisecondClock;
     }
@@ -440,13 +452,6 @@ public class TableUpdateDetails implements Closeable {
         if (ownSecurityContext != null) {
             ownSecurityContext.authorizeInsert(tableToken);
         }
-    }
-
-    private long getMetaMaxUncommittedRows() {
-        if (metadataService != null) {
-            return metadataService.getMetaMaxUncommittedRows();
-        }
-        return defaultMaxUncommittedRows;
     }
 
     private void handleCommitException(Throwable ex) {

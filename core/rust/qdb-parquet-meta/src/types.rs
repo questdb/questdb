@@ -71,7 +71,7 @@ pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 /// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
 /// the gating flag's bit position; grow when adding sections at higher
 /// bit positions.
-pub const SUPPORTED_FOOTER_SECTIONS: usize = 2;
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 3;
 
 /// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
 /// header + entry contents) per footer. Real entries are tens to hundreds of
@@ -240,6 +240,13 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
+    /// Required: row group `i` occupies `num_rows[i]` index rows from `index_row_lo[i]`.
+    /// Section: `[u64 index_row_count][u64 index_row_lo; row_group_count]`. Absent means the
+    /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
+    pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
+
+    pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -266,6 +273,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_index_row_map(self) -> bool {
+        self.0 & Self::INDEX_ROW_MAP_BIT != 0
+    }
+
+    pub const fn with_index_row_map(self) -> Self {
+        Self(self.0 | Self::INDEX_ROW_MAP_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

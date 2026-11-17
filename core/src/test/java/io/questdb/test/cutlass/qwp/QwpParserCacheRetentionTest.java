@@ -44,6 +44,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_DOUBLE_ARRAY;
+import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_LONG;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_SYMBOL;
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 
@@ -297,6 +298,33 @@ public class QwpParserCacheRetentionTest {
                 Assert.assertEquals(16, cursor.getDecodedIndexCacheCapacity());
             } finally {
                 Unsafe.free(address, 1, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testSchemaCacheCountedAndReleasedAfterLateTableFailure() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (QwpTableBuffer buffer = new QwpTableBuffer("wide_schema");
+                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+                final int columns = 200;
+                for (int c = 0; c < columns; c++) {
+                    buffer.getOrCreateColumn("a_rather_long_column_name_" + c, TYPE_LONG, false).addLong(c);
+                }
+                buffer.nextRow();
+
+                int size = encoder.encode(buffer);
+                long address = encoder.getBuffer().getBufferPtr();
+                Unsafe.putShort(address + QwpConstants.HEADER_OFFSET_TABLE_COUNT, (short) 2);
+
+                QwpMessageCursor cursor = new QwpMessageCursor();
+                cursor.of(address, size, null);
+                final long before = cursor.getRetainedCacheBytes();
+                cursor.nextTable();
+                // The block cursor keeps the schema section for reuse: it is retained memory.
+                Assert.assertTrue(cursor.getRetainedCacheBytes() - before > columns * 27L);
+                Assert.assertThrows(QwpParseException.class, cursor::nextTable);
+                Assert.assertEquals(before, cursor.getRetainedCacheBytes());
             }
         });
     }
