@@ -125,15 +125,4 @@ public final class CommitMode {
             default -> "unknown";
         };
     }
-
-    /**
-     * Returns {@code true} iff an instance in this mode stores {@code _cv} checksum trailers, and therefore
-     * downgrade-locks every table it writes in {@code _meta}
-     * ({@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}). Only NOSYNC, the default, leaves tables writable
-     * by an older release; its start also removes the trailers and the lock from every table
-     * (see {@code RecoveryCoordinator.unlockTablesForDowngrade}).
-     */
-    public static boolean writesChecksums(int commitMode) {
-        return commitMode != NOSYNC;
-    }
 }

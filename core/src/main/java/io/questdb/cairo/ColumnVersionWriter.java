@@ -42,10 +42,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
-    // Whether commits store a [CV_CHECKSUM_MAGIC][checksum] trailer after the area. Follows the instance mode,
-    // not the table's: an older binary rewrites an area in place and leaves the magic next to data it never
-    // checksummed, so a NOSYNC instance writes none (and clears the slot), and only a checksummed table is
-    // downgrade-locked in _meta (ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION). The two must agree.
+    // Whether commits store a [CV_CHECKSUM_MAGIC][checksum] trailer after the area: always, except on a
+    // downgrade start (cairo.commit.mode.adaptive.downgrade=true). An older binary rewrites an area in place
+    // and leaves the magic next to data it never checksummed, so a downgrade start writes none (and clears the
+    // slot), and only a checksummed table is downgrade-locked in _meta
+    // (ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION). The two must agree.
     private final boolean trailerEnabled;
     // Adaptive column-file obligations, including UPDATEs with no partition-metadata change.
     // Null without a consumer; TableWriter intersects sentinel timestamps with live partitions.
@@ -65,7 +66,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         this.mem = Vm.getCMARWInstance(ff, fileName, ff.getPageSize(), 0, MemoryTag.MMAP_TABLE_READER, CairoConfiguration.O_NONE);
         this.configuration = configuration;
         this.commitMode = configuration.getCommitMode();
-        this.trailerEnabled = CommitMode.writesChecksums(configuration.getCommitMode());
+        this.trailerEnabled = !configuration.isCommitModeAdaptiveDowngrade();
         this.partitioned = partitioned;
         this.size = this.mem.size();
         super.ofRO(mem);

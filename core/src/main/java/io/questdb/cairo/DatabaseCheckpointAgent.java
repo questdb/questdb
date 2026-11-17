@@ -619,7 +619,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // copied - a pooled reader copy keeps a private _meta snapshot that TableWriter's
                                         // in-place storage version write never reaches, so those bytes can lag their own
                                         // _txn.
-                                        final boolean withChecksums = CommitMode.writesChecksums(configuration.getCommitMode());
+                                        final boolean withChecksums = !configuration.isCommitModeAdaptiveDowngrade();
                                         mem.putInt(
                                                 TableUtils.META_OFFSET_VERSION,
                                                 ColumnType.storageVersion(reader.getTxFile().hasCompositePartitions(), withChecksums)

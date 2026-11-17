@@ -792,9 +792,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     /**
      * The boot cost outside adaptive: for each WAL table without a save point, recovery makes at most two existence
-     * checks, plus the one read of the {@code _meta} storage version (open, read, close) a NOSYNC start makes to
-     * find downgrade-locked tables, and no other file system call. Measured as the difference between a database
-     * of one such table and one of eleven.
+     * checks and no other file system call. Measured as the difference between a database of one such table and
+     * one of eleven.
      */
     @Test
     public void testNosyncBootCostsAtMostTwoExistenceChecksPerWalTable() throws Exception {
@@ -826,9 +825,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             perTable.remove("exists");
             Assert.assertTrue("at most two existence checks per WAL table, got " + existenceChecks + " for " + extraTables + " tables",
                     existenceChecks <= 2 * extraTables);
-            // The downgrade-lock pass (RecoveryCoordinator.unlockTablesForDowngrade): one _meta version read per table.
-            Assert.assertEquals("one _meta read per WAL table and no other file system call, for " + extraTables + " tables and "
-                    + existenceChecks + " existence checks", "{close=" + extraTables + ", openRO=" + extraTables + ", read=" + extraTables + "}", perTable.toString());
+            Assert.assertEquals("no other file system call per WAL table, for " + extraTables + " tables and "
+                    + existenceChecks + " existence checks", "{}", perTable.toString());
         });
     }
 

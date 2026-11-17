@@ -96,8 +96,9 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     /**
      * Writes the live area as a fresh single-area file. With {@code withChecksumTrailer} the area gets the same
-     * 16-byte trailer as a regular commit; without it the file carries no checksum, as a NOSYNC commit leaves
-     * it, so an older release may write over it (see {@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
+     * 16-byte trailer as a regular commit; without it the file carries no checksum, as a commit of a downgrade
+     * start ({@link CairoConfiguration#isCommitModeAdaptiveDowngrade()}) leaves it, so an older release may write over
+     * it (see {@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
      */
     public void dumpTo(MemoryW mem, boolean withChecksumTrailer) {
         mem.putLong(OFFSET_VERSION_64, version);

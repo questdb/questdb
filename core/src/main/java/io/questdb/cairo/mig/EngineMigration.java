@@ -185,11 +185,12 @@ public class EngineMigration {
                             // A version above latestTableVersion that is a storage marker (a table that currently
                             // holds composite partitions, or is downgrade-locked, carries one of
                             // ColumnType.storageVersion()) is not a migration-version number: the table is at
-                            // latestTableVersion for the migrations' purposes, and every commit mode but NOSYNC
-                            // marks every table it writes, so skipping the marked tables would skip them all.
-                            // The marker stays: a migration up to latestTableVersion is never written over it
-                            // (ver <= latestTableVersion is false from firstVersion on), and the writer alone
-                            // folds it back. Any other version above latestTableVersion comes from a newer
+                            // latestTableVersion for the migrations' purposes, and every writer marks the table
+                            // it writes (unless cairo.commit.mode.adaptive.downgrade is set), so skipping the
+                            // marked tables would skip them all. The marker stays: a migration up to
+                            // latestTableVersion is never written over it (ver <= latestTableVersion is false
+                            // from firstVersion on); the writer folds the composite marker back and a downgrade
+                            // start the lock. Any other version above latestTableVersion comes from a newer
                             // binary and is left alone.
                             final boolean isMarked = ColumnType.isCompositeStorageVersion(storedTableVersion)
                                     || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);

@@ -27,7 +27,6 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -88,14 +87,14 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
 
             try (TableReader pinned = engine.getReader(tableToken)) {
                 makeComposite();
-                Assert.assertEquals(compositeStorageVersion(), metaStorageVersion(tableToken));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion(tableToken));
 
                 // Snapshot the metadata copy while the table IS composite, so the copy's private _meta
                 // bytes stamp MAX_STORAGE_VERSION and go stale in the opposite direction to the main
                 // test: the stamp derived from the _txn has to LOWER this image, not raise it.
                 try (TableReader copy = engine.getReaderAtTxn(pinned, sqlExecutionContext)) {
                     Assert.assertNotSame("expected the reader pool copy slow path", pinned, copy);
-                    Assert.assertEquals(compositeStorageVersion(), dumpedMetaStorageVersion(copy));
+                    Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, dumpedMetaStorageVersion(copy));
                 }
 
                 // Turning merge-append off folds every composite partition back to plain at writer open,
@@ -103,7 +102,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                 node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
                 engine.releaseAllWriters();
                 engine.getWriter(tableToken, "test").close();
-                Assert.assertEquals(plainStorageVersion(), metaStorageVersion(tableToken));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(tableToken));
 
                 try {
                     execute("CHECKPOINT CREATE");
@@ -113,7 +112,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                     );
                     Assert.assertEquals(
                             "a checkpoint of a table whose _txn is plain again must stamp ColumnType.VERSION",
-                            plainStorageVersion(),
+                            ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION,
                             checkpointMetaStorageVersion(tableToken)
                     );
                 } finally {
@@ -136,12 +135,12 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
             createPlainTable();
             final TableToken tableToken = engine.verifyTableName("x");
             makeComposite();
-            Assert.assertEquals(compositeStorageVersion(), metaStorageVersion(tableToken));
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion(tableToken));
 
             // No pinned reader and no reader copy anywhere in the pool: the checkpoint's own
             // getReaderWithRepair() gets a reader that maps the live _meta.
             try (TableReader fresh = engine.getReader(tableToken)) {
-                Assert.assertEquals(compositeStorageVersion(), dumpedMetaStorageVersion(fresh));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, dumpedMetaStorageVersion(fresh));
             }
 
             try {
@@ -153,7 +152,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                 Assert.assertEquals(
                         "a composite table checkpointed from a non-stale reader must stamp"
                                 + " MAX_STORAGE_VERSION",
-                        compositeStorageVersion(),
+                        ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION,
                         checkpointMetaStorageVersion(tableToken)
                 );
             } finally {
@@ -179,7 +178,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                 // The table goes composite. TableWriter.writeStorageVersionToMeta() stamps
                 // MAX_STORAGE_VERSION into _meta in place, without bumping the metadata version.
                 makeComposite();
-                Assert.assertEquals(compositeStorageVersion(), metaStorageVersion(tableToken));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion(tableToken));
 
                 // Fixture precondition, not a contract: the pinned reader holds the pool's first slot, so
                 // this returns the copy from above, reloaded to the composite transaction while its
@@ -195,7 +194,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                     );
                     Assert.assertEquals(
                             "the fixture no longer reproduces the stale metadata copy",
-                            plainStorageVersion(),
+                            ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION,
                             dumpedMetaStorageVersion(stale)
                     );
                 }
@@ -210,7 +209,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                     Assert.assertEquals(
                             "checkpoint _meta stamps a storage version an older binary accepts, while its"
                                     + " _txn carries composite partition references",
-                            compositeStorageVersion(),
+                            ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION,
                             checkpointMetaStorageVersion(tableToken)
                     );
                 } finally {
@@ -226,14 +225,14 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createPlainTable();
             final TableToken tableToken = engine.verifyTableName("x");
-            Assert.assertEquals(plainStorageVersion(), metaStorageVersion(tableToken));
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion(tableToken));
 
             try {
                 execute("CHECKPOINT CREATE");
                 Assert.assertFalse(checkpointTxnHasCompositePartitions(tableToken));
                 Assert.assertEquals(
                         "a plain table must not be promoted to MAX_STORAGE_VERSION by the checkpoint",
-                        plainStorageVersion(),
+                        ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION,
                         checkpointMetaStorageVersion(tableToken)
                 );
             } finally {
@@ -286,7 +285,7 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                 Assert.assertEquals(
                         "the restored table stamps a storage version an older binary accepts, while its"
                                 + " _txn carries composite partition references",
-                        compositeStorageVersion(),
+                        ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION,
                         metaStorageVersion(tableToken)
                 );
             } finally {
@@ -314,14 +313,14 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
             final TableToken tableToken = engine.verifyTableName("x");
 
             try (TableReader reader = engine.getReader(tableToken)) {
-                Assert.assertEquals(plainStorageVersion(), dumpedMetaStorageVersion(reader));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, dumpedMetaStorageVersion(reader));
                 makeComposite();
                 reader.reload();
                 Assert.assertTrue(
                         "fixture did not make the reader's _txn composite",
                         reader.getTxFile().hasCompositePartitions()
                 );
-                Assert.assertEquals(compositeStorageVersion(), dumpedMetaStorageVersion(reader));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, dumpedMetaStorageVersion(reader));
             }
         });
     }
@@ -346,13 +345,6 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "metadata version does not match runtime version");
             }
         }
-    }
-
-
-    // The storage version a composite table carries under the test's commit mode: every mode but NOSYNC also
-    // downgrade-locks the table (ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION).
-    private static int compositeStorageVersion() {
-        return ColumnType.storageVersion(true, CommitMode.writesChecksums(configuration.getCommitMode()));
     }
 
     private static int checkpointMetaStorageVersion(TableToken tableToken) {
@@ -429,12 +421,6 @@ public class CompositeCheckpointStorageVersionTest extends AbstractCairoTest {
             path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.META_FILE_NAME);
             return readStorageVersion(path);
         }
-    }
-
-    // The storage version a plain table carries under the test's commit mode: every mode but NOSYNC
-    // downgrade-locks the table (ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION).
-    private static int plainStorageVersion() {
-        return ColumnType.storageVersion(false, CommitMode.writesChecksums(configuration.getCommitMode()));
     }
 
     private static int readStorageVersion(Path path) {

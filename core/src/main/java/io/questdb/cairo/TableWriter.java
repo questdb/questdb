@@ -334,9 +334,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // finishPendingDetaches() removes each one it names.
     private final LongList detachesAfterSavePoint = new LongList();
     private final DirectUtf8String directUtf8String = new DirectUtf8String();
-    // Whether this instance writes _cv checksum trailers (every mode but NOSYNC), and so stamps the table
-    // downgrade-locked in _meta: see ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION. Taken from the instance mode,
-    // as ColumnVersionWriter takes its trailer decision, so the two cannot disagree.
+    // Whether this instance writes _cv checksum trailers (always, except on a downgrade start), and so stamps
+    // the table downgrade-locked in _meta: see ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION. Taken from the same
+    // setting as ColumnVersionWriter takes its trailer decision, so the two cannot disagree.
     private final boolean downgradeLocked;
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -694,7 +694,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         this.fileOperationRetryCount = configuration.getFileOperationRetryCount();
         this.tableToken = tableToken;
         this.o3QuickSortEnabled = configuration.isO3QuickSortEnabled();
-        this.downgradeLocked = CommitMode.writesChecksums(configuration.getCommitMode());
+        this.downgradeLocked = !configuration.isCommitModeAdaptiveDowngrade();
         this.engine = cairoEngine;
         final int frameCacheSize = configuration.getO3PartitionMergeAppendFrameCacheSize();
         this.compositeFrameCache = frameCacheSize > 0
@@ -7785,7 +7785,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * the table no longer holds any composite partition. The caller runs this AFTER the {@code _txn} commit
      * that cleared the last composite flag, so the version never claims plain data while {@code _txn} still
      * points at a composite piece. Reads the in-memory count, never scans. Never drops the downgrade lock:
-     * only a NOSYNC start does, after it removed the {@code _cv} trailers.
+     * only a downgrade start does, after it removed the {@code _cv} trailers.
      * <p>
      * Best effort: the {@code _txn} commit is already durable, so a failure here must not surface as a failed
      * commit or skip the caller's post-commit steps. The cached version follows whatever reached {@code _meta}:
@@ -7958,8 +7958,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * The storage version that {@code _meta} should carry for the table's current shape: raised by the
      * composite marker while it holds composite partitions, and by the downgrade lock while this instance
-     * writes {@code _cv} checksum trailers or {@code _meta} already carries the lock (a NOSYNC writer keeps
-     * it: the trailers it stands for are still in {@code _cv} until a NOSYNC start removes them). See
+     * writes {@code _cv} checksum trailers or {@code _meta} already carries the lock (a writer of a downgrade
+     * start keeps it: the trailers it stands for are still in {@code _cv} until the start's unlock pass
+     * removes them). See
      * {@link ColumnType#storageVersion(boolean, boolean)}. Used when a full meta rewrite must reproduce the
      * elevated version.
      */

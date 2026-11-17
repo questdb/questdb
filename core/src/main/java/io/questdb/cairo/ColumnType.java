@@ -164,12 +164,13 @@ public final class ColumnType {
     // "composite" or "downgrade-locked", not "needs migration N". A stable on-disk marker must
     // not float with VERSION, so it is written out as a constant rather than VERSION + 1.
     public static final int COMPOSITE_STORAGE_VERSION = 430;
-    // The storage version of a table whose _cv carries checksum trailers (every commit mode but
-    // NOSYNC writes them). An older binary that does not know the trailer rewrites a _cv area in
-    // place and leaves the trailer's magic next to data it never checksummed, so this binary would
-    // then read the area as torn. The marker makes the older binary refuse the table instead
-    // (its _meta version check accepts at most COMPOSITE_STORAGE_VERSION). A NOSYNC start removes
-    // the trailers and the marker (RecoveryCoordinator.unlockTablesForDowngrade), which is the
+    // The storage version of a table whose _cv carries checksum trailers (every commit mode writes
+    // them). An older binary that does not know the trailer rewrites a _cv area in place and leaves
+    // the trailer's magic next to data it never checksummed, so this binary would then read the
+    // area as torn. The marker makes the older binary refuse the table instead (its _meta version
+    // check accepts at most COMPOSITE_STORAGE_VERSION). A start with
+    // cairo.commit.mode.adaptive.downgrade=true removes the trailers and the marker
+    // (RecoveryCoordinator.unlockTablesForDowngrade) and writes neither while it runs, which is the
     // documented way back to an older release.
     public static final int DOWNGRADE_LOCKED_STORAGE_VERSION = 431;
     // Both markers at once: composite partitions and _cv checksum trailers.
