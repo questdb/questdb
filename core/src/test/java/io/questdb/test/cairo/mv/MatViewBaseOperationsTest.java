@@ -1718,6 +1718,36 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateRecordGoesWithRebasedBase() throws Exception {
+        // REBASE WAL moves the base to a new directory and drops the old one, so each rebase leaves no TRUNCATE record
+        // behind under the old directory name, while the rebased base records its own TRUNCATE afresh.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            createBase();
+            createView("price_1h", "IMMEDIATE");
+            drainWalAndMatViewQueues();
+            for (int i = 0; i < 3; i++) {
+                execute(TRUNCATE_BASE_ROWS);
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                final TableToken oldToken = engine.verifyTableName("base");
+                Assert.assertEquals(1, store.getLastBaseTableTruncateRecordCount());
+                Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(oldToken), store.getLastBaseTableTruncateTxn(oldToken));
+
+                execute("ALTER TABLE base SUSPEND WAL");
+                execute("ALTER TABLE base REBASE WAL");
+                final TableToken newToken = engine.verifyTableName("base");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+                Assert.assertEquals(0, store.getLastBaseTableTruncateRecordCount());
+                Assert.assertEquals(-1, store.getLastBaseTableTruncateTxn(oldToken));
+                Assert.assertEquals(-1, store.getLastBaseTableTruncateTxn(newToken));
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testUpdateRangeDroppedAfterLaterTruncate() throws Exception {
         // A TRUNCATE applies after a base UPDATE and before the UPDATE's range task runs. The task drops the range,
         // so the refresh recomputes only the bucket of the row written after the truncate, and the view keeps its

@@ -5390,9 +5390,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // dropped entry lets WalPurgeJob sweep the dir like any dropped table (and it is WalPurgeJob
             // that calls removeTableToken once the dir is actually deleted).
             notifyPoolsTableDropped(oldToken, false);
+            // Drop the entries the mat view state store keys by the old dir name: a mat view's state, and the TRUNCATE
+            // record of a table some view uses as its base, as a drop does.
+            matViewStateStore.removeViewState(oldToken);
             if (oldToken.isMatView()) {
-                // Drop the old mat view's graph/state entries (keyed by the old dir name).
-                matViewStateStore.removeViewState(oldToken);
+                // Drop the old mat view's graph entries (keyed by the old dir name).
                 dependentViewGraph.removeView(oldToken);
             }
         } finally {

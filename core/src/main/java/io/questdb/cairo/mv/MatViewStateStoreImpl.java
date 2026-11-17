@@ -62,7 +62,8 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     private final ConcurrentHashMap<AtomicLong> lastNotifiedTxnByTableName = new ConcurrentHashMap<>(false);
     // Base table directory name to the seqTxn of the last TRUNCATE the WAL apply job applied to it. The directory
     // name tells a base dropped and re-created under the same name from the original. Kept only for tables some
-    // view used as its base, see notifyBaseTableTruncate(), and removed when the table drops, see removeViewState().
+    // view used as its base, see notifyBaseTableTruncate(), and removed when the table drops or REBASE WAL moves it to
+    // another directory, see removeViewState().
     private final ConcurrentHashMap<AtomicLong> lastTruncateTxnByTableDirName = new ConcurrentHashMap<>();
     private final MicrosecondClock microsecondClock;
     private final ConcurrentHashMap<MatViewState> stateByTableDirName = new ConcurrentHashMap<>();
@@ -531,8 +532,9 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     @Override
     public void removeViewState(TableToken matViewToken) {
-        // The engine calls this for every dropped WAL table. No view refreshes from a dropped base, so the base's
-        // TRUNCATE record goes too, and the records do not pile up over the drops and re-creates of a base.
+        // The engine calls this for every dropped WAL table, and for the old directory of every table REBASE WAL moves.
+        // No view refreshes from a dropped base or from a base's old directory, so the base's TRUNCATE record goes
+        // too, and the records do not pile up over the drops, re-creates and rebases of a base.
         lastTruncateTxnByTableDirName.remove(matViewToken.getDirName());
         final MatViewState state = stateByTableDirName.remove(matViewToken.getDirName());
         if (state != null) {
