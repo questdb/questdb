@@ -110,6 +110,9 @@ abstract class HashJoinStageStepper {
     );
     // Set by tests alone; see AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting().
     private static volatile boolean isCopiesEnabled = true;
+    // Set by tests alone; see AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting().
+    @Nullable
+    private static volatile Runnable newInstanceHook;
     // True when the stepper walks the key's matches itself in the open cursor's execution: the
     // stage's pairs, or those of a later stage, run a filter, or the stage is the first one of a
     // swapped execution, whose later stages read their keys off its matches; see ofEnumerated().
@@ -163,12 +166,21 @@ abstract class HashJoinStageStepper {
      * cannot define hidden classes or a test turned the copies off.
      */
     static HashJoinStageStepper newInstance() {
+        final Runnable hook = newInstanceHook;
+        if (hook != null) {
+            hook.run();
+        }
         return isCopiesEnabled ? COPIES.newInstance() : new HashJoinStageStepperTemplate();
     }
 
     @TestOnly
     static void setCopiesEnabled(boolean isEnabled) {
         isCopiesEnabled = isEnabled;
+    }
+
+    @TestOnly
+    static void setNewInstanceHook(@Nullable Runnable hook) {
+        newInstanceHook = hook;
     }
 
     /**

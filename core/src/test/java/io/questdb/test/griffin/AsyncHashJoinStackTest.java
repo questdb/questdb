@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinSpec;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
@@ -93,6 +94,19 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             + " LEFT JOIN d3 g ON t.sym = g.s"
             + " LEFT JOIN u1 h ON t.k = h.k AND h.w > t.v % 5"
             + " LEFT JOIN d2 i ON t.lk = i.lk";
+    // Stacks whose LEFT first join never swaps, whose stages walk their matches and hand their chains
+    // to the consumer, over unique and duplicate builds, with residuals and post-join filters.
+    private static final String[] SHARED_TEMPLATE_STACKS = {
+            "SELECT t.k, t.v, d1.w, d2.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk JOIN d3 ON t.sym = d3.s",
+            "SELECT t.k, t.v, d1.w, d2.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk AND d2.w2 > t.v JOIN d3 ON t.sym = d3.s",
+            "SELECT t.k, t.v, d1.w, d2.w2 FROM t LEFT JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk WHERE d2.w2 > d1.w",
+            // Unique builds that the workers walk, ahead of a stage with a residual, and LEFT misses of
+            // both.
+            "SELECT t.k, t.v, u1.w, u2.w2, d2.w2 FROM t LEFT JOIN u1 ON t.k = u1.k LEFT JOIN u2 ON t.lk = u2.lk LEFT JOIN d2 ON t.lk = d2.lk AND d2.w2 > t.v",
+            "SELECT t.k, t.v, u1.w, u2.w2 FROM t LEFT JOIN u1 ON t.k = u1.k AND u1.w > t.v % 4 JOIN u2 ON t.lk = u2.lk WHERE u2.w2 > u1.w OR u1.w IS NULL",
+            // A LEFT stage's post-join filter that keeps some of its misses and drops the rest.
+            "SELECT t.k, t.v, d1.w, d2.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk WHERE d2.w2 > d1.w OR (d2.w2 IS NULL AND t.v % 4 = 0)",
+    };
     private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
 
@@ -1029,21 +1043,51 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
                 createTables();
                 sqlExecutionContext.changePageFrameSizes(3, 3);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
-                for (String sql : new String[]{
-                        "SELECT t.k, t.v, d1.w, d2.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk JOIN d3 ON t.sym = d3.s",
-                        "SELECT t.k, t.v, d1.w, d2.w2, d3.w3 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk AND d2.w2 > t.v JOIN d3 ON t.sym = d3.s",
-                        "SELECT t.k, t.v, d1.w, d2.w2 FROM t LEFT JOIN d1 ON t.k = d1.k JOIN d2 ON t.lk = d2.lk WHERE d2.w2 > d1.w",
-                        // Unique builds that the workers walk, ahead of a stage with a residual, and
-                        // LEFT misses of both.
-                        "SELECT t.k, t.v, u1.w, u2.w2, d2.w2 FROM t LEFT JOIN u1 ON t.k = u1.k LEFT JOIN u2 ON t.lk = u2.lk LEFT JOIN d2 ON t.lk = d2.lk AND d2.w2 > t.v",
-                        "SELECT t.k, t.v, u1.w, u2.w2 FROM t LEFT JOIN u1 ON t.k = u1.k AND u1.w > t.v % 4 JOIN u2 ON t.lk = u2.lk WHERE u2.w2 > u1.w OR u1.w IS NULL",
-                        // A LEFT stage's post-join filter that keeps some of its misses and drops the
-                        // rest.
-                        "SELECT t.k, t.v, d1.w, d2.w2 FROM t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk WHERE d2.w2 > d1.w OR (d2.w2 IS NULL AND t.v % 4 = 0)",
-                }) {
+                for (String sql : SHARED_TEMPLATE_STACKS) {
                     assertStack(sql, countMatches(sql, " JOIN "));
                     try (RecordCursorFactory factory = select(sql)) {
                         Assert.assertFalse(find(factory).getStepperClass(1).isHidden());
+                    }
+                }
+            } finally {
+                restoreSteppers();
+            }
+        });
+    }
+
+    @Test
+    public void testSharedStepperTemplateOnWarmUp() throws Exception {
+        assertMemoryLeak(() -> {
+            // A JVM that cannot define hidden classes defines an instance of the shared stepper
+            // template per stage as the factory's copies once the factory warms up, as it compiles or
+            // within its first execution: the tasks then run those instances as the copies, and no
+            // stage's stepper is a hidden class.
+            useSteppers(false);
+            try {
+                createTables();
+                sqlExecutionContext.changePageFrameSizes(3, 3);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+                for (long warmUpRows : new long[]{0, 10}) {
+                    AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(warmUpRows);
+                    for (String sql : SHARED_TEMPLATE_STACKS) {
+                        final String label = sql + ", warm-up " + warmUpRows;
+                        final int stageCount = countMatches(sql, " JOIN ");
+                        final String expected = ordinary(sql, sqlExecutionContext);
+                        try (RecordCursorFactory factory = select(sql)) {
+                            final AsyncHashJoinRecordCursorFactory join = find(factory);
+                            Assert.assertNotNull(label, join);
+                            Assert.assertEquals(label, stageCount, join.getSpec().getStageCount());
+                            // The first execution warms the factory up, and the second runs the
+                            // copies alone.
+                            Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+                            Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+                            Assert.assertEquals(label, stageCount, join.getAtom().getStepperCopyCount());
+                            for (int k = 0; k < stageCount; k++) {
+                                Assert.assertFalse(label, join.getStepperClass(k).isHidden());
+                            }
+                            Assert.assertEquals(label, 0, join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_TASK, false));
+                            Assert.assertTrue(label, join.getAtom().getStepperRunCount(AsyncHashJoinAtom.STEPPER_RUN_TASK, true) > 0);
+                        }
                     }
                 }
             } finally {

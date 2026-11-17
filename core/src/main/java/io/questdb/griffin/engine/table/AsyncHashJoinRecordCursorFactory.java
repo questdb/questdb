@@ -534,6 +534,18 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * Runs the hook before a factory defines each of its stepper copies, the stages' in stage order
+     * and then the swapped first stage's, on the thread that defines them: the owner as it collects
+     * the frame that completes the factory's warm-up, or the compiling thread when there is no
+     * warm-up. A test thus fails a definition with what the hook throws, or holds the owner inside
+     * the definition while workers start tasks; null removes it.
+     */
+    @TestOnly
+    public static void setStepperCopyHookForTesting(@Nullable Runnable hook) {
+        HashJoinStageStepper.setNewInstanceHook(hook);
+    }
+
+    /**
      * Sets the probe rows after which the factories that compile from here on switch from the shared
      * stepper template to their stages' hidden copies, {@link AsyncHashJoinAtom#STEPPER_WARM_UP_ROWS}
      * unless a test lowers it, as this does; 0 runs the copies from the first task.

@@ -452,6 +452,22 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * The class of the stepper that the stage runs on the chain of hidden copies, which the tasks run
+     * once the factory is warmed up, in the orientation of the open cursor's execution, or of the
+     * last one: the first stage's copy of that orientation, then each copy's next. Null before the
+     * factory defines its copies, and past the last stage.
+     */
+    @Nullable
+    @TestOnly
+    public Class<?> getCopyChainClass(int stage) {
+        HashJoinStageStepper chained = stepper;
+        for (int k = 0; k < stage && chained != null; k++) {
+            chained = chained.next;
+        }
+        return chained != null ? chained.getClass() : null;
+    }
+
+    /**
      * The chunks that the consumer joined to continue frames whose tasks stopped at their cap of
      * tuples, in the last execution since its cursor opened.
      */

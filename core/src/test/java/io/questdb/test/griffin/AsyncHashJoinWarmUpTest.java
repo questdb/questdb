@@ -25,12 +25,21 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.Os;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -38,6 +47,9 @@ import org.junit.Test;
 
 import java.util.HashSet;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.griffin.engine.table.AsyncHashJoinAtom.*;
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
@@ -58,10 +70,27 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
     private static final String CONTINUED = "SELECT t.v, d.w FROM t JOIN d ON t.k = d.k WHERE d.w > t.v % 3";
     private static final int FRAME_COUNT = 8;
     private static final int FRAME_ROWS = 4;
+    private static final Log LOG = LogFactory.getLog(AsyncHashJoinWarmUpTest.class);
     private static final String SINGLE = "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k";
     // s is smaller than t, so the first join hashes s and probes t's frames; the second join reads its
     // key from the first join's build rows.
     private static final String SWAPPED_STACK = "SELECT s.k, s.sv, t.v, u.w FROM s JOIN t ON s.k = t.k JOIN u ON s.lk = u.k";
+    // SWAPPED_STACK with a third join, whose key, too, reads the first join's build rows when swapped.
+    private static final String SWAPPED_STACK_OF_THREE = "SELECT s.k, s.sv, t.v, u.w, d.w dw FROM s JOIN t ON s.k = t.k JOIN u ON s.lk = u.k JOIN d ON s.k = d.k";
+    private static final String[] TABLES = {
+            """
+            CREATE TABLE t AS (
+                SELECT (x % 5)::INT k, (x % 3)::INT lk, x v, timestamp_sequence('2024-01-01', 60_000_000) ts
+                FROM long_sequence(32)
+            ) TIMESTAMP(ts) PARTITION BY DAY
+            """,
+            // u holds one row per key but key 4, d three rows per key.
+            "CREATE TABLE u AS (SELECT (x % 4)::INT k, x * 7 w FROM long_sequence(4))",
+            "CREATE TABLE d AS (SELECT (x % 5)::INT k, x * 100 w FROM long_sequence(15))",
+            // s, smaller than t, which a first join over both hashes.
+            "CREATE TABLE s AS (SELECT (x % 5)::INT k, (x % 4)::INT lk, x * 11 sv FROM long_sequence(4))",
+    };
+    private static final int WORKER_COUNT = 2;
 
     @Override
     @Before
@@ -143,6 +172,43 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
                 final long copyChunks = atom.getStepperRunCount(STEPPER_RUN_CONTINUATION, true);
                 Assert.assertTrue(templateChunks >= 3);
                 Assert.assertTrue(copyChunks >= FRAME_COUNT - 3);
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesChainToTheNextStagesCopies() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Each copy hands its matches on to the next stage's copy, never to the next stage's
+            // instance of the shared template, which would write the same rows: the first execution
+            // swaps the inputs and defines the copies after its first frame, and its tasks then start
+            // from the swapped first stage's copy; the second, once s has grown past t, starts from
+            // the first stage's copy of the query's orientation. The later stages' copies serve both.
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(FRAME_ROWS);
+            try (
+                    RecordCursorFactory two = select(SWAPPED_STACK);
+                    RecordCursorFactory three = select(SWAPPED_STACK_OF_THREE)
+            ) {
+                final String[] sqls = {SWAPPED_STACK, SWAPPED_STACK_OF_THREE};
+                final RecordCursorFactory[] factories = {two, three};
+                for (int i = 0; i < factories.length; i++) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factories[i]);
+                    Assert.assertNotNull(sqls[i], join);
+                    Assert.assertEquals(sqls[i], i + 2, join.getSpec().getStageCount());
+                    Assert.assertTrue(sqls[i], join.getSpec().isSwapCandidate());
+                    Assert.assertNull(sqls[i], join.getAtom().getCopyChainClass(0));
+                    Assert.assertEquals(sqls[i], ordinary(sqls[i], sqlExecutionContext), result(factories[i], sqlExecutionContext));
+                    assertCopyChain(join, true);
+                }
+                // s grows to 40 rows, past t's 32.
+                execute("INSERT INTO s SELECT (x % 5)::INT k, (x % 4)::INT lk, x * 13 sv FROM long_sequence(36)");
+                for (int i = 0; i < factories.length; i++) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factories[i]);
+                    Assert.assertNotNull(sqls[i], join);
+                    Assert.assertEquals(sqls[i], ordinary(sqls[i], sqlExecutionContext), result(factories[i], sqlExecutionContext));
+                    assertCopyChain(join, false);
+                }
             }
         });
     }
@@ -233,6 +299,61 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
                 Assert.assertEquals(ordinary(sql, sqlExecutionContext), result(factory, sqlExecutionContext));
                 Assert.assertTrue(atom.isSwapped());
                 assertRuns(atom, STEPPER_RUN_TASK, 0, 12);
+            }
+        });
+    }
+
+    @Test
+    public void testCopiesThatFailToDefineLeaveTheTemplate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // SWAPPED_STACK defines its three copies, the stages' and then the swapped first stage's,
+            // as the consumer collects the first frame's four rows, and the last of them fails: in
+            // hasNext(), which collects the frame as it moves past its rows, or in close(), which
+            // collects the frame that the cursor holds after one row. The join's own cursor raises
+            // the failure from either, where the query's cursor would log a failure of its close().
+            // The frame is collected, and the factory defines no copy and stays on the template,
+            // until the next execution defines all three as it collects its first frame.
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(FRAME_ROWS);
+            final String expected = ordinary(SWAPPED_STACK, sqlExecutionContext);
+            final Error failure = new Error("test: the stepper copy cannot be defined");
+            for (boolean isOnClose : new boolean[]{false, true}) {
+                final String label = isOnClose ? "close()" : "hasNext()";
+                try (RecordCursorFactory factory = select(SWAPPED_STACK)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(label, join);
+                    final AsyncHashJoinAtom atom = join.getAtom();
+                    final AtomicInteger definitions = new AtomicInteger();
+                    AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(() -> {
+                        if (definitions.incrementAndGet() == 3) {
+                            throw failure;
+                        }
+                    });
+                    int rowsRead = 0;
+                    Throwable thrown = null;
+                    try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
+                        do {
+                            Assert.assertTrue(label, cursor.hasNext());
+                            rowsRead++;
+                        } while (!isOnClose);
+                    } catch (Error e) {
+                        thrown = e;
+                    } finally {
+                        AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(null);
+                    }
+                    Assert.assertSame(label, failure, thrown);
+                    Assert.assertEquals(label, isOnClose ? 1 : FRAME_ROWS, rowsRead);
+                    Assert.assertTrue(label, atom.isSwapped());
+                    Assert.assertEquals(label, 3, definitions.get());
+                    Assert.assertEquals(label, 0, atom.getStepperCopyCount());
+                    Assert.assertFalse(label, join.getStepperClass(0).isHidden());
+                    Assert.assertEquals(label, FRAME_ROWS, atom.getProbedRowCount());
+                    Assert.assertEquals(label, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(label, 0, atom.getRing().getAllocatedBytes());
+                    Assert.assertEquals(label, expected, result(factory, sqlExecutionContext));
+                    assertRuns(atom, STEPPER_RUN_TASK, 1, FRAME_COUNT - 1);
+                    Assert.assertEquals(label, 3, atom.getStepperCopyCount());
+                }
             }
         });
     }
@@ -371,6 +492,16 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTaskThatStartsWhileCopiesAreDefinedRunsTheTemplateOnFiberWorkers() throws Exception {
+        assertTaskThatStartsWhileCopiesAreDefinedRunsTheTemplate(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testTaskThatStartsWhileCopiesAreDefinedRunsTheTemplateOnThreadWorkers() throws Exception {
+        assertTaskThatStartsWhileCopiesAreDefinedRunsTheTemplate(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
     public void testTasksSwitchWithinAnExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -400,9 +531,133 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
         });
     }
 
+    // The stepper chain that the join's tasks run on its copies, in the last execution's orientation:
+    // every stage's own hidden copy, the swapped first stage's copy for a swapped execution, and no
+    // stepper after the last stage.
+    private static void assertCopyChain(AsyncHashJoinRecordCursorFactory join, boolean isSwapped) {
+        final AsyncHashJoinAtom atom = join.getAtom();
+        Assert.assertEquals(isSwapped, atom.isSwapped());
+        final int stageCount = join.getSpec().getStageCount();
+        for (int k = 0; k < stageCount; k++) {
+            final Class<?> chained = atom.getCopyChainClass(k);
+            Assert.assertNotNull("stage " + k, chained);
+            Assert.assertTrue("stage " + k, chained.isHidden());
+            if (k == 0 && isSwapped) {
+                Assert.assertNotSame("stage 0", join.getStepperClass(0), chained);
+            } else {
+                Assert.assertSame("stage " + k, join.getStepperClass(k), chained);
+            }
+        }
+        Assert.assertNull(atom.getCopyChainClass(stageCount));
+        Assert.assertNull(atom.getCopyChainClass(stageCount + 1));
+    }
+
     private static void assertRuns(AsyncHashJoinAtom atom, int kind, long template, long copies) {
         Assert.assertEquals("template runs of kind " + kind, template, atom.getStepperRunCount(kind, false));
         Assert.assertEquals("copy runs of kind " + kind, copies, atom.getStepperRunCount(kind, true));
+    }
+
+    // SWAPPED_STACK on workers, under a warm-up of one frame's rows that its first execution's
+    // consumer completes as it collects the first frame, while the frames after it wait to start: a
+    // task that starts while the owner defines the stepper copies runs the shared template, since the
+    // flag that publishes the copies is still unset, and the tasks that start once the flag is set
+    // run the copies.
+    private static void assertTaskThatStartsWhileCopiesAreDefinedRunsTheTemplate(WorkerPoolMode mode) throws Exception {
+        // Four frames in flight, more than the workers.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            for (String ddl : TABLES) {
+                db.execute(ddl, context);
+            }
+            context.changePageFrameSizes(FRAME_ROWS, FRAME_ROWS);
+            final String expected = ordinaryRows(SWAPPED_STACK, context);
+            context.setParallelHashJoinEnabled(true);
+            AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(FRAME_ROWS);
+            try (RecordCursorFactory factory = db.select(SWAPPED_STACK, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                Assert.assertTrue(join.isClientRowSource());
+                final AsyncHashJoinAtom atom = join.getAtom();
+                final CountDownLatch ownerDefinesCopies = new CountDownLatch(1);
+                final AtomicInteger definitions = new AtomicInteger();
+                // As it defines the first copy, the owner lets the workers' held tasks go, and waits
+                // until one of them, which read the flag unset, finished.
+                AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(() -> {
+                    if (definitions.incrementAndGet() == 1) {
+                        final int reducedFrames = join.getReducedFrameCount();
+                        Assert.assertEquals(1, reducedFrames);
+                        ownerDefinesCopies.countDown();
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                        while (join.getReducedFrameCount() == reducedFrames) {
+                            Assert.assertTrue("no held task finished", System.nanoTime() < deadline);
+                            Os.pause();
+                        }
+                    }
+                });
+                final StringSink rows = new StringSink();
+                final RecordMetadata metadata = factory.getMetadata();
+                try {
+                    // The client reads two rows first, so that the first frame, which its task caps
+                    // at those rows, goes out alone.
+                    context.setFirstReadRows(2);
+                    final RecordCursor cursor;
+                    try {
+                        cursor = factory.getCursor(context);
+                    } finally {
+                        context.setFirstReadRows(Long.MAX_VALUE);
+                    }
+                    try (cursor) {
+                        Assert.assertTrue(cursor.hasNext());
+                        CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
+                        Assert.assertTrue(atom.isSwapped());
+                        Assert.assertEquals(1, join.getDispatchedFrameCount());
+                        // From here on, a worker that takes a probe task holds it, before the task reads
+                        // the flag, until the owner defines the copies.
+                        atom.getPerWorkerLocks().setTestAcquireLatch(new CountDownLatch(1) {
+                            @Override
+                            public void countDown() {
+                                try {
+                                    Assert.assertTrue("the owner did not define the copies", ownerDefinesCopies.await(30, TimeUnit.SECONDS));
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                    throw new AssertionError(e);
+                                }
+                            }
+                        });
+                        // The third row opens the full window, frames 0 to 3, and the consumer
+                        // continues the first frame, which it collects once it moves past its fourth
+                        // row: that completes the warm-up and defines the copies.
+                        for (int i = 1; i < FRAME_ROWS; i++) {
+                            Assert.assertTrue(cursor.hasNext());
+                            CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
+                        }
+                        Assert.assertEquals(4, join.getDispatchedFrameCount());
+                        Assert.assertEquals(0, definitions.get());
+                        while (cursor.hasNext()) {
+                            CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
+                        }
+                    }
+                } finally {
+                    AsyncHashJoinRecordCursorFactory.setStepperCopyHookForTesting(null);
+                    atom.getPerWorkerLocks().setTestAcquireLatch(null);
+                }
+                TestUtils.assertEquals(expected, rows);
+                Assert.assertEquals(3, definitions.get());
+                Assert.assertEquals(3, atom.getStepperCopyCount());
+                // The first frame's task and a task that started while the owner defined the copies
+                // ran the template, and the tasks of frames 4 to 7, which went out once the flag was
+                // set, the copies.
+                final long templateTasks = atom.getStepperRunCount(STEPPER_RUN_TASK, false);
+                final long copyTasks = atom.getStepperRunCount(STEPPER_RUN_TASK, true);
+                Assert.assertTrue("template tasks " + templateTasks, templateTasks >= 2);
+                Assert.assertTrue("copy tasks " + copyTasks, copyTasks >= FRAME_COUNT - 4);
+                Assert.assertEquals(FRAME_COUNT, templateTasks + copyTasks);
+                Assert.assertEquals(0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                // The next execution runs the copies alone.
+                Assert.assertEquals(ordinary(SWAPPED_STACK, context), result(factory, context));
+                assertRuns(atom, STEPPER_RUN_TASK, 0, FRAME_COUNT);
+            }
+        }));
     }
 
     private static long countOrdinary(String sql) throws SqlException {
@@ -430,17 +685,9 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
     }
 
     private static void createTables() throws Exception {
-        execute("""
-                CREATE TABLE t AS (
-                    SELECT (x % 5)::INT k, (x % 3)::INT lk, x v, timestamp_sequence('2024-01-01', 60_000_000) ts
-                    FROM long_sequence(32)
-                ) TIMESTAMP(ts) PARTITION BY DAY
-                """);
-        // u holds one row per key but key 4, d three rows per key.
-        execute("CREATE TABLE u AS (SELECT (x % 4)::INT k, x * 7 w FROM long_sequence(4))");
-        execute("CREATE TABLE d AS (SELECT (x % 5)::INT k, x * 100 w FROM long_sequence(15))");
-        // s, smaller than t, which a first join over both hashes.
-        execute("CREATE TABLE s AS (SELECT (x % 5)::INT k, (x % 4)::INT lk, x * 11 sv FROM long_sequence(4))");
+        for (String ddl : TABLES) {
+            execute(ddl);
+        }
         sqlExecutionContext.changePageFrameSizes(FRAME_ROWS, FRAME_ROWS);
     }
 
@@ -448,5 +695,25 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
         final AsyncHashJoinRecordCursorFactory join = find(factory);
         Assert.assertNotNull(join);
         return join.getAtom();
+    }
+
+    // The ordinary plan's rows, printed as the test prints the rows that it reads off the operator's
+    // cursor under a first read.
+    private static String ordinaryRows(String sql, SqlExecutionContext context) throws SqlException {
+        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(false);
+        try (
+                RecordCursorFactory factory = context.getCairoEngine().select(sql, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            Assert.assertNull(find(factory));
+            final StringSink rows = new StringSink();
+            while (cursor.hasNext()) {
+                CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), rows, true);
+            }
+            return rows.toString();
+        } finally {
+            context.setParallelHashJoinEnabled(wasEnabled);
+        }
     }
 }
