@@ -8530,10 +8530,10 @@ public class MatViewTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
         assertMemoryLeak(() -> {
             // A base partitioned by day holds the five inserts in five partitions with gaps
-            // between them. The cap still merges the five cached intervals into 2 clusters,
-            // and the partition clip splits them again at every gap, one REPLACE_RANGE commit
-            // per partition, so the cap does not bound the commits here.
-            assertMaxClustersCapCommits("DAY", "price_1h", 5);
+            // between them. The cap merges the five cached intervals into 2 clusters, and the
+            // partition clip keeps them whole: the view holds no rows in the gaps, so a
+            // REPLACE_RANGE commit across a gap deletes nothing a split would keep.
+            assertMaxClustersCapCommits("DAY", "price_1h", 2);
             // All five inserts land in the one 2024 partition of a base partitioned by year,
             // so the 2 clusters produce exactly 2 REPLACE_RANGE commits. Without the cap (or
             // with cap >= 5) the same workload produces 5 commits -- this delta is the

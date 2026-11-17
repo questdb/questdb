@@ -28,13 +28,17 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CompositeTimestampFinder;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.NativeTimestampFinder;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TimestampFinder;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -110,6 +114,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // lossy clusters on the next cache write and survive across restarts.
     private final LongList clusteredIntervals = new LongList();
     private final long busyRetryTimeoutUs;
+    // Read the view's timestamps for the partition clip's gap check, see hasViewRows().
+    private final CompositeTimestampFinder compositeTimestampFinder = new CompositeTimestampFinder();
     private final CairoConfiguration configuration;
     private final CairoEngine engine;
     private final StringSink errorMsgSink = new StringSink();
@@ -122,6 +128,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final LongList partitionIntervals = new LongList();
     private final int maxRefreshRetryAttempts;
     private final MicrosecondClock microsecondClock;
+    private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final RefreshContext refreshContext = new RefreshContext();
     private final MatViewRefreshSqlExecutionContext refreshSqlExecutionContext;
     private final MatViewRefreshTask refreshTask = new MatViewRefreshTask();
@@ -1185,15 +1192,21 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * covers the half-open range {@code [partitionTs, partitionCeil)}, so its inclusive range is
      * {@code [partitionTs, partitionCeil - 1]}. The reader lists partitions in ascending timestamp order,
      * so the ranges come out sorted: the parts of a split partition, and contiguous partitions, merge into
-     * one range, and a missing partition leaves a gap between ranges. On return, {@code workingIntervals}
-     * holds only the parts that overlap an existing base partition, and is empty when none does.
+     * one range, and a missing partition leaves a gap between ranges. A gap that a replace range can cross
+     * without deleting view rows joins the ranges around it, see
+     * {@link #mergeGapsWithoutViewRows(SampleByIntervalIterator, TableToken, long, LongList)}; a null
+     * {@code bucketIterator} keeps every gap. On return, {@code workingIntervals} holds only the parts that
+     * overlap an existing base partition or such a gap, and is empty when none does.
      */
     private void clipToPartitionRanges(
             @NotNull TableReader baseTableReader,
             @NotNull TimestampDriver.TimestampCeilMethod partitionCeilMethod,
             @NotNull LongList workingIntervals,
             long minTs,
-            long maxTs
+            long maxTs,
+            @Nullable SampleByIntervalIterator bucketIterator,
+            @NotNull TableToken viewToken,
+            long viewSeqTxn
     ) {
         partitionIntervals.clear();
         final int partitionCount = baseTableReader.getPartitionCount();
@@ -1217,6 +1230,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             } else {
                 partitionIntervals.add(partitionTs, partitionHi);
             }
+        }
+        if (bucketIterator != null && partitionIntervals.size() > 2) {
+            mergeGapsWithoutViewRows(bucketIterator, viewToken, viewSeqTxn, workingIntervals);
         }
         // Without a partition in range, partitionIntervals is empty and the intersection empties
         // workingIntervals, so nothing is left to refresh.
@@ -1483,6 +1499,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final long now = driver.getTicks();
         final boolean rangeRefresh = rangeTo != Numbers.LONG_NULL;
         final boolean incrementalRefresh = lastRefreshTxn != Numbers.LONG_NULL;
+        final boolean isFirstBuild = incrementalRefresh && lastRefreshTxn == -1;
+
+        // The partition clip below keeps a separate REPLACE_RANGE commit for a base partition gap only where a
+        // replace range across the gap would delete view rows, which it reads from the view's applied data. That
+        // data must include every view transaction that this refresh's commits follow. Take the view's last sequenced txn before the
+        // refresh writes into the view's WAL: the cached intervals update below may commit a view state event,
+        // which holds no rows. A view with REFRESH LIMIT keeps every gap: a user backfill into its frozen zone
+        // can commit between the check and the refresh's commits, where the check cannot see it. So does a view
+        // whose designated timestamp type differs from the base's, since the gaps are in base table units. CREATE
+        // no longer accepts such a view, but older ones keep refreshing.
+        long viewSeqTxn = Numbers.LONG_NULL;
+        if (
+                (incrementalRefresh || rangeRefresh)
+                        && !isFirstBuild
+                        && viewDefinition.getRefreshLimitHoursOrMonths() == 0
+                        && walWriter.getMetadata().getTimestampType() == driver.getTimestampType()
+        ) {
+            viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+        }
 
         LongList refreshIntervals = null;
         long minTs = Long.MAX_VALUE;
@@ -1700,10 +1735,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // intersects the working intervals with the base reader's partition ranges; the gaps between
         // partitions become gaps in the working intervals, and the interval iterator commits a
         // separate replace range on each side of a gap. It changes only the job-owned scratch list,
-        // never the cached intervals in MatViewState.getRefreshIntervals(). FULL rebuilds every row, and
-        // the first build, which runs while the refresh position is -1, has no rows to keep, so both
-        // skip the clip and recompute the base's whole [minTs, maxTs] in one contiguous range.
-        final boolean isFirstBuild = incrementalRefresh && lastRefreshTxn == -1;
+        // never the cached intervals in MatViewState.getRefreshIntervals(). A gap that a replace range can
+        // cross without deleting view rows stays in the working intervals, so it costs no commit. FULL
+        // rebuilds every row, and the first build, which runs while the refresh position is -1, has no rows
+        // to keep, so both skip the clip and recompute the base's whole [minTs, maxTs] in one contiguous
+        // range.
         if ((incrementalRefresh || rangeRefresh) && !isFirstBuild && minTs <= maxTs) {
             final TimestampDriver.TimestampCeilMethod partitionCeilMethod =
                     driver.getPartitionCeilMethod(baseTableReader.getPartitionedBy());
@@ -1717,7 +1753,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 clusteredIntervals.add(minTs, maxTs);
                 refreshIntervals = clusteredIntervals;
             }
-            clipToPartitionRanges(baseTableReader, partitionCeilMethod, refreshIntervals, minTs, maxTs);
+            // Rounds timestamps down to their view buckets as the refresh's interval iterator does, which
+            // the gap check needs. The refresh sets the iterator up again for its own iteration below.
+            final SampleByIntervalIterator bucketIterator = viewSeqTxn != Numbers.LONG_NULL
+                    ? intervalIterator(
+                    driver,
+                    viewDefinition.getTimestampSampler(),
+                    viewDefinition.getTzRules(),
+                    viewDefinition.getFixedOffset(),
+                    viewDefinition.getSamplingIntervalUnit(),
+                    null,
+                    minTs,
+                    maxTs,
+                    1,
+                    refreshContext.stepPerInterval
+            )
+                    : null;
+            clipToPartitionRanges(baseTableReader, partitionCeilMethod, refreshIntervals, minTs, maxTs, bucketIterator, viewToken, viewSeqTxn);
             if (refreshIntervals.size() > 0) {
                 minTs = refreshIntervals.getQuick(0);
                 maxTs = refreshIntervals.getQuick(refreshIntervals.size() - 1);
@@ -3228,6 +3280,37 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return viewSeqTracker.getWriterTxn() < viewSeqTracker.getSeqTxn();
     }
 
+    // Whether the view's reader holds a row with a timestamp in [lo, hi], which is empty when hi < lo. A Parquet
+    // partition that the range reaches counts as holding one, since the check reads only mapped native timestamps.
+    private boolean hasViewRows(@NotNull TableReader viewReader, long lo, long hi) {
+        final int timestampIndex = viewReader.getMetadata().getTimestampIndex();
+        final int partitionCount = viewReader.getPartitionCount();
+        // The partition that holds lo, or the first one when lo lies before it, then each partition, or part of a
+        // split partition, that starts at or before hi.
+        for (
+                int i = Math.max(0, viewReader.getPartitionIndexByTimestamp(lo));
+                i < partitionCount && viewReader.getPartitionTimestampByIndex(i) <= hi;
+                i++
+        ) {
+            if (viewReader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                return true;
+            }
+            final long rowCount = viewReader.openPartition(i);
+            if (rowCount > 0) {
+                final TimestampFinder finder = viewReader.getTxFile().isPartitionComposite(i)
+                        ? compositeTimestampFinder.of(viewReader, i, timestampIndex, rowCount)
+                        : nativeTimestampFinder.of(viewReader, i, timestampIndex, rowCount);
+                finder.prepare();
+                // the partition's last row at or before hi, or -1 when all its rows lie after hi
+                final long row = finder.findTimestamp(hi, 0, rowCount - 1);
+                if (row > -1 && finder.timestampAt(row) >= lo) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isViewWriteSuspended(TableToken viewToken) {
         return configuration.isWalApplySuspendedWriteDenied() && engine.isWalApplySuspended(viewToken);
     }
@@ -3322,6 +3405,85 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             e.put(" [from=").put(queryMetadata.getColumnName(MatViewColumnMapping.getQueryColumnIndex(copier, position)))
                     .put(", to=").put(viewMetadata.getColumnName(MatViewColumnMapping.getViewColumnIndex(copier, position)))
                     .put(']');
+        }
+    }
+
+    /**
+     * Joins two consecutive base partition ranges of {@link #partitionIntervals} across the gap between them when
+     * one of {@code workingIntervals} spans the gap and reaches past it on both sides, and a replace range across
+     * the gap deletes no view row that the split around the gap keeps.
+     * <p>
+     * The partition clip splits a working interval at every base partition gap, so that its REPLACE_RANGE commits
+     * keep the view rows there, one view WAL transaction per gap. The interval iterator rounds the piece before the
+     * gap up to the end of the bucket that holds {@code gapLo - 1}, and the piece after it down to the start of the
+     * bucket that holds {@code gapHi + 1}, so the split already replaces those two buckets. A replace range across
+     * the gap reaches further only into {@code [gapLo, bucketFloor(gapHi + 1))}. When the view holds no row there,
+     * the refresh commits across the gap as it would without the clip: the gaps of a sparse base whose rows never
+     * existed cost no commits, while the gaps where the view keeps rows the base removed keep their own. The range
+     * is empty when the two buckets meet inside the gap, and the split then writes no extra commit either. Gaps
+     * between separate working intervals stay, since the intersection with the working intervals keeps them out.
+     * <p>
+     * The check reads the view's applied data, so it holds only when the view's reader has applied every view
+     * transaction up to {@code viewSeqTxn}, the view's last txn before the refresh wrote into the view's WAL;
+     * otherwise, or when the view cannot be read, every gap keeps its commit. Rows that an unapplied view
+     * transaction writes, such as an earlier refresh's commit the WAL apply has not reached, would be invisible
+     * to the check, and a replace range across their gap would delete them once applied after it.
+     *
+     * @param bucketIterator the refresh's interval iterator, set up over the clip's range, which gives the bucket
+     *                       floors
+     */
+    private void mergeGapsWithoutViewRows(
+            @NotNull SampleByIntervalIterator bucketIterator,
+            @NotNull TableToken viewToken,
+            long viewSeqTxn,
+            @NotNull LongList workingIntervals
+    ) {
+        final int partitionSize = partitionIntervals.size();
+        final int workingSize = workingIntervals.size();
+        TableReader viewReader = null;
+        boolean isMergeAllowed = true;
+        try {
+            int w = 0;
+            // partitionIntervals holds the ranges merged so far in [0, out), compacted in place
+            int out = 2;
+            for (int p = 2; p < partitionSize; p += 2) {
+                // The previous range and this one end and start at partition boundaries, so neither bound overflows.
+                final long gapLo = partitionIntervals.getQuick(out - 1) + 1;
+                final long gapHi = partitionIntervals.getQuick(p) - 1;
+                // the first working interval that reaches the partition after the gap
+                while (w < workingSize && workingIntervals.getQuick(w + 1) <= gapHi) {
+                    w += 2;
+                }
+                boolean isMerged = false;
+                if (isMergeAllowed && w < workingSize && workingIntervals.getQuick(w) < gapLo) {
+                    try {
+                        if (viewReader == null) {
+                            viewReader = engine.getReader(viewToken);
+                            isMergeAllowed = viewReader.getSeqTxn() >= viewSeqTxn;
+                        }
+                        // The partition after the gap starts at or before maxTs, which the iterator's setup covers.
+                        isMerged = isMergeAllowed && !hasViewRows(viewReader, gapLo, bucketIterator.bucketFloor(gapHi + 1) - 1);
+                    } catch (CairoException e) {
+                        LOG.info().$("could not read materialized view rows, refresh commits each base partition gap separately [view=").$(viewToken)
+                                .$(", msg=").$safe(e.getFlyweightMessage())
+                                .$(", errno=").$(e.getErrno())
+                                .I$();
+                        isMergeAllowed = false;
+                    }
+                }
+                if (isMerged) {
+                    partitionIntervals.setQuick(out - 1, partitionIntervals.getQuick(p + 1));
+                } else {
+                    partitionIntervals.setQuick(out, partitionIntervals.getQuick(p));
+                    partitionIntervals.setQuick(out + 1, partitionIntervals.getQuick(p + 1));
+                    out += 2;
+                }
+            }
+            partitionIntervals.setPos(out);
+        } finally {
+            nativeTimestampFinder.clear();
+            compositeTimestampFinder.clear();
+            Misc.free(viewReader);
         }
     }
 

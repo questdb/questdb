@@ -85,6 +85,35 @@ public class FixedOffsetIntervalIteratorTest extends AbstractIntervalIteratorTes
     }
 
     @Test
+    public void testBucketFloor() throws Exception {
+        // Daily buckets WITH OFFSET '09:00': a timestamp's bucket starts at the latest 09:00 at or before it.
+        final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+        iterator.of(
+                sampler,
+                timestampDriver.fromHours(9),
+                null,
+                timestampDriver.parseFloorLiteral("2024-03-16T00:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2024-03-19T00:00:00.000000Z"),
+                1
+        );
+        final String[][] floors = {
+                {"2024-03-16T00:00:00.000000Z", "2024-03-15T09:00:00.000000Z"},
+                {"2024-03-17T08:59:59.999999Z", "2024-03-16T09:00:00.000000Z"},
+                {"2024-03-17T09:00:00.000000Z", "2024-03-17T09:00:00.000000Z"},
+                {"2024-03-18T00:00:00.000000Z", "2024-03-17T09:00:00.000000Z"},
+                {"2024-03-18T23:59:59.999999Z", "2024-03-18T09:00:00.000000Z"}
+        };
+        for (String[] floor : floors) {
+            Assert.assertEquals(
+                    floor[0],
+                    timestampDriver.parseFloorLiteral(floor[1]),
+                    iterator.bucketFloor(timestampDriver.parseFloorLiteral(floor[0]))
+            );
+        }
+    }
+
+    @Test
     public void testFixedOffset() throws SqlException {
         final FixedOffsetIntervalIterator iterator = new FixedOffsetIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);

@@ -61,6 +61,13 @@ public abstract class SampleByIntervalIterator {
     private int txnIntervalLoIndex;
 
     /**
+     * Returns the start of the SAMPLE BY bucket that holds the given timestamp, where the iterator starts the
+     * step-group of an interval whose low boundary is that timestamp. Valid once the iterator is set up, for a
+     * timestamp no later than the maximum timestamp it was set up with.
+     */
+    public abstract long bucketFloor(long timestamp);
+
+    /**
      * Returns maximum timestamp that belong to the iterated intervals.
      */
     public abstract long getMaxTimestamp();

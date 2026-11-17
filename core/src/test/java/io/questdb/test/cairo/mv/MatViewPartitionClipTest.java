@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewTimerJob;
@@ -38,6 +39,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -52,10 +54,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
@@ -111,6 +116,57 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     public static Collection<Object[]> params() {
         return Arrays.asList(new Object[][]{
                 {TestTimestampType.MICRO}, {TestTimestampType.NANO}
+        });
+    }
+
+    @Test
+    public void testBucketsStraddlingGapEndsCostNoGapCommits() throws Exception {
+        // A DAY base holds rows at 06:00 on weekdays and never on weekends. The Monday bucket of a daily view in
+        // Europe/Berlin starts on Sunday at 23:00Z, or 22:00Z in summer time, and that of a daily view WITH OFFSET
+        // '09:00' on Sunday at 09:00, both inside the weekend gap, and both hold Monday's row. A split at the gap
+        // recomputes the Monday bucket as well, so the gap keeps no commit of its own: a user RANGE over four weeks,
+        // across the switch to summer time on 2024-03-31, writes one view WAL transaction, as a refresh without the
+        // split does, where a split at each of the three weekends would write four.
+        assertMemoryLeak(() -> {
+            createBase("DAY", null);
+            final String berlinSql = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
+            final String offsetSql = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '09:00'";
+            execute("CREATE MATERIALIZED VIEW berlin AS (" + berlinSql + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW offset_9h AS (" + offsetSql + ") PARTITION BY DAY");
+            // Monday 2024-03-18 to Friday 2024-04-12
+            final StringBuilder rows = new StringBuilder();
+            LocalDate date = LocalDate.parse("2024-03-18");
+            for (int day = 0; day < 26; day++, date = date.plusDays(1)) {
+                if (date.getDayOfWeek() != DayOfWeek.SATURDAY && date.getDayOfWeek() != DayOfWeek.SUNDAY) {
+                    appendRow(rows, day, date + "T06:00:00.000000Z");
+                }
+            }
+            execute("INSERT INTO base VALUES " + rows);
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM table_partitions('base')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n20\n");
+
+            final String[] views = {"berlin", "offset_9h"};
+            final String[] sqls = {berlinSql, offsetSql};
+            for (int i = 0; i < views.length; i++) {
+                final long viewTxns = walTxnCount(views[i]);
+                execute("REFRESH MATERIALIZED VIEW " + views[i] + " RANGE FROM '2024-03-18T00:00:00.000000Z' TO '2024-04-13T00:00:00.000000Z'");
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(views[i], viewTxns + 1, walTxnCount(views[i]));
+                assertSqlEquals(views[i] + " ORDER BY ts, sym", "(" + sqls[i] + ") ORDER BY ts, sym");
+            }
+            assertQuery("SELECT ts, price FROM berlin WHERE ts BETWEEN '2024-03-28' AND '2024-04-02' ORDER BY ts")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .returns(replaceTs("""
+                            ts\tprice
+                            2024-03-28T23:00:00.000000Z\t11.0
+                            2024-03-31T22:00:00.000000Z\t14.0
+                            2024-04-01T22:00:00.000000Z\t15.0
+                            """));
         });
     }
 
@@ -258,15 +314,73 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIncrementalRefreshAcrossGapsWritesOneCommitPerGap() throws Exception {
-        // Performance property: a refresh whose working interval crosses N partition gaps writes
-        // exactly N more REPLACE_RANGE commits than the same refresh over a base without gaps, for an
-        // incremental refresh and for a user RANGE alike.
+    public void testGapCheckReadsCompositeViewPartition() throws Exception {
+        // Merge-append leaves the view's month partition composite once refreshes replace ranges inside it: the
+        // replaced rows of 2024-01-05 stay in the column files as dead rows, and the new ones, as well as the row of
+        // 2024-01-07, which the base writes later, land after the rows of 2024-01-09. The base then drops
+        // 2024-01-07. The gap check finds the view's row of 2024-01-07 through the partition's pieces, so a user RANGE
+        // keeps a commit for that gap and the row, and joins the days around 2024-01-03, which never held rows.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         assertMemoryLeak(() -> {
-            assertCommitsPerGap(1);
-            assertCommitsPerGap(3);
+            // A fixed clock past the base's newest row keeps the view's refresh timestamps, and so its status,
+            // deterministic.
+            currentMicros = parseFloorPartialTimestamp("2024-01-10T00:00:00.000000Z");
+            createBase("DAY", null);
+            createView("1h", "MONTH");
+            final StringBuilder rows = new StringBuilder();
+            for (int day = 1; day < 10; day++) {
+                if (day != 3 && day != 7) {
+                    appendRow(rows, day, "2024-01-0" + day + "T00:10:00.000000Z");
+                }
+            }
+            execute("INSERT INTO base VALUES " + rows);
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 50.0, '2024-01-05T00:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO base VALUES ('a', 7.0, '2024-01-07T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT name, numRows, pieceCount > 1 composite FROM table_partitions('price_1h')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tnumRows\tcomposite
+                            2024-01\t8\ttrue
+                            """);
+            execute("ALTER TABLE base DROP PARTITION LIST '2024-01-07'");
+            drainWalAndMatViewQueues();
+
+            final long viewTxns = walTxnCount("price_1h");
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-10T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewTxns + 2, walTxnCount("price_1h"));
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\ta\t2.0
+                    2024-01-04T00:00:00.000000Z\ta\t4.0
+                    2024-01-05T00:00:00.000000Z\ta\t50.0
+                    2024-01-06T00:00:00.000000Z\ta\t6.0
+                    2024-01-07T00:00:00.000000Z\ta\t7.0
+                    2024-01-08T00:00:00.000000Z\ta\t8.0
+                    2024-01-09T00:00:00.000000Z\ta\t9.0
+                    """);
+            assertViewValid();
         });
     }
+
+    @Test
+    public void testGapsWithoutViewRowsCostNoCommits() throws Exception {
+        // Performance property: a refresh whose working interval crosses partition gaps in which the view holds no
+        // row, here the gaps of a base that never held rows there, writes as many REPLACE_RANGE commits as the same
+        // refresh over a base without gaps, for an incremental refresh, a user RANGE and the min..max recompute alike.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        assertMemoryLeak(() -> {
+            assertGapsWithoutViewRowsCostNoCommits(1);
+            assertGapsWithoutViewRowsCostNoCommits(3);
+        });
+    }
+
 
     @Test
     public void testIncrementalRefreshAfterDstGapAcrossZones() throws Exception {
@@ -563,6 +677,77 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOnlyGapsWithViewRowsKeepTheirCommits() throws Exception {
+        // The mixed base never holds 2024-01-02, 2024-01-03 and 2024-01-08, and drops 2024-01-04 and 2024-01-06 after
+        // the view's first build, which keeps its rows there. Its gaps are 2024-01-02..04, with view rows on the last
+        // day only, 2024-01-06, with view rows, and 2024-01-08, without. An incremental refresh and a user RANGE
+        // across all its days write two more view WAL transactions than the same refreshes of a view over a dense
+        // base: one for each gap that holds view rows.
+        assertMemoryLeak(() -> {
+            for (String base : new String[]{"dense", "mixed"}) {
+                execute("CREATE TABLE " + base + " (sym SYMBOL, price DOUBLE, ts " + tsType() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE MATERIALIZED VIEW " + base + "_v AS (SELECT ts, sym, last(price) AS price FROM " + base + " SAMPLE BY 1h) PARTITION BY DAY");
+            }
+            final StringBuilder denseRows = new StringBuilder();
+            final StringBuilder mixedRows = new StringBuilder();
+            for (int day = 1; day < 10; day++) {
+                appendRow(denseRows, day, "2024-01-0" + day + "T00:10:00.000000Z");
+                if (day == 1 || day >= 4 && day != 8) {
+                    appendRow(mixedRows, day, "2024-01-0" + day + "T00:10:00.000000Z");
+                }
+            }
+            execute("INSERT INTO dense VALUES " + denseRows);
+            execute("INSERT INTO mixed VALUES " + mixedRows);
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE mixed DROP PARTITION LIST '2024-01-04', '2024-01-06'");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT name FROM table_partitions('mixed') ORDER BY name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            name
+                            2024-01-01
+                            2024-01-05
+                            2024-01-07
+                            2024-01-09
+                            """);
+
+            // One out-of-order commit into the days both bases hold.
+            final String o3Rows = """
+                    ('a', 10.0, '2024-01-01T00:20:00.000000Z'),
+                    ('a', 50.0, '2024-01-05T00:20:00.000000Z'),
+                    ('a', 70.0, '2024-01-07T00:20:00.000000Z'),
+                    ('a', 90.0, '2024-01-09T00:20:00.000000Z')
+                    """;
+            long denseTxns = walTxnCount("dense_v");
+            long mixedTxns = walTxnCount("mixed_v");
+            execute("INSERT INTO dense VALUES " + o3Rows);
+            execute("INSERT INTO mixed VALUES " + o3Rows);
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("incremental refresh", walTxnCount("dense_v") - denseTxns + 2, walTxnCount("mixed_v") - mixedTxns);
+
+            denseTxns = walTxnCount("dense_v");
+            mixedTxns = walTxnCount("mixed_v");
+            for (String base : new String[]{"dense", "mixed"}) {
+                execute("REFRESH MATERIALIZED VIEW " + base + "_v RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-10T00:00:00.000000Z'");
+            }
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("user RANGE", walTxnCount("dense_v") - denseTxns + 2, walTxnCount("mixed_v") - mixedTxns);
+
+            assertQuery("mixed_v ORDER BY ts").timestamp("ts").noLeakCheck().expectSize().returns(replaceTs("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-04T00:00:00.000000Z\ta\t4.0
+                    2024-01-05T00:00:00.000000Z\ta\t50.0
+                    2024-01-06T00:00:00.000000Z\ta\t6.0
+                    2024-01-07T00:00:00.000000Z\ta\t70.0
+                    2024-01-09T00:00:00.000000Z\ta\t90.0
+                    """));
+            assertSqlEquals("dense_v ORDER BY ts, sym", "(SELECT ts, sym, last(price) AS price FROM dense SAMPLE BY 1h) ORDER BY ts, sym");
+        });
+    }
+
+    @Test
     public void testOutOfOrderAndPostGapWritesInOneRefreshKeepViewValid() throws Exception {
         // One incremental refresh of two transactions, an out-of-order row a year back and a row in the bucket after
         // the gap: the snap from the old row's bucket to the bucket after the gap lands on the transition.
@@ -676,6 +861,55 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     2024-01-02T00:00:00.000000Z\tb\t20.0
                     2024-01-03T00:00:00.000000Z\tc\t30.0
                     2024-01-04T00:00:00.000000Z\td\t4.0
+                    """);
+            assertViewValid();
+        });
+    }
+
+    @Test
+    public void testParquetViewPartitionKeepsGapCommit() throws Exception {
+        // The view keeps its row of 2024-01-02, a day the base drops, in a partition that is in Parquet, as a storage
+        // policy can leave it. The gap check reads only native timestamps and counts a Parquet partition it reaches as
+        // holding rows, so a user RANGE keeps a commit for that gap, and joins the days around 2024-01-04, which never
+        // held rows. Neither commit reaches the Parquet partition, which a replace commit cannot change.
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-01-06T00:00:00.000000Z");
+            createBase("DAY", null);
+            createView("1h", "DAY");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('b', 2.0, '2024-01-02T00:10:00.000000Z'),
+                    ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
+                    ('e', 5.0, '2024-01-05T00:10:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("ALTER TABLE base DROP PARTITION LIST '2024-01-02'");
+            drainWalAndMatViewQueues();
+            try (TableWriter writer = getWriter("price_1h")) {
+                Assert.assertTrue(writer.convertPartitionNativeToParquet(ts("2024-01-02T00:00:00"), null, 0.01));
+            }
+            assertQuery("SELECT name, isParquet FROM table_partitions('price_1h') ORDER BY name")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\tfalse
+                            2024-01-02\ttrue
+                            2024-01-03\tfalse
+                            2024-01-05\tfalse
+                            """);
+
+            final long viewTxns = walTxnCount("price_1h");
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-06T00:00:00.000000Z'");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewTxns + 2, walTxnCount("price_1h"));
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tb\t2.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    2024-01-05T00:00:00.000000Z\te\t5.0
                     """);
             assertViewValid();
         });
@@ -996,6 +1230,59 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshLimitViewKeepsGapCommitsForBackfill() throws Exception {
+        // A view with REFRESH LIMIT keeps a commit for every gap: a user backfill into its frozen zone can commit after
+        // the refresh checked the gaps, where the check cannot see it. Here a backfill into 2024-01-02, a gap of the
+        // base that never held rows, commits once a user RANGE across the gap has committed its first batch, a day's
+        // bucket. The RANGE's later commits, which apply after the backfill, leave it alone. A RANGE that joined the
+        // days around the gap would replace it, from the end of its first batch on, with the base's rows there: none.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_INSERT_AS_SELECT_BATCH_SIZE, 1);
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1);
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-01-06T00:00:00.000000Z");
+            createBase("DAY", null);
+            createView("1h", "DAY");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
+                    ('e', 5.0, '2024-01-05T00:10:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 2 DAYS");
+            drainWalAndMatViewQueues();
+
+            final long viewTxns = walTxnCount("price_1h");
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-06T00:00:00.000000Z'");
+            final AtomicBoolean isBackfilled = new AtomicBoolean();
+            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+                job.setOnBatchCommittedForTesting(() -> {
+                    if (isBackfilled.compareAndSet(false, true)) {
+                        try {
+                            execute("INSERT INTO price_1h VALUES ('2024-01-02T05:00:00.000000Z', 'y', 7.0)");
+                        } catch (SqlException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                });
+                drainMatViewQueue(job);
+            }
+            Assert.assertTrue(isBackfilled.get());
+            // the backfill and a commit for each of the base's three days
+            Assert.assertEquals(viewTxns + 4, walTxnCount("price_1h"));
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T05:00:00.000000Z\ty\t7.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    2024-01-05T00:00:00.000000Z\te\t5.0
+                    """);
+            assertViewValid();
+        });
+    }
+
+    @Test
     public void testReplaceCommitInOldestPartitionIsFollowed() throws Exception {
         // Inside the base's partitions the view follows the base. A replace-range commit in the
         // oldest existing partition, next to the TTL-dropped 2024-01-01, replaces b with e there, and
@@ -1110,6 +1397,62 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                     2023-03-26T01:30:00.000000Z\ta\t7\t70
                     """);
             assertViewCaughtUp("v");
+        });
+    }
+
+    @Test
+    public void testUnappliedViewRowsKeepGapCommits() throws Exception {
+        // A view transaction that the WAL apply has not reached writes a row into 2024-01-02, a gap of the base that
+        // never held rows, as an earlier refresh's commit can while the apply lags behind. A user RANGE that runs
+        // before the apply cannot see the row in the view's applied data, so it keeps a commit for every gap, and the
+        // row survives the RANGE's commits, which apply after it. Once the row is applied, a RANGE keeps the commit
+        // of its gap only.
+        assertMemoryLeak(() -> {
+            // A fixed clock past the base's newest row keeps the view's refresh timestamps, and so its status,
+            // deterministic.
+            currentMicros = parseFloorPartialTimestamp("2024-01-06T00:00:00.000000Z");
+            createBase("DAY", null);
+            createManualView();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('c', 3.0, '2024-01-03T00:10:00.000000Z'),
+                    ('e', 5.0, '2024-01-05T00:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("price_1h"))) {
+                final TableWriter.Row row = walWriter.newRow(ts("2024-01-02T00:00:00"));
+                row.putSym(1, "z");
+                row.putDouble(2, 9.0);
+                row.append();
+                walWriter.commit();
+            }
+            final String range = "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-06T00:00:00.000000Z'";
+            long viewTxns = walTxnCount("price_1h");
+            execute(range);
+            drainMatViewQueue(engine);
+            // a commit for each of the base's three days
+            Assert.assertEquals(viewTxns + 3, walTxnCount("price_1h"));
+            drainWalQueue();
+            final String expectedRows = """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tz\t9.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    2024-01-05T00:00:00.000000Z\te\t5.0
+                    """;
+            assertViewRows(expectedRows);
+
+            viewTxns = walTxnCount("price_1h");
+            execute(range);
+            drainWalAndMatViewQueues();
+            // 2024-01-02 keeps its commit, 2024-01-04 joins the days around it
+            Assert.assertEquals(viewTxns + 2, walTxnCount("price_1h"));
+            assertViewRows(expectedRows);
+            assertViewValid();
         });
     }
 
@@ -1264,10 +1607,12 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 .returns("first\n" + firstPartition + "\n");
     }
 
-    // Writes, into a dense base (days 1..2N+1) and into a base that lacks every second day (N gaps),
-    // the same out-of-order rows across all their days, and runs the same user RANGE over both. Each
-    // refresh of the base with gaps writes exactly N more view WAL transactions.
-    private void assertCommitsPerGap(int gapCount) throws Exception {
+    // Writes, into a dense base (days 1..2N+1) and into a base that lacks every second day (N gaps that
+    // never held rows), the same out-of-order rows across all their days, and refreshes both views the
+    // same three ways: incrementally, with a user RANGE and with the min..max recompute after missing
+    // WAL files. The views hold no rows in the gaps, so each refresh of the view over the base with gaps
+    // writes as many view WAL transactions as the same refresh over the dense base.
+    private void assertGapsWithoutViewRowsCostNoCommits(int gapCount) throws Exception {
         final int dayCount = 2 * gapCount + 1;
         final String dense = "dense" + gapCount;
         final String gappy = "gappy" + gapCount;
@@ -1300,7 +1645,7 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         Assert.assertEquals(
                 "incremental refresh across " + gapCount + " gaps",
-                walTxnCount(dense + "_v") - denseTxns + gapCount,
+                walTxnCount(dense + "_v") - denseTxns,
                 walTxnCount(gappy + "_v") - gappyTxns
         );
 
@@ -1312,7 +1657,23 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
         drainWalAndMatViewQueues();
         Assert.assertEquals(
                 "user RANGE across " + gapCount + " gaps",
-                walTxnCount(dense + "_v") - denseTxns + gapCount,
+                walTxnCount(dense + "_v") - denseTxns,
+                walTxnCount(gappy + "_v") - gappyTxns
+        );
+
+        // Another out-of-order commit across every day of each base, whose WAL events the refreshes
+        // cannot read.
+        denseTxns = walTxnCount(dense + "_v");
+        gappyTxns = walTxnCount(gappy + "_v");
+        execute("INSERT INTO " + dense + " VALUES " + denseO3Rows.toString().replace(":20:", ":30:"));
+        execute("INSERT INTO " + gappy + " VALUES " + gappyO3Rows.toString().replace(":20:", ":30:"));
+        drainWalQueue();
+        removeWalEventFiles(engine.verifyTableName(dense));
+        removeWalEventFiles(engine.verifyTableName(gappy));
+        drainWalAndMatViewQueues();
+        Assert.assertEquals(
+                "min..max recompute across " + gapCount + " gaps",
+                walTxnCount(dense + "_v") - denseTxns,
                 walTxnCount(gappy + "_v") - gappyTxns
         );
 

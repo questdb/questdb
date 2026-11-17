@@ -100,6 +100,44 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
     }
 
     @Test
+    public void testBucketFloor() throws Exception {
+        // Daily buckets WITH OFFSET '02:30' in Europe/Berlin, which moves its clocks forward at 2023-03-26T01:00:00Z, local
+        // 02:00 CET (+1h) to 03:00 CEST (+2h). The bucket of 2023-03-25 starts at local 02:30 CET, 01:30Z. The bucket of
+        // 2023-03-26 would start at local 02:30, inside the gap, so it starts at the transition; the transition itself
+        // still lies in the iterator's shift interval, which the bucket before the gap takes. The bucket of 2023-03-27
+        // starts at local 02:30 CEST, 00:30Z.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                timestampDriver.fromMinutes(150),
+                null,
+                timestampDriver.parseFloorLiteral("2023-03-25T12:00:00.000000Z"),
+                timestampDriver.parseFloorLiteral("2023-03-28T12:00:00.000000Z"),
+                1
+        );
+        final String[][] floors = {
+                {"2023-03-25T12:00:00.000000Z", "2023-03-25T01:30:00.000000Z"},
+                {"2023-03-26T00:59:59.999999Z", "2023-03-25T01:30:00.000000Z"},
+                {"2023-03-26T01:00:00.000000Z", "2023-03-25T01:30:00.000000Z"},
+                {"2023-03-26T01:10:00.000000Z", "2023-03-26T01:00:00.000000Z"},
+                {"2023-03-26T12:00:00.000000Z", "2023-03-26T01:00:00.000000Z"},
+                {"2023-03-27T00:29:59.999999Z", "2023-03-26T01:00:00.000000Z"},
+                {"2023-03-27T00:30:00.000000Z", "2023-03-27T00:30:00.000000Z"},
+                {"2023-03-28T12:00:00.000000Z", "2023-03-28T00:30:00.000000Z"}
+        };
+        for (String[] floor : floors) {
+            Assert.assertEquals(
+                    floor[0],
+                    timestampDriver.parseFloorLiteral(floor[1]),
+                    iterator.bucketFloor(timestampDriver.parseFloorLiteral(floor[0]))
+            );
+        }
+    }
+
+    @Test
     public void testFixedOffset() throws Exception {
         final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
         final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);

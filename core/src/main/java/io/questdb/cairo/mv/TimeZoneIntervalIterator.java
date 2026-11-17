@@ -72,6 +72,11 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     private long utcTimestampLo;
 
     @Override
+    public long bucketFloor(long timestamp) {
+        return localToUtc(localBucketFloor(timestamp));
+    }
+
+    @Override
     public long getMaxTimestamp() {
         return utcMaxTimestamp;
     }
@@ -193,7 +198,7 @@ public class TimeZoneIntervalIterator extends SampleByIntervalIterator {
     protected boolean clampToInterval(long intervalLoUtc, long intervalHiUtc) {
         // The iterator walks local time, while the txn intervals are in UTC, so both interval
         // boundaries are rounded to their buckets in local time.
-        if (utcTimestampLo < localToUtc(localBucketFloor(intervalLoUtc))) {
+        if (utcTimestampLo < bucketFloor(intervalLoUtc)) {
             // The step-group starts in the gap before the interval's first bucket. Snap to that
             // bucket, so that the next step-group starts there.
             snapToCluster(intervalLoUtc);
