@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PageFrameTouch;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
@@ -347,6 +349,22 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
 
     public long rowGroupMinTimestamp(int rowGroupIndex, int timestampColumnIndex) {
         return parquetMetaReader.getRowGroupMinTimestamp(rowGroupIndex, timestampColumnIndex);
+    }
+
+    @Override
+    public long touchRowGroup(DirectIntList columns, int rowGroup, SqlExecutionCircuitBreaker circuitBreaker, long memoryTrackerAddr) {
+        long pages = 0;
+        for (long i = 0; i < columns.size(); i += 2) {
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            final int column = columns.get(i);
+            final long offset = parquetMetaReader.getChunkByteRangeStart(rowGroup, column);
+            final long size = parquetMetaReader.getChunkTotalCompressed(rowGroup, column);
+            if (parquetAddr == 0 || offset < 0 || size < 0 || offset > parquetSize || size > parquetSize - offset) {
+                throw CairoException.nonCritical().put("invalid parquet chunk range during TOUCH");
+            }
+            pages += PageFrameTouch.touchMemory(parquetAddr + offset, size, circuitBreaker);
+        }
+        return pages;
     }
 
     protected static int decodeRowGroupFromBuffersShim(
