@@ -38,6 +38,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -46,6 +47,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,6 +77,8 @@ public class DowngradeLockTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointImageIsLocked() throws Exception {
+        // The engine refuses CHECKPOINT CREATE on Windows, which has no sync(2).
+        Assume.assumeFalse(Os.isWindows());
         // NOSYNC, the shipped default: the mode that stored no trailer before.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
@@ -99,6 +103,8 @@ public class DowngradeLockTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointImageOfDowngradeStartIsUnlocked() throws Exception {
+        // The engine refuses CHECKPOINT CREATE on Windows, which has no sync(2).
+        Assume.assumeFalse(Os.isWindows());
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, "true");
         assertMemoryLeak(() -> {
