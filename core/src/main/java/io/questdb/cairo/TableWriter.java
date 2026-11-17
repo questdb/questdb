@@ -7012,6 +7012,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", columnType=").$(ColumnType.nameOf(tableColType))
                             .I$();
                     columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, partitionSize);
+                } else {
+                    // the detached metadata names live columns only, so the column is live in both
+                    assert tableColType > 0;
+                    // overrideColumnVersions() copied only the partition's own records. A column without one
+                    // takes its presence from the partition the column was added at, and the table's own
+                    // "added at" partition can differ from the one the partition was detached with: TRUNCATE
+                    // and a DROP of the newest partition move it back. The detached _cv tells whether the
+                    // partition holds the column.
+                    // A top of -1 means the column was added after the partition was written, and nothing wrote
+                    // it there: the partition holds none of its rows, as with a top of partitionSize.
+                    long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, detColIdx);
+                    if (detachedColumnTop < 0) {
+                        detachedColumnTop = partitionSize;
+                    }
+                    long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                    if (columnTop < 0) {
+                        columnTop = partitionSize;
+                    }
+                    if (columnTop != detachedColumnTop) {
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, detachedColumnTop);
+                    }
                 }
 
                 // check column is / was indexed

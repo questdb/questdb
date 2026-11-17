@@ -579,6 +579,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachParquetPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull() throws Exception {
+        assertAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull(false, true);
+    }
+
+    @Test
+    public void testAttachParquetPartitionDetachedBeforeTruncateReadsAddedColumnsAsNullWal() throws Exception {
+        assertAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull(true, true);
+    }
+
+    @Test
     public void testAttachParquetPartitionRestoresSymbolNullFlagsAcrossRowGroupsAndColumnIds() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
@@ -798,6 +808,98 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                                     2020-01-01T23:59:58.999999998Z\t
                                     """);
         });
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeNewestDroppedReadsAddedColumnsAsNull() throws Exception {
+        assertAttachPartitionReadsAddedColumnsAsNull(false, false, "ALTER TABLE tab DROP PARTITION LIST '2024-01-04'");
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeNewestDroppedReadsAddedColumnsAsNullWal() throws Exception {
+        assertAttachPartitionReadsAddedColumnsAsNull(true, false, "ALTER TABLE tab DROP PARTITION LIST '2024-01-04'");
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeTruncateKeepsColumnTop() throws Exception {
+        // The partition holds the added column from its third row on: an O3 write gave it an explicit column
+        // top in _cv, which the detached _cv carries and which the attach has to keep after the TRUNCATE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (price DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        (1.0, '2024-01-01T01:00:00.000000Z'),
+                        (2.0, '2024-01-01T02:00:00.000000Z'),
+                        (4.0, '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE tab ADD COLUMN qty LONG");
+            execute("INSERT INTO tab VALUES (3.0, '2024-01-01T03:00:00.000000Z', 30)");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("TRUNCATE TABLE tab");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            final String expected = replaceTimestampSuffix("""
+                    price\tts\tqty
+                    1.0\t2024-01-01T01:00:00.000000Z\tnull
+                    2.0\t2024-01-01T02:00:00.000000Z\tnull
+                    3.0\t2024-01-01T03:00:00.000000Z\t30
+                    """);
+            assertQuery("SELECT price, ts, qty FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT price, ts, qty FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeTruncateKeepsDroppedColumnDropped() throws Exception {
+        // A column dropped before the DETACH is gone from both the detached metadata and the table. The attach still
+        // takes the presence of the column added after the partition was written from the detached _cv.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (price DOUBLE, gone INT, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO tab VALUES
+                        (1.0, 10, '2024-01-01T01:00:00.000000Z'),
+                        (2.0, 20, '2024-01-02T01:00:00.000000Z')
+                    """);
+            execute("ALTER TABLE tab ADD COLUMN qty LONG");
+            execute("INSERT INTO tab VALUES (3.0, 30, '2024-01-02T02:00:00.000000Z', 300)");
+            execute("ALTER TABLE tab DROP COLUMN gone");
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            execute("TRUNCATE TABLE tab");
+            renameDetachedToAttachable("tab", "2024-01-01");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-01'");
+            execute("INSERT INTO tab VALUES (4.0, '2024-01-03T01:00:00.000000Z', 400)");
+            final String expected = replaceTimestampSuffix("""
+                    price\tts\tqty
+                    1.0\t2024-01-01T01:00:00.000000Z\tnull
+                    4.0\t2024-01-03T01:00:00.000000Z\t400
+                    """);
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull() throws Exception {
+        assertAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull(false, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNullWal() throws Exception {
+        assertAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull(true, false);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedWithoutTruncateReadsAddedColumnsAsNull() throws Exception {
+        assertAttachPartitionReadsAddedColumnsAsNull(false, false, null);
+    }
+
+    @Test
+    public void testAttachPartitionDetachedWithoutTruncateReadsAddedColumnsAsNullWal() throws Exception {
+        assertAttachPartitionReadsAddedColumnsAsNull(true, false, null);
     }
 
     @Test
@@ -4359,6 +4461,91 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    private void assertAttachPartitionDetachedBeforeTruncateReadsAddedColumnsAsNull(boolean isWal, boolean isParquet) throws Exception {
+        assertAttachPartitionReadsAddedColumnsAsNull(isWal, isParquet, "TRUNCATE TABLE tab");
+    }
+
+    /**
+     * @param ddlAfterDetach null, or the statement that runs between the DETACH and the ATTACH: TRUNCATE TABLE or a
+     *                       DROP of the newest partition, 2024-01-04
+     */
+    private void assertAttachPartitionReadsAddedColumnsAsNull(boolean isWal, boolean isParquet, String ddlAfterDetach) throws Exception {
+        // _cv tells that a column added after a partition was written is absent from it by the partition the column
+        // was added at. TRUNCATE and a DROP of the newest partition move that "added at" partition back, so the
+        // attach must take the column's absence from the _cv the partition was detached with.
+        assertMemoryLeak(() -> {
+            ddl(isWal, "CREATE TABLE tab (price DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY"
+                    + (isWal ? " WAL" : " BYPASS WAL"));
+            ddl(isWal, """
+                    INSERT INTO tab VALUES
+                        (1.0, '2024-01-01T01:00:00.000000Z'),
+                        (2.0, '2024-01-02T01:00:00.000000Z'),
+                        (3.0, '2024-01-03T01:00:00.000000Z'),
+                        (3.5, '2024-01-03T02:00:00.000000Z'),
+                        (4.0, '2024-01-04T01:00:00.000000Z')
+                    """);
+            // one at a time: a WAL table does not take several columns in one ALTER
+            ddl(isWal, "ALTER TABLE tab ADD COLUMN qty LONG");
+            ddl(isWal, "ALTER TABLE tab ADD COLUMN sym SYMBOL");
+            ddl(isWal, "ALTER TABLE tab ADD COLUMN note VARCHAR");
+            ddl(isWal, "INSERT INTO tab VALUES (5.0, '2024-01-04T02:00:00.000000Z', 50, 'e', 'n5')");
+            if (isParquet) {
+                ddl(isWal, "ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+            }
+            ddl(isWal, "ALTER TABLE tab DETACH PARTITION LIST '2024-01-03'");
+            final boolean isTruncated = ddlAfterDetach != null && ddlAfterDetach.startsWith("TRUNCATE");
+            final boolean isNewestDropped = ddlAfterDetach != null && !isTruncated;
+            if (ddlAfterDetach != null) {
+                ddl(isWal, ddlAfterDetach);
+            }
+            renameDetachedToAttachable("tab", "2024-01-03");
+            ddl(isWal, "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-03'");
+
+            final String header = "price\tts\tqty\tsym\tnote\n";
+            final String before = isTruncated ? "" : """
+                    1.0\t2024-01-01T01:00:00.000000Z\tnull\t\t
+                    2.0\t2024-01-02T01:00:00.000000Z\tnull\t\t
+                    """;
+            final String after = isTruncated || isNewestDropped ? "" : """
+                    4.0\t2024-01-04T01:00:00.000000Z\tnull\t\t
+                    5.0\t2024-01-04T02:00:00.000000Z\t50\te\tn5
+                    """;
+            final String query = "SELECT price, ts, qty, sym, note FROM tab";
+            final String attached = replaceTimestampSuffix(header + before + """
+                    3.0\t2024-01-03T01:00:00.000000Z\tnull\t\t
+                    3.5\t2024-01-03T02:00:00.000000Z\tnull\t\t
+                    """ + after);
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(attached);
+            // the symbol column holds only NULLs in the attached partition
+            Assert.assertTrue(containsSymbolNullValue("tab", "sym"));
+            assertQuery("SELECT price FROM tab WHERE sym IS NULL").noLeakCheck()
+                    .returns(isTruncated ? "price\n3.0\n3.5\n" : isNewestDropped ? "price\n1.0\n2.0\n3.0\n3.5\n" : "price\n1.0\n2.0\n3.0\n3.5\n4.0\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(attached);
+
+            // The writer keeps the columns absent in the rows the partition already has. The newer partition goes
+            // first, so that the write into the attached one is an out-of-order merge for Parquet too.
+            ddl(isWal, "INSERT INTO tab VALUES (6.0, '2024-01-05T01:00:00.000000Z', 60, 'f', 'n6')");
+            ddl(isWal, "INSERT INTO tab VALUES (3.7, '2024-01-03T03:00:00.000000Z', 37, 'c', 'n3')");
+            final String written = replaceTimestampSuffix(header + before + """
+                    3.0\t2024-01-03T01:00:00.000000Z\tnull\t\t
+                    3.5\t2024-01-03T02:00:00.000000Z\tnull\t\t
+                    3.7\t2024-01-03T03:00:00.000000Z\t37\tc\tn3
+                    """ + after + """
+                    6.0\t2024-01-05T01:00:00.000000Z\t60\tf\tn6
+                    """);
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(written);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(written);
+            if (isParquet) {
+                ddl(isWal, "ALTER TABLE tab CONVERT PARTITION TO NATIVE LIST '2024-01-03'");
+                assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns(written);
+            }
+        });
+    }
+
     // Fails the step that names a committed DETACH .detached, whether it renames the temporary name or links it
     private static class DetachedNameFailingFacade extends TestFilesFacadeImpl {
         // What errno() reports after the fault, as the operating system would
@@ -4637,6 +4824,14 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             drainWalQueue();
         }
         return java.nio.file.Path.of(configuration.getDbRoot(), engine.verifyTableName("tab").getDirName());
+    }
+
+    private void ddl(boolean isWal, String sql) throws Exception {
+        execute(sql);
+        if (isWal) {
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tab")));
+        }
     }
 
     private void dropCurrentVersionOfPartition(String tableName, String partitionName) throws SqlException {
