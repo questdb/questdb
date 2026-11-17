@@ -75,6 +75,11 @@ import org.junit.Test;
  * {@link #setUp()}.
  */
 public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
+    // A WINDOW JOIN of the trades with the prices of their symbol over the second up to each trade, sorted by the
+    // trades' timestamp, in which its rows already arrive.
+    private static final String SORTED_WINDOW_JOIN = "(SELECT t.sym, avg(p.price) ap, t.ts FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) " +
+            "RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW EXCLUDE PREVAILING ORDER BY t.ts)";
+
 
     @Override
     @Before
@@ -118,6 +123,68 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                             TestUtils.assertFactoryInTree(f, HorizonJoinNotKeyedRecordCursorFactory.class);
                             // intentionally never call getCursor()
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverSortedWindowJoinBreachesLimitInSort() throws Exception {
+        // The single-threaded HORIZON JOIN reads a WINDOW JOIN sorted by its timestamp through the sort that ORDER BY
+        // keeps for it. The sort copies the rows into a record chain bound to the per-query tracker, whose first
+        // 16 MiB page breaches the 8 MiB limit. Reusing the factory checks that the failed execution released what
+        // it had charged.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 16 * 1024 * 1024);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 100, 8);
+                        createPrices(engine, sqlExecutionContext, 1_000, 8);
+                        try (RecordCursorFactory factory = compiler.compile(horizonOverSortedWindowJoin(SORTED_WINDOW_JOIN), sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
+                            for (int i = 0; i < 5; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    //noinspection StatementWithEmptyBody
+                                    while (cursor.hasNext()) {
+                                    }
+                                    Assert.fail("expected a per-query memory breach in the sort at iteration " + i);
+                                } catch (CairoException e) {
+                                    assertBreachOn(e, "size=16777216, memoryTag=" + MemoryTag.NATIVE_RECORD_CHAIN + ']');
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverSortedWindowJoinReleasesAllocations() throws Exception {
+        // With 64 KiB pages the sort the single-threaded HORIZON JOIN reads fits the per-query limit. Repeated
+        // executions of one factory return the rows of the same join over the materialised WINDOW JOIN and must
+        // release every byte they charged.
+        setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 64 * 1024);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createTrades(engine, sqlExecutionContext, 5_000, 8);
+                        createPrices(engine, sqlExecutionContext, 50_000, 8);
+                        engine.execute("CREATE TABLE w_ref AS " + SORTED_WINDOW_JOIN + " TIMESTAMP(ts) PARTITION BY DAY", sqlExecutionContext);
+                        final String query = horizonOverSortedWindowJoin(SORTED_WINDOW_JOIN);
+                        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            TestUtils.assertFactoryInTree(factory, HorizonJoinRecordCursorFactory.class);
+                            // eight symbols at five offsets
+                            assertReleasesAllocations(factory, sqlExecutionContext, 40);
+                        }
+                        TestUtils.assertSqlCursors(compiler, sqlExecutionContext, horizonOverSortedWindowJoin("w_ref"), query, LOG);
                     },
                     configuration,
                     LOG
@@ -754,5 +821,11 @@ public class SyncHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                 "INSERT INTO trades SELECT (x * 1_000_000)::timestamp, (x % " + symbols + ")::symbol, x::double FROM long_sequence(" + rows + ")",
                 ctx
         );
+    }
+
+    // A keyed single-threaded HORIZON JOIN of the prices over a left-hand side with sym, ap and ts.
+    private static String horizonOverSortedWindowJoin(String master) {
+        return "SELECT h.offset, w.sym, count() c, sum(w.ap) sap, avg(q.price) qp FROM " + master + " w " +
+                "HORIZON JOIN prices q ON (w.sym = q.sym) RANGE FROM -2s TO 2s STEP 1s AS h ORDER BY 1, 2";
     }
 }

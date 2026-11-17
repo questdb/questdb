@@ -28,8 +28,10 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
@@ -450,6 +452,78 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     .returns("""
                             sec_offs\tavg\tsum
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinCoveringIndexMasterKeepsParallelReaders() throws Exception {
+        // A covering-index scan offers page frames but no random access. A parallel filter above the ORDER BY reads
+        // those page frames and supplies the random access, and the parallel HORIZON JOIN reads them itself, so
+        // ORDER BY keeps skipping its sort under both.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String horizon = "SELECT h.offset, w.sym, count() c, sum(w.price) sp, avg(q.bid) ab FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            // The trades of A cost 1.0, 3.0 and 5.0 and see the quotes 100, 102 and 104 at offset 0, one more at 1s.
+            final String expected = "offset\tsym\tc\tsp\tab\n" +
+                    "0\tA\t3\t9.0\t102.0\n" +
+                    oneSecondOffset() + "\tA\t3\t9.0\t103.0\n";
+            final String filtered = "(SELECT * FROM (SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts) WHERE rnd_double() < 2)";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery(horizon.formatted(filtered.formatted("ci")))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "SelectedRecord", "Async Filter", "CoveringIndex")
+                        .withPlanNotContaining("Async Horizon Join", "keys: [ts]")
+                        .returns(expected);
+                assertSqlCursors(horizon.formatted(filtered.formatted("trades")), horizon.formatted(filtered.formatted("ci")));
+            }
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String sorted = "(SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts)";
+            assertQuery(horizon.formatted(sorted.formatted("ci")))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Async Horizon Join", "CoveringIndex")
+                    .withPlanNotContaining("keys: [ts]")
+                    .returns(expected);
+            assertSqlCursors(horizon.formatted(sorted.formatted("trades")), horizon.formatted(sorted.formatted("ci")));
+        });
+    }
+
+    @Test
+    public void testHorizonJoinCoveringIndexMasterSortedByTimestamp() throws Exception {
+        // Without a reader of its page frames, the covering-index scan reaches the single-threaded HORIZON JOIN
+        // without random access, so ORDER BY keeps its sort. With parallel filters off a filter above the ORDER BY
+        // runs serially and offers no page frames to the parallel HORIZON JOIN, which then takes the
+        // single-threaded path and rejects the left-hand side, as it did before.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String horizon = "SELECT h.offset, w.sym, count() c, sum(w.price) sp, avg(q.bid) ab FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String expected = "offset\tsym\tc\tsp\tab\n" +
+                    "0\tA\t3\t9.0\t102.0\n" +
+                    oneSecondOffset() + "\tA\t3\t9.0\t103.0\n";
+            final String sorted = "(SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts)";
+            sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+            assertQuery(horizon.formatted(sorted.formatted("ci")))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .withPlanNotContaining("Async Horizon Join")
+                    .returns(expected);
+            assertSqlCursors(horizon.formatted(sorted.formatted("trades")), horizon.formatted(sorted.formatted("ci")));
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            final String filtered = "(SELECT * FROM (SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts) WHERE rnd_double() < 2)";
+            assertQuery(horizon.formatted(filtered.formatted("ci")))
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining("Horizon Join", "Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .withPlanNotContaining("Async Horizon Join")
+                    .returns(expected);
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String rejected = horizon.formatted(filtered.formatted("ci"));
+            assertExceptionNoLeakCheck(rejected, rejected.indexOf("HORIZON"), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
         });
     }
 
@@ -1981,6 +2055,62 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterSortedByTimestampWithoutRandomAccess() throws Exception {
+        // ASOF JOIN and hash join sub-queries keep the timestamp order of their left-hand side but offer no random
+        // access, so ORDER BY on that timestamp keeps its sort for the single-threaded HORIZON JOIN. Without the
+        // ORDER BY the HORIZON JOIN rejects them.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String horizon = "SELECT h.offset, w.sym, count() c, sum(w.pp) spp, avg(q.bid) ab FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String asOf = "SELECT t.ts, t.sym, x.price pp FROM trades t ASOF JOIN prices x ON (sym)";
+            execute("CREATE TABLE asof_ref AS (" + asOf + " ORDER BY t.ts) TIMESTAMP(ts) PARTITION BY DAY");
+            final String oneSecond = oneSecondOffset();
+            // ASOF JOIN pairs the trades of A with the prices 2.0, 4.0 and 3.0, those of B with 6.0 twice; at offset 0
+            // the trades of A see the quotes 100, 102 and 104, those of B 200 and 202, at 1s each quote is one higher.
+            final String asOfExpected = "offset\tsym\tc\tspp\tab\n" +
+                    "0\tA\t3\t9.0\t102.0\n" +
+                    "0\tB\t2\t12.0\t201.0\n" +
+                    oneSecond + "\tA\t3\t9.0\t103.0\n" +
+                    oneSecond + "\tB\t2\t12.0\t202.0\n";
+            // the symbol index scan of ti reads the trades of A
+            final String indexScanAsOf = "(SELECT t.ts, t.sym, x.price pp FROM ti t ASOF JOIN prices x ON (sym) WHERE t.sym = 'A' ORDER BY t.ts)";
+            // the weights of A and B are 10.0 and 20.0
+            final String hashJoin = "(SELECT t.ts, t.sym, x.w pp FROM trades t JOIN weights x ON (sym) ORDER BY t.ts)";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery(horizon.formatted("(" + asOf + " ORDER BY t.ts)"))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "AsOf Join")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns(asOfExpected);
+                assertSqlCursors(horizon.formatted("asof_ref"), horizon.formatted("(" + asOf + " ORDER BY t.ts)"));
+                assertQuery(horizon.formatted(indexScanAsOf))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "AsOf Join")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns("offset\tsym\tc\tspp\tab\n" +
+                                "0\tA\t3\t9.0\t102.0\n" +
+                                oneSecond + "\tA\t3\t9.0\t103.0\n");
+                assertQuery(horizon.formatted(hashJoin))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "Hash Join")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns("offset\tsym\tc\tspp\tab\n" +
+                                "0\tA\t3\t30.0\t102.0\n" +
+                                "0\tB\t2\t40.0\t201.0\n" +
+                                oneSecond + "\tA\t3\t30.0\t103.0\n" +
+                                oneSecond + "\tB\t2\t40.0\t202.0\n");
+                final String unsorted = horizon.formatted("(" + asOf + ")");
+                assertExceptionNoLeakCheck(unsorted, unsorted.indexOf("HORIZON"), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinMissingRangeOrList() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -3012,6 +3142,45 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             false\t40.0
                             true\t30.0
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOverInputThatFollowedOrderByAdvice() throws Exception {
+        // An index scan of a table without row ids follows the ORDER BY advice, so its rows arrive in timestamp
+        // order without random access or page frames, and so do those of a hash join over it. ORDER BY keeps the
+        // sort for the HORIZON JOIN, which runs single-threaded over it.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String horizon = "SELECT h.offset, w.sym, count() c, sum(w.price) sp, avg(q.bid) ab FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String oneSecond = oneSecondOffset();
+            final String indexScan = "(SELECT ts, sym, price FROM '*!*ti' WHERE sym = 'A' ORDER BY ts)";
+            final String hashJoin = "SELECT t.ts, t.sym, t.price * x.w price FROM ti t JOIN weights x ON (sym) WHERE t.sym = 'A' ORDER BY t.ts";
+            execute("CREATE TABLE hash_join_ref AS (" + hashJoin + ") TIMESTAMP(ts) PARTITION BY DAY");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // the trades of A cost 1.0, 3.0 and 5.0
+                assertQuery(horizon.formatted(indexScan))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "DeferredSingleSymbolFilterPageFrame")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns("offset\tsym\tc\tsp\tab\n" +
+                                "0\tA\t3\t9.0\t102.0\n" +
+                                oneSecond + "\tA\t3\t9.0\t103.0\n");
+                assertSqlCursors(horizon.formatted("(SELECT ts, sym, price FROM trades WHERE sym = 'A')"), horizon.formatted(indexScan));
+                // the weight of A is 10.0
+                assertQuery(horizon.formatted("(" + hashJoin + ")"))
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", "Encode sort\n", "keys: [ts]", "Hash Join")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns("offset\tsym\tc\tsp\tab\n" +
+                                "0\tA\t3\t90.0\t102.0\n" +
+                                oneSecond + "\tA\t3\t90.0\t103.0\n");
+                assertSqlCursors(horizon.formatted("hash_join_ref"), horizon.formatted("(" + hashJoin + ")"));
+            }
         });
     }
 
@@ -9460,6 +9629,84 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRowIdJoinReaderCutAboveCoveringIndexOrderBy() throws Exception {
+        // A WHERE above the ORDER BY of a covering-index scan runs as a parallel filter over its page frames and
+        // supplies the random access SPLICE JOIN needs, even with a LIMIT or a set operation above the WHERE. A
+        // LIMIT or a VIRTUAL projection between the ORDER BY and its reader offers no page frames, so ORDER BY
+        // keeps its sort there, and so it does without parallel filters.
+        assertMemoryLeak(() -> {
+            createRowIdJoinTables();
+            final String splice = "SELECT * FROM %s w SPLICE JOIN quotes q ON (w.sym = q.sym)";
+            final String limited = "(SELECT * FROM (SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts) WHERE rnd_double() < 2 LIMIT 2)";
+            final String excepted = "(SELECT * FROM (SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts) WHERE rnd_double() < 2 " +
+                    "EXCEPT SELECT ts, sym, price FROM trades WHERE price > 4.5)";
+            final String limitedRows = queryResult(splice.formatted(limited.formatted("trades")));
+            final String exceptedRows = queryResult(splice.formatted(excepted.formatted("trades")));
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertQuery(splice.formatted(limited.formatted("ci")))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlan("""
+                                SelectedRecord
+                                    Splice Join
+                                      condition: q.sym=w.sym
+                                        Async Filter workers: 1
+                                          limit: 2
+                                          filter: rnd_double()<2
+                                            CoveringIndex on: sym with: ts, price
+                                              filter: sym='A'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: quotes
+                                """)
+                        .returns(limitedRows);
+                assertQuery(splice.formatted(excepted.formatted("ci")))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Except", "Async Filter workers: 1\n              filter: rnd_double()<2\n                CoveringIndex")
+                        .withPlanNotContaining("keys: [ts]")
+                        .returns(exceptedRows);
+            }
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            assertQuery(splice.formatted(limited.formatted("ci")))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Limit", "Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(limitedRows);
+            assertQuery(splice.formatted(excepted.formatted("ci")))
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Except", "Filter filter: rnd_double()<2", "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                    .returns(exceptedRows);
+            sqlExecutionContext.setParallelFilterEnabled(true);
+
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            final String horizon = "SELECT h.offset, w.sym, count() c, sum(w.%s) sp, avg(q.bid) ab FROM %s w " +
+                    "HORIZON JOIN quotes q ON (w.sym = q.sym) LIST (0s, 1s) AS h ORDER BY 1, 2";
+            final String sorted = "(SELECT ts, sym, price FROM %s WHERE sym = 'A' ORDER BY ts)";
+            final String oneSecond = oneSecondOffset();
+            final String[][] masters = {
+                    // the trades of A cost 1.0, 3.0 and 5.0
+                    {"price", "(SELECT * FROM %s LIMIT 100)", "Limit", "9.0"},
+                    {"p2", "(SELECT ts, sym, price * 2 p2 FROM %s)", "VirtualRecord", "18.0"}
+            };
+            for (String[] master : masters) {
+                final String query = horizon.formatted(master[0], master[1].formatted(sorted.formatted("ci")));
+                assertQuery(query)
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .withPlanContaining("Horizon Join", master[2], "Encode sort\n", "keys: [ts]", "CoveringIndex")
+                        .withPlanNotContaining("Async Horizon Join")
+                        .returns("offset\tsym\tc\tsp\tab\n" +
+                                "0\tA\t3\t" + master[3] + "\t102.0\n" +
+                                oneSecond + "\tA\t3\t" + master[3] + "\t103.0\n");
+                assertSqlCursors(horizon.formatted(master[0], master[1].formatted(sorted.formatted("trades"))), query);
+            }
+        });
+    }
+
     /**
      * Builds the rows a HORIZON JOIN over the given offsets, in seconds, must produce: one ASOF
      * JOIN per offset over the trades shifted by that offset. Column {@code o} holds the index of
@@ -9796,6 +10043,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
         execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
     }
 
+    // Trades of symbols B and A at distinct timestamps, ti and ci as copies with a symbol index and a covering
+    // index, prices for an ASOF JOIN, quotes of each trade's symbol 0s and 1s after the trade, and a weight for
+    // each symbol. The trades take the left-hand timestamp type, prices and quotes the right-hand one.
+    private void createRowIdJoinTables() throws Exception {
+        final String leftType = leftTableTimestampType.getTypeName();
+        final String rightType = rightTableTimestampType.getTypeName();
+        executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftType);
+        executeWithRewriteTimestamp("CREATE TABLE ti (ts #TIMESTAMP, sym SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", leftType);
+        executeWithRewriteTimestamp(
+                "CREATE TABLE ci (ts #TIMESTAMP, sym SYMBOL INDEX TYPE POSTING EF INCLUDE (price), price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                leftType
+        );
+        executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightType);
+        executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", rightType);
+        execute("CREATE TABLE weights (sym SYMBOL, w DOUBLE)");
+        final String trades = """
+                ('2024-01-01T08:00:00.000000Z', 'B', 2.0),
+                ('2024-01-01T08:00:05.000000Z', 'B', 4.0),
+                ('2024-01-01T09:00:00.000000Z', 'A', 1.0),
+                ('2024-01-01T09:00:10.000000Z', 'A', 3.0),
+                ('2024-01-02T09:00:00.000000Z', 'A', 5.0)""";
+        execute("INSERT INTO trades VALUES " + trades);
+        execute("INSERT INTO ti VALUES " + trades);
+        execute("INSERT INTO ci VALUES " + trades);
+        execute("""
+                INSERT INTO prices VALUES
+                    ('2024-01-01T07:59:50.000000Z', 'B', 6.0),
+                    ('2024-01-01T08:59:30.000000Z', 'A', 2.0),
+                    ('2024-01-01T09:00:05.000000Z', 'A', 4.0),
+                    ('2024-01-02T08:59:30.000000Z', 'A', 3.0)""");
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T08:00:00.000000Z', 'B', 200.0),
+                    ('2024-01-01T08:00:01.000000Z', 'B', 201.0),
+                    ('2024-01-01T08:00:05.000000Z', 'B', 202.0),
+                    ('2024-01-01T08:00:06.000000Z', 'B', 203.0),
+                    ('2024-01-01T09:00:00.000000Z', 'A', 100.0),
+                    ('2024-01-01T09:00:01.000000Z', 'A', 101.0),
+                    ('2024-01-01T09:00:10.000000Z', 'A', 102.0),
+                    ('2024-01-01T09:00:11.000000Z', 'A', 103.0),
+                    ('2024-01-02T09:00:00.000000Z', 'A', 104.0),
+                    ('2024-01-02T09:00:01.000000Z', 'A', 105.0)""");
+        execute("INSERT INTO weights VALUES ('A', 10.0), ('B', 20.0)");
+        drainWalQueue();
+    }
+
     private String getHorizonJoinPlanType() {
         return parallelHorizonJoinEnabled ? "Async Horizon Join workers: 1" : "Horizon Join";
     }
@@ -9810,6 +10103,17 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     private long getSecondsDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
+    }
+
+    // One second in the unit of the master's timestamp, the unit HORIZON JOIN reports its offsets in.
+    private String oneSecondOffset() {
+        return String.valueOf(getSecondsDivisor());
+    }
+
+    private String queryResult(String query) throws SqlException {
+        final StringSink result = new StringSink();
+        printSql(query, result);
+        return result.toString();
     }
 
     private void testHorizonJoinRightFilterCacheReopen(boolean isParallel, boolean isCachedHit) throws Exception {

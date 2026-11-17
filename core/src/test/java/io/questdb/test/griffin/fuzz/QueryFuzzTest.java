@@ -146,9 +146,8 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         frame) shapes (both default true). They share the join band with
  *         the ASOF/LT/SPLICE temporal joins, so enabling them splits that
  *         band rather than widening it; with both off the band is
- *         temporal-only and draws the original rnd stream. Their WHERE is
- *         master-side only, so the FUNCTION fault is woven there like the
- *         other shapes.</li>
+ *         temporal-only. Their WHERE is master-side only, so the FUNCTION
+ *         fault is woven there like the other shapes.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin=true|false} &mdash; generate
  *         equi-join GROUP BY shapes (an INNER, LEFT, RIGHT or FULL join on one
  *         or two of the shared key columns under a keyed or scalar aggregate),
