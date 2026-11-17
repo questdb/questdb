@@ -84,7 +84,9 @@ import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
+    private static final String CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_ORIGIN_REQUEST_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_SITE_REQUEST_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and the request has no Origin, like any link or embedded resource on another site, so http.browser.allowed.origins cannot admit it; open the URL directly";
     private static final String FALSE = "false";
@@ -746,6 +748,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         if (processor == rejectProcessor || processor.isCrossSiteRequestAccepted()) {
             return processor;
         }
+        final DirectUtf8Sequence origin = headerParser.getHeader(HEADER_ORIGIN);
         final DirectUtf8Sequence secFetchSite = headerParser.getHeader(HEADER_SEC_FETCH_SITE);
         if (secFetchSite != null) {
             // Sec-Fetch-Site decides over Origin: behind a TLS-terminating proxy the
@@ -754,19 +757,30 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // which the browser sends with every cross-origin fetch.
             if (Utf8s.equalsAscii(SEC_FETCH_SITE_SAME_ORIGIN, secFetchSite)
                     || Utf8s.equalsAscii(SEC_FETCH_SITE_NONE, secFetchSite)
-                    || isBrowserOriginAllowed()) {
+                    || configuration.getBrowserAllowedOrigins().isAllowed(origin)) {
                 return processor;
             }
-            // A link or an embedded resource on another site sends no Origin, so no
-            // entry of http.browser.allowed.origins can admit it. The message says
-            // so, rather than send the operator to list an origin.
+            // A link or an embedded resource on another site sends no Origin, and a file:
+            // page or a sandboxed frame sends null, so no entry of http.browser.allowed.origins
+            // can admit either. The message says so, rather than send the operator to list
+            // an origin.
+            final String reason;
+            if (origin == null) {
+                reason = CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED;
+            } else if (BrowserAllowedOrigins.hasHttpScheme(origin)) {
+                reason = CROSS_SITE_REQUEST_REJECTED;
+            } else {
+                reason = CROSS_SITE_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED;
+            }
+            return rejectProcessor.reject(HTTP_FORBIDDEN, reason);
+        }
+        // a cross-origin request carries an Origin
+        if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, socket.isTlsSessionStarted())
+                && !configuration.getBrowserAllowedOrigins().isAllowed(origin)) {
             return rejectProcessor.reject(
                     HTTP_FORBIDDEN,
-                    headerParser.getHeader(HEADER_ORIGIN) == null ? CROSS_SITE_REQUEST_WITHOUT_ORIGIN_REJECTED : CROSS_SITE_REQUEST_REJECTED
+                    BrowserAllowedOrigins.hasHttpScheme(origin) ? CROSS_ORIGIN_REQUEST_REJECTED : CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED
             );
-        }
-        if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, socket.isTlsSessionStarted()) && !isBrowserOriginAllowed()) {
-            return rejectProcessor.reject(HTTP_FORBIDDEN, CROSS_ORIGIN_REQUEST_REJECTED);
         }
         return processor;
     }
@@ -1487,11 +1501,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             processor.onConnectionClosed(this);
             throw registerDispatcherDisconnect(DISCONNECT_REASON_SERVER_ERROR);
         }
-    }
-
-    // true when the request's Origin is listed in http.browser.allowed.origins
-    private boolean isBrowserOriginAllowed() {
-        return configuration.getBrowserAllowedOrigins().isAllowed(headerParser.getHeader(HEADER_ORIGIN));
     }
 
     // true when the client asks to close its session by sending 'session=false'

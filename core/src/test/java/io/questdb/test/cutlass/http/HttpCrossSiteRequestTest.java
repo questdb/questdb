@@ -55,7 +55,9 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
  * rebinding needs, unless http.allowed.hosts lists them.
  */
 public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
+    private static final String CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
+    private static final String CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_SITE_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_WITHOUT_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and the request has no Origin, like any link or embedded resource on another site, so http.browser.allowed.origins cannot admit it; open the URL directly";
     private static final String DUMMY_WEB_CONSOLE = "<html><body><p>Dummy Web Console</p></body></html>";
@@ -384,6 +386,9 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 // message says that listing the origin cannot admit it
                 {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site"},
                 {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", "same-site"},
+                // a sandboxed frame on a page of the listed origin sends null, which any page can send
+                {CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", "null"},
+                {CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED, "Origin", "null"},
                 // origins compare byte for byte, as browsers serialize them
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", LISTED_ORIGIN + "/"},
                 {CROSS_ORIGIN_REJECTED, "Origin", "https://other.example.com"},
@@ -658,14 +663,20 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 {CROSS_SITE_WITHOUT_ORIGIN_REJECTED, "Sec-Fetch-Site", ""},
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", sameOrigin},
                 {CROSS_SITE_REJECTED, "Sec-Fetch-Site", "same-site", "Origin", sameOrigin},
+                // file: pages, sandboxed frames and redirected requests send null, extensions and apps their own
+                // scheme; any page can send null, so no listed origin admits it, and the message says so
+                {CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", "null"},
+                {CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED, "Sec-Fetch-Site", "same-site", "Origin", "null"},
+                {CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED, "Sec-Fetch-Site", "cross-site", "Origin", "chrome-extension://abcdefghijklmnopabcdefghijklmnop"},
                 // without Sec-Fetch-Site, Origin must be the origin of Host
                 {CROSS_ORIGIN_REJECTED, "Origin", "http://evil.example.com"},
                 // same host on another port: same site, but another origin
                 {CROSS_ORIGIN_REJECTED, "Origin", "http://localhost:1"},
                 {CROSS_ORIGIN_REJECTED, "Origin", "https://" + authority},
-                // sandboxed frames, file: and data: documents
-                {CROSS_ORIGIN_REJECTED, "Origin", "null"},
                 {CROSS_ORIGIN_REJECTED, "Origin", sameOrigin + "/"},
+                // sandboxed frames, file: and data: documents, and file: pages in older browsers
+                {CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED, "Origin", "null"},
+                {CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED, "Origin", "file://"},
         };
     }
 

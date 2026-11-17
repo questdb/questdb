@@ -53,6 +53,17 @@ public final class BrowserAllowedOrigins {
         this.origins = origins;
     }
 
+    /**
+     * Returns true when the Origin header value has the lowercase http or https scheme
+     * of every entry, so that an entry could list it. A browser sends another value,
+     * such as null, from a file: page, a sandboxed frame or a request redirected across
+     * origins, and an extension or an app sends a scheme of its own: no entry admits
+     * those, and null must not be listed, because any page can send it.
+     */
+    public static boolean hasHttpScheme(Utf8Sequence origin) {
+        return Utf8s.startsWithAscii(origin, "http://") || Utf8s.startsWithAscii(origin, "https://");
+    }
+
     public static BrowserAllowedOrigins parse(String value) {
         if (value == null || value.isBlank()) {
             return EMPTY;

@@ -79,6 +79,33 @@ public class QwpBrowserOriginTest {
     }
 
     @Test
+    public void testAllowedOriginsConfigurationListsOnlyHttpOrigins() {
+        // the connection tells the operator whether listing an Origin could ever admit it
+        for (String origin : new String[]{
+                "http://localhost:3000", "https://app.example.com", "https://[::1]:8443", "http://127.0.0.1:3000"
+        }) {
+            Assert.assertTrue(origin, BrowserAllowedOrigins.hasHttpScheme(new Utf8String(origin)));
+            Assert.assertTrue(origin, BrowserAllowedOrigins.parse(origin).isAllowed(new Utf8String(origin)));
+        }
+        for (String origin : new String[]{
+                // file: pages, sandboxed frames, data: documents and requests redirected across origins
+                "null",
+                // file: pages in older browsers, extensions and apps with schemes of their own
+                "file://", "chrome-extension://abcdefghijklmnopabcdefghijklmnop", "capacitor://localhost", "tauri://localhost",
+                // written differently from what a browser sends
+                "HTTP://localhost:3000", "Https://app.example.com", "http:/localhost:3000", "http:localhost",
+                "ws://localhost:3000", "httpx://localhost", ""
+        }) {
+            Assert.assertFalse(origin, BrowserAllowedOrigins.hasHttpScheme(new Utf8String(origin)));
+            try {
+                Assert.assertFalse(origin, BrowserAllowedOrigins.parse(origin).isAllowed(new Utf8String(origin)));
+            } catch (IllegalArgumentException expected) {
+                // the configuration refuses to list it
+            }
+        }
+    }
+
+    @Test
     public void testAllowedOriginsConfigurationNamesCanonicalForm() {
         assertRejectedWith("https://App.Example.com", "browsers send https://app.example.com");
         assertRejectedWith("https://app.example.com:443", "browsers send https://app.example.com");
