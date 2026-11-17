@@ -2124,6 +2124,71 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholePastWorkLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w_chain (ts TIMESTAMP, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w_chain VALUES (0, 1, 2)");
+            drainWalQueue();
+            // A read that names one alone gives the sub-query of the second branch no column, so its plan computes
+            // c2 + 1 and scans c2. The columns of the first branch each read the one before them and c1, and with 1000
+            // of them the second compile runs out of work in the first branch, before it decides on the sub-query of
+            // the second one. It keeps that sub-query whole all the same.
+            final String subQuery = "SELECT c1 b1, c2 + 1 e FROM w_chain";
+            final long work1000 = keptWholeWork(chainedColumnsUnion(1000, "SELECT", "1", subQuery), "{w_chain=[?c2, c1]}");
+            final long work2000 = keptWholeWork(chainedColumnsUnion(2000, "SELECT", "1", subQuery), "{w_chain=[?c2, c1]}");
+            Assert.assertTrue(work2000 + " outputs added with 2000 columns, " + work1000 + " with 1000", work2000 < 2 * work1000);
+            for (int columnCount : new int[]{5, 1000}) {
+                final String viewSql = chainedColumnsUnion(columnCount, "DECLARE OVERRIDABLE @d := 1 SELECT", "@d", subQuery);
+                // the scans of the reads check the dependencies of the view below the limit only: they read each output
+                // of the view alone, which takes too long with 1000 of them
+                assertReads(
+                        columnCount < 1000,
+                        viewSql,
+                        "{w_chain=[?c2, c1]}",
+                        "SELECT one FROM v",
+                        "SELECT a3 FROM v",
+                        "SELECT one FROM v LIMIT 1",
+                        "SELECT sum(one) FROM v",
+                        "SELECT count() FROM v"
+                );
+                // a read that sets the variable of the second branch reads c2 as the reader
+                assertOverrideDenied(viewSql, "DECLARE @d := 2 SELECT one FROM v", "permission denied [table=w_chain, columns=c2]");
+            }
+        });
+    }
+
+    @Test
+    public void testSubQueryKeptWholePastWorkLimitByNoRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w_chain (ts TIMESTAMP, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO w_chain VALUES (0, 1, 2)");
+            drainWalQueue();
+            // Every read of the view needs every column of the SELECT DISTINCT of the second branch, so it gives the
+            // sub-query b1, and no read scans c2. Past the limit of its work, the second compile cannot tell that,
+            // and keeps the sub-query whole: the view lends c2 to the reads that set none of its variables, and the
+            // principal that records the view has to be allowed to read c2.
+            final String subQuery = "SELECT c1 b1, c2 + 1 e FROM w_chain";
+            final String viewSql5 = chainedColumnsUnion(5, "SELECT DISTINCT", "1", subQuery);
+            final String viewSql1000 = chainedColumnsUnion(1000, "SELECT DISTINCT", "1", subQuery);
+            assertReads(viewSql5, "{w_chain=[c1]}", "SELECT one FROM v", "SELECT count() FROM v");
+            assertReads(false, viewSql1000, "{w_chain=[?c2, c1]}", "SELECT one FROM v", "SELECT count() FROM v");
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new ColumnDenyingSecurityContext("w_chain", "c2"), bindVariableService, null, -1, null)) {
+                forEachViewStatement(viewSql5, context, statement -> Assert.assertEquals(statement, "{w_chain=[c1]}", dependenciesOf("v")));
+                final String accessDenied = "permission denied [table=w_chain, column=c2]";
+                TestUtils.assertContains(denialOf("CREATE VIEW v AS (" + viewSql1000 + ")", context), accessDenied);
+                Assert.assertNull(engine.getTableTokenIfExists("v"));
+                execute("CREATE VIEW v AS (" + viewSql5 + ")", context);
+                drainWalAndViewQueues();
+                TestUtils.assertContains(denialOf("ALTER VIEW v AS (" + viewSql1000 + ")", context), accessDenied);
+                TestUtils.assertContains(denialOf("CREATE OR REPLACE VIEW v AS (" + viewSql1000 + ")", context), accessDenied);
+                Assert.assertEquals("{w_chain=[c1]}", dependenciesOf("v"));
+                execute("DROP VIEW v");
+                drainWalAndViewQueues();
+            }
+        });
+    }
+
+    @Test
     public void testSubQueryKeptWholeReleasesItsMemory() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -3051,6 +3116,18 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             viewSql.put(", a").put(i - 1).put(" + ").put(term).put(" a").put(i);
         }
         return viewSql.put(" FROM w_chain)").toString();
+    }
+
+    // The SELECT of chainedColumns() with a UNION ALL branch over the sub-query, which the branch's own SELECT, such as
+    // "SELECT DISTINCT", reads: its column b1 in place of a1, the constant 0 in place of each other column of the
+    // chain, and the expression one in place of the constant one.
+    private static String chainedColumnsUnion(int columnCount, String branchSelect, String one, String subQuery) {
+        final StringSink viewSql = new StringSink();
+        viewSql.put(chainedColumns(columnCount, "c1")).put(" UNION ALL ").put(branchSelect).put(" b1");
+        for (int i = 2; i < columnCount; i++) {
+            viewSql.put(", 0 z").put(i);
+        }
+        return viewSql.put(", ").put(one).put(" one FROM (").put(subQuery).put(')').toString();
     }
 
     private static void createTables() throws Exception {

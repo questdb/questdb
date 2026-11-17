@@ -144,9 +144,11 @@ public class SqlOptimiser implements Mutable {
     // The most entries the propagation of the columns of a query in kept-whole mode adds to its sets of outputs and of
     // columns reached, see takeKeptWholeWork(). A SELECT list whose columns each read the one before it and the nested
     // model gives column i the outputs of the columns after it, so the entries grow with the square of the columns.
-    // Past the limit, a column serves every output, which keeps no sub-query whole for its sake and so leaves out of
-    // the dependencies of the view the columns only such a read would scan: a read of such a view that scans them
-    // needs SELECT on them. It keeps the work and the memory of the propagation in proportion to the SELECT.
+    // Past the limit, the propagation no longer knows which outputs a column serves, so it keeps whole every sub-query
+    // it has yet to decide on, see emitKeptWholeProjection(): the dependencies of the view then lend, marked, every
+    // column such a sub-query computes, those no read of the view scans included, which the principal that records
+    // the view has to be allowed to read. It keeps the work and the memory of the propagation in proportion to the
+    // SELECT.
     private static final long KEPT_WHOLE_WORK_LIMIT = 1L << 20;
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
@@ -3638,7 +3640,8 @@ public class SqlOptimiser implements Mutable {
             } else {
                 // The columns of a projection share the sets of outputs they serve, see recordKeptWholeOrigins(), so
                 // each set is added once, which keeps the work in proportion to the columns plus the outputs. Past
-                // the limit of the work, no read keeps the join model whole for the sake of the projection.
+                // the limit of the work, this collects no output, and emitKeptWholeProjection() keeps the join model
+                // whole all the same.
                 if (keptWholeServedOrigins.add(origins)) {
                     if (!takeKeptWholeWork(origins.size())) {
                         return;
@@ -5212,6 +5215,13 @@ public class SqlOptimiser implements Mutable {
                         if (outputs.size() > 0) {
                             keptWholeWithheldJoins.add(j);
                             recordWithheldJoinOrigins(j, joinModels.getQuick(j), columns, columnCount, outputs);
+                        } else if (isKeptWholeWorkExhausted()) {
+                            // Past the limit of the work, a column may serve every output in place of the ones it
+                            // serves, see takeKeptWholeWork(), so the propagation cannot tell whether some read leaves
+                            // the join model without columns. The plan of a read that keeps the join model whole
+                            // computes every column of it, the columns any read of it scans and more, so the
+                            // projection withholds it all the same.
+                            keptWholeWithheldJoins.add(j);
                         }
                     }
                 }
@@ -16336,8 +16346,8 @@ public class SqlOptimiser implements Mutable {
 
     // Takes the work of adding count entries to the sets of the propagation in kept-whole mode, and returns whether the
     // propagation may do it. Past KEPT_WHOLE_WORK_LIMIT it may not, and the caller gives the column every output, or
-    // keeps no join model whole: a column that serves more outputs keeps fewer sub-queries whole, so the dependencies
-    // of the view lend fewer columns.
+    // collects no output whose reads keep a join model whole. Either way, emitKeptWholeProjection() keeps whole every
+    // sub-query it decides on from then on, see isKeptWholeWorkExhausted().
     private boolean takeKeptWholeWork(long count) {
         if (count > KEPT_WHOLE_WORK_LIMIT - keptWholeWork) {
             keptWholeWork = KEPT_WHOLE_WORK_LIMIT;
