@@ -94,8 +94,8 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * A join whose rows are the query's own, one for one, see {@link #markClientRowSource()}, takes the
  * rows that the client reads first, see {@link SqlExecutionContext#getFirstReadRows()}, as such a
- * LIMIT: an HTTP page or a PostgreSQL Execute's row limit then first joins only the probe rows that
- * the page may need, and a client that reads on, as a PostgreSQL portal does, reads on into the
+ * LIMIT: an HTTP page, a CSV export's limit or a PostgreSQL Execute's row limit then first joins
+ * only the probe rows that the page may need, and a client that reads on, as a PostgreSQL portal does, reads on into the
  * full window.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {

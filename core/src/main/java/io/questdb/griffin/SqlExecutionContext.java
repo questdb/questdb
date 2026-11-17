@@ -158,8 +158,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * The rows that the client reads first from the cursor that the query's factory opens next, as
-     * its protocol bounds them: an HTTP page without a row count, or a PostgreSQL Execute's row
-     * limit. Long.MAX_VALUE when nothing bounds them. A hint, not a limit: the client may read on,
+     * its protocol bounds them: an HTTP page or CSV export without a row count, or a PostgreSQL
+     * Execute's row limit. Long.MAX_VALUE when nothing bounds them. A hint, not a limit: the client may read on,
      * as a PostgreSQL portal does on its next Execute. The protocol sets it around the factory's
      * {@code getCursor()} alone, see {@link #setFirstReadRows(long)}.
      */

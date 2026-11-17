@@ -267,6 +267,67 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
         assertResponses(expected, actual);
     }
 
+    @Test
+    public void testExportCsvLimitsBoundTheFirstWindow() throws Exception {
+        // [query, query parameters, the rows that the join's first window was cut for]. A CSV export
+        // without a row count reads the rows up to the larger of its skip and stop and one more; a
+        // count, no limit, a Parquet export, which reads every row, or a join that is not the
+        // query's rows leaves the window as it is.
+        final Object[][] requests = {
+                {STAR, "limit=1,7", 8L},
+                {STAR, "limit=1,7&count=true", Long.MAX_VALUE},
+                {STAR, "", Long.MAX_VALUE},
+                {STAR, "limit=7", 8L},
+                {STAR, "limit=0", 1L},
+                {STAR, "limit=3_000,3_010", 3_011L},
+                // A limit whose skip passes its stop reads the rows it skips and one more.
+                {STAR, "limit=21,5", 22L},
+                // The rows past the largest row count read nothing less than every row.
+                {STAR, "limit=9223372036854775807,9223372036854775806", Long.MAX_VALUE},
+                {STAR, "limit=9223372036854775806,9223372036854775806", Long.MAX_VALUE},
+                {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
+                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", Long.MAX_VALUE},
+                {STAR, "limit=2,4", 5L},
+        };
+        final ObjList<String> expected = new ObjList<>();
+        final ObjList<String> actual = new ObjList<>();
+        for (boolean isParallel : new boolean[]{false, true}) {
+            final ObjList<String> responses = isParallel ? actual : expected;
+            newTester().run(newConfiguration(isParallel, 0), (engine, context) -> withQueryPool(engine, () -> {
+                createTables(engine);
+                try (TestHttpClient client = new TestHttpClient()) {
+                    // One connection, whose context serves every request.
+                    client.setKeepConnection(true);
+                    for (Object[] request : requests) {
+                        AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                        responses.add(get(client, "/exp", (String) request[0], (String) request[1]));
+                        final long firstWindowRows = AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                        Assert.assertEquals(request[0] + "&" + request[1], isParallel ? (long) request[2] : -1L, firstWindowRows);
+                    }
+                    // A Parquet export ignores the limit and reads every row.
+                    final Utf8StringSink parquet = new Utf8StringSink();
+                    client.toSink0("/exp", STAR, parquet, null, null, null, params("fmt=parquet&limit=1,7"), "200");
+                    Assert.assertTrue(parquet.size() > 1_000);
+                    Assert.assertEquals(isParallel ? Long.MAX_VALUE : -1L, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                    // An export whose query fails to open its cursor after the join opened its own:
+                    // the join took the limit's rows, and the next request on the connection,
+                    // without a limit, finds no trace of them.
+                    final String failing = "SELECT f.k, d1.w, test_fault() x FROM f JOIN d1 ON f.k = d1.k";
+                    TestFaultFunctionFactory.armToFailAfterInits(0);
+                    try {
+                        TestUtils.assertContains(get(client, "/exp", failing, "limit=5", null), "test_fault: injected init failure");
+                    } finally {
+                        TestFaultFunctionFactory.disarm();
+                    }
+                    Assert.assertEquals(isParallel ? 6L : -1L, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                    responses.add(get(client, "/exp", failing, ""));
+                    Assert.assertEquals(isParallel ? Long.MAX_VALUE : -1L, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                }
+            }));
+        }
+        assertResponses(expected, actual);
+    }
+
     private static void assertResponses(ObjList<String> expected, ObjList<String> actual) {
         Assert.assertEquals(expected.size(), actual.size());
         for (int i = 0, n = expected.size(); i < n; i++) {
