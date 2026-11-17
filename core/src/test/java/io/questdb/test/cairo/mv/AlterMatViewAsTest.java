@@ -1752,7 +1752,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         // The new SQL reads the base table only through regular views, which the parse expands into their bodies. A
         // body's positions point into the regular view's own SQL, so the statement reports a base table it cannot use
         // at the SQL's reference to the outermost regular view that reads it, and leaves the view as it was. The
-        // reference sits in the top query, in a join, and in front of a regular view over another.
+        // reference sits in the top query, in a join, in a join behind a table function, and in front of a regular view
+        // over another.
         assertMemoryLeak(() -> {
             createBaseWithRefreshedView("IMMEDIATE");
             execute("CREATE TABLE other (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1767,6 +1768,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             final String sql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM rv SAMPLE BY 1h)";
             final String joinSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM rv b "
                     + "JOIN other o ON (sym) SAMPLE BY 1h)";
+            final String functionSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM long_sequence(1) l "
+                    + "CROSS JOIN rv b SAMPLE BY 1h)";
             final String nestedSql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM rv2 SAMPLE BY 1h)";
 
             execute("DROP TABLE base");
@@ -1774,6 +1777,7 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             final String missingError = "base table does not exist, name the new base table with WITH BASE [baseTable=base]";
             assertExceptionNoLeakCheck(sql, sql.indexOf("FROM rv") + "FROM ".length(), missingError);
             assertExceptionNoLeakCheck(joinSql, joinSql.indexOf("rv b"), missingError);
+            assertExceptionNoLeakCheck(functionSql, functionSql.indexOf("rv b"), missingError);
             assertExceptionNoLeakCheck(nestedSql, nestedSql.indexOf("FROM rv2") + "FROM ".length(), missingError);
 
             execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
