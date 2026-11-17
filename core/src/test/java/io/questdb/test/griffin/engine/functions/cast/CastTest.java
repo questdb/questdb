@@ -5435,7 +5435,7 @@ public class CastTest extends AbstractCairoTest {
                 .sizeMayVary()
                 .returns("x\\n\\n");
     }
-    
+
     @Test
     public void testStrToLong256Sort() throws Exception {
         assertQuery("select cast(a as long256) x from tt order by x")
@@ -6003,7 +6003,7 @@ public class CastTest extends AbstractCairoTest {
                         0x2\\t0x02
                         """);
     }
-    
+
     @Test
     public void testSymbolToLong256Sort() throws Exception {
         assertQuery("select cast(a as long256) x from tt order by x")
