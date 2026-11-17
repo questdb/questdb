@@ -6,13 +6,15 @@
 #   light - Linux amd64 only. test-pipeline.yml triggers it on every PR build. It reports the
 #           advisory enterprise-ci-light status, which can never satisfy the required check.
 #   full  - every platform and replication store. test-hosted-pipeline.yml (macwin) triggers it,
-#           on demand on a PR and in the merge queue. Only the full run reports enterprise-ci,
-#           the required check, so a PR merges only after a full enterprise run has passed.
+#           on demand on a PR and in the merge queue. The full run reports enterprise-ci, the
+#           required check, unless the tandem skip below reports it instead.
 # A light trigger skips merge-queue builds: the macwin pipeline runs there and triggers the full
-# run, which is the one the queue gates on.
-# A full trigger is skipped when an Enterprise PR comes from a branch named like the OSS one: that
-# PR tests the pair with its own CI and runs the Enterprise Windows jobs in Enterprise macwin. The
-# trigger then sets enterprise-ci itself, pointing at that PR, so the OSS PR can still merge.
+# run, which the queue gates on.
+# Tandem skip: a full trigger queues no run when an Enterprise PR comes from a branch named like
+# the OSS one. That PR's own CI tests Enterprise against the OSS commit its branch pins, which can
+# be older than this one, and runs the Enterprise Windows jobs in Enterprise macwin on request.
+# The trigger then sets enterprise-ci to success itself, pointing at that PR, so the OSS PR can
+# merge without an Enterprise run of its own commit.
 parameters:
   - name: flavour
     type: string
@@ -27,8 +29,8 @@ jobs:
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
     # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
-    # never reports it from merging, and ejects a queue entry that never reports it.
+    # enterprise-ci (reported by the full run or the tandem skip) is a required check, so GitHub
+    # blocks a PR that never reports it from merging, and ejects a queue entry that never reports it.
     condition: >-
       and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
@@ -79,9 +81,10 @@ jobs:
             exit 1
           fi
 
-          # Prints the number of an Enterprise PR from branch $1, as seen in the Enterprise PR builds of
-          # the last 30 days. Prints nothing when there is none or the lookup fails; the full run then
-          # goes ahead as usual.
+          # Prints the number of an Enterprise PR from branch $1, as seen in its pull-request builds.
+          # Azure DevOps purges those after 10 days, so the 30-day window finds only PRs built in about
+          # the last 10. Prints nothing when there is none or the lookup fails; the full run then goes
+          # ahead as usual.
           tandem_ent_pr() {
             local since
             since=$(date -u -d '-30 days' +%Y-%m-%dT%H:%M:%SZ)
@@ -89,6 +92,31 @@ jobs:
               "https://dev.azure.com/questdb/questdb-enterprise/_apis/build/builds?definitions=23&reasonFilter=pullRequest&minTime=$since&\$top=5000&api-version=7.1" \
               | jq -r --arg b "$1" 'first(.value[]? | select(.triggerInfo["pr.sourceBranch"] == $b) | .triggerInfo["pr.number"]) // empty' 2>/dev/null \
               || true
+          }
+
+          # Deletes the comments that failed full enterprise runs left on OSS PR $1 (marker
+          # <!-- enterprise-ci-bot -->, posted by ReportToOssPr in the enterprise build-and-test.yaml).
+          # Returns non-zero when a GitHub call fails.
+          delete_full_run_failure_comments() {
+            local page=1 comments ids="" id rc=0
+            while :; do
+              comments=$(curl -sS --fail --max-time 30 --retry 3 --retry-delay 2 \
+                -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/questdb/questdb/issues/$1/comments?per_page=100&page=$page") || return 1
+              ids="$ids $(jq -r '.[] | select((.body // "") | contains("<!-- enterprise-ci-bot -->")) | .id' <<< "$comments")" || return 1
+              [ "$(jq length <<< "$comments")" -eq 100 ] || break
+              page=$((page + 1))
+            done
+            for id in $ids; do
+              if curl -sS --fail --max-time 30 --retry 3 --retry-delay 2 -o /dev/null -X DELETE \
+                -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/questdb/questdb/issues/comments/$id"; then
+                echo "Deleted the earlier Enterprise CI failure comment $id"
+              else
+                rc=1
+              fi
+            done
+            return $rc
           }
 
           if [ "$ENT_FLAVOUR" = "full" ] && [ -n "$OSS_BRANCH" ]; then
@@ -100,7 +128,7 @@ jobs:
                 -H "Accept: application/vnd.github+json" \
                 "https://api.github.com/repos/questdb/questdb/statuses/$OSS_COMMIT" \
                 -d "$(jq -n --arg pr "$ENT_PR" '{state: "success", context: "enterprise-ci",
-                  description: ("Skipped: questdb-enterprise#" + $pr + " tests this branch"),
+                  description: ("Skipped for tandem PR questdb-enterprise#" + $pr),
                   target_url: ("https://github.com/questdb/questdb-enterprise/pull/" + $pr)}')")
               if [ "$HTTP_CODE" != "201" ]; then
                 echo "Response: $(jq -r '.message // empty' status.json 2>/dev/null || true)"
@@ -109,7 +137,13 @@ jobs:
                 exit 1
               fi
               rm -f status.json
-              echo "Set enterprise-ci on $OSS_COMMIT: skipped, questdb-enterprise#$ENT_PR tests this branch"
+              echo "Set enterprise-ci on $OSS_COMMIT: skipped for tandem PR questdb-enterprise#$ENT_PR"
+              # A passing full run deletes the failure comments of earlier full runs. Do the same, or the
+              # PR keeps an "Enterprise CI Failed" comment next to the green check. Best effort: a failed
+              # GitHub call only leaves comments behind.
+              if ! delete_full_run_failure_comments "$OSS_PR_NUMBER"; then
+                echo "##vso[task.logissue type=warning]Could not delete earlier Enterprise CI failure comments on PR #$OSS_PR_NUMBER"
+              fi
               exit 0
             fi
           fi
