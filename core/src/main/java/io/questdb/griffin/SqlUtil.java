@@ -1114,39 +1114,12 @@ public class SqlUtil {
     /**
      * Returns the position of the first reference to the table in the query, in the order
      * {@link #collectAllTableNames(IQueryModel, LowerCaseCharSequenceHashSet, IntList)} walks the models, or -1 when
-     * the query does not reference the table.
+     * the query does not reference the table. A reference in the body of a regular view that the parse expanded gives
+     * the position of the query's reference to the outermost such view, since the body's positions point into the
+     * view's own SQL.
      */
     public static int findTableNamePosition(@NotNull IQueryModel model, @NotNull CharSequence tableName) {
-        IQueryModel m = model;
-        do {
-            final ExpressionNode tableNameExpr = m.getTableNameExpr();
-            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL
-                    && Chars.equalsIgnoreCase(unquote(tableNameExpr.token), tableName)) {
-                return tableNameExpr.position;
-            }
-
-            final ObjList<IQueryModel> joinModels = m.getJoinModels();
-            for (int i = 0, n = joinModels.size(); i < n; i++) {
-                final IQueryModel joinModel = joinModels.getQuick(i);
-                if (joinModel != m) {
-                    final int position = findTableNamePosition(joinModel, tableName);
-                    if (position > -1) {
-                        return position;
-                    }
-                }
-            }
-
-            final IQueryModel unionModel = m.getUnionModel();
-            if (unionModel != null) {
-                final int position = findTableNamePosition(unionModel, tableName);
-                if (position > -1) {
-                    return position;
-                }
-            }
-
-            m = m.getNestedModel();
-        } while (m != null);
-        return -1;
+        return findTableNamePosition(model, tableName, -1);
     }
 
     public static RecordCursorFactory generateFactory(SqlCompiler compiler, ExecutionModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -2483,6 +2456,46 @@ public class SqlUtil {
             throw SqlException.$(tokPosition + tokLen, "expected interval qualifier in ").put(tok);
         }
         return k;
+    }
+
+    // viewPosition is the position of the query's reference to the expanded view whose body the walk is in, or -1
+    private static int findTableNamePosition(IQueryModel model, CharSequence tableName, int viewPosition) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null && viewPosition == -1) {
+                // every model the walk reaches from here lies in the view's body
+                viewPosition = viewNameExpr.position;
+            }
+
+            final ExpressionNode tableNameExpr = m.getTableNameExpr();
+            if (tableNameExpr != null && tableNameExpr.type == ExpressionNode.LITERAL
+                    && Chars.equalsIgnoreCase(unquote(tableNameExpr.token), tableName)) {
+                return viewPosition > -1 ? viewPosition : tableNameExpr.position;
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    final int position = findTableNamePosition(joinModel, tableName, viewPosition);
+                    if (position > -1) {
+                        return position;
+                    }
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final int position = findTableNamePosition(unionModel, tableName, viewPosition);
+                if (position > -1) {
+                    return position;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return -1;
     }
 
     /**

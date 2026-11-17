@@ -1748,6 +1748,46 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBaseReadThroughRegularViewIsRefusedAtViewReference() throws Exception {
+        // The new SQL reads the base table only through regular views, which the parse expands into their bodies. A
+        // body's positions point into the regular view's own SQL, so the statement reports a base table it cannot use
+        // at the SQL's reference to the outermost regular view that reads it, and leaves the view as it was. The
+        // reference sits in the top query, in a join, and in front of a regular view over another.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute("CREATE TABLE other (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // a body longer than the statements below, so that a position taken from it points past their end
+            execute("""
+                    CREATE VIEW rv AS (
+                        SELECT ts, sym, price, price AS p01, price AS p02, price AS p03, price AS p04, price AS p05,
+                            price AS p06, price AS p07, price AS p08, price AS p09, price AS p10, price AS p11
+                        FROM base
+                    )""");
+            execute("CREATE VIEW rv2 AS (SELECT * FROM rv)");
+            final String sql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM rv SAMPLE BY 1h)";
+            final String joinSql = ALTER_PREFIX + "AS (SELECT b.ts, b.sym, last(b.price) AS price FROM rv b "
+                    + "JOIN other o ON (sym) SAMPLE BY 1h)";
+            final String nestedSql = ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM rv2 SAMPLE BY 1h)";
+
+            execute("DROP TABLE base");
+            drainWalAndMatViewQueues();
+            final String missingError = "base table does not exist, name the new base table with WITH BASE [baseTable=base]";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("FROM rv") + "FROM ".length(), missingError);
+            assertExceptionNoLeakCheck(joinSql, joinSql.indexOf("rv b"), missingError);
+            assertExceptionNoLeakCheck(nestedSql, nestedSql.indexOf("FROM rv2") + "FROM ".length(), missingError);
+
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(sql, sql.indexOf("FROM rv") + "FROM ".length(), "base table has to be WAL enabled");
+            assertExceptionNoLeakCheck(nestedSql, nestedSql.indexOf("FROM rv2") + "FROM ".length(), "base table has to be WAL enabled");
+
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            Assert.assertEquals("base", viewDefinition().getBaseTableName());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
     public void testBaseRecreatedWithoutWithBaseIsRefusedAtBaseReference() throws Exception {
         // Without WITH BASE the view keeps its base table's name. When a table the view cannot use took the name, the
         // statement fails at the SQL's first reference to the base table, as CREATE does, and leaves the view as it
