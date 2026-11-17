@@ -4,13 +4,9 @@
 # enterprise run when someone comments `/azp run macwin` on it, and in the merge queue; a plain
 # push starts none. The run tests the questdb submodule at the OSS commit, with the Enterprise
 # branch named like the OSS one or else main, and reports enterprise-ci, a required check, back
-# to that commit.
-# Tandem skip: no run starts when an open Enterprise PR comes from a branch named like the OSS
-# one. That PR tests the pair itself: its own CI runs Enterprise against the OSS commit its branch
-# pins, and its Windows jobs run in Enterprise macwin on request. The trigger then sets
-# enterprise-ci to success itself, pointing at that PR, so the OSS PR can merge. The trigger asks
-# GitHub for open questdb-enterprise PRs with GH_TOKEN; when it cannot read them, or cannot set the
-# status, it runs the full run instead, as for an OSS PR without an Enterprise PR.
+# to that commit. When an open Enterprise PR comes from that same-named branch, the run skips its
+# tests and reports enterprise-ci as passed: that Enterprise PR tests the pair itself (see the
+# tandem step in questdb-enterprise ci/templates/check-changes-job.yml).
 jobs:
   - job: TriggerEnterprise
     displayName: "Trigger Enterprise Pipeline"
@@ -18,9 +14,8 @@ jobs:
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
     # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci (reported by the enterprise run or the tandem skip) is a required check, so
-    # GitHub blocks a PR that never reports it from merging, and ejects a queue entry that never
-    # reports it.
+    # enterprise-ci (reported by the enterprise run) is a required check, so GitHub blocks a PR that
+    # never reports it from merging, and ejects a queue entry that never reports it.
     condition: >-
       and(succeeded(),
       or(eq(variables['SOURCE_CODE_CHANGED'], 'true'),
@@ -65,76 +60,6 @@ jobs:
           if [ -z "$OSS_COMMIT" ]; then
             echo "##vso[task.logissue type=error]Could not resolve the OSS commit for PR #$OSS_PR_NUMBER"
             exit 1
-          fi
-
-          # Prints the number of the open Enterprise PR from branch $1, or "none" when there is no
-          # open one. Prints nothing when GitHub does not answer the question, e.g. when GH_TOKEN
-          # cannot read questdb-enterprise (GitHub then answers 404).
-          open_ent_pr() {
-            local code
-            code=$(curl -sS -G -o entprs.json -w "%{http_code}" --max-time 30 --retry 3 --retry-delay 2 \
-              -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-              --data-urlencode "state=open" --data-urlencode "head=questdb:$1" --data-urlencode "per_page=1" \
-              "https://api.github.com/repos/questdb/questdb-enterprise/pulls") || code=""
-            if [ "$code" = "200" ]; then
-              jq -r 'if type == "array" then (.[0].number // "none") else empty end' entprs.json 2>/dev/null || true
-            fi
-            rm -f entprs.json
-          }
-
-          # Deletes the comments that failed full enterprise runs left on OSS PR $1 (marker
-          # <!-- enterprise-ci-bot -->, posted by ReportToOssPr in the enterprise build-and-test.yaml).
-          # Returns non-zero when a GitHub call fails.
-          delete_full_run_failure_comments() {
-            local page=1 comments ids="" id rc=0
-            while :; do
-              comments=$(curl -sS --fail --max-time 30 --retry 3 --retry-delay 2 \
-                -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/questdb/questdb/issues/$1/comments?per_page=100&page=$page") || return 1
-              ids="$ids $(jq -r '.[] | select((.body // "") | contains("<!-- enterprise-ci-bot -->")) | .id' <<< "$comments")" || return 1
-              [ "$(jq length <<< "$comments")" -eq 100 ] || break
-              page=$((page + 1))
-            done
-            for id in $ids; do
-              if curl -sS --fail --max-time 30 --retry 3 --retry-delay 2 -o /dev/null -X DELETE \
-                -H "Authorization: token $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/questdb/questdb/issues/comments/$id"; then
-                echo "Deleted the earlier Enterprise CI failure comment $id"
-              else
-                rc=1
-              fi
-            done
-            return $rc
-          }
-
-          if [ -n "$OSS_BRANCH" ]; then
-            ENT_PR=$(open_ent_pr "$OSS_BRANCH")
-            if [ -z "$ENT_PR" ]; then
-              echo "##vso[task.logissue type=warning]Could not read open questdb-enterprise PRs with GH_TOKEN; running the full enterprise run"
-            elif [ "$ENT_PR" != "none" ]; then
-              echo "Enterprise PR #$ENT_PR is open from the same branch ($OSS_BRANCH); skipping the full enterprise run"
-              HTTP_CODE=$(curl -sS -o status.json -w "%{http_code}" --max-time 30 --retry 3 --retry-delay 2 -X POST \
-                -H "Authorization: token $GH_TOKEN" \
-                -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/questdb/questdb/statuses/$OSS_COMMIT" \
-                -d "$(jq -n --arg pr "$ENT_PR" '{state: "success", context: "enterprise-ci",
-                  description: ("Skipped for tandem PR questdb-enterprise#" + $pr),
-                  target_url: ("https://github.com/questdb/questdb-enterprise/pull/" + $pr)}')") || HTTP_CODE=""
-              if [ "$HTTP_CODE" = "201" ]; then
-                rm -f status.json
-                echo "Set enterprise-ci on $OSS_COMMIT: skipped for tandem PR questdb-enterprise#$ENT_PR"
-                # A passing full run deletes the failure comments of earlier full runs. Do the same, or the
-                # PR keeps an "Enterprise CI Failed" comment next to the green check. Best effort: a failed
-                # GitHub call only leaves comments behind.
-                if ! delete_full_run_failure_comments "$OSS_PR_NUMBER"; then
-                  echo "##vso[task.logissue type=warning]Could not delete earlier Enterprise CI failure comments on PR #$OSS_PR_NUMBER"
-                fi
-                exit 0
-              fi
-              echo "Response: $(jq -r '.message // empty' status.json 2>/dev/null || true)"
-              rm -f status.json
-              echo "##vso[task.logissue type=warning]Could not set enterprise-ci on $OSS_COMMIT (HTTP $HTTP_CODE) with GH_TOKEN; running the full enterprise run instead"
-            fi
           fi
 
           # Queue the enterprise run on enterprise branch $1. The pipeline's ossFlavour parameter
