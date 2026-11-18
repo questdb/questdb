@@ -1035,6 +1035,17 @@ public class QwpWalAppender implements QuietCloseable {
                                 .put(']');
                     }
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
+                        if (writer.getTableToken().isMatView()) {
+                            // A backfill into a materialized view writes the view's columns. The view's columns
+                            // change only through ALTER MATERIALIZED VIEW, which checks the change against the view's
+                            // SQL. The refusal repeats under byte-identical replay.
+                            throw CairoException.schemaMismatch()
+                                    .put("materialized view has no such column, add it with ALTER MATERIALIZED VIEW ... ADD COLUMN [table=")
+                                    .put(tud.getTableNameUtf16())
+                                    .put(", column=")
+                                    .put(columnName)
+                                    .put(']');
+                        }
                         final int newColumnType;
                         if (colType == TYPE_DOUBLE_ARRAY) {
                             newColumnType = batchDims > 0

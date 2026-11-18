@@ -27,14 +27,22 @@ package io.questdb.test;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.client.Sender;
+import io.questdb.client.cutlass.line.LineSenderException;
+import io.questdb.griffin.SqlParser;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.time.temporal.ChronoUnit;
 
 import static io.questdb.test.AbstractCairoTest.parseFloorPartialTimestamp;
 
@@ -130,5 +138,120 @@ public class ServerMainMatViewBackfillTest extends AbstractBootstrapTest {
                 Assert.assertTrue("not all frozen backfills survived concurrent refresh", survived);
             }
         });
+    }
+
+    @Test
+    public void testIlpBackfillCannotAddViewColumn() throws Exception {
+        // A line protocol backfill into a view with REFRESH LIMIT must not add a column the view lacks: a view's
+        // columns change only through ALTER MATERIALIZED VIEW, which refuses the change on a view whose SQL relies
+        // on generated column names. The line names a frozen-zone row, which the commit-time check would accept.
+        TestUtils.assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.CAIRO_MAT_VIEW_ENABLED.getEnvVarName(), "true"
+            )) {
+                final CairoEngine engine = serverMain.getEngine();
+                serverMain.execute("create table base_price (sym symbol, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
+                serverMain.execute("insert into base_price values ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+                serverMain.awaitTxn("base_price", 1);
+                final String[] viewNames = {"named_http", "named_tcp", "gen_http", "gen_tcp"};
+                for (String viewName : viewNames) {
+                    if (viewName.startsWith("gen")) {
+                        // a view of the previous version, whose SQL relies on generated column names
+                        SqlParser.setMatViewExplicitNamesCheckSkipped(true);
+                        try {
+                            serverMain.execute("create materialized view " + viewName + " as (select sym, last(price), ts from base_price sample by 1h)");
+                        } finally {
+                            SqlParser.setMatViewExplicitNamesCheckSkipped(false);
+                        }
+                    } else {
+                        serverMain.execute("create materialized view " + viewName + " as (select sym, last(price) price, ts from base_price sample by 1h)");
+                    }
+                }
+                // the first build covers every bucket; the limit then freezes the ones below 11:00
+                for (String viewName : viewNames) {
+                    awaitRefreshed(engine, viewName, 1, false);
+                    serverMain.execute("alter materialized view " + viewName + " set refresh limit 1 hour");
+                }
+                for (String viewName : viewNames) {
+                    awaitRefreshed(engine, viewName, 1, true);
+                }
+
+                // frozen zone: base max 12:00, limit 1h -> boundary 11:00
+                final long frozenTs = parseFloorPartialTimestamp("2024-09-10T08:00");
+                for (String viewName : new String[]{"named_http", "gen_http"}) {
+                    try (Sender sender = Sender.builder(Sender.Transport.HTTP).address("localhost:" + serverMain.getHttpServerPort()).build()) {
+                        sender.table(viewName)
+                                .symbol("sym", "a")
+                                .doubleColumn("extra", 42.0)
+                                .at(frozenTs, ChronoUnit.MICROS);
+                        sender.flush();
+                        Assert.fail("expected the line to be refused [view=" + viewName + ']');
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "table: " + viewName + ", column: extra does not exist; "
+                                + "add columns to a materialized view with ALTER MATERIALIZED VIEW ... ADD COLUMN");
+                    }
+                }
+
+                capture.start();
+                for (String viewName : new String[]{"named_tcp", "gen_tcp"}) {
+                    try (Sender sender = Sender.builder(Sender.Transport.TCP).address("localhost").port(ILP_PORT).build()) {
+                        sender.table(viewName)
+                                .symbol("sym", "a")
+                                .doubleColumn("extra", 42.0)
+                                .at(frozenTs, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+                    // the line either fails or, without the check, adds the column
+                    capture.waitForRegex("could not write ILP message \\[tableName=" + viewName + "|columnName=extra");
+                }
+                capture.assertNotLogged("columnName=extra");
+
+                // the next refresh: the views keep their columns and stay valid
+                serverMain.execute("insert into base_price values ('a', 3.0, '2024-09-10T13:10')");
+                serverMain.awaitTxn("base_price", 2);
+                for (String viewName : viewNames) {
+                    awaitRefreshed(engine, viewName, 2, true);
+                    final String valueColumn = viewName.startsWith("gen") ? "last" : "price";
+                    serverMain.assertSql(
+                            "select \"column\", type from table_columns('" + viewName + "')",
+                            "column\ttype\n" +
+                                    "sym\tSYMBOL\n" +
+                                    valueColumn + "\tDOUBLE\n" +
+                                    "ts\tTIMESTAMP\n"
+                    );
+                    serverMain.assertSql(
+                            "select view_status, invalidation_reason from materialized_views() where view_name = '" + viewName + "'",
+                            "view_status\tinvalidation_reason\n" +
+                                    "valid\t\n"
+                    );
+                    serverMain.assertSql(
+                            "select * from " + viewName,
+                            "sym\t" + valueColumn + "\tts\n" +
+                                    "a\t1.0\t2024-09-10T09:00:00.000000Z\n" +
+                                    "a\t2.0\t2024-09-10T12:00:00.000000Z\n" +
+                                    "a\t3.0\t2024-09-10T13:00:00.000000Z\n"
+                    );
+                }
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    // Waits until the view has refreshed up to the base txn, its WAL has applied and, when asked, it accepts backfill.
+    private static void awaitRefreshed(CairoEngine engine, String viewName, long baseTxn, boolean isBackfillable) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
+        final long deadline = System.currentTimeMillis() + 60_000;
+        while (System.currentTimeMillis() < deadline) {
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final SeqTxnTracker viewTxnTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            if ((!isBackfillable || engine.isBackfillableMatView(viewToken)) && viewState != null && viewState.getLastRefreshBaseTxn() >= baseTxn
+                    && viewTxnTracker.getWriterTxn() >= viewTxnTracker.getSeqTxn()) {
+                return;
+            }
+            Os.sleep(10);
+        }
+        Assert.fail("materialized view did not refresh in time [view=" + viewName + ", baseTxn=" + baseTxn + ']');
     }
 }
