@@ -66,6 +66,9 @@ public final class Mig941 {
     private static final int PARQUET_FORMAT_BIT = 61;
     private static final int PARQUET_GENERATED_BIT = 60;
     private static final long PARQUET_REMOTE_BIT = 1L << 63;
+    private static final long PARTITION_HAS_DELTA_BIT = 1L << 59;
+    // Earlier Delta builds marked the catalog with bit 61 next to the delta-write bit 60.
+    private static final long PARTITION_LEGACY_DELTA_FLAGS = (1L << 61) | (1L << 60);
     private static final int PARTITION_MASKED_SIZE_IDX = 1;
     private static final int PARTITION_NAME_TX_IDX = 2;
     private static final int PARTITION_PARQUET_FILE_SIZE_IDX = 3;
@@ -164,6 +167,14 @@ public final class Mig941 {
                 long nameTxn = txMem.getLong(entryOffset + PARTITION_NAME_TX_IDX * Long.BYTES);
                 long rawParquetFileSize = txMem.getLong(entryOffset + PARTITION_PARQUET_FILE_SIZE_IDX * Long.BYTES);
 
+                // Delta catalogs pin an exact _pm prefix. Regenerating an equivalent
+                // footer discards metadata history and invalidates that boundary.
+                // These partitions were created after this migration was introduced.
+                if (rawParquetFileSize != -1L && ((rawParquetFileSize & PARTITION_HAS_DELTA_BIT) != 0
+                        || (rawParquetFileSize & PARTITION_LEGACY_DELTA_FLAGS) == PARTITION_LEGACY_DELTA_FLAGS)) {
+                    continue;
+                }
+
                 final boolean parquetGenerated = ((maskedSize >>> PARQUET_GENERATED_BIT) & 1) == 1;
                 final boolean remote = rawParquetFileSize != -1L
                         && (rawParquetFileSize & PARQUET_REMOTE_BIT) != 0;
@@ -177,8 +188,7 @@ public final class Mig941 {
                 long parquetFileSizeFromTxn = rawParquetFileSize == -1L
                         ? -1L
                         : rawParquetFileSize & PARQUET_FILE_SIZE_VALUE_MASK;
-                // Keep a _pm that resolves for the recorded Parquet size: it may hold a stamp its
-                // footer lacks.
+                // Keep a _pm that resolves for the recorded Parquet size: it may hold a stamp its footer lacks.
                 if (isParquetMetaCurrent(ff, path, plen, timestampType, partitionBy, partitionTs, nameTxn, parquetFileSizeFromTxn, parquetMetaReader)) {
                     continue;
                 }
