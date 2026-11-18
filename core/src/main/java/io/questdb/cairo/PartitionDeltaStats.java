@@ -24,13 +24,23 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.PartitionFrameSource;
+
 /**
- * Logical row count and Delta-only timestamp bounds at one partition snapshot.
+ * Logical row count, Delta-only timestamp bounds and physical base source at one partition snapshot.
  */
 public final class PartitionDeltaStats {
+    private final PartitionFrameSource baseSource = new PartitionFrameSource();
     private long maxTimestamp;
     private long minTimestamp;
     private long rowCount;
+
+    /**
+     * The snapshot's physical base; cleared when no catalog state is available.
+     */
+    public PartitionFrameSource getBaseSource() {
+        return baseSource;
+    }
 
     public long getMaxTimestamp() {
         return maxTimestamp;
