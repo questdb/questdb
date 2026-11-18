@@ -50,6 +50,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -259,8 +261,8 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
                     for (int i = 0; i < bytes.length; i++) {
                         bytes[i] = parquet.byteAt(i);
                     }
-                    Assert.assertEquals("PAR1", new String(bytes, 0, 4, java.nio.charset.StandardCharsets.US_ASCII));
-                    responses.add(java.util.HexFormat.of().formatHex(bytes));
+                    Assert.assertEquals("PAR1", new String(bytes, 0, 4, StandardCharsets.US_ASCII));
+                    responses.add(HexFormat.of().formatHex(bytes));
                 }
             });
         }
