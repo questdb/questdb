@@ -5672,10 +5672,16 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 return it.readOnlyFromCall > 0 && (it.isReadOnlyTransient ? call == it.readOnlyFromCall : call >= it.readOnlyFromCall);
             }
         }) {
-            for (int i = 0, n = iterations.size(); i < n; i++) {
-                final FuzzIteration it = iterations.getQuick(i);
-                current.set(it);
-                runCommitBatchFuzzIteration(it, hookEngine);
+            try {
+                for (int i = 0, n = iterations.size(); i < n; i++) {
+                    final FuzzIteration it = iterations.getQuick(i);
+                    current.set(it);
+                    runCommitBatchFuzzIteration(it, hookEngine);
+                }
+            } finally {
+                // The faults belong to the iterations: closing the engine closes the pooled WAL writers, whose
+                // column pages msync under SYNC, and a persistent fault of the last iteration would fire there.
+                current.set(null);
             }
         }
     }
