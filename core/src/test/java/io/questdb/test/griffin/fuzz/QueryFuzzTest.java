@@ -1026,6 +1026,33 @@ public class QueryFuzzTest extends AbstractCairoTest {
         });
     }
 
+    // Pins the first window of the parallel hash join's executions whose builds fan out, at the
+    // default cap of a million tuples per task. Frames of two rows and a ring budget of 192 bytes
+    // give a stack of up to five joins a first window of two frames or more, up to the ring's
+    // entries, which follow the host's query workers under the default dispatch limit; an execution
+    // whose workers walk duplicate matches instead counts each task's tuples as the cap, and starts
+    // at one frame. A pinned seed's queries over native probe frames start there, and every axis
+    // compares their rows with the ordinary plan's.
+    @Test
+    public void testParallelJoinCapBoundFirstWindowAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "107"},
+                        {"questdb.fuzz.s1", "109"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "cap-bound first windows " + runner.getParallelJoinCapBoundFirstWindowRuns(),
+                        runner.getParallelJoinCapBoundFirstWindowRuns() > 0
+                ))
+        );
+    }
+
     // Pins what the frame pressure knobs make the generated equi-join queries do to the parallel
     // hash join: with frames of two rows and a ring budget of four such frames of one join, a pinned
     // seed's probes have more frames than the ring has entries, and the frames of duplicate matches

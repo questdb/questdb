@@ -135,8 +135,9 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             // A budget of four tasks' caps of tuples: a first window of four frames, whose entries the
             // duplicate matches of d grow, doubling from a frame's room, to room for 32 tuples, 512
             // bytes each. The first row leaves three more tuple-carrying frames in flight, whose
-            // entries a count reads and gives back: the entries keep the budget, and the window
-            // follows the entries read to three frames.
+            // entries a count reads and gives back: each of the four entries read holds more than its
+            // share of the budget, 1,536 / 8 = 192 bytes, while the window, which follows the entries
+            // read to three frames, holds fewer frames than the ring's eight entries.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, CAP);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 4 * CAP_BYTES);
             try (RecordCursorFactory factory = select(WALK)) {
@@ -153,7 +154,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                     Assert.assertEquals(rows - 1, counter.get());
                     // The frame the cursor held and the three in flight.
                     Assert.assertEquals(4, join.getCountedTupleFrameCount());
-                    Assert.assertTrue(ring.getAllocatedBytes() <= 4 * CAP_BYTES);
+                    Assert.assertEquals(0, ring.getAllocatedBytes());
                     Assert.assertEquals(3, ring.getDispatchLimit());
                     cursor.toTop();
                     Assert.assertEquals(rows, countRows(cursor));

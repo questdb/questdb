@@ -283,6 +283,10 @@ public final class QueryRunner {
     // Executions of the parallel hash join, on any axis, whose probe had more frames than the tuple
     // ring has entries, more than one, so that frames share entries.
     private int parallelJoinAliasedRuns;
+    // Executions of the parallel hash join, on any axis, whose builds fan out and whose first window,
+    // which the ring counts in a task's cap of tuples, was narrower than the one that the probe
+    // frames' rows give; see isCapBoundFirstWindow().
+    private int parallelJoinCapBoundFirstWindowRuns;
     // Executions of the parallel hash join, on any axis, whose rows were the query's own and whose
     // cursor opened under the rows that a client reads first; see firstReadRows().
     private int parallelJoinFirstReadRuns;
@@ -601,6 +605,16 @@ public final class QueryRunner {
      */
     public int getParallelJoinAliasedRuns() {
         return parallelJoinAliasedRuns;
+    }
+
+    /**
+     * Executions of the parallel hash join whose rows were the query's own, over native probe
+     * frames, that started at a window narrower than the one that the frames' rows give: only an
+     * execution whose builds fan out, whose ring counts a task's tuples as the task's cap, starts
+     * there. See {@link #isCapBoundFirstWindow}.
+     */
+    public int getParallelJoinCapBoundFirstWindowRuns() {
+        return parallelJoinCapBoundFirstWindowRuns;
     }
 
     /**
@@ -1362,8 +1376,35 @@ public final class QueryRunner {
             if (rowsRead > 0 && window < firstWindow) {
                 parallelJoinNarrowedWindowRuns++;
             }
+            if (rowsRead > 0 && isCapBoundFirstWindow(join, ring, firstWindow)) {
+                parallelJoinCapBoundFirstWindowRuns++;
+            }
         }
         return rowsRead;
+    }
+
+    /**
+     * True when an execution of a join whose rows are the query's own, which the query read to the
+     * end, so that its tasks read every probe frame, read native probe frames alone and returned its
+     * first row at a window narrower than the one that the frames' rows give,
+     * {@code max(1, min(entries, ring budget / (max frame rows * tuple stride * 8)))}. At the first
+     * row the window is the one that the ring started at, or one that the frames collected before
+     * it, which held no row to return, set from their entries, no larger than their rows, so no
+     * narrower. Only an execution whose builds fan out starts narrower: its ring counts a task's
+     * tuples as the task's cap, {@code max(frame rows, cairo.sql.parallel.hash.join.task.output.max.rows)}.
+     * A native frame holds the context's page frame rows at most, and fewer than its page frame
+     * minimum more when it takes in a short last frame; a Parquet frame, a row group, may hold more.
+     */
+    private boolean isCapBoundFirstWindow(AsyncHashJoinRecordCursorFactory join, HashJoinTupleRing ring, int firstWindow) {
+        if (!join.isClientRowSource() || join.getAtom().getParquetProbeFrameCount() > 0) {
+            return false;
+        }
+        final long maxFrameRows = executionContext.getPageFrameMaxRows() + Math.max(0, executionContext.getPageFrameMinRows() - 1);
+        final long ringMaxSize = engine.getConfiguration().getSqlParallelHashJoinTupleRingMaxSize();
+        final long queryMemoryLimit = engine.getConfiguration().getQueryMemoryLimitBytes();
+        final long ringBudget = queryMemoryLimit > 0 ? Math.min(ringMaxSize, queryMemoryLimit / 4) : ringMaxSize;
+        final long frameRowsWindow = Math.max(1, Math.min(ring.getEntryCount(), ringBudget / (maxFrameRows * ring.getTupleStride() * Long.BYTES)));
+        return firstWindow < frameRowsWindow;
     }
 
     /**
