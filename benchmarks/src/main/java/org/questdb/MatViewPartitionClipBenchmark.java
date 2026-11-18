@@ -68,12 +68,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * Measures a year-long {@code REFRESH MATERIALIZED VIEW ... RANGE} of an hourly view over a base table with partition
  * gaps. A refresh that keeps view rows whose base partitions are gone recomputes only the buckets that overlap an
- * existing base partition, so it splits the range at every partition gap and writes one view WAL transaction per
- * piece; a build without it writes the whole range in one transaction.
+ * existing base partition, so it splits the range at every partition gap where the view holds rows and writes one
+ * view WAL transaction per piece; a build without it writes the whole range in one transaction.
  * <ul>
  *     <li>{@code base}: {@code HOUR}, a {@code PARTITION BY HOUR} base with one hour in six populated over 2024,
  *     1,463 partition gaps; {@code DAY}, a {@code PARTITION BY DAY} base with no weekend partitions over 2024, 52
  *     gaps;</li>
+ *     <li>{@code gaps}: {@code empty}, the base never held rows in its gaps, so the view holds none there either;
+ *     {@code rows}, the base held rows in every hour, or every day, when the view's first build ran, and then dropped
+ *     the partitions of its gaps, so the view keeps rows in every gap. A base DROP PARTITION invalidates the view on
+ *     builds that do not keep view rows over removed base partitions, so {@code rows} measures only builds that do;</li>
  *     <li>{@code stage}: {@code refresh}, the refresh job's run for the RANGE, which writes the view's WAL;
  *     {@code apply}, the WAL apply of what that run wrote; {@code full}, a {@code REFRESH ... FULL}, which rebuilds the
  *     whole view in a single pass without the split, refresh and apply together, as the reference that the change must
@@ -113,6 +117,8 @@ public class MatViewPartitionClipBenchmark {
     public String base;
     @Param({"nosync", "adaptive"})
     public String commitMode;
+    @Param({"empty", "rows"})
+    public String gaps;
     @Param({"same", "changed"})
     public String rows;
     @Param({"refresh", "apply", "full"})
@@ -207,6 +213,11 @@ public class MatViewPartitionClipBenchmark {
         refreshJob = new MatViewRefreshJob(0, engine, 1);
         walApplyJob = new ApplyWal2TableJob(engine, 0);
 
+        final boolean isGapWithRows = switch (gaps) {
+            case "empty" -> false;
+            case "rows" -> true;
+            default -> throw new IllegalArgumentException("unknown gaps: " + gaps);
+        };
         final boolean isChanged = switch (rows) {
             case "same" -> false;
             case "changed" -> true;
@@ -228,24 +239,27 @@ public class MatViewPartitionClipBenchmark {
         final long rowsPerHour = symbols > 0 ? symbols : ROWS_PER_POPULATED_HOUR;
         final long rowMicros = HOUR_MICROS / rowsPerHour;
         final String keyExpr = symbols > 0 ? "concat('s', (x - 1) % " + symbols + ") sym, " : "";
+        // With gaps holding view rows, the base holds rows in its gaps too until the view's first build, which drops
+        // them below.
         if ("HOUR".equals(base)) {
-            final long baseRows = (long) DAYS * 24 / HOUR_BASE_POPULATED_HOUR_STEP * rowsPerHour;
-            // row x lands in populated hour (x - 1) / rowsPerHour, every HOUR_BASE_POPULATED_HOUR_STEP hours
+            final int hourStep = isGapWithRows ? 1 : HOUR_BASE_POPULATED_HOUR_STEP;
+            final long baseRows = (long) DAYS * 24 / hourStep * rowsPerHour;
+            // row x lands in populated hour (x - 1) / rowsPerHour, every hourStep hours
             engine.execute(
                     "INSERT INTO base SELECT (" + START_MICROS
-                            + " + ((x - 1) / " + rowsPerHour + ") * " + HOUR_BASE_POPULATED_HOUR_STEP * HOUR_MICROS
+                            + " + ((x - 1) / " + rowsPerHour + ") * " + hourStep * HOUR_MICROS
                             + " + ((x - 1) % " + rowsPerHour + ") * " + rowMicros + ")::TIMESTAMP, " + keyExpr + "x::DOUBLE "
                             + "FROM long_sequence(" + baseRows + ")",
                     context
             );
         } else {
             final long baseRows = (long) DAYS * 24 * rowsPerHour;
-            // every hour of every day, without Saturdays and Sundays; 2024-01-01 is a Monday
+            // every hour of every day, without Saturdays and Sundays unless the gaps hold rows; 2024-01-01 is a Monday
             engine.execute(
                     "INSERT INTO base SELECT ts, " + keyColumn + "v FROM ("
                             + "SELECT (" + START_MICROS + " + (x - 1) * " + rowMicros + ")::TIMESTAMP ts, " + keyExpr + "x::DOUBLE v "
                             + "FROM long_sequence(" + baseRows + ")"
-                            + ") WHERE ((ts::LONG - " + START_MICROS + ") / " + DAY_MICROS + ") % 7 < 5",
+                            + ") WHERE ((ts::LONG - " + START_MICROS + ") / " + DAY_MICROS + ") % 7 < " + (isGapWithRows ? 7 : 5),
                     context
             );
         }
@@ -261,6 +275,22 @@ public class MatViewPartitionClipBenchmark {
         final long expectedRows = countRows("(" + viewSql + ")");
         if (countRows("v") != expectedRows) {
             throw new IllegalStateException("the view did not build [rows=" + countRows("v") + ", expected=" + expectedRows + ']');
+        }
+        if (isGapWithRows) {
+            // the base drops the partitions of its gaps, and the view keeps its rows there
+            engine.execute(
+                    "HOUR".equals(base)
+                            ? "ALTER TABLE base DROP PARTITION WHERE ((ts::LONG - " + START_MICROS + ") / " + HOUR_MICROS + ") % " + HOUR_BASE_POPULATED_HOUR_STEP + " > 0"
+                            : "ALTER TABLE base DROP PARTITION WHERE ((ts::LONG - " + START_MICROS + ") / " + DAY_MICROS + ") % 7 > 4",
+                    context
+            );
+            drainWal();
+            engine.execute("REFRESH MATERIALIZED VIEW v INCREMENTAL", context);
+            runRefreshJob();
+            drainWal();
+            if (countRows("v") != expectedRows) {
+                throw new IllegalStateException("the view did not keep its rows [rows=" + countRows("v") + ", expected=" + expectedRows + ']');
+            }
         }
         // one RANGE outside the measurement, which compiles the SQL and reports the view WAL transactions it writes
         if (bumpSql != null) {
