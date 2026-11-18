@@ -158,11 +158,10 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             ff.isCvLengthFailureAfterFault = true;
+            // the table reports the commit's failure: the rollback's failure stayed inside the writer's close
             failPendingCommit(ff, TXN_FILE_NAME, Fault.ALLOCATE, "No space left");
-            capture.drain();
-            capture.assertLogged("rolling back column version of failed commit");
-            capture.assertLogged("could not roll back column version of failed commit");
-            capture.assertLogged("injected fstat failure");
+            // the rollback read the length of _cv, which nothing else reads as the writer gives the table up
+            Assert.assertEquals(1, ff.cvLengthFailureCount.get());
             assertTableResumes(token, "");
         });
     }
@@ -547,6 +546,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     private static final class ApplyFaultFacade extends TestFilesFacadeImpl {
         private static final long WRITER_PAGE_SIZE = 4 * 1024;
         private final Set<Long> cvFds = ConcurrentHashMap.newKeySet();
+        private final AtomicInteger cvLengthFailureCount = new AtomicInteger();
         private final AtomicInteger faultCount = new AtomicInteger();
         private final Set<Long> txnFds = ConcurrentHashMap.newKeySet();
         private volatile Fault fault = Fault.NONE;
@@ -581,6 +581,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
         public long length(long fd) {
             if (isCvLengthFailureArmed && cvFds.contains(fd)) {
                 isCvLengthFailureArmed = false;
+                cvLengthFailureCount.incrementAndGet();
                 throw CairoException.critical(5).put("injected fstat failure [fd=").put(fd).put(']');
             }
             // a file at least as long as its grown mapping skips allocate()
