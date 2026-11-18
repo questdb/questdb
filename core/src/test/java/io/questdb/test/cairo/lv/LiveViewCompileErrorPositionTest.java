@@ -392,7 +392,9 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
     @Test
     public void testAnchorFunctionIsFreedAfterTheAnchorChecks() throws Exception {
         // trim() holds native buffers from the moment the compile creates it, so assertMemoryLeak sees an
-        // anchor function the CREATE does not free, whether the anchor checks refuse it or pass it.
+        // anchor function the CREATE does not free, whether the anchor checks refuse it or pass it. Both
+        // anchors compile, so the live-view-compile flag is checked after a compile that returns, where the
+        // other tests check it after one that throws.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String select = "SELECT ts, sym, vc, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION ";
@@ -403,8 +405,10 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
                     positionOf(refused, "ANCHOR"),
                     "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got VARCHAR"
             );
+            assertLiveViewCompileFlagReset();
             execute(PREFIX + select + "length(trim(vc)))");
             Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+            assertLiveViewCompileFlagReset();
         });
     }
 
@@ -441,7 +445,8 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
     @Test
     public void testAnchorPurityRejectStaysAtTheAnchorKeyword() throws Exception {
         // An anchor that compiles but returns a type no view anchors on, folds to a constant or aggregates
-        // is refused at the ANCHOR keyword, not at the expression's root token.
+        // is refused at the ANCHOR keyword, not at the expression's root token. The refusal comes after the
+        // anchor compile returned, which must have reset the live-view-compile flag all the same.
         assertMemoryLeak(() -> {
             createBase();
             final String[][] cases = {
@@ -452,6 +457,7 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
             for (String[] c : cases) {
                 final String sql = anchored(c[0]);
                 assertCreateRejected(sql, SqlException.class, positionOf(sql, "ANCHOR"), c[1]);
+                assertLiveViewCompileFlagReset();
             }
             final String doubleAnchor = PREFIX + "SELECT ts, sym, v, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION v)";
             assertCreateRejected(
@@ -460,6 +466,7 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
                     positionOf(doubleAnchor, "ANCHOR"),
                     "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE"
             );
+            assertLiveViewCompileFlagReset();
         });
     }
 
