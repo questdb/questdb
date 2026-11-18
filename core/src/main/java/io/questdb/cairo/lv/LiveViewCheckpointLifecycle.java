@@ -34,6 +34,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -403,20 +404,34 @@ public final class LiveViewCheckpointLifecycle {
      * @return true when neither name is left on disk
      */
     public static boolean removeRepairMarker(@NotNull CairoConfiguration configuration, @NotNull Path checkpointsDir) {
+        try (Path path = new Path()) {
+            return removeRepairMarker(configuration, checkpointsDir, path);
+        }
+    }
+
+    /**
+     * As {@link #removeRepairMarker(CairoConfiguration, Path)}, building each name in the caller's
+     * {@code path}, so it allocates no buffer of its own.
+     *
+     * @return true when neither name is left on disk
+     */
+    public static boolean removeRepairMarker(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir,
+            @Transient @NotNull Path path
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         boolean success = true;
-        try (Path path = new Path()) {
-            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
-            LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
-            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
+        LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+        if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+            success = false;
+            logRemoveFailure(ff, path);
+        }
+        LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+        path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+        if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+            success = false;
+            logRemoveFailure(ff, path);
         }
         return success;
     }
@@ -435,6 +450,26 @@ public final class LiveViewCheckpointLifecycle {
             @Nullable LiveViewCheckpointMetaStore pinOwner,
             boolean primaryOwner
     ) {
+        try (Path path = new Path()) {
+            return retireTimeline(configuration, checkpointsDir, pinOwner, primaryOwner, path);
+        }
+    }
+
+    /**
+     * As {@link #retireTimeline(CairoConfiguration, Path, LiveViewCheckpointMetaStore, boolean)},
+     * building the name of every file and directory it removes in the caller's {@code path}, so it
+     * allocates no buffer of its own. {@code path} must not be {@code checkpointsDir}: each name is
+     * built by pointing {@code path} at {@code checkpointsDir} first, which on the same object keeps
+     * the previous name in place.
+     */
+    public static boolean retireTimeline(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir,
+            @Nullable LiveViewCheckpointMetaStore pinOwner,
+            boolean primaryOwner,
+            @Transient @NotNull Path path
+    ) {
+        assert path != checkpointsDir;
         if (!primaryOwner) {
             return false;
         }
@@ -444,41 +479,39 @@ public final class LiveViewCheckpointLifecycle {
 
         final FilesFacade ff = configuration.getFilesFacade();
         boolean success = true;
-        try (Path path = new Path()) {
-            // Remove the publication point first. With pin acquisition excluded,
-            // no new reader can discover the roots whose directories follow.
-            LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
-            final boolean isTimelineRemoved = !ff.exists(path.$()) || ff.removeQuiet(path.$());
-            if (!isTimelineRemoved) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
-            // The prefix-preservation repair marker is void once the timeline it
-            // guarded is gone, and only then: beside a _timeline the unlink left, the
-            // marker is what keeps a restore off the generation it guards. One this
-            // removal leaves without a _timeline would be read against the fresh
-            // history this retire precedes, so the append that opens the next runtime
-            // history removes it first, and opens none while it stays; beside a seed
-            // history, whose readers never read it, it waits for the retire at the
-            // seed's completion. The staged sibling counts as a marker too, so it stays
-            // or goes with it.
-            if (isTimelineRemoved) {
-                success &= removeRepairMarker(configuration, checkpointsDir);
-            }
-            LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
-            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
-                success = false;
-                logRemoveFailure(ff, path);
-            }
-            success &= removeTree(ff, LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir));
-            success &= removeTree(ff, LiveViewCheckpointLayout.dataDirPath(path, checkpointsDir));
-            success &= removeTree(ff, path.of(checkpointsDir).concat(LiveViewCheckpointLayout.REPAIR_DIR_NAME));
+        // Remove the publication point first. With pin acquisition excluded,
+        // no new reader can discover the roots whose directories follow.
+        LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
+        final boolean isTimelineRemoved = !ff.exists(path.$()) || ff.removeQuiet(path.$());
+        if (!isTimelineRemoved) {
+            success = false;
+            logRemoveFailure(ff, path);
         }
+        // The prefix-preservation repair marker is void once the timeline it
+        // guarded is gone, and only then: beside a _timeline the unlink left, the
+        // marker is what keeps a restore off the generation it guards. One this
+        // removal leaves without a _timeline would be read against the fresh
+        // history this retire precedes, so the append that opens the next runtime
+        // history removes it first, and opens none while it stays; beside a seed
+        // history, whose readers never read it, it waits for the retire at the
+        // seed's completion. The staged sibling counts as a marker too, so it stays
+        // or goes with it.
+        if (isTimelineRemoved) {
+            success &= removeRepairMarker(configuration, checkpointsDir, path);
+        }
+        LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
+        if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+            success = false;
+            logRemoveFailure(ff, path);
+        }
+        path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+        if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+            success = false;
+            logRemoveFailure(ff, path);
+        }
+        success &= removeTree(ff, LiveViewCheckpointLayout.metaDirPath(path, checkpointsDir));
+        success &= removeTree(ff, LiveViewCheckpointLayout.dataDirPath(path, checkpointsDir));
+        success &= removeTree(ff, path.of(checkpointsDir).concat(LiveViewCheckpointLayout.REPAIR_DIR_NAME));
         return success;
     }
 

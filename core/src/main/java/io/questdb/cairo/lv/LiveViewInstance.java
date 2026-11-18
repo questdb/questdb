@@ -487,13 +487,14 @@ public class LiveViewInstance implements QuietCloseable {
     // a reader that sees the flag sees its reason. Volatile for live_views().
     private volatile boolean isCheckpointUpgradeRebuildPending;
     private volatile String checkpointUpgradeRebuildReason;
-    // Whether a retire of this view's checkpoint timeline ran and left _timeline on disk: the
-    // unlink failed, so the generation it names is one this process retired. While it stands no
-    // read binds that generation and no write builds on it, and the next seal retries the retire
-    // first. Set by the retire that finds _timeline after the unlink, cleared by the one that
-    // finds it gone. Mutated and read only on the refresh-worker thread under the refresh latch,
-    // whose CAS publishes it from one turn to the next; not volatile. In-memory only: a restart
-    // meets the repair marker the retire keeps beside the file instead.
+    // Whether a retire of this view's checkpoint timeline ran and left _timeline on disk, or could
+    // not tell whether it did: the unlink failed, or the check after it, so the generation the file
+    // names is one this process retired. While it stands no read binds that generation and no write
+    // builds on it, and the next seal retries the retire first. Set by the retire that finds
+    // _timeline after the unlink, or cannot check, cleared by the one that finds it gone. Mutated
+    // and read only on the refresh-worker thread under the refresh latch, whose CAS publishes it
+    // from one turn to the next; not volatile. In-memory only: a restart meets the repair marker the
+    // retire keeps beside the file instead.
     private boolean isCheckpointTimelineRetirePending;
     // Lifetime counts of the two destructive events a restart witness has to rule
     // out: applied-base rebuilds this instance started (one per restart at most
@@ -2133,8 +2134,8 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return true while a retire of this view's checkpoint timeline has run and its
-     * {@code _timeline} is still on disk. See {@link #isCheckpointTimelineRetirePending}. Read on
-     * the refresh-worker thread only
+     * {@code _timeline} is still on disk, or the retire could not tell whether it is. See
+     * {@link #isCheckpointTimelineRetirePending}. Read on the refresh-worker thread only
      */
     public boolean isCheckpointTimelineRetirePending() {
         return isCheckpointTimelineRetirePending;
@@ -2343,8 +2344,9 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Records that a retire of this view's checkpoint timeline left {@code _timeline} on disk.
-     * The refresh worker calls this under the refresh latch, from the retire itself.
+     * Records that a retire of this view's checkpoint timeline left {@code _timeline} on disk, or
+     * could not tell whether it did. The refresh worker calls this under the refresh latch, from the
+     * retire itself, when it finds {@code _timeline} after the unlink or cannot check.
      * {@link #clearCheckpointTimelineRetirePending()} ends it.
      */
     public void markCheckpointTimelineRetirePending() {

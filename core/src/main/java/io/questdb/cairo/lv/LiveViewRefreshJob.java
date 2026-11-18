@@ -406,6 +406,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Prices a whole-range resume's checkpoint chain boundary by boundary, as the freeze cursor
     // reaches each one. One per worker, bound per repair; repairs never nest.
     private final LiveViewResumeChainPrice resumeChainPrice = new LiveViewResumeChainPrice();
+    // The names of the files a retire removes, and of the _timeline its check reads after the
+    // unlink, so that neither allocates: see removeCheckpointTimelineFiles. The retire builds the
+    // checkpoint directory in path, the per-call scratch.
+    private final Path retireFilePath = new Path();
     // Per-key ROWS repair-bound discovery, and the adapter the repair plan calls it
     // through. One of each per worker: the discovery owns a native counter map it
     // rebuilds per call, and the adapter carries the one repair's cursor factory and
@@ -604,6 +608,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         Misc.free(walEventReader);
         Misc.free(walPath);
         Misc.free(path);
+        Misc.free(retireFilePath);
         Misc.free(blockFileWriter);
         Misc.free(walFrameCursor);
         Misc.free(walRecordCursor);
@@ -4366,38 +4371,45 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * {@code _timeline} it cannot remove, and {@link #clearCheckpointRepairMarker} clears none
      * while the file stands, so the marker goes only with the file.
      * <p>
+     * The unlink and the check after it build their paths in buffers the job owns, {@link #path}
+     * and {@link #retireFilePath}, so a failed allocation can stop neither. A check that throws all
+     * the same cannot tell whether {@code _timeline} survived, and counts as a kept one: the
+     * refusal, the marker and the next seal's retry follow, as they do for a file the unlink left.
+     * <p>
      * Nothing here fails the caller: every fault is logged. An upgrade-pending view's older
      * {@code _timeline} is the upgrade's to end instead ({@link #clearUpgradeRebuildPendingIfRetired}),
      * since every seal already refuses to publish over it.
      */
     private void removeCheckpointTimelineFiles(LiveViewInstance instance) {
-        try (Path checkpointsDir = new Path()) {
-            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+        try {
+            path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
             LiveViewCheckpointLifecycle.retireTimeline(
                     engine.getConfiguration(),
-                    checkpointsDir,
+                    path,
                     null,
-                    true
+                    true,
+                    retireFilePath
             );
         } catch (Throwable t) {
             LOG.error().$("could not retire live view checkpoint timeline [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
         }
-        final boolean isTimelineKept;
-        try (Path timelinePath = new Path()) {
-            timelinePath.of(engine.getConfiguration().getDbRoot())
+        boolean isTimelineKept;
+        try {
+            // From the root: the retire above may have stopped with either buffer holding any name.
+            retireFilePath.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
                     .concat(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
-            isTimelineKept = engine.getConfiguration().getFilesFacade().exists(timelinePath.$());
+            isTimelineKept = engine.getConfiguration().getFilesFacade().exists(retireFilePath.$());
         } catch (Throwable t) {
             LOG.error().$("could not check the live view checkpoint timeline after a retire [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
-            return;
+            isTimelineKept = true;
         }
         if (instance.isCheckpointUpgradeRebuildPending()) {
             clearUpgradeRebuildPendingIfRetired(instance, isTimelineKept);
@@ -4412,7 +4424,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     // The branch of removeCheckpointTimelineFiles for a _timeline the retire could not remove: see
     // there. The refusal goes first, and stands whatever the marker comes to: every fault after it
-    // is logged.
+    // is logged. It also answers a check that could not tell, after which _timeline may be gone
+    // already: the marker it writes then stands beside no file, and goes with the next retire,
+    // which finds the file gone, or with the append that opens the next history.
     private void refuseKeptCheckpointTimeline(LiveViewInstance instance) {
         final boolean isNewlyKept = !instance.isCheckpointTimelineRetirePending();
         instance.markCheckpointTimelineRetirePending();

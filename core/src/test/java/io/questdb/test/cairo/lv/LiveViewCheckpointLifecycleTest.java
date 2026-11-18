@@ -58,12 +58,14 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -790,6 +792,146 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             Assert.assertFalse(isRepairMarkerFilePresent(true));
             Assert.assertFalse(isRetirementQueuePresent(false));
             Assert.assertFalse(isRetirementQueuePresent(true));
+            Assert.assertTrue(metaDirExists());
+            Assert.assertTrue(dataDirExists());
+            Assert.assertTrue(repairDirExists());
+        });
+    }
+
+    @Test
+    public void testRetireTimelineIntoTheCallersPathRemovesWhatTheAllocatingFormRemoves() throws Exception {
+        // The retire that builds its names in the caller's Path removes what the allocating form
+        // removes, keeps what it keeps beside a _timeline it cannot remove, leaves the directory's
+        // Path as it was, and opens no Path and allocates nothing up to its unlinks of _timeline and
+        // of the staged marker. Both forms of the marker removal take both names.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        assertMemoryLeak(ff, () -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            writeRetireFixture();
+            try (Path dir = checkpointsDir(); Path path = new Path()) {
+                final String dirName = dir.toString();
+                ff.sampleTheNextUnlinks();
+                final long pathBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PATH);
+                final long allocations = Unsafe.getMallocCount() + Unsafe.getReallocCount();
+                Assert.assertTrue(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true, path));
+                Assert.assertEquals("no Path stands open at the unlink of _timeline", pathBytes, ff.getPathBytesAtTheTimelineUnlink());
+                Assert.assertEquals("nothing allocates up to it", allocations, ff.getAllocationsAtTheTimelineUnlink());
+                Assert.assertEquals("nor at the unlink of the staged marker", pathBytes, ff.getPathBytesAtTheStagedMarkerUnlink());
+                Assert.assertEquals("nor up to it", allocations, ff.getAllocationsAtTheStagedMarkerUnlink());
+                Assert.assertEquals("the directory's Path stays as it was", dirName, dir.toString());
+            }
+            Assert.assertFalse(timelineExists());
+            Assert.assertFalse(isRepairMarkerFilePresent(false));
+            Assert.assertFalse(isRepairMarkerFilePresent(true));
+            assertRetireRemovedAllButTheTimelineAndTheMarker();
+
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            writeRetireFixture();
+            ff.refuseUnlinkOf(LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+            try (Path dir = checkpointsDir(); Path path = new Path()) {
+                Assert.assertFalse(LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true, path));
+            } finally {
+                ff.refuseUnlinkOf(null);
+            }
+            Assert.assertTrue(timelineExists());
+            Assert.assertTrue("the marker stays", isRepairMarkerFilePresent(false));
+            Assert.assertTrue("and its staged sibling", isRepairMarkerFilePresent(true));
+            assertRepairMarkerReads(MARKER_GENERATION, MARKER_LV_SEQ_TXN);
+            assertRetireRemovedAllButTheTimelineAndTheMarker();
+
+            try (Path dir = checkpointsDir(); Path path = new Path()) {
+                Assert.assertTrue(LiveViewCheckpointLifecycle.removeRepairMarker(configuration, dir, path));
+                Assert.assertFalse(isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+
+                writeRetireFixture();
+                Assert.assertTrue(LiveViewCheckpointLifecycle.removeRepairMarker(configuration, dir));
+                Assert.assertFalse(isRepairMarkerFilePresent(false));
+                Assert.assertFalse(isRepairMarkerFilePresent(true));
+            }
+        });
+    }
+
+    @Test
+    public void testRetireTimelineIntoTheCallersPathReportsEachNameItCannotRemove() throws Exception {
+        // A name the retire cannot unlink fails the retire, stays, and is logged, and the retire
+        // removes every other name all the same: the staged repair marker once _timeline is gone, and
+        // either name of the retirement work set. With the fault gone a retire removes what is left.
+        final RetireRemovalFault ff = new RetireRemovalFault();
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(ff, () -> {
+                final String[] refusedNames = {
+                        LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX,
+                        LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME,
+                        LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME
+                };
+                for (int i = 0; i < refusedNames.length; i++) {
+                    final String refusedName = refusedNames[i];
+                    ensureDirs();
+                    publish(1, 1, 7, 0, 5);
+                    writeRetireFixture();
+                    final int refusedBefore = ff.getRefusedUnlinks();
+                    ff.refuseUnlinkOf(refusedName);
+                    try (Path dir = checkpointsDir(); Path path = new Path()) {
+                        Assert.assertFalse(refusedName, LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true, path));
+                    } finally {
+                        ff.refuseUnlinkOf(null);
+                    }
+                    Assert.assertEquals(refusedName, refusedBefore + 1, ff.getRefusedUnlinks());
+                    capture.drain();
+                    Assert.assertEquals(
+                            refusedName,
+                            i + 1,
+                            capture.countOccurrences("could not remove live view checkpoint lifecycle file [path=")
+                    );
+                    Assert.assertFalse(refusedName, timelineExists());
+                    Assert.assertFalse(refusedName, isRepairMarkerFilePresent(false));
+                    Assert.assertEquals(refusedName, i == 0, isRepairMarkerFilePresent(true));
+                    Assert.assertEquals(refusedName, i == 1, isRetirementQueuePresent(false));
+                    Assert.assertEquals(refusedName, i == 2, isRetirementQueuePresent(true));
+                    Assert.assertFalse(refusedName, metaDirExists());
+                    Assert.assertFalse(refusedName, dataDirExists());
+                    Assert.assertFalse(refusedName, repairDirExists());
+
+                    try (Path dir = checkpointsDir(); Path path = new Path()) {
+                        Assert.assertTrue(refusedName, LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true, path));
+                    }
+                    Assert.assertFalse(refusedName, isRepairMarkerFilePresent(true));
+                    Assert.assertFalse(refusedName, isRetirementQueuePresent(false));
+                    Assert.assertFalse(refusedName, isRetirementQueuePresent(true));
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testRetireTimelineRefusesItsDirectoryAsItsPath() throws Exception {
+        // Pointing a Path at itself keeps the name it held, so the retire refuses a caller's Path
+        // that is the checkpoint directory's own, ahead of anything it removes.
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            writeRetireFixture();
+            boolean isRefused = false;
+            try (Path dir = checkpointsDir()) {
+                try {
+                    LiveViewCheckpointLifecycle.retireTimeline(configuration, dir, null, true, dir);
+                } catch (AssertionError e) {
+                    isRefused = true;
+                }
+            }
+            Assert.assertTrue("the retire refuses the directory's own Path", isRefused);
+            Assert.assertTrue(timelineExists());
+            Assert.assertTrue(isRepairMarkerFilePresent(false));
+            Assert.assertTrue(isRepairMarkerFilePresent(true));
+            Assert.assertTrue(isRetirementQueuePresent(false));
+            Assert.assertTrue(isRetirementQueuePresent(true));
             Assert.assertTrue(metaDirExists());
             Assert.assertTrue(dataDirExists());
             Assert.assertTrue(repairDirExists());
@@ -1756,15 +1898,34 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     // Refuses the unlink of the checkpoint file whose name ends with the refused name, when set
     // the unlinks of both repair marker names, and, when set, every directory removal under the
     // checkpoint directory: a file lock or a permission fault a retire has to work around. Counts
-    // the unlinks it refuses.
+    // the unlinks it refuses. Once armed, samples the native memory tagged NATIVE_PATH and
+    // Unsafe's malloc and realloc count at the next unlink of _timeline and at the next unlink of
+    // the staged repair marker.
     private static final class RetireRemovalFault extends TestFilesFacadeImpl {
         private final AtomicInteger refusedUnlinks = new AtomicInteger();
+        private volatile long allocationsAtTheStagedMarkerUnlink = -1;
+        private volatile long allocationsAtTheTimelineUnlink = -1;
         private volatile boolean isRefusingMarkerUnlinks;
         private volatile boolean isRefusingTreeRemovals;
+        private volatile boolean isSamplingTheStagedMarkerUnlink;
+        private volatile boolean isSamplingTheTimelineUnlink;
+        private volatile long pathBytesAtTheStagedMarkerUnlink = -1;
+        private volatile long pathBytesAtTheTimelineUnlink = -1;
         private volatile String refusedUnlinkName;
 
         @Override
         public boolean removeQuiet(LPSZ name) {
+            if (isSamplingTheTimelineUnlink && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                isSamplingTheTimelineUnlink = false;
+                pathBytesAtTheTimelineUnlink = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PATH);
+                allocationsAtTheTimelineUnlink = Unsafe.getMallocCount() + Unsafe.getReallocCount();
+            }
+            if (isSamplingTheStagedMarkerUnlink
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME + LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                isSamplingTheStagedMarkerUnlink = false;
+                pathBytesAtTheStagedMarkerUnlink = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_PATH);
+                allocationsAtTheStagedMarkerUnlink = Unsafe.getMallocCount() + Unsafe.getReallocCount();
+            }
             final String refused = refusedUnlinkName;
             if (refused != null && Utf8s.containsAscii(name, LV_DIR) && Utf8s.endsWithAscii(name, refused)) {
                 refusedUnlinks.incrementAndGet();
@@ -1778,6 +1939,22 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                 return false;
             }
             return super.removeQuiet(name);
+        }
+
+        long getAllocationsAtTheStagedMarkerUnlink() {
+            return allocationsAtTheStagedMarkerUnlink;
+        }
+
+        long getAllocationsAtTheTimelineUnlink() {
+            return allocationsAtTheTimelineUnlink;
+        }
+
+        long getPathBytesAtTheStagedMarkerUnlink() {
+            return pathBytesAtTheStagedMarkerUnlink;
+        }
+
+        long getPathBytesAtTheTimelineUnlink() {
+            return pathBytesAtTheTimelineUnlink;
         }
 
         int getRefusedUnlinks() {
@@ -1802,6 +1979,15 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
 
         void refuseUnlinkOf(@Nullable String name) {
             refusedUnlinkName = name;
+        }
+
+        void sampleTheNextUnlinks() {
+            allocationsAtTheStagedMarkerUnlink = -1;
+            allocationsAtTheTimelineUnlink = -1;
+            pathBytesAtTheStagedMarkerUnlink = -1;
+            pathBytesAtTheTimelineUnlink = -1;
+            isSamplingTheStagedMarkerUnlink = true;
+            isSamplingTheTimelineUnlink = true;
         }
     }
 }

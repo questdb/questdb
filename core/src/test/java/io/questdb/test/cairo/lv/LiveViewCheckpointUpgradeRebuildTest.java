@@ -188,6 +188,37 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     @Test
+    public void testACheckFaultAfterTheOlderTimelineRetireKeepsTheUpgradePending() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            final LiveViewInstance instance = instance("lv");
+            // The upgrade rebuild's retire removes the older _timeline, and the check of it after the
+            // unlink fails: the retire cannot tell whether the file went, so the upgrade stays
+            // pending, as it does for a file the retire kept, and the view refuses no timeline.
+            fault.armTimelineCheckAfterItsUnlink();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the check after the unlink must have failed", fault.hasTimelineCheckFired());
+                Assert.assertTrue("the upgrade stays pending", instance.isCheckpointUpgradeRebuildPending());
+                Assert.assertFalse("the upgrade owns the timeline", instance.isCheckpointTimelineRetirePending());
+                Assert.assertFalse(
+                        "no marker stands beside it",
+                        new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME).exists()
+                );
+                capture.drain();
+                capture.assertLogged("live view could not retire its older-format checkpoint timeline, the upgrade stays pending [view=lv]");
+                assertViewRows(ALL_ROWS);
+                assertNoRefreshFaults("lv");
+
+                insertAndRefresh(job, ROW_AFTER_THE_UPGRADE);
+            }
+            assertViewRows(ALL_ROWS + ROW_AFTER_THE_UPGRADE_OUTPUT);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
     public void testACrashBetweenTheCommitAndTheRetireRebuildsAgainOnRestart() throws Exception {
         assertMemoryLeak(fault, () -> {
             seedSixRows();
@@ -1358,7 +1389,8 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     /**
-     * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the open that
+     * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the check of
+     * whether its {@code _timeline} exists that follows the file's next unlink, the open that
      * creates a view's {@code _timeline} where none exists, the removal of its checkpoint
      * {@code meta} directory, and the open of the base's {@code amount} column that the whole-view
      * rebuild's scan of the applied base makes and the raw-WAL drain never does. The scan fault
@@ -1387,6 +1419,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         private final AtomicBoolean isMetaDirRemoveFired = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeFired = new AtomicBoolean();
+        // Armed: the next unlink of _timeline arms isTimelineCheckFailing, which fails the check after it.
+        private final AtomicBoolean isTimelineCheckArmed = new AtomicBoolean();
+        private final AtomicBoolean isTimelineCheckFailing = new AtomicBoolean();
+        private final AtomicBoolean isTimelineCheckFired = new AtomicBoolean();
         private final AtomicBoolean isTimelineCreateArmed = new AtomicBoolean();
         private final AtomicBoolean isTimelineCreateFired = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveArmed = new AtomicBoolean();
@@ -1410,10 +1446,23 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             return instance != null && instance.isCheckpointRestoreAttempted() && instance.getCompiledPlan() != null;
         }
 
+        private static boolean isTimelineFile(LPSZ name) {
+            return Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        }
+
         @Override
         public int errno() {
             final int errno = pendingErrno.getAndSet(0);
             return errno != 0 ? errno : super.errno();
+        }
+
+        @Override
+        public boolean exists(LPSZ path) {
+            if (isTimelineCheckFailing.get() && isTimelineFile(path) && isTimelineCheckFailing.compareAndSet(true, false)) {
+                isTimelineCheckFired.set(true);
+                throw CairoException.critical(0).put("injected fault on the check of _timeline");
+            }
+            return super.exists(path);
         }
 
         @Override
@@ -1465,6 +1514,9 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         @Override
         public boolean removeQuiet(LPSZ name) {
+            if (isTimelineCheckArmed.get() && isTimelineFile(name) && isTimelineCheckArmed.compareAndSet(true, false)) {
+                isTimelineCheckFailing.set(true);
+            }
             if (isMarkerRemoveArmed.get()
                     && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
                     && isMarkerRemoveArmed.compareAndSet(true, false)) {
@@ -1536,6 +1588,14 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             isMetaDirRemoveArmed.set(true);
         }
 
+        // Fails, once, the check of whether _timeline exists that follows its next unlink, which
+        // goes through.
+        void armTimelineCheckAfterItsUnlink() {
+            isTimelineCheckFired.set(false);
+            isTimelineCheckFailing.set(false);
+            isTimelineCheckArmed.set(true);
+        }
+
         void armTimelineCreate() {
             isTimelineCreateFired.set(false);
             isTimelineCreateArmed.set(true);
@@ -1564,6 +1624,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         boolean hasSchemaChangeFired() {
             return isSchemaChangeFired.get();
+        }
+
+        boolean hasTimelineCheckFired() {
+            return isTimelineCheckFired.get();
         }
 
         boolean hasTimelineCreateFired() {

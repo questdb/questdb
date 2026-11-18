@@ -372,6 +372,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // from the run's sequence, for the same reason: see runKeptTimelineEpisode.
     private static final long KEPT_TIMELINE_EPISODE_SALT0 = 0x1B873593CC9E2D51L;
     private static final long KEPT_TIMELINE_EPISODE_SALT1 = 0x85EBCA6BC2B2AE35L;
+    // Salt the draw of a fault on the kept-timeline episode's check of _timeline after the retire's
+    // unlink apart from the run's sequence, for the same reason: see runKeptTimelineEpisode.
+    private static final long KEPT_TIMELINE_CHECK_SALT0 = 0x9E3779B97F4A7C15L;
+    private static final long KEPT_TIMELINE_CHECK_SALT1 = 0xD1B54A32D192ED03L;
     // Salt the draw of a lock on the repair marker the kept-timeline episode leaves without its
     // _timeline apart from the episode's sequence, so the episode draws what it drew before: see
     // runKeptTimelineEpisode.
@@ -597,6 +601,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // while the lock held, the late rows it repaired with no anchor meanwhile, and the fresh
     // histories the episodes opened once the lock went: see runKeptTimelineEpisode.
     private boolean isKeptTimelineEpisodeArm;
+    // Kept-timeline episodes whose retire could not check _timeline after the unlink the lock
+    // refused: see runKeptTimelineEpisode.
+    private int keptTimelineCheckFaults;
     private int keptTimelineEpisodes;
     private int keptTimelineFreshHistories;
     private int keptTimelineLateRowRepairs;
@@ -893,6 +900,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         runDedupFuzzBatch(TestUtils.generateRandom(LOG, 289968849569755L, 1794849741680L));
         logKeptTimelineEpisodes();
         Assert.assertTrue("no departure kept its timeline under the lock", keptTimelineEpisodes > 0);
+        Assert.assertTrue("no retire under the lock failed its check of the timeline", keptTimelineCheckFaults > 0);
         Assert.assertTrue("no seal was refused over a kept timeline", keptTimelineRefusedSeals > 0);
         Assert.assertTrue("no late row was repaired over a kept timeline", keptTimelineLateRowRepairs > 0);
         Assert.assertTrue("no seal opened a fresh history once the lock went", keptTimelineFreshHistories > 0);
@@ -2002,6 +2010,12 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_RETIRE_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_RETIRE_SALT1);
     }
 
+    // The sequence a departure draws the fault on its kept-timeline episode's check of _timeline
+    // from, drawn from the run's without advancing it.
+    private static Rnd keptTimelineCheckRnd(Rnd rnd) {
+        return new Rnd(rnd.getSeed0() ^ KEPT_TIMELINE_CHECK_SALT0, rnd.getSeed1() ^ KEPT_TIMELINE_CHECK_SALT1);
+    }
+
     // The sequence a departure draws its kept-timeline episode from, drawn from the run's without
     // advancing it.
     private static Rnd keptTimelineEpisodeRnd(Rnd rnd) {
@@ -2560,6 +2574,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // The kept-timeline episodes a test ran, and what they reached: see runKeptTimelineEpisode.
     private void logKeptTimelineEpisodes() {
         LOG.info().$("LV fuzz kept-timeline episodes [episodes=").$(keptTimelineEpisodes)
+                .$(", checkFaults=").$(keptTimelineCheckFaults)
                 .$(", refusedSeals=").$(keptTimelineRefusedSeals)
                 .$(", lateRowRepairs=").$(keptTimelineLateRowRepairs)
                 .$(", freshHistories=").$(keptTimelineFreshHistories)
@@ -2786,10 +2801,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
             }
             final long sealFailuresBefore = instance.getCheckpointSealFailures();
+            // The test's first kept-timeline episode, and one in two after it, also fails the check
+            // of _timeline after the unlink the lock refuses: the retire cannot tell whether the
+            // file went, which it answers as it answers the file the lock kept. Drawn from a
+            // sequence salted apart from the run's, so a pinned-seed batch draws what it drew before.
+            final boolean isTimelineCheckFailing = isKeptTimelineDrawn
+                    && (keptTimelineCheckFaults == 0 || keptTimelineCheckRnd(rnd).nextBoolean());
             if (isKeptTimelineDrawn) {
                 checkpointFaults.armTheKeptTimeline(() -> {
                     job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
                     checkpointFaults.lockTheTimeline();
+                    if (isTimelineCheckFailing) {
+                        checkpointFaults.failTheTimelineCheckAfterItsNextUnlink();
+                    }
                 });
             }
             try {
@@ -2804,6 +2828,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 }
             }
             if (isKeptTimelineDrawn && checkpointFaults.consumeKeptTimeline()) {
+                Assert.assertEquals(
+                        "the retire's check of _timeline fails when the departure draws it",
+                        isTimelineCheckFailing ? 1 : 0,
+                        checkpointFaults.consumeFailedTimelineChecks()
+                );
+                if (isTimelineCheckFailing) {
+                    keptTimelineCheckFaults++;
+                }
                 runKeptTimelineEpisode(
                         keptTimelineEpisodeRnd(rnd),
                         job,
@@ -3099,7 +3131,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * The departure's frontier truncate failed to publish, and the retire that answered it met a
      * lock on {@code _timeline}: the splice's generation, whose root of the departed batch sits
      * above the view's new frontier, stays on disk under the truncate's marker, and the view
-     * refuses it. The lock holds for a drawn 0 to 2 later steps: one or two rows the filter drops,
+     * refuses it. The test's first episode, and one in two after it, also failed the retire's check
+     * of {@code _timeline} after the unlink, which the retire answers as it answers the file the
+     * lock kept, so nothing below differs. The lock holds for a drawn 0 to 2 later steps: one or two rows the filter drops,
      * whose cycles have no head to stand on and decline a first root above the view's newest row,
      * then a late row the filter keeps, inside the kept batch, whose repair finds no anchor and
      * whose closing seal retries the retire and is refused. While the lock holds nothing
@@ -9541,12 +9575,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
      * and every directory removal under the checkpoint directory, as a lock on the file refuses
      * them, so a retire keeps the generation, and the repair marker the retire keeps beside it.
      * While the marker is locked, refuses every unlink of the repair marker and of its staged
-     * sibling, so the marker outlives a {@code _timeline} a retire removes.
+     * sibling, so the marker outlives a {@code _timeline} a retire removes. Once armed, fails the
+     * check of whether {@code _timeline} exists that follows its next unlink, refused or not.
      */
     private static final class CheckpointFaults extends TestFilesFacadeImpl {
         // -1 disarmed; otherwise the base WAL timestamp column opens still to let through before the one that raises
         // the engine's closing flag.
         private final AtomicInteger closingCountdown = new AtomicInteger(-1);
+        private final AtomicInteger failedTimelineChecks = new AtomicInteger();
         private final AtomicInteger markerRenames = new AtomicInteger();
         private final AtomicInteger refusedMarkerUnlinks = new AtomicInteger();
         private final AtomicInteger refusedTimelineUnlinks = new AtomicInteger();
@@ -9554,10 +9590,27 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         private volatile String closingBaseDir;
         private volatile boolean hasCrashed;
         private volatile boolean hasKeptTheTimeline;
+        private volatile boolean isFailingTheCheckAfterTheNextTimelineUnlink;
+        private volatile boolean isFailingTheNextTimelineCheck;
         private volatile boolean isMarkerLocked;
         private volatile boolean isTimelineLocked;
         private volatile Runnable onCrash;
         private volatile Runnable onTheKeptTimeline;
+
+        private static boolean isTimelineFile(LPSZ name) {
+            return Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        }
+
+        @Override
+        public boolean exists(LPSZ path) {
+            if (isFailingTheNextTimelineCheck && isTimelineFile(path)) {
+                isFailingTheNextTimelineCheck = false;
+                failedTimelineChecks.incrementAndGet();
+                throw CairoException.critical(0).put("injected fault on the check of _timeline");
+            }
+            return super.exists(path);
+        }
 
         @Override
         public long openRO(LPSZ name) {
@@ -9582,11 +9635,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 refusedMarkerUnlinks.incrementAndGet();
                 return false;
             }
-            if (isTimelineLocked
-                    && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
-                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
-                refusedTimelineUnlinks.incrementAndGet();
-                return false;
+            if (isTimelineFile(name)) {
+                if (isFailingTheCheckAfterTheNextTimelineUnlink) {
+                    isFailingTheCheckAfterTheNextTimelineUnlink = false;
+                    isFailingTheNextTimelineCheck = true;
+                }
+                if (isTimelineLocked) {
+                    refusedTimelineUnlinks.incrementAndGet();
+                    return false;
+                }
             }
             return super.removeQuiet(name);
         }
@@ -9654,8 +9711,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             return wasKept;
         }
 
+        // Disarms the kept-timeline action, and the fault on the check of _timeline, armed or
+        // pending, which only that action arms.
         void disarmTheKeptTimeline() {
             onTheKeptTimeline = null;
+            isFailingTheCheckAfterTheNextTimelineUnlink = false;
+            isFailingTheNextTimelineCheck = false;
+        }
+
+        // The checks of _timeline the fault failed since the last call, which forgets them.
+        int consumeFailedTimelineChecks() {
+            return failedTimelineChecks.getAndSet(0);
+        }
+
+        // Fails, once, the check of whether _timeline exists that follows its next unlink.
+        void failTheTimelineCheckAfterItsNextUnlink() {
+            isFailingTheNextTimelineCheck = false;
+            isFailingTheCheckAfterTheNextTimelineUnlink = true;
         }
 
         // Whether the crash was taken since the last call, which forgets it.
