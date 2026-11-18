@@ -70,7 +70,7 @@ public class DeltaStorageVersionTest extends AbstractCairoTest {
             try (Path path = new Path()) {
                 path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory())
                         .concat(token).concat(TableUtils.META_FILE_NAME);
-                Assert.assertEquals(ColumnType.DELTA_STORAGE_VERSION, readVersion(path));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION, readVersion(path));
             } finally {
                 execute("CHECKPOINT RELEASE");
             }
@@ -99,7 +99,7 @@ public class DeltaStorageVersionTest extends AbstractCairoTest {
 
                 writer.commitSeqTxn(seqTxn);
                 Assert.assertTrue(diskTxnHasDeltaActive(token));
-                Assert.assertEquals(ColumnType.DELTA_STORAGE_VERSION, metaVersion(token));
+                Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION, metaVersion(token));
             }
         });
     }
@@ -121,8 +121,8 @@ public class DeltaStorageVersionTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 // The check a build that knows composite stamps but not Delta runs on open.
                 try {
-                    TableUtils.validateMetaVersion(path.$(), mem, TableUtils.META_OFFSET_VERSION, ColumnType.VERSION, ColumnType.MAX_STORAGE_VERSION);
-                    Assert.fail("a build that stops at MAX_STORAGE_VERSION accepted a Delta table");
+                    TableUtils.validateMetaVersion(path.$(), mem, TableUtils.META_OFFSET_VERSION, ColumnType.VERSION, ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION);
+                    Assert.fail("a build that stops at DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION accepted a Delta table");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "metadata version does not match runtime version");
                 }

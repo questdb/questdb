@@ -3350,7 +3350,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.DELTA_STORAGE_VERSION);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -3437,7 +3437,8 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        // A table holding composite or Delta partitions carries an elevated storage version
+        // A table that currently holds composite or Delta partitions, or is downgrade-locked because its _cv
+        // carries checksum trailers, carries a version in (ColumnType.VERSION, ColumnType.MAX_STORAGE_VERSION]
         // rather than ColumnType.VERSION; all are readable by this binary, so accept the whole
         // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
         // that predates a migration (migrations bring it up before it is opened), and a version
