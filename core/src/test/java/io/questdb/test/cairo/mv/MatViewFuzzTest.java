@@ -224,12 +224,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 timestampClauses++;
             }
             switch (sql.bucketing) {
-                case AggregatingSql.SAMPLE_BY -> Assert.assertTrue(text, text.contains(" SAMPLE BY 1h") && !text.contains("timestamp_floor"));
-                case AggregatingSql.FLOOR -> Assert.assertTrue(text, text.contains("timestamp_floor('1h', ") && !text.contains("SAMPLE BY"));
-                default -> Assert.assertTrue(text, text.contains("ts, '2024-01-01T00:00:00.000000Z') AS ts") && !text.contains("SAMPLE BY"));
+                case AggregatingSql.SAMPLE_BY ->
+                        Assert.assertTrue(text, text.contains(" SAMPLE BY 1h") && !text.contains("timestamp_floor"));
+                case AggregatingSql.FLOOR ->
+                        Assert.assertTrue(text, text.contains("timestamp_floor('1h', ") && !text.contains("SAMPLE BY"));
+                default ->
+                        Assert.assertTrue(text, text.contains("ts, '2024-01-01T00:00:00.000000Z') AS ts") && !text.contains("SAMPLE BY"));
             }
             switch (sql.source) {
-                case AggregatingSql.CTE -> Assert.assertTrue(text, text.startsWith("WITH a AS (") || text.contains("(WITH a AS ("));
+                case AggregatingSql.CTE ->
+                        Assert.assertTrue(text, text.startsWith("WITH a AS (") || text.contains("(WITH a AS ("));
                 case AggregatingSql.JOIN -> Assert.assertTrue(text, text.contains(" b JOIN other o ON (sym)"));
                 default -> Assert.assertFalse(text, text.contains("WITH a AS (") || text.contains(" JOIN "));
             }
@@ -1305,7 +1309,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 }
                 drainWalQueue();
             }
-            case VIEW_INVALIDATE -> engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
+            case VIEW_INVALIDATE ->
+                    engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
             case VIEW_RESUME -> {
                 // RESUME waits for the view's WAL, and the jobs deliver the invalidations published so far
                 drainOperationsFuzzQueues();
@@ -1739,7 +1744,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case 'h' -> Micros.HOUR_MICROS;
             case 'm' -> Micros.MINUTE_MICROS;
             case 's' -> Micros.SECOND_MICROS;
-            default -> throw new AssertionError("unexpected sampling interval unit: " + state.getViewDefinition().getSamplingIntervalUnit());
+            default ->
+                    throw new AssertionError("unexpected sampling interval unit: " + state.getViewDefinition().getSamplingIntervalUnit());
         };
         long width = interval * unitMicros + Micros.HOUR_MICROS;
         final TableToken baseToken = engine.getTableTokenIfExists(state.getViewDefinition().getBaseTableName());
@@ -2260,7 +2266,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
                 oracle.onInvalidationPublished();
             }
-            case BACKLOG_UPDATE -> engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
+            case BACKLOG_UPDATE ->
+                    engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
             case RESTART -> restartOperationsFuzzViewStates(oracle);
             case APPLY_WAL -> drainWalQueue();
             case RUN_REFRESH_JOB -> {
@@ -2754,7 +2761,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final AggregatingSql aggregatingAlter = new AggregatingSql();
         for (int step = 0; step < steps; step++) {
             switch (rnd.nextInt(10)) {
-                case 0, 1, 2 -> insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5));
+                case 0, 1, 2 ->
+                        insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5));
                 case 3, 4, 5 -> {
                     final String sql;
                     final int kind;

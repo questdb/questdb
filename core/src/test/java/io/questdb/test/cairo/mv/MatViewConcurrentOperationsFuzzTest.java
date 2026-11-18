@@ -519,7 +519,8 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
         switch (rnd.nextInt(28)) {
             case 0, 1, 2 -> sql.put("REFRESH MATERIALIZED VIEW mv RESUME");
             case 3, 4 -> sql.put("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
-            case 5, 6 -> sql.put("ALTER MATERIALIZED VIEW mv AS (").put(rnd.nextBoolean() ? VIEW_SQL : VIEW_SQL_MAX).put(')');
+            case 5, 6 ->
+                    sql.put("ALTER MATERIALIZED VIEW mv AS (").put(rnd.nextBoolean() ? VIEW_SQL : VIEW_SQL_MAX).put(')');
             case 7, 8 -> {
                 if (rnd.nextBoolean()) {
                     sql.put("ALTER MATERIALIZED VIEW mv WITH BASE base2 AS (").put(VIEW_SQL_BASE2).put(')');
@@ -536,7 +537,8 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
                 sql.put(" TO ");
                 appendDay(sql, day + 1 + rnd.nextInt(DAY_COUNT - day));
             }
-            case 13, 14 -> sql.put(rnd.nextBoolean() ? "ALTER MATERIALIZED VIEW mv ADD COLUMN extra DOUBLE" : "ALTER MATERIALIZED VIEW mv DROP COLUMN extra");
+            case 13, 14 ->
+                    sql.put(rnd.nextBoolean() ? "ALTER MATERIALIZED VIEW mv ADD COLUMN extra DOUBLE" : "ALTER MATERIALIZED VIEW mv DROP COLUMN extra");
             case 15 -> {
                 sql.put(rnd.nextBoolean() ? "ALTER MATERIALIZED VIEW mv DROP PARTITION LIST " : "ALTER MATERIALIZED VIEW mv DROP PARTITION WHERE ts < ");
                 appendDay(sql, rnd.nextInt(DAY_COUNT));

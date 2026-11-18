@@ -175,7 +175,8 @@ public final class MatViewFuzzOpGenerator {
         return switch (kind) {
             case INSERT -> 10;
             case VIEW_RESUME -> 6;
-            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, VIEW_INVALIDATE, APPLY_WAL, RUN_REFRESH_JOB -> 4;
+            case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, VIEW_INVALIDATE, APPLY_WAL, RUN_REFRESH_JOB ->
+                    4;
             case VIEW_FULL, BASE_RACED_BARE_NAME_COLUMN_CHANGE -> 3;
             case VIEW_ALTER_AS, RESTART -> 2;
             default -> 0;
@@ -949,8 +950,10 @@ public final class MatViewFuzzOpGenerator {
                 op.policy = "WHEN " + lowComparison(c) + " AND " + lowComparison(other);
             }
             case 2 -> op.policy = "WHEN " + c + " < min(" + c + ") OVER ()";
-            case 3 -> op.policy = "KEEP " + (rnd.nextBoolean() ? "HIGHEST" : "LOWEST") + " ON " + c + " PARTITION BY ts, sym";
-            case 4 -> op.policy = "KEEP " + (1 + rnd.nextInt(3)) + (rnd.nextBoolean() ? " HIGHEST" : " LOWEST") + " ON " + c + " PARTITION BY ts, sym";
+            case 3 ->
+                    op.policy = "KEEP " + (rnd.nextBoolean() ? "HIGHEST" : "LOWEST") + " ON " + c + " PARTITION BY ts, sym";
+            case 4 ->
+                    op.policy = "KEEP " + (1 + rnd.nextInt(3)) + (rnd.nextBoolean() ? " HIGHEST" : " LOWEST") + " ON " + c + " PARTITION BY ts, sym";
             default -> op.policy = "KEEP LATEST PARTITION BY sym, ts, " + c;
         }
         // the KEEP and window shapes compile a read probe against the view's applied columns
