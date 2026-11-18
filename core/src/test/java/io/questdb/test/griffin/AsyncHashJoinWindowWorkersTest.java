@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
@@ -66,6 +67,8 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * up with it, and the frames dispatched at each frame follow from the window alone.
  */
 public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
+    // The entry of a task that wrote its cap of 512 tuples of the one-stage join, two longs each.
+    private static final long CAP_ENTRY_BYTES = 512 * 2 * Long.BYTES;
     // t8's frames of eight probe rows, each of which meets d3's three rows of its key, every one of
     // which the residual keeps.
     private static final int FRAME_JOINED_ROWS = 24;
@@ -105,6 +108,72 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     @Test
     public void testCountAfterRowsMeetsTheFramesAheadOnThreadWorkers() throws Exception {
         assertCountAfterRowsMeetsTheFramesAhead(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testFanOutAtServerDefaultsFitsAQueryMemoryLimitOnThreadWorkers() throws Exception {
+        // The server's defaults on eight workers: a dispatch limit of eight, a reduce queue of 32,
+        // page frames of 100_000 to 1_000_000 rows, and a task cap of a page frame's 1_000_000 rows.
+        // b holds 1_000 rows of each of a's eight keys, every pair of which the residual keeps: a's
+        // 32_000 rows make 32 frames of 1_000_000 / 1_000 rows, whose tasks each write the cap, which
+        // grows their entries to 16_384_000 bytes. A query memory limit of 64 MiB leaves the ring a
+        // quarter, 16 MiB, which holds one such entry: the first window holds one frame, where the
+        // frames' rows would let eight in, 131 MB.
+        final int workerCount = 8;
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, workerCount);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 32);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+        assertMemoryLeak(() -> executeOnWorkers(WorkerPoolMode.LEGACY, workerCount, null, configuration, LOG, (db, context) -> {
+            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            db.execute("CREATE TABLE b AS (SELECT (x % 8)::INT k, 1_000_000_000L + x w FROM long_sequence(8_000))", context);
+            db.execute("""
+                    CREATE TABLE a AS (
+                        SELECT (x % 8)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts
+                        FROM long_sequence(32_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            context.setParallelHashJoinEnabled(true);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024);
+            try (RecordCursorFactory factory = db.select("SELECT a.v, b.w FROM a JOIN b ON a.k = b.k AND b.w > a.v", context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                long rows = 0;
+                long vSum = 0;
+                long wSum = 0;
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(32, join.getProbeFrameCount());
+                    Assert.assertEquals(1, join.getAtom().getRing().getDispatchLimit());
+                    Assert.assertEquals(1, join.getDispatchedFrameCount());
+                    do {
+                        rows++;
+                        vSum += record.getLong(0);
+                        wSum += record.getLong(1);
+                    } while (cursor.hasNext());
+                }
+                // Each of a's rows, v from 1 to 32_000, meets b's 1_000 rows of its key, so the 4_000
+                // rows of a of each key meet b's rows of that key, and between them all of b's rows,
+                // w from 1_000_000_001 to 1_000_008_000, each 4_000 times.
+                Assert.assertEquals(32_000_000L, rows);
+                Assert.assertEquals(1_000L * (32_000L * 32_001 / 2), vSum);
+                Assert.assertEquals(4_000L * (8_000L * 1_000_000_000L + 8_000L * 8_001 / 2), wSum);
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        }));
+    }
+
+    @Test
+    public void testFanOutFirstWindowWithinTheBudgetOnFiberWorkers() throws Exception {
+        assertFanOutFirstWindowWithinTheBudget(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testFanOutFirstWindowWithinTheBudgetOnThreadWorkers() throws Exception {
+        assertFanOutFirstWindowWithinTheBudget(WorkerPoolMode.LEGACY);
     }
 
     @Test
@@ -216,6 +285,67 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                 Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
             }
         });
+    }
+
+    private static void assertFanOutFirstWindowWithinTheBudget(WorkerPoolMode mode) throws Exception {
+        // Each probe row of t meets d's four rows of its key, every pair of which the residual keeps,
+        // so a cap of 512 tuples cuts t's frames to 512 / 4 = 128 rows, whose tasks each write the
+        // cap, which grows their entries, doubling from the frame's room, to 8 KiB. A ring budget of
+        // two such entries holds a first window of two frames, where the frames' rows, a quarter of
+        // the tuples, would let the dispatch limit's eight in.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 512);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 2 * CAP_ENTRY_BYTES);
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            context.changePageFrameSizes(1, 256);
+            final String sql = "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w + t.v > 0";
+            final String expected = ordinaryRows(db, sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final HashJoinTupleRing ring = join.getAtom().getRing();
+                final RecordMetadata metadata = factory.getMetadata();
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, ring.getDispatchLimit());
+                    Assert.assertEquals(2, join.getDispatchedFrameCount());
+                    // Once the workers joined the first window, its two entries hold the budget.
+                    awaitReducedFrames(join);
+                    Assert.assertEquals(2 * CAP_ENTRY_BYTES, ring.getAllocatedBytes());
+                    TestUtils.assertEquals(expected, printFromCurrentRow(cursor, metadata));
+                    Assert.assertEquals(0, join.getAtom().getContinuationCount());
+                }
+                // A query memory limit of eight such entries, whose quarter is the budget: the two
+                // entries of the first window, which the workers join while the consumer holds its
+                // first frame, fit it, where the eight of a first window of the frames' rows would not.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 8 * CAP_ENTRY_BYTES);
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(2, join.getDispatchedFrameCount());
+                    awaitReducedFrames(join);
+                    TestUtils.assertEquals(expected, printFromCurrentRow(cursor, metadata));
+                }
+                // Limits from a few bytes up fail the query at each allocation in turn, the workers'
+                // ones among them; each failure leaves nothing, and the first limit that admits the
+                // query reads the rows.
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> printRows(factory, context),
+                        e -> TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded"),
+                        () -> {
+                            Assert.assertEquals(0, ring.getAllocatedBytes());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, db.getBusyReaderCount());
+                        }
+                );
+                Assert.assertTrue(failures > 0);
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        }));
     }
 
     private static void assertFirstWindowUnderAnOuterLimit(WorkerPoolMode mode) throws Exception {
@@ -605,6 +735,16 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
         } finally {
             context.setParallelHashJoinEnabled(isEnabledBefore);
         }
+    }
+
+    // The cursor's current row and every row after it, as printRows() prints them.
+    private static String printFromCurrentRow(RecordCursor cursor, RecordMetadata metadata) {
+        final StringSink sink = new StringSink();
+        final Record record = cursor.getRecord();
+        do {
+            CursorPrinter.println(record, metadata, sink);
+        } while (cursor.hasNext());
+        return sink.toString();
     }
 
     private static String printRows(RecordCursorFactory factory, SqlExecutionContextImpl context) throws SqlException {

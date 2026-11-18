@@ -152,6 +152,27 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testContinuedFramesFirstWindowHoldsTheTaskCap() throws Exception {
+        // t holds 8_000 probe rows over a hundred keys, and d ten rows of each key: frames of the
+        // 1_000-row floor, whose tasks stop at the cap of 5_000 tuples and leave the rest of their
+        // frames to continuations. A ring budget of 160_000 bytes holds two such tasks' tuples of two
+        // longs, 80_000 bytes each, where the frames' rows, 16_000 bytes, would let the dispatch
+        // limit's eight frames in.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 160_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d AS (SELECT (x % 100)::INT k, 100_000 + x w FROM long_sequence(1_000))");
+            sqlExecutionContext.changePageFrameSizes(2_000, 8_000);
+            for (String sql : ENUMERATED) {
+                assertFrames(sql, 8, -1);
+                assertFirstWindow(sql, 2, 2, false);
+            }
+        });
+    }
+
+    @Test
     public void testDeferredUniqueAndEmptyBuildsKeepTheFrames() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -394,6 +415,27 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetFirstWindowHoldsTheRowGroupTask() throws Exception {
+        // As in testParquetFramesKeepTheirRowGroups: the Parquet partition's frame, its row group of
+        // twelve rows, past the cap of six, leaves its task a cap of twelve tuples, 192 bytes of two
+        // longs, which the tasks of the native partition's frames of two rows never pass: a ring
+        // budget of 384 bytes holds two such tasks, where the cap of six would let four in.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 384);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 7_200_000_000) ts FROM long_sequence(24)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE d AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            sqlExecutionContext.changePageFrameSizes(1, 12);
+            for (String sql : ENUMERATED) {
+                assertFrames(sql, 1 + 6, -1);
+                assertFirstWindow(sql, 2, 2, false);
+            }
+        });
+    }
+
+    @Test
     public void testReadParquetFramesKeepTheirRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -464,6 +506,36 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             // frames keep the twelve configured rows.
             assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k", 2, 0);
             assertFrames("SELECT t.v, d.w, f.w2 FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0 LEFT JOIN f ON t.k = f.k AND f.w2 > 0", 2, 0);
+        });
+    }
+
+    @Test
+    public void testSwappedFirstWindowHoldsTheTaskCap() throws Exception {
+        // As in testSwappedInputsFollowTheLeftBuild: the join hashes l, three rows of each key, whose
+        // matches the workers walk, and cuts r's frames to two rows, whose tasks fill the cap of six
+        // tuples. A ring budget of 288 bytes holds three such tasks' tuples of one stage, 96 bytes
+        // each, and two of two stages, 144 bytes each, where the frames' rows would let the dispatch
+        // limit's eight frames in, and six.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 288);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(12)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE r AS (SELECT (x % 4)::INT k, x * 100 w, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(24)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE u AS (SELECT (x % 4)::INT k, x * 7 w2 FROM long_sequence(4))");
+            execute("CREATE TABLE d AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
+            sqlExecutionContext.changePageFrameSizes(1, 6);
+            final Object[][] queriesAndWindows = {
+                    {"SELECT l.v, r.w FROM l JOIN r ON l.k = r.k WHERE r.w > l.v", 3},
+                    {"SELECT l.v, r.w, u.w2 FROM l JOIN r ON l.k = r.k JOIN u ON l.k = u.k", 2},
+                    {"SELECT l.v, r.w, d.w dw FROM l JOIN r ON l.k = r.k LEFT JOIN d ON l.k = d.k AND d.w > 0", 2},
+            };
+            for (Object[] query : queriesAndWindows) {
+                final String sql = (String) query[0];
+                final int window = (int) query[1];
+                assertFrames(sql, 12, 0);
+                assertFirstWindow(sql, window, window, true);
+            }
         });
     }
 
@@ -558,6 +630,21 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             }
         } finally {
             sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
+        }
+    }
+
+    // An execution of the query, which swaps the first join's inputs or not, starts at the given
+    // window of the ring, and its first row comes with the given frames dispatched.
+    private static void assertFirstWindow(String sql, int window, int dispatched, boolean isSwapped) throws SqlException {
+        try (RecordCursorFactory factory = select(sql)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(sql, cursor.hasNext());
+                Assert.assertEquals(sql, isSwapped, join.getAtom().isSwapped());
+                Assert.assertEquals(sql, window, join.getAtom().getRing().getDispatchLimit());
+                Assert.assertEquals(sql, dispatched, join.getDispatchedFrameCount());
+            }
         }
     }
 

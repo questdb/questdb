@@ -56,6 +56,7 @@ import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -191,6 +192,71 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     @Test
     public void testEntriesNeverSharedWhenDispatchingAheadOnThreadWorkers() throws Exception {
         assertEntriesNeverSharedWhenDispatchingAhead(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testFanOutSizesTheFirstWindowByTheTaskCap() throws Exception {
+        // Each case: cairo.sql.parallel.hash.join.task.output.max.rows, the ring budget, the dispatch
+        // limit, 1 for an execution whose tasks fan out, and the window and the entries that a ring
+        // with a dynamic window starts with. A task of an execution that fans out writes up to
+        // max(10, cap) tuples of a frame of 10 rows, and one of an execution that does not up to 10,
+        // 24 bytes each, so the window is max(1, min(dispatch limit, 32, budget / (tuples * 24))),
+        // and the entries max(1, min(dispatch limit, 32)).
+        final long[][] cases = {
+                // A cap of 30 tuples, 720 bytes a task, sizes the window of an execution that fans out.
+                {30, 3 * 720, 8, 1, 3, 8},
+                {30, 3 * 720 - 1, 8, 1, 2, 8},
+                {30, 720, 8, 1, 1, 8},
+                // A budget below one task's tuples, or none, leaves a window of one frame.
+                {30, 719, 8, 1, 1, 8},
+                {30, 0, 8, 1, 1, 8},
+                // A huge budget leaves the window at the dispatch limit, one frame for a limit of one.
+                {30, LARGE_RING, 8, 1, 8, 8},
+                {30, LARGE_RING, 1, 1, 1, 1},
+                // A cap below the frame's rows, or at them, leaves the task the frame's rows, 240 bytes.
+                {1, 720, 8, 1, 3, 8},
+                {5, 720, 8, 1, 3, 8},
+                {10, 720, 8, 1, 3, 8},
+                // Without fan-out a task writes a tuple per row at most, whatever the cap.
+                {30, 720, 8, 0, 3, 8},
+                {Integer.MAX_VALUE, 720, 8, 0, 3, 8},
+                // The largest cap, 51_539_607_528 bytes a task, sizes in a long.
+                {Integer.MAX_VALUE, 1L << 30, 8, 1, 1, 8},
+                {Integer.MAX_VALUE, 103_079_215_055L, 8, 1, 1, 8},
+                {Integer.MAX_VALUE, 103_079_215_056L, 8, 1, 2, 8},
+                {Integer.MAX_VALUE, Long.MAX_VALUE, 8, 1, 8, 8},
+        };
+        assertMemoryLeak(() -> withRing(null, 8, LARGE_RING, -1, "t", (engine, compiler, context, sequence, factory) -> {
+            context.setMemoryTracker(null);
+            sequence.of(factory, context, sequence.getAtom().collectSubSeq, ORDER_ASC);
+            try {
+                sequence.prepareForDispatch();
+                Assert.assertEquals(FRAME_COUNT, sequence.getFrameCount());
+                for (long[] c : cases) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, c[0]);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, c[1]);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, c[2]);
+                    assertFirstWindow(engine.getConfiguration(), sequence, c[3] == 1, c[4], c[5], Arrays.toString(c));
+                }
+            } finally {
+                sequence.await();
+                sequence.reset();
+            }
+        }));
+        // Without probe frames the budget bounds nothing, however the tasks would fan out.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 30);
+        assertMemoryLeak(() -> withRing(null, 4, 1, -1, "empty", (engine, compiler, context, sequence, factory) -> {
+            context.setMemoryTracker(null);
+            sequence.of(factory, context, sequence.getAtom().collectSubSeq, ORDER_ASC);
+            try {
+                sequence.prepareForDispatch();
+                Assert.assertEquals(0, sequence.getFrameCount());
+                assertFirstWindow(engine.getConfiguration(), sequence, true, 4, 4, "empty");
+            } finally {
+                sequence.await();
+                sequence.reset();
+            }
+        }));
     }
 
     @Test
@@ -338,6 +404,25 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     private static void assertFails(Runnable operation, String message) {
         final AssertionError error = Assert.assertThrows(AssertionError.class, operation::run);
         TestUtils.assertContains(error.getMessage(), message);
+    }
+
+    // Binds a ring of the configuration's settings to the prepared sequence, with a dynamic window, as
+    // the join's cursor does, for an execution whose tasks fan out or not, and asserts the window and
+    // the entries that it starts with, and that binding allocates nothing.
+    private static void assertFirstWindow(
+            CairoConfiguration configuration,
+            PageFrameSequence<RingAtom> sequence,
+            boolean isFanOut,
+            long window,
+            long entries,
+            String label
+    ) {
+        try (HashJoinTupleRing ring = new HashJoinTupleRing(configuration, STAGE_COUNT)) {
+            ring.of(sequence, true, isFanOut);
+            Assert.assertEquals(label, window, ring.getDispatchLimit());
+            Assert.assertEquals(label, entries, ring.getEntryCount());
+            Assert.assertEquals(label, 0, ring.getAllocatedBytes());
+        }
     }
 
     private static void assertNoMismatch(RingAtom atom) {

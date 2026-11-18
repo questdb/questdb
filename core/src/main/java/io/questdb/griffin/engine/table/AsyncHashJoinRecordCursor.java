@@ -62,7 +62,9 @@ import io.questdb.std.Os;
  * {@link HashJoinTupleRing}. Once {@code next()} handed it a frame, the cursor dispatches the frames
  * after it up to the same window, see {@link PageFrameSequence#dispatchAhead(int)}, so that the
  * workers join them while it reads the frame: {@code next()} alone publishes frames only when none
- * is ready to collect. The ring's window is dynamic: each frame the cursor has read tells the
+ * is ready to collect. The ring's window is dynamic: it starts at the frames whose tasks' tuples the
+ * ring's budget holds, a tuple per probe row, or a task's cap of tuples once the builds lead the
+ * cursor to cut the frames for duplicate matches, see below; each frame the cursor has read tells the
  * ring how much memory its entry took, and the window follows the largest, so that frames whose
  * tuples are few, under a selective probe filter, keep more workers busy within the ring's budget.
  * {@code toTop()} probes again over the same builds, in the same orientation.
@@ -351,7 +353,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             // task: with no frame to read, the cursor ends at once.
             if (atom.build(circuitBreaker, buildRounds)) {
                 // The builds tell how many matches a probe row meets, which the frames' rows follow.
-                frameSequence.setPageFrameMaxRows(atom.getProbeFrameRowCap());
+                final long probeFrameRowCap = atom.getProbeFrameRowCap();
+                frameSequence.setPageFrameMaxRows(probeFrameRowCap);
                 frameSequence.prepareForDispatch();
                 frameLimit = frameSequence.getFrameCount() - 1;
                 long probeRows = 0;
@@ -363,7 +366,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 atom.bindSymbolKeyTranslation(Math.min(probeRows, limitRows), circuitBreaker);
                 atom.maybeCopyPayload(probeRows, circuitBreaker, buildRounds);
                 final HashJoinTupleRing ring = atom.getRing();
-                ring.of(frameSequence, true);
+                // Where the builds cap the frames' rows, a probe row may yield several tuples, and a
+                // task may write its cap of them.
+                ring.of(frameSequence, true, probeFrameRowCap != Long.MAX_VALUE);
                 firstWindow(ring.getDispatchLimit());
                 tupleStride = ring.getTupleStride();
                 for (int k = 0; k < stageCount; k++) {

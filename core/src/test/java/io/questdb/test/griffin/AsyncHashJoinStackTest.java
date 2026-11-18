@@ -1019,7 +1019,12 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
     public void testRingSizedForStride() throws Exception {
         // Frames of four rows, and a ring budget of 576 bytes: a frame of tuples of three longs, a
         // probe row and two stages' entries, takes 96 bytes, and a frame of tuples of nine longs,
-        // eight stages' entries, 288.
+        // eight stages' entries, 288. The workers walk the matches of the eight-stage stack's first
+        // seven stages, the first of which, d1, repeats its keys, so a task may write its cap of
+        // tuples, the frame's rows or task.output.max.rows if that is more: a cap of four keeps 288
+        // bytes a task, and a cap of eight makes it 576. The two-stage stack hands the chains of d1
+        // and d2, which repeat their keys too, to the consumer, one tuple per probe row, whatever
+        // the cap.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 16);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 576);
         assertMemoryLeak(() -> {
@@ -1028,8 +1033,11 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             execute("CREATE TABLE rt AS (SELECT (x % 7)::INT k, (x % 6)::LONG lk, ('s' || (x % 4))::SYMBOL sym, x v, timestamp_sequence('2024-01-01', 21_600_000_000) ts FROM long_sequence(8)) TIMESTAMP(ts) PARTITION BY DAY");
             final int queueCapacity = configuration.getPageFrameReduceQueueCapacity();
             final String two = "SELECT t.v, d1.w, d2.w2 FROM rt t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk";
-            assertRing(two, 3, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (4 * 3 * 8)))));
-            assertRing(EIGHT_STAGES.replace(" FROM t", " FROM rt t"), 9, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (4 * 9 * 8)))));
+            for (int cap : new int[]{4, 8}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, cap);
+                assertRing(two, 3, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (4 * 3 * 8)))));
+                assertRing(EIGHT_STAGES.replace(" FROM t", " FROM rt t"), 9, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (Math.max(4, cap) * 9 * 8)))));
+            }
         });
     }
 

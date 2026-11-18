@@ -47,12 +47,14 @@ import org.jetbrains.annotations.TestOnly;
  * keeps {@code R} {@link DirectLongList}s bound to the execution's memory tracker, where {@code R} is
  * the execution's effective dispatch limit:
  * <pre>
- * R = max(1, min(dispatch limit, queue capacity, ring budget / (max probe frame rows * (1 + N) * 8)))
+ * R = max(1, min(dispatch limit, queue capacity, ring budget / (max task tuples * (1 + N) * 8)))
  * </pre>
- * with {@code N} stages, and the ring budget, {@code cairo.sql.parallel.hash.join.tuple.ring.max.size},
- * capped at a quarter of a configured per-query memory limit. The task of frame {@code f} writes
- * entry {@code f % R}, or, with a dynamic window, see below, {@code f} modulo the entry count. That
- * is safe because {@link PageFrameSequence#next(int, boolean)} and
+ * with {@code N} stages, the ring budget, {@code cairo.sql.parallel.hash.join.tuple.ring.max.size},
+ * capped at a quarter of a configured per-query memory limit, and the most tuples that a frame's task
+ * writes: the rows of the largest probe frame, or, for an execution whose stages fan out, the task's
+ * cap, the larger of those rows and {@code cairo.sql.parallel.hash.join.task.output.max.rows}. The
+ * task of frame {@code f} writes entry {@code f % R}, or, with a dynamic window, see below, {@code f}
+ * modulo the entry count. That is safe because {@link PageFrameSequence#next(int, boolean)} and
  * {@link PageFrameSequence#dispatchAhead(int)} keep the frames dispatched and not collected by the
  * owner, the frame the owner reads included, to a contiguous window of at most the dispatch limit
  * they receive, and next() reduces a frame locally only when that window is empty. The owner
@@ -62,8 +64,8 @@ import org.jetbrains.annotations.TestOnly;
  * limit, so that count-only frame {@code f + R} can run while the owner still reads entry
  * {@code f % R}.
  * <p>
- * The owner binds the ring with {@link #of(PageFrameSequence, boolean)}, with a dynamic window,
- * once per execution, after {@link PageFrameSequence#prepareForDispatch()} and before the first
+ * The owner binds the ring with {@link #of(PageFrameSequence, boolean, boolean)}, with a dynamic
+ * window, once per execution, after {@link PageFrameSequence#prepareForDispatch()} and before the first
  * dispatch, and keeps it bound across {@code toTop()}. Binding creates the entries' list objects, so no worker grows the ring's
  * own lists, but allocates no native memory: an entry's memory grows on the thread that first
  * writes it, charged to the execution's tracker. {@link #clear()} frees it all.
@@ -72,10 +74,13 @@ import org.jetbrains.annotations.TestOnly;
  * frame, and its kept-row count, -1 when the frame had no probe filter, so that a continuation
  * walks row indexes instead of the task's filtered rows.
  * <p>
- * {@code R} sizes the ring for the worst case, every probe row of the largest frame surviving into
- * one tuple, so a selective probe filter or INNER joins that most rows miss would hold the window
- * at {@code R} for memory that the entries never take. A ring bound with a dynamic window, see
- * {@link #of(PageFrameSequence, boolean)}, instead keeps {@code min(dispatch limit, queue capacity)}
+ * {@code R} sizes the ring for the worst case of a frame's task: every probe row of the largest frame
+ * surviving into one tuple, or, where the stages whose matches the workers walk fan out, see
+ * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, every task writing its cap of tuples, which the
+ * frames' rows, cut to what the cap holds at the expected fan-out, are meant to fill. So a selective
+ * probe filter or INNER joins that most rows miss would hold the window at {@code R} for memory that
+ * the entries never take. A ring bound with a dynamic window, see
+ * {@link #of(PageFrameSequence, boolean, boolean)}, instead keeps {@code min(dispatch limit, queue capacity)}
  * entries, which take no memory until a task writes them, and moves its window, the limit that
  * {@link #getDispatchLimit()} returns, as the owner reads frames, see {@link #release(int)}: it starts
  * at {@code R}, and each frame read makes it {@code ringBudget / the largest entry read so far},
@@ -95,6 +100,10 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
     private final int queueCapacity;
     private final LongList resumePositions = new LongList();
     private final long ringMaxSize;
+    // The tuples a task of an execution whose stages fan out writes before it leaves the rest of its
+    // frame to a continuation, unless the frame has more rows; see
+    // cairo.sql.parallel.hash.join.task.output.max.rows.
+    private final long taskOutputMaxRows;
     private final int tupleStride;
     // The window: the dispatch limit the owner passes to next(); 0 while the ring is not bound.
     private int dispatchLimit;
@@ -114,36 +123,37 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
         this.configuredDispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
         this.queueCapacity = configuration.getPageFrameReduceQueueCapacity();
         this.ringMaxSize = configuration.getSqlParallelHashJoinTupleRingMaxSize();
+        this.taskOutputMaxRows = configuration.getSqlParallelHashJoinTaskOutputMaxRows();
         this.tupleStride = 1 + stageCount;
     }
 
     /**
      * The effective dispatch limit {@code R}, the number of ring entries:
-     * {@code max(1, min(dispatchLimit, queueCapacity, ringBudget / (maxProbeFrameRows * tupleStride * 8)))}.
+     * {@code max(1, min(dispatchLimit, queueCapacity, ringBudget / (maxTaskTuples * tupleStride * 8)))}.
      * The floor of one keeps a dispatch limit of 0, which makes every frame reduce locally, from
-     * leaving the ring without an entry; a ring budget below one frame's tuples also leaves one
+     * leaving the ring without an entry; a ring budget below one task's tuples also leaves one
      * entry. Without probe frames the budget bounds nothing.
      *
-     * @param dispatchLimit     {@code cairo.sql.parallel.filter.dispatch.limit}
-     * @param queueCapacity     the capacity of the reduce queue, which caps the window anyway
-     * @param ringBudget        the bytes the entries may take, see {@link #computeRingBudget(long, long)}
-     * @param maxProbeFrameRows the rows of the largest probe frame, 0 without frames
-     * @param tupleStride       the longs per tuple, 1 + the stage count
+     * @param dispatchLimit {@code cairo.sql.parallel.filter.dispatch.limit}
+     * @param queueCapacity the capacity of the reduce queue, which caps the window anyway
+     * @param ringBudget    the bytes the entries may take, see {@link #computeRingBudget(long, long)}
+     * @param maxTaskTuples the most tuples that the task of a probe frame writes, 0 without frames
+     * @param tupleStride   the longs per tuple, 1 + the stage count
      */
     public static int computeDispatchLimit(
             int dispatchLimit,
             int queueCapacity,
             long ringBudget,
-            long maxProbeFrameRows,
+            long maxTaskTuples,
             int tupleStride
     ) {
         long limit = Math.min(dispatchLimit, queueCapacity);
-        if (maxProbeFrameRows > 0) {
+        if (maxTaskTuples > 0) {
             final long rowBytes = (long) tupleStride * Long.BYTES;
-            // A frame too large to size in a long fits no budget.
-            final long budgetFrames = maxProbeFrameRows > Long.MAX_VALUE / rowBytes
+            // Tuples too many to size in a long fit no budget.
+            final long budgetFrames = maxTaskTuples > Long.MAX_VALUE / rowBytes
                     ? 0
-                    : ringBudget / (maxProbeFrameRows * rowBytes);
+                    : ringBudget / (maxTaskTuples * rowBytes);
             limit = Math.min(limit, budgetFrames);
         }
         return (int) Math.max(1, limit);
@@ -258,31 +268,40 @@ public class HashJoinTupleRing implements Mutable, QuietCloseable {
 
     /**
      * Binds the ring to an execution of the probe sequence with a fixed window of {@code R}
-     * entries, see {@link #of(PageFrameSequence, boolean)}. The join binds its ring with a dynamic
+     * entries, for tasks that write a tuple per probe row at most, see
+     * {@link #of(PageFrameSequence, boolean, boolean)}. The join binds its ring with a dynamic
      * window; tests of the ring's entry reuse bind it with this one.
      */
     @TestOnly
     public void of(PageFrameSequence<?> probeSequence) {
-        of(probeSequence, false);
+        of(probeSequence, false, false);
     }
 
     /**
      * Binds the ring to an execution of the probe sequence and sizes it: the sequence has counted
      * its frames, in {@link PageFrameSequence#prepareForDispatch()}, and dispatched none. The
      * entries charge their memory to the sequence's memory tracker. The window starts at
-     * {@code R}. With a fixed window the ring keeps {@code R} entries, and the window never grows;
+     * {@code R}, which counts the tuples of a frame's task as the rows of the largest frame, or,
+     * when {@code isFanOut}, as the task's cap of tuples: the execution fans out when the builds of
+     * the stages whose matches the workers walk hold more rows than keys, see
+     * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, so that a probe row may yield several
+     * tuples. With a fixed window the ring keeps {@code R} entries, and the window never grows;
      * with a dynamic one it keeps {@link #computeEntryCount(int, int)} entries, and the frames the
      * owner reads move the window within them, see {@link #release(int)}.
      */
-    public void of(PageFrameSequence<?> probeSequence, boolean isWindowDynamic) {
+    public void of(PageFrameSequence<?> probeSequence, boolean isWindowDynamic, boolean isFanOut) {
         assert dispatchLimit == 0 : "clear() the ring before binding it to another execution";
         long maxFrameRows = 0;
         for (int i = 0, n = probeSequence.getFrameCount(); i < n; i++) {
             maxFrameRows = Math.max(maxFrameRows, probeSequence.getFrameRowCount(i));
         }
+        // A task writes a tuple per probe row at most, unless the execution fans out: then it writes
+        // up to its cap, the frame's rows or the configured cap if that is more, as
+        // AsyncHashJoinAtom.joinRows() applies it.
+        final long maxTaskTuples = isFanOut && maxFrameRows > 0 ? Math.max(maxFrameRows, taskOutputMaxRows) : maxFrameRows;
         final MemoryTracker memoryTracker = probeSequence.getMemoryTracker();
         final long ringBudget = computeRingBudget(ringMaxSize, memoryTracker != null ? memoryTracker.getLimit() : 0);
-        final int dispatchLimit = computeDispatchLimit(configuredDispatchLimit, queueCapacity, ringBudget, maxFrameRows, tupleStride);
+        final int dispatchLimit = computeDispatchLimit(configuredDispatchLimit, queueCapacity, ringBudget, maxTaskTuples, tupleStride);
         // The window's bound, R, never exceeds the dispatch limit and the queue capacity.
         final int entryCount = isWindowDynamic ? computeEntryCount(configuredDispatchLimit, queueCapacity) : dispatchLimit;
         assert entryCount >= dispatchLimit;

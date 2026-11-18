@@ -495,6 +495,51 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitOverAFanOutJoinStaysWithinTheWindowOfTheTaskCap() throws Exception {
+        // Each probe row meets d2's two rows of its key, which the post-join filter keeps, so a cap
+        // of eight tuples holds a frame's four rows, and a ring budget of 256 bytes two such tasks'
+        // tuples of two longs, 128 bytes each, where the frames' rows, 64 bytes, would let four
+        // frames in.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 8);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 256);
+        assertMemoryLeak(() -> {
+            createTables();
+            final String join = "SELECT t.v, d2.w2 FROM t JOIN d2 ON t.k = d2.k WHERE d2.w2 > t.v";
+            // Without a LIMIT, and under one that the rows of the window's two frames do not reach,
+            // the first row comes with the window's two frames, whose tasks join every row; LIMIT 3
+            // needs three rows of frame 0, whose task joins them alone.
+            final Object[][] queriesDispatchedAndRows = {
+                    {join, 2, 128},
+                    {join + " LIMIT 10", 2, 10},
+                    {join + " LIMIT 3", 1, 3},
+            };
+            for (Object[] query : queriesDispatchedAndRows) {
+                final String sql = (String) query[0];
+                final int dispatched = (int) query[1];
+                assertParallelHashJoin(sql, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final AsyncHashJoinRecordCursorFactory fanOutJoin = find(factory);
+                    Assert.assertNotNull(sql, fanOutJoin);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(sql, cursor.hasNext());
+                        Assert.assertEquals(sql, 2, fanOutJoin.getAtom().getRing().getDispatchLimit());
+                        Assert.assertEquals(sql, dispatched, fanOutJoin.getDispatchedFrameCount());
+                        if (dispatched == 1) {
+                            Assert.assertEquals(sql, 3, fanOutJoin.getAtom().getJoinedProbeRowCount());
+                        }
+                        int rows = 1;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(sql, (int) query[2], rows);
+                        Assert.assertEquals(sql, 0, fanOutJoin.getAtom().getContinuationCount());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitOverAProbeFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
