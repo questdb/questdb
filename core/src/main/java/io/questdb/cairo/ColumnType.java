@@ -151,20 +151,32 @@ public final class ColumnType {
     public static final int VARCHAR_AUX_SHL = 4;
     // column type version as written to the metadata file
     public static final int VERSION = 426;
-    // The highest storage version this binary can read and write. The database never
-    // migrates a table to it on its own (migrations target VERSION); only a table that
-    // currently holds composite partitions carries it, written straight into _meta at
-    // META_OFFSET_VERSION when the first composite partition appears. Folding every
+    // The storage version of a table that currently holds composite partitions. The database
+    // never migrates a table to it on its own (migrations target VERSION); it is written straight
+    // into _meta at META_OFFSET_VERSION when the first composite partition appears. Folding every
     // composite partition back to plain restores VERSION. This lets a user try composite
     // partitions and still downgrade to a binary that only understands VERSION: that older
-    // binary rejects a table stamped MAX_STORAGE_VERSION instead of misreading it, while a
+    // binary rejects a table stamped COMPOSITE_STORAGE_VERSION instead of misreading it, while a
     // table that never went composite (or was compacted back) stays readable.
     //
     // Fixed literal, deliberately placed above MIGRATION_VERSION (429) so it never collides
     // with a migration-step number: a stored version in (VERSION, MAX_STORAGE_VERSION] means
-    // "composite", not "needs migration N". A stable on-disk marker must not float with VERSION,
-    // so it is written out as a constant rather than VERSION + 1.
-    public static final int MAX_STORAGE_VERSION = 430;
+    // "composite" or "downgrade-locked", not "needs migration N". A stable on-disk marker must
+    // not float with VERSION, so it is written out as a constant rather than VERSION + 1.
+    public static final int COMPOSITE_STORAGE_VERSION = 430;
+    // The storage version of a table whose _cv carries checksum trailers (every commit mode writes
+    // them). An older binary that does not know the trailer rewrites a _cv area in place and leaves
+    // the trailer's magic next to data it never checksummed, so this binary would then read the
+    // area as torn. The marker makes the older binary refuse the table instead (its _meta version
+    // check accepts at most COMPOSITE_STORAGE_VERSION). A start with
+    // cairo.commit.mode.adaptive.downgrade=true removes the trailers and the marker
+    // (RecoveryCoordinator.unlockTablesForDowngrade) and writes neither while it runs, which is the
+    // documented way back to an older release.
+    public static final int DOWNGRADE_LOCKED_STORAGE_VERSION = 431;
+    // Both markers at once: composite partitions and _cv checksum trailers.
+    public static final int DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION = 432;
+    // The highest storage version this binary can read and write.
+    public static final int MAX_STORAGE_VERSION = DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;
@@ -498,6 +510,13 @@ public final class ColumnType {
     }
 
     /**
+     * True when a {@code _meta} storage version says the table holds composite partitions.
+     */
+    public static boolean isCompositeStorageVersion(int storageVersion) {
+        return storageVersion == COMPOSITE_STORAGE_VERSION || storageVersion == DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION;
+    }
+
+    /**
      * Checks if a value of {@code fromType} can be converted to {@code toType} through any available conversion,
      * including both safe (widening) and unsafe (narrowing) conversions.
      * <p>
@@ -532,6 +551,14 @@ public final class ColumnType {
 
     public static boolean isDesignatedTimestamp(int columnType) {
         return tagOf(columnType) == TIMESTAMP && (columnType & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
+    }
+
+    /**
+     * True when a {@code _meta} storage version says the table's {@code _cv} carries checksum trailers,
+     * which an older binary must not write over.
+     */
+    public static boolean isDowngradeLockedStorageVersion(int storageVersion) {
+        return storageVersion == DOWNGRADE_LOCKED_STORAGE_VERSION || storageVersion == DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION;
     }
 
     public static boolean isDouble(int columnType) {
@@ -743,6 +770,17 @@ public final class ColumnType {
 
     public static int sizeOfTag(short tag) {
         return TYPE_SIZE[tag];
+    }
+
+    /**
+     * The {@code _meta} storage version for a table's shape: {@link #VERSION} plain, raised by the composite
+     * and downgrade-lock markers.
+     */
+    public static int storageVersion(boolean composite, boolean downgradeLocked) {
+        if (composite) {
+            return downgradeLocked ? DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION : COMPOSITE_STORAGE_VERSION;
+        }
+        return downgradeLocked ? DOWNGRADE_LOCKED_STORAGE_VERSION : VERSION;
     }
 
     public static short tagOf(int type) {

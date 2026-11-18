@@ -94,7 +94,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
         clear();
     }
 
-    public void dumpTo(MemoryW mem) {
+    /**
+     * Writes the live area as a fresh single-area file. With {@code withChecksumTrailer} the area gets the same
+     * 16-byte trailer as a regular commit; without it the file carries no checksum, as a commit of a downgrade
+     * start ({@link CairoConfiguration#isCommitModeAdaptiveDowngrade()}) leaves it, so an older release may write over
+     * it (see {@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
+     */
+    public void dumpTo(MemoryW mem, boolean withChecksumTrailer) {
         mem.putLong(OFFSET_VERSION_64, version);
         boolean areaA = (version & 1L) == 0L;
         final long offset = HEADER_SIZE;
@@ -115,10 +121,11 @@ public class ColumnVersionReader implements Closeable, Mutable {
             p += BLOCK_SIZE_BYTES;
         }
 
-        // Checkpoint copies use the same 16-byte trailer as regular commits.
-        long areaAddr = mem.appendAddressFor(offset, size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
-        mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC);
-        mem.putLong(offset + size + Long.BYTES, TableUtils.calculateCvAreaChecksum(areaAddr, size));
+        if (withChecksumTrailer) {
+            long areaAddr = mem.appendAddressFor(offset, size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
+            mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC);
+            mem.putLong(offset + size + Long.BYTES, TableUtils.calculateCvAreaChecksum(areaAddr, size));
+        }
     }
 
     public LongList getCachedColumnVersionList() {

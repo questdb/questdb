@@ -612,14 +612,18 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                         reader.getMetadata().dumpTo(mem);
                                         // The checkpoint image is a second producer of a (_meta, _txn) pair, so it owns the
-                                        // invariant COMPOSITE_PARTITIONS.md relies on: _meta stamps MAX_STORAGE_VERSION
-                                        // whenever _txn carries composite partition references. Derive the stamp from the
-                                        // _txn this image ships rather than trusting the bytes dumpTo() copied - a pooled
-                                        // reader copy keeps a private _meta snapshot that TableWriter's in-place storage
-                                        // version write never reaches, so those bytes can lag their own _txn.
-                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getTxFile().hasCompositePartitions()
-                                                ? ColumnType.MAX_STORAGE_VERSION
-                                                : ColumnType.VERSION);
+                                        // invariant COMPOSITE_PARTITIONS.md relies on: _meta stamps the composite storage
+                                        // version whenever _txn carries composite partition references, and the downgrade
+                                        // lock whenever the _cv it ships carries a checksum trailer (below). Derive the
+                                        // stamp from the files this image ships rather than trusting the bytes dumpTo()
+                                        // copied - a pooled reader copy keeps a private _meta snapshot that TableWriter's
+                                        // in-place storage version write never reaches, so those bytes can lag their own
+                                        // _txn.
+                                        final boolean withChecksums = !configuration.isCommitModeAdaptiveDowngrade();
+                                        mem.putInt(
+                                                TableUtils.META_OFFSET_VERSION,
+                                                ColumnType.storageVersion(reader.getTxFile().hasCompositePartitions(), withChecksums)
+                                        );
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TXN_FILE_NAME);
@@ -629,7 +633,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // Copy _cv file.
                                         path.trimTo(rootLen).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
                                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-                                        reader.getColumnVersionReader().dumpTo(mem);
+                                        reader.getColumnVersionReader().dumpTo(mem, withChecksums);
                                         mem.close(false);
 
                                         // Generate _name file from table token (not copied from db_root).
