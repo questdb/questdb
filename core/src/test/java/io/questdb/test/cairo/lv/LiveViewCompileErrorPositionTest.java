@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
@@ -32,13 +33,20 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Chars;
 import io.questdb.std.FlyweightMessageContainer;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -48,10 +56,11 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.function.Supplier;
 
 /**
- * Where CREATE LIVE VIEW reports an error raised while it compiles its SELECT.
+ * Where CREATE LIVE VIEW reports an error raised while it compiles its SELECT or its ANCHOR clause.
  * <p>
  * CairoEngine.createLiveView compiles the stored SELECT text on its own, so the compile positions every
  * error in that text. The statement records where the text starts, and createLiveView adds that offset
@@ -59,13 +68,23 @@ import java.util.function.Supplier;
  * SqlException, ImplicitCastException and CairoException itself. The CairoException subclasses the
  * reader pool throws carry no position in the text, and some of them are objects every throw shares,
  * so they keep their own.
+ * <p>
+ * createLiveView then compiles the anchor from a text the parser renders from the typed ANCHOR
+ * EXPRESSION, or synthesizes from ANCHOR DAILY. The statement does not contain that text, so an error
+ * that compile positions points at the root token of the typed expression instead, or at the ANCHOR
+ * keyword for ANCHOR DAILY. An anchor that compiles but fails the anchor checks (its type, a constant,
+ * a non-deterministic or aggregate function) is refused at the ANCHOR keyword.
  *
  * @see LiveViewProjectionRejectTest
  */
 public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
+    // The SELECT of a view with one named window, up to the window's ANCHOR clause
+    private static final String ANCHORED_SELECT = "SELECT ts, sym, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ";
     private static final String NON_DETERMINISTIC_MESSAGE = "non-deterministic function cannot be used in live view: rnd_double";
     private static final String PREFIX = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS ";
     private static final String W = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING)";
+    // What failing_constant() throws when a compile folds it, while a test arms it.
+    private static volatile Supplier<CairoException> anchorConstantFailure;
     // What the engine throws instead of opening a reader of the base table, while a test arms it.
     private static volatile Supplier<CairoException> baseReaderFailure;
 
@@ -88,13 +107,374 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
                 }
                 return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
             }
+
+            @Override
+            protected Iterable<FunctionFactory> getFunctionFactories() {
+                final ArrayList<FunctionFactory> factories = new ArrayList<>();
+                super.getFunctionFactories().forEach(factories::add);
+                factories.add(new FailingConstantFunctionFactory());
+                return factories;
+            }
         };
         AbstractCairoTest.setUpStatic();
     }
 
     @After
-    public void disarmBaseReaderFailure() {
+    public void disarmFailures() {
+        anchorConstantFailure = null;
         baseReaderFailure = null;
+    }
+
+    @Test
+    public void testAnchorCompileErrorLeavesTheNameFree() throws Exception {
+        // An anchor compile error of each kind ends the CREATE before the view's table, files or registry
+        // entry exist, so nothing is left behind and the name takes an anchor that compiles.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String badColumn = anchored("timestamp_floor('1d', nope)");
+            assertCreateRejected(badColumn, SqlException.class, positionOf(badColumn, "timestamp_floor"), "Invalid column: nope");
+            final String cast = anchored("ts::long + 'a'::int");
+            assertCreateRejected(cast, ImplicitCastException.class, positionOf(cast, "+"), "inconvertible value: a [CHAR -> INT]");
+            final String division = anchored("ts::long + (1.00m / 0.00m)::long");
+            assertCreateRejected(division, CairoException.class, positionOf(division, "+"), "'/' operation failed: Division by zero");
+            final String daily = anchoredBy("ANCHOR DAILY '00:00' 'Not/AZone'");
+            assertCreateRejected(daily, SqlException.class, positionOf(daily, "ANCHOR"), "invalid timezone: Not/AZone");
+            assertNoLiveViewDirectory();
+            assertQuery("SELECT count() FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
+
+            final String select = ANCHORED_SELECT + "ANCHOR EXPRESSION timestamp_floor('1d', ts))";
+            execute(PREFIX + select);
+            Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+            // IF NOT EXISTS over the view that now exists compiles nothing, so an anchor that fails to
+            // compile is not refused, and the view keeps its own anchor
+            execute("CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s START FROM BEGINNING AS "
+                    + ANCHORED_SELECT + "ANCHOR EXPRESSION no_such_fn(ts))");
+            assertQuery("SHOW CREATE LIVE VIEW lv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\n"
+                            + "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM BEGINNING AS (\n"
+                            + select + "\n"
+                            + ");\n");
+        });
+    }
+
+    @Test
+    public void testAnchorCompileErrorMatchesThePlainSelect() throws Exception {
+        // The same expression in a plain SELECT fails with the same kind and message. Where the offending
+        // token is the expression's root, the plain SELECT points at it too, so the CREATE reports it at
+        // the plain SELECT's offset into the expression. Where a nested token offends, the plain SELECT
+        // points at that token and the CREATE at the root.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String[] rootErrors = {"no_such_fn(ts)", "timestamp_floor(sym, ts)", "nope", "\"nope\""};
+            for (String expression : rootErrors) {
+                final String sql = anchored(expression);
+                final Rejection create = executeRejected(sql);
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                final Rejection select = compileRejected("SELECT " + expression + " FROM base");
+                create.assertEquals(
+                        sql,
+                        select.type,
+                        positionOf(sql, expression) + select.position - "SELECT ".length(),
+                        select.message
+                );
+            }
+            // {the expression, its root token}
+            final String[][] nestedErrors = {
+                    {"timestamp_floor('1d', nope)", "timestamp_floor"},
+                    {"ts::long / no_such_fn(ts)", "/"},
+                    {"ts::long + 'a'::int", "+"},
+                    {"ts::long + (1.00m / 0.00m)::long", "+"}
+            };
+            for (String[] c : nestedErrors) {
+                final String sql = anchored(c[0]);
+                final Rejection create = executeRejected(sql);
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                final Rejection select = compileRejected("SELECT " + c[0] + " FROM base");
+                create.assertEquals(sql, select.type, positionOf(sql, c[1]), select.message);
+            }
+        });
+    }
+
+    @Test
+    public void testAnchorCompileErrorPositionWhateverPrecedesIt() throws Exception {
+        // The anchor's root token sits wherever the statement leaves it: behind lower case, newlines, a
+        // parenthesised body, the optional clauses, multi-byte characters, a DECLARE, a quoted view name,
+        // another named window or a long comment.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String anchor = "ANCHOR EXPRESSION timestamp_floor('1d', nope)";
+            final String[] statements = {
+                    "create live view lv flush every 1s start from beginning as select ts, sym, sum(x) over w a from base "
+                            + "window w as (partition by sym order by ts anchor expression timestamp_floor('1d', nope))",
+                    // the anchor on a line of its own
+                    "CREATE LIVE VIEW lv\n"
+                            + "FLUSH EVERY 1s START FROM BEGINNING AS\n"
+                            + "SELECT ts, sym, sum(x) OVER w a\n"
+                            + "FROM base\n"
+                            + "WINDOW w AS (\n"
+                            + "  PARTITION BY sym ORDER BY ts\n"
+                            + "  " + anchor + "\n"
+                            + ")",
+                    PREFIX + "(\n  " + ANCHORED_SELECT + anchor + ")\n)",
+                    "CREATE LIVE VIEW IF NOT EXISTS lv FLUSH EVERY 1s IN MEMORY 2s PARTITION BY DAY START FROM '2026-01-01' AS "
+                            + ANCHORED_SELECT + anchor + ")",
+                    // a 4-byte and a 2-byte UTF-8 character in a literal of the SELECT and in a comment before the anchor
+                    PREFIX + "SELECT ts, sym, '\uD83D\uDE00\u0436' e, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts "
+                            + "ANCHOR EXPRESSION /* \uD83D\uDE00 \u0436 */ timestamp_floor('1d', nope))",
+                    // the variable sits in the DECLARE ahead of the SELECT, which reads it; the anchor does not
+                    PREFIX + "DECLARE @k := 1 SELECT ts, sym, x + @k y, sum(x) OVER w a FROM base "
+                            + "WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor + ")",
+                    // the anchored window second of two
+                    PREFIX + "SELECT ts, sym, sum(x) OVER w1 b, sum(x) OVER w a FROM base "
+                            + "WINDOW w1 AS (PARTITION BY sym ORDER BY ts ROWS 10 PRECEDING), w AS (PARTITION BY sym ORDER BY ts " + anchor + ")",
+                    PREFIX + ANCHORED_SELECT + "ANCHOR EXPRESSION /* " + "c".repeat(70_000) + " */ timestamp_floor('1d', nope))",
+                    PREFIX + "SELECT ts, sym, sum(x) OVER w a FROM base_ns WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor + ")"
+            };
+            for (String sql : statements) {
+                assertCreateRejected(sql, SqlException.class, positionOf(sql, "timestamp_floor"), "Invalid column: nope");
+            }
+            // a keyword as the view name, quoted
+            final String quotedName = "CREATE LIVE VIEW \"select\" FLUSH EVERY 1s START FROM BEGINNING AS " + ANCHORED_SELECT + anchor + ")";
+            assertCreateRejected("select", quotedName, SqlException.class, positionOf(quotedName, "timestamp_floor"), "Invalid column: nope");
+        });
+    }
+
+    @Test
+    public void testAnchorDailyCompileErrorReportsTheAnchorKeyword() throws Exception {
+        // createLiveView compiles ANCHOR DAILY as the timestamp_floor call it stands for, a text the
+        // statement does not contain. An invalid time zone, the one error that call raises, points at the
+        // ANCHOR keyword. Left out: a designated timestamp whose name needs quotes, which the synthesized
+        // call drops (a PRE-EXISTING bug), so its CREATE fails for that reason.
+        assertMemoryLeak(() -> {
+            createBase();
+            // {the anchor clause, the message}
+            final String[][] cases = {
+                    {"ANCHOR DAILY '00:00' 'Not/AZone'", "invalid timezone: Not/AZone"},
+                    {"ANCHOR DAILY '08:30' 'Not/AZone'", "invalid timezone: Not/AZone"},
+                    {"ANCHOR DAILY '00:00' '+25:00'", "invalid timezone: +25:00"},
+                    {"ANCHOR DAILY '00:00' ''", "invalid timezone: "}
+            };
+            for (String[] c : cases) {
+                final String sql = anchoredBy(c[0]);
+                assertCreateRejected(sql, SqlException.class, positionOf(sql, "ANCHOR"), c[1]);
+            }
+            final String lowerCase = "create live view lv flush every 1s start from beginning as select ts, sym, sum(x) over w a from base "
+                    + "window w as (partition by sym order by ts anchor daily '00:00' 'Not/AZone')";
+            assertCreateRejected(lowerCase, SqlException.class, positionOf(lowerCase, "anchor"), "invalid timezone: Not/AZone");
+            execute("CREATE TABLE base_ns (ts TIMESTAMP_NS, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String nanos = PREFIX + "SELECT ts, sym, sum(x) OVER w a FROM base_ns "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00' 'Not/AZone')";
+            assertCreateRejected(nanos, SqlException.class, positionOf(nanos, "ANCHOR"), "invalid timezone: Not/AZone");
+        });
+    }
+
+    @Test
+    public void testAnchorErrorAfterBaseColumnChangeReportsItsRootToken() throws Exception {
+        // A compiled CREATE LIVE VIEW executed after the column its anchor reads changed type. The SELECT
+        // still compiles, and the anchor compile fails the way the plain SELECT of the expression does, at
+        // the root token; a type no view anchors on is refused at the ANCHOR keyword. The base takes a valid
+        // view afterwards.
+        assertMemoryLeak(() -> {
+            final String sql = PREFIX + "SELECT ts, sym, l, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION l + 0)";
+            final String plainSelect = "SELECT l + 0 FROM base";
+
+            final Rejection toBoolean = executeAfterBaseColumnChange(sql, "ALTER TABLE base ALTER COLUMN l TYPE BOOLEAN");
+            final Rejection plainBoolean = compileRejected(plainSelect);
+            plainBoolean.assertEquals(plainSelect, SqlException.class, positionOf(plainSelect, "+"), "there is no matching operator `+` with the argument types: BOOLEAN + INT");
+            toBoolean.assertEquals(sql, plainBoolean.type, positionOf(sql, "+"), plainBoolean.message);
+            assertBaseTakesAnchoredView();
+
+            // the same name for a column of another type
+            final Rejection toUuid = executeAfterBaseColumnChange(sql, "ALTER TABLE base DROP COLUMN l", "ALTER TABLE base ADD COLUMN l UUID");
+            final Rejection plainUuid = compileRejected(plainSelect);
+            plainUuid.assertEquals(plainSelect, SqlException.class, positionOf(plainSelect, "+"), "there is no matching operator `+` with the argument types: UUID + INT");
+            toUuid.assertEquals(sql, plainUuid.type, positionOf(sql, "+"), plainUuid.message);
+            assertBaseTakesAnchoredView();
+
+            final Rejection toDouble = executeAfterBaseColumnChange(sql, "ALTER TABLE base ALTER COLUMN l TYPE DOUBLE");
+            toDouble.assertEquals(sql, SqlException.class, positionOf(sql, "ANCHOR"), "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE");
+            assertBaseTakesAnchoredView();
+        });
+    }
+
+    @Test
+    public void testAnchorExpressionCastAndCairoErrorsReportItsRootToken() throws Exception {
+        // Constant folding in the anchor compile raises an ImplicitCastException for a failing cast,
+        // positioned in the rendered text or not at all, and a CairoException for failing DECIMAL
+        // arithmetic. Each points at the root token of the typed expression.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String[][] casts = {
+                    {"ts::long + 12345::DECIMAL(4,2)::long", "inconvertible value: 12345 [INT -> DECIMAL(4,2)]"},
+                    // the cast sets no position
+                    {"ts::long + 'a'::int", "inconvertible value: a [CHAR -> INT]"}
+            };
+            for (String[] c : casts) {
+                final String sql = anchored(c[0]);
+                assertCreateRejected(sql, ImplicitCastException.class, positionOf(sql, "+"), c[1]);
+                assertLiveViewCompileFlagReset();
+            }
+            // {the expression, its root token, the message}
+            final String[][] arithmetic = {
+                    {"ts::long + (1.00m / 0.00m)::long", "+", "'/' operation failed: Division by zero"},
+                    {
+                            "ts::long * (" + "9".repeat(76) + "m * 10m)::long",
+                            "* (",
+                            "'*' operation failed: Overflow in multiplication (256-bit \u00d7 64-bit): product exceeds 256-bit capacity"
+                    }
+            };
+            for (String[] c : arithmetic) {
+                final String sql = anchored(c[0]);
+                assertCreateRejected(sql, CairoException.class, positionOf(sql, c[1]), c[2]);
+                assertLiveViewCompileFlagReset();
+            }
+        });
+    }
+
+    @Test
+    public void testAnchorExpressionCompileErrorReportsItsRootToken() throws Exception {
+        // createLiveView compiles the anchor from a text the parser renders from the typed expression, so
+        // the compile positions its errors in that text. Each error points at the root token of the typed
+        // ANCHOR EXPRESSION instead: the outermost call, the operator applied last, or the column.
+        // Parentheses and comments are not tokens of the expression. Left out: shapes the rendering does
+        // not carry over faithfully (CASE, BETWEEN, a cast of a parenthesised IN, a DECLARE variable, a
+        // quoted name that is a keyword or holds blanks; PRE-EXISTING bugs), whose CREATE fails or
+        // succeeds for reasons of its own.
+        assertMemoryLeak(() -> {
+            createBase();
+            // {the expression, its root token, the message}
+            final String[][] cases = {
+                    {"no_such_fn(ts)", "no_such_fn", "unknown function name: no_such_fn(TIMESTAMP)"},
+                    {
+                            "timestamp_floor(sym, ts)",
+                            "timestamp_floor",
+                            "there is no matching function `timestamp_floor` with the argument types: (SYMBOL, TIMESTAMP)"
+                    },
+                    {"timestamp_floor('1d', nope)", "timestamp_floor", "Invalid column: nope"},
+                    {"timestamp_floor('1x', ts)", "timestamp_floor", "invalid unit '1x'"},
+                    {"ts::long / no_such_fn(ts)", "/", "unknown function name: no_such_fn(TIMESTAMP)"},
+                    {"-no_such_fn(ts)", "-no_such_fn", "unknown function name: no_such_fn(TIMESTAMP)"},
+                    {"(no_such_fn(ts))", "no_such_fn", "unknown function name: no_such_fn(TIMESTAMP)"},
+                    {"nope::long", "::", "Invalid column: nope"},
+                    {"CAST(nope AS LONG)", "CAST", "Invalid column: nope"},
+                    // left-associative: the second minus applies last
+                    {"ts::long - 1 - nope", "- nope", "Invalid column: nope"},
+                    // the plus binds weaker than the multiplication, so it applies last
+                    {"ts::long + 2 * nope", "+", "Invalid column: nope"},
+                    {"nope", "nope", "Invalid column: nope"},
+                    {"/* c */ no_such_fn(ts)", "no_such_fn", "unknown function name: no_such_fn(TIMESTAMP)"},
+                    {"length('a' || nope)", "length", "Invalid column: nope"},
+                    {"ts::long + count()", "+", "Aggregate function cannot be passed as an argument"},
+                    // the anchor reads the base columns the SELECT reads, and the SELECT does not read v
+                    {"v::long", "::", "Invalid column: v"},
+                    {"timestamp_floor(\n    '1d',\n    nope\n  )", "timestamp_floor", "Invalid column: nope"},
+                    // a quoted name starts at its opening quote, as the plain SELECT reports it
+                    {"\"nope\"", "\"nope\"", "Invalid column: nope"}
+            };
+            for (String[] c : cases) {
+                final String sql = anchored(c[0]);
+                assertCreateRejected(sql, SqlException.class, positionOf(sql, c[1]), c[2]);
+                assertLiveViewCompileFlagReset();
+            }
+        });
+    }
+
+    @Test
+    public void testAnchorFunctionIsFreedAfterTheAnchorChecks() throws Exception {
+        // trim() holds native buffers from the moment the compile creates it, so assertMemoryLeak sees an
+        // anchor function the CREATE does not free, whether the anchor checks refuse it or pass it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String select = "SELECT ts, sym, vc, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION ";
+            final String refused = PREFIX + select + "trim(vc))";
+            assertCreateRejected(
+                    refused,
+                    SqlException.class,
+                    positionOf(refused, "ANCHOR"),
+                    "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got VARCHAR"
+            );
+            execute(PREFIX + select + "length(trim(vc)))");
+            Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+        });
+    }
+
+    @Test
+    public void testAnchorOnBlankNamedColumnIsAccepted() throws Exception {
+        // A LONG column the SELECT reads is a valid anchor, whatever its name. The parser renders a quoted
+        // name without its quotes, so the anchor text of a column named " " holds no token and
+        // createLiveView has nothing to compile: the CREATE goes on. The refresh cannot compile that text
+        // (a PRE-EXISTING bug of the rendering), so only the CREATE outcome is pinned, which stays right
+        // once the rendering keeps the quotes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, \" \" LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String select = "SELECT ts, sym, \" \", sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION \" \")";
+            execute(PREFIX + select);
+            Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+            assertLiveViewCompileFlagReset();
+            assertQuery("SHOW CREATE LIVE VIEW lv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("ddl\n"
+                            + "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM BEGINNING AS (\n"
+                            + select + "\n"
+                            + ");\n");
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tinvalidation_reason
+                            active\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testAnchorPurityRejectStaysAtTheAnchorKeyword() throws Exception {
+        // An anchor that compiles but returns a type no view anchors on, folds to a constant or aggregates
+        // is refused at the ANCHOR keyword, not at the expression's root token.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String[][] cases = {
+                    {"sym", "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got SYMBOL"},
+                    {"length('hello')", "ANCHOR EXPRESSION must not be a constant"},
+                    {"sum(x)", "ANCHOR EXPRESSION must not contain aggregation; sum() is not allowed"}
+            };
+            for (String[] c : cases) {
+                final String sql = anchored(c[0]);
+                assertCreateRejected(sql, SqlException.class, positionOf(sql, "ANCHOR"), c[1]);
+            }
+            final String doubleAnchor = PREFIX + "SELECT ts, sym, v, sum(x) OVER w a FROM base WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION v)";
+            assertCreateRejected(
+                    doubleAnchor,
+                    SqlException.class,
+                    positionOf(doubleAnchor, "ANCHOR"),
+                    "ANCHOR EXPRESSION must return TIMESTAMP, LONG, or INT; got DOUBLE"
+            );
+        });
+    }
+
+    @Test
+    public void testAnchorReparseErrorReportsItsRootToken() throws Exception {
+        // createLiveView parses the rendered anchor text again before it compiles it, and that parse fails
+        // on its own for a searched CASE, whose rendering does not parse back (a PRE-EXISTING bug: the
+        // valid CASE anchor is refused). Its error points at the root token too. Once the rendering is
+        // fixed this CREATE succeeds, and the test needs another input that fails the parse.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, l LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = anchored("CASE WHEN x > 0 THEN ts::long ELSE l END");
+            assertCreateRejected(sql, SqlException.class, positionOf(sql, "CASE"), "missing arguments");
+            assertNoLiveViewDirectory();
+        });
     }
 
     @Test
@@ -311,6 +691,35 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCompiledOperationKeepsItsAnchorPosition() throws Exception {
+        // A compiled CREATE LIVE VIEW can run after its compiler parsed another one, as a PG prepared
+        // statement executed again does. The second statement's anchor starts elsewhere, so a position read
+        // from the parser's reusable state or its pooled nodes rather than the operation's own would point
+        // elsewhere.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String sqlA = anchored("timestamp_floor('1d', nope)");
+            final String sqlB = "CREATE LIVE VIEW lv_b FLUSH EVERY 1s IN MEMORY 2s START FROM NOW AS (  SELECT ts, sym, sum(x) OVER w a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION /* b */ ts::long + no_such_fn(ts)))";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (Operation opA = compiler.compile(sqlA, sqlExecutionContext).getOperation()) {
+                    compiler.compile(sqlB, sqlExecutionContext);
+                    Rejection rejection = null;
+                    try {
+                        opA.execute(sqlExecutionContext, null);
+                    } catch (Throwable e) {
+                        rejection = Rejection.of(e);
+                    }
+                    Assert.assertNotNull("the first operation must reject its anchor", rejection);
+                    rejection.assertEquals(sqlA, SqlException.class, positionOf(sqlA, "timestamp_floor"), "Invalid column: nope");
+                }
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv_b"));
+        });
+    }
+
+    @Test
     public void testCompiledOperationKeepsItsSelectPosition() throws Exception {
         // A compiled CREATE LIVE VIEW can run after its compiler parsed another one, as a PG prepared
         // statement executed again does. The second statement starts its SELECT elsewhere, so a position
@@ -334,6 +743,51 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
             }
             Assert.assertNull(engine.getTableTokenIfExists("lv"));
             Assert.assertNull(engine.getTableTokenIfExists("lv_b"));
+        });
+    }
+
+    @Test
+    public void testPooledCairoExceptionFromTheAnchorCompileKeepsItsPosition() throws Exception {
+        // Constant folding lets out what evaluating a constant throws, as it is: failing_constant() throws
+        // the armed exception when the anchor compile folds it. A locked entry's flyweight of the thread and
+        // a closed pool's one instance carry no position in the anchor and never reset theirs, so CREATE
+        // must not write one into them, on any execution. A CairoException created for the throw points at
+        // the root token like any other.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String sql = anchored("ts::long + failing_constant()");
+
+            final int lockedPosition = EntryLockedException.instance("anchor").getPosition();
+            anchorConstantFailure = () -> EntryLockedException.instance("anchor");
+            for (int i = 0; i < 2; i++) {
+                final CairoException e = executeRejectedWithCairoException(sql);
+                Assert.assertSame(EntryLockedException.class, e.getClass());
+                TestUtils.assertEquals("table busy [reason=anchor]", e.getFlyweightMessage());
+                Assert.assertEquals(lockedPosition, e.getPosition());
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            }
+            anchorConstantFailure = null;
+            Assert.assertEquals(lockedPosition, EntryLockedException.instance("x").getPosition());
+            assertLiveViewCompileFlagReset();
+
+            final int closedPosition = PoolClosedException.INSTANCE.getPosition();
+            anchorConstantFailure = () -> PoolClosedException.INSTANCE;
+            for (int i = 0; i < 2; i++) {
+                final CairoException e = executeRejectedWithCairoException(sql);
+                Assert.assertSame(PoolClosedException.INSTANCE, e);
+                TestUtils.assertEquals("", e.getFlyweightMessage());
+                Assert.assertEquals(closedPosition, e.getPosition());
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            }
+            anchorConstantFailure = null;
+            Assert.assertEquals(closedPosition, PoolClosedException.INSTANCE.getPosition());
+
+            anchorConstantFailure = () -> CairoException.critical(0).put("anchor fold failed");
+            assertCreateRejected(sql, CairoException.class, positionOf(sql, "+"), "anchor fold failed");
+            anchorConstantFailure = null;
+
+            execute(sql);
+            Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
         });
     }
 
@@ -381,6 +835,27 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
         });
     }
 
+    // The CREATE statement whose one named window carries ANCHOR EXPRESSION expression
+    private static String anchored(String expression) {
+        return anchoredBy("ANCHOR EXPRESSION " + expression);
+    }
+
+    // The CREATE statement whose one named window ends in anchorClause
+    private static String anchoredBy(String anchorClause) {
+        return PREFIX + ANCHORED_SELECT + anchorClause + ")";
+    }
+
+    // The base, whatever a failed CREATE did to it, takes a view anchored on its designated timestamp; the
+    // view and the base are dropped afterwards.
+    private static void assertBaseTakesAnchoredView() throws SqlException {
+        Assert.assertNull(engine.getTableTokenIfExists("lv"));
+        execute(PREFIX + ANCHORED_SELECT + "ANCHOR EXPRESSION ts::long)");
+        Assert.assertNotNull(engine.getTableTokenIfExists("lv"));
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+        drainWalQueue();
+    }
+
     private static void assertCreateRejected(String sql, Class<? extends Throwable> expectedType, int expectedPosition, String expectedMessage) {
         assertCreateRejected("lv", sql, expectedType, expectedPosition, expectedMessage);
     }
@@ -394,6 +869,14 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
     ) {
         executeRejected(sql).assertEquals(sql, expectedType, expectedPosition, expectedMessage);
         Assert.assertNull(engine.getTableTokenIfExists(viewName));
+    }
+
+    // CREATE LIVE VIEW sets the live-view-compile flag of the context only while it compiles. A flag left
+    // set would let a plain query take the ANCHOR clause, which only a live view acts on.
+    private static void assertLiveViewCompileFlagReset() {
+        Assert.assertFalse(sqlExecutionContext.isLiveViewCompile());
+        final String sql = "SELECT sum(x) OVER (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00') FROM base";
+        compileRejected(sql).assertEquals(sql, SqlException.class, positionOf(sql, "ANCHOR"), "ANCHOR is only supported in a live view query");
     }
 
     private static void assertNoLiveViewDirectory() {
@@ -417,6 +900,28 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
 
     private static void createBase() throws SqlException {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
+    // Creates the base with one row, compiles sql, changes the base and executes the compiled statement,
+    // which must fail
+    private static Rejection executeAfterBaseColumnChange(String sql, String... changes) throws SqlException {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT, l LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base VALUES ('2026-01-01T00:00:00.000000Z', 'a', 1, 5)");
+        drainWalQueue();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (Operation op = compiler.compile(sql, sqlExecutionContext).getOperation()) {
+                for (String change : changes) {
+                    execute(change);
+                }
+                drainWalQueue();
+                try {
+                    op.execute(sqlExecutionContext, null);
+                } catch (Throwable e) {
+                    return Rejection.of(e);
+                }
+            }
+        }
+        throw new AssertionError("the compiled statement must fail after the change: " + sql);
     }
 
     private static Rejection executeRejected(String sql) {
@@ -444,6 +949,41 @@ public class LiveViewCompileErrorPositionTest extends AbstractLiveViewTest {
         final int position = sql.indexOf(token);
         Assert.assertTrue("'" + token + "' must occur once in: " + sql, position > -1 && position == sql.lastIndexOf(token));
         return position;
+    }
+
+    // failing_constant(): a LONG constant, 0 unless a test arms anchorConstantFailure. A compile folds a
+    // constant by evaluating it, so the armed exception leaves the compile as it is thrown.
+    private static class FailingConstantFunctionFactory implements FunctionFactory {
+
+        @Override
+        public String getSignature() {
+            return "failing_constant()";
+        }
+
+        @Override
+        public Function newInstance(
+                int position,
+                ObjList<Function> args,
+                IntList argPositions,
+                CairoConfiguration configuration,
+                SqlExecutionContext sqlExecutionContext
+        ) {
+            return new LongFunction() {
+                @Override
+                public long getLong(Record rec) {
+                    final Supplier<CairoException> failure = anchorConstantFailure;
+                    if (failure != null) {
+                        throw failure.get();
+                    }
+                    return 0;
+                }
+
+                @Override
+                public boolean isConstant() {
+                    return true;
+                }
+            };
+        }
     }
 
     // What a failed statement threw, copied out at once: SqlException is a flyweight of the thread that the

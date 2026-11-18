@@ -82,6 +82,70 @@ public class PGLiveViewTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateWithAnchorCompileErrorInScriptReportsScriptPosition() throws Exception {
+        // In simple mode the server parses the whole script, so an error position is an offset into the
+        // script, one-based on the wire. A CREATE LIVE VIEW after another statement reports an error from
+        // compiling its anchor at the anchor expression's root token there too.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String script = "SELECT 1; CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS SELECT ts, sym, sum(x) OVER w a FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', nope))";
+            try (Statement statement = connection.createStatement()) {
+                try {
+                    statement.execute(script);
+                    Assert.fail("the script must refuse the anchor");
+                } catch (PSQLException e) {
+                    final ServerErrorMessage serverError = e.getServerErrorMessage();
+                    Assert.assertNotNull(serverError);
+                    Assert.assertEquals("Invalid column: nope", serverError.getMessage());
+                    Assert.assertEquals(script.indexOf("timestamp_floor") + 1, serverError.getPosition());
+                }
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+        });
+    }
+
+    @Test
+    public void testCreateWithAnchorCompileErrorReportsTheAnchorOnEveryExecution() throws Exception {
+        // A prepared CREATE LIVE VIEW whose anchor fails to compile, executed twice, for each kind of error
+        // the anchor compile raises: an SqlException, an ImplicitCastException, a CairoException, and an
+        // unknown ANCHOR DAILY time zone. Both executions report the root token of the anchor expression,
+        // or the ANCHOR keyword for ANCHOR DAILY, which the server sends one-based, and neither leaves a
+        // view behind.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // {the anchor clause, the token it fails at, the message}
+            final String[][] cases = {
+                    {"ANCHOR EXPRESSION timestamp_floor('1d', nope)", "timestamp_floor", "Invalid column: nope"},
+                    {"ANCHOR EXPRESSION ts::long + 'a'::int", "+", "inconvertible value: a [CHAR -> INT]"},
+                    {"ANCHOR EXPRESSION ts::long + (1.00m / 0.00m)::long", "+", "'/' operation failed: Division by zero"},
+                    {"ANCHOR DAILY '00:00' 'Not/AZone'", "ANCHOR", "invalid timezone: Not/AZone"}
+            };
+            for (String[] c : cases) {
+                final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, sum(x) OVER w a FROM base "
+                        + "WINDOW w AS (PARTITION BY x ORDER BY ts " + c[0] + ")";
+                Assert.assertEquals(sql.indexOf(c[1]), sql.lastIndexOf(c[1]));
+                try (PreparedStatement create = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < 2; i++) {
+                        try {
+                            create.execute();
+                            Assert.fail("execution " + i + " must refuse the anchor: " + sql);
+                        } catch (PSQLException e) {
+                            final ServerErrorMessage serverError = e.getServerErrorMessage();
+                            Assert.assertNotNull(serverError);
+                            Assert.assertEquals(c[2], serverError.getMessage());
+                            Assert.assertEquals(sql, sql.indexOf(c[1]) + 1, serverError.getPosition());
+                        }
+                        Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCreateWithCompileErrorInScriptReportsScriptPosition() throws Exception {
         // In simple mode the server parses the whole script, so an error position is an offset into the
         // script, one-based on the wire. A CREATE LIVE VIEW after another statement reports an error from

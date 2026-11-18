@@ -2353,12 +2353,14 @@ public class SqlParser {
             String windowName = Chars.toString(keyCs);
             byte anchorKind = w.getAnchorKind();
             String anchorExpressionSql = null;
+            int anchorExpressionPosition = w.getAnchorPosition();
             if (anchorKind == WindowExpression.ANCHOR_KIND_EXPRESSION) {
                 ExpressionNode expr = w.getAnchorExpression();
                 if (expr != null) {
                     StringSink anchorSink = Misc.getThreadLocalSink();
                     expr.toSink(anchorSink);
                     anchorExpressionSql = anchorSink.toString();
+                    anchorExpressionPosition = expr.position;
                 }
             } else if (anchorKind == WindowExpression.ANCHOR_KIND_DAILY) {
                 // Desugar ANCHOR DAILY 'HH:MM' [tz] into the equivalent
@@ -2381,6 +2383,7 @@ public class SqlParser {
                     windowName,
                     anchorKind,
                     anchorExpressionSql,
+                    anchorExpressionPosition,
                     w.getAnchorDailyTimeUs(),
                     w.getAnchorDailyTimeZone() == null ? null : Chars.toString(w.getAnchorDailyTimeZone()),
                     w.getAnchorPosition(),

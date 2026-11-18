@@ -1807,28 +1807,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 // Runs at CREATE only, never at restart.
                 final LiveViewDefinition.LvAnchorSpec anchor = op.getAnchorSpec();
                 if (anchor != null && anchor.anchorExpressionSql != null) {
-                    final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
-                    if (anchorNode != null) {
-                        Function anchorFn = null;
-                        try {
-                            FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
-                            executionContext.setLiveViewCompile(true);
-                            try {
-                                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
-                            } finally {
-                                executionContext.setLiveViewCompile(false);
-                            }
-                            // Anchor the reject position in the user's CREATE SQL (the
-                            // ANCHOR keyword) rather than in the re-parsed desugared
-                            // expression. anchorNode.position is an offset into the
-                            // synthesized timestamp_floor* text for DAILY, and into a
-                            // toSink-roundtripped expression for ANCHOR EXPRESSION; in
-                            // both cases it diverges from what the user typed.
-                            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
-                        } finally {
-                            Misc.free(anchorFn);
-                        }
-                    }
+                    validateAnchorExpression(compiler, anchor, baseProjMeta, executionContext);
                 }
             }
         }
@@ -5731,6 +5710,56 @@ public class CairoEngine implements Closeable, WriterSource {
             throw CairoException.nonCritical()
                     .put("invalid table name [table=").putAsPrintable(tableName)
                     .put(']');
+        }
+    }
+
+    // Compiles the anchor of a live view being created against the base columns its SELECT reads, and checks the
+    // compiled function. The anchor's stored text is the parser's rendering of the typed ANCHOR EXPRESSION, or the
+    // call it synthesizes from ANCHOR DAILY, so the compile positions its errors in a text the CREATE statement does
+    // not contain: each error it positions is reported at the anchor's token in the statement instead.
+    private void validateAnchorExpression(
+            SqlCompiler compiler,
+            LiveViewDefinition.LvAnchorSpec anchor,
+            RecordMetadata baseProjMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final Function anchorFn;
+        try {
+            final ExpressionNode anchorNode = compiler.parseExpression(anchor.anchorExpressionSql);
+            if (anchorNode == null) {
+                // The text holds no token: the rendering drops a quoted name's quotes, and a name of blanks, or one
+                // that opens a comment, lexes to nothing. There is nothing to compile; the refresh refuses such an
+                // anchor (LiveViewRefreshJob.buildAnchorWindow).
+                return;
+            }
+            final FunctionParser fp = new FunctionParser(configuration, getFunctionFactoryCache());
+            executionContext.setLiveViewCompile(true);
+            try {
+                anchorFn = fp.parseFunction(anchorNode, baseProjMeta, executionContext);
+            } finally {
+                executionContext.setLiveViewCompile(false);
+            }
+        } catch (SqlException e) {
+            e.setPosition(anchor.anchorExpressionPosition);
+            throw e;
+        } catch (ImplicitCastException e) {
+            throw e.position(anchor.anchorExpressionPosition);
+        } catch (CairoException e) {
+            // As for the SELECT compile in createLiveView: only CairoException itself is created per throw and
+            // positioned in the compiled text. A subclass carries no such position, and PoolClosedException.INSTANCE
+            // and the fiber-local EntryLockedException / LimitOverflowException flyweights never reset theirs, so
+            // writing one would leak into later throws.
+            if (e.getClass() == CairoException.class) {
+                e.position(anchor.anchorExpressionPosition);
+            }
+            throw e;
+        }
+        try {
+            // A purity reject points at the ANCHOR keyword (anchorPosition), a compile error above at the anchor's
+            // own token (anchorExpressionPosition).
+            validateAnchorPurity(anchorFn, anchor.anchorPosition, true);
+        } finally {
+            Misc.free(anchorFn);
         }
     }
 
