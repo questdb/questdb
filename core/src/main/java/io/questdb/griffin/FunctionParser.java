@@ -1392,6 +1392,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                                 // prefer CHAR -> STRING to STRING -> CHAR conversion
                                 overloadDistance = 2 * overloadDistance;
                             }
+                        } else if (argTypeTag == ColumnType.SYMBOL && sigArgTypeTag == ColumnType.CHAR && !arg.isConstant()) {
+                            // a symbol converts to CHAR by keeping only its first character, so 'a' >= 'ab'
+                            // would be true; leave it to the STRING overload, as for a non-constant STRING
+                            overloadDistance = ColumnType.OVERLOAD_NONE;
                         } else if (argTypeTag == ColumnType.CHAR && sigArgTypeTag == ColumnType.STRING && !factory.supportImplicitCastCharToStr()) {
                             overloadDistance = ColumnType.OVERLOAD_NONE;
                         }
