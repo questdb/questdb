@@ -48,7 +48,6 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -1526,31 +1525,10 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
      * Fails, once, the next flush of a file whose path contains a fragment: with a data-sync failure, or with
      * another.
      */
-    private static final class FileFlushFaultFacade extends TestFilesFacadeImpl {
-        private final java.util.Map<Long, String> paths = new java.util.concurrent.ConcurrentHashMap<>();
-        // mapping address -> {length, fd}
-        private final java.util.concurrent.ConcurrentSkipListMap<Long, long[]> mappings = new java.util.concurrent.ConcurrentSkipListMap<>();
+    private static final class FileFlushFaultFacade extends WalFlushHookFacade {
         volatile boolean hasFired;
         private volatile String fragment;
         private volatile boolean isDataSyncFailure;
-
-        @Override
-        public void barrierFsync(long fd) {
-            onFlush(fd);
-            super.barrierFsync(fd);
-        }
-
-        @Override
-        public boolean close(long fd) {
-            paths.remove(fd);
-            return super.close(fd);
-        }
-
-        @Override
-        public void fdatasync(long fd) {
-            onFlush(fd);
-            super.fdatasync(fd);
-        }
 
         @Override
         public void fsync(long fd) {
@@ -1558,60 +1536,15 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
             super.fsync(fd);
         }
 
-        @Override
-        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
-            if (paths.containsKey(fd)) {
-                mappings.put(addr, new long[]{len, fd});
-            }
-            return addr;
-        }
-
-        @Override
-        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
-            if (paths.containsKey(fd)) {
-                mappings.remove(addr);
-                mappings.put(newAddr, new long[]{newSize, fd});
-            }
-            return newAddr;
-        }
-
-        @Override
-        public void msync(long addr, long len, boolean async) {
-            if (!async) {
-                final java.util.Map.Entry<Long, long[]> mapping = mappings.floorEntry(addr);
-                if (mapping != null && addr < mapping.getKey() + mapping.getValue()[0]) {
-                    onFlush(mapping.getValue()[1]);
-                }
-            }
-            super.msync(addr, len, async);
-        }
-
-        @Override
-        public void munmap(long address, long size, int memoryTag) {
-            mappings.remove(address);
-            super.munmap(address, size, memoryTag);
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            final long fd = super.openRW(name, opts);
-            if (fd > -1) {
-                paths.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
-            }
-            return fd;
-        }
-
         void failNextFlush(String fragment, boolean isDataSyncFailure) {
             this.isDataSyncFailure = isDataSyncFailure;
             this.fragment = fragment;
         }
 
-        private void onFlush(long fd) {
-            final String path = paths.get(fd);
+        @Override
+        protected void onFlush(String path) {
             final String fragment = this.fragment;
-            if (path != null && fragment != null && path.contains(fragment)) {
+            if (fragment != null && path.contains(fragment)) {
                 this.fragment = null;
                 hasFired = true;
                 if (isDataSyncFailure) {

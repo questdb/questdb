@@ -34,6 +34,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
+import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -43,10 +44,10 @@ import io.questdb.std.Unsafe;
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
 /**
- * One QWP ingress connection fed a scripted client byte stream over in-memory sockets, for tests outside this
- * package: frames of one-row messages, delivered a receive pass at a time, and the frames the server sends back.
+ * One QWP ingress connection fed a scripted client byte stream over in-memory sockets: frames delivered a receive
+ * pass at a time, and the frames the server sends back.
  */
-public final class QwpIngressTestConnection implements QuietCloseable {
+public class QwpIngressTestConnection implements QuietCloseable {
     // Large enough for the ack of a batch of thousands of tables, which the server then sends whole.
     private static final int TEST_SEND_BUFFER_SIZE = 1 << 20;
     private final TestableContext context;
@@ -57,37 +58,57 @@ public final class QwpIngressTestConnection implements QuietCloseable {
     private final long recvBuf;
     private final int recvBufferSize;
     private final long sendBuf;
+    private final int sendBufferSize;
     private final QwpIngressProcessorState state;
     private int nextFrame;
 
     public QwpIngressTestConnection(CairoEngine engine, CairoConfiguration configuration, int recvBufferSize, byte[]... frames) throws Exception {
-        this(engine, configuration, recvBufferSize, AllowAllSecurityContext.INSTANCE, frames);
+        this(engine, testHttpConfig(configuration), recvBufferSize, frames);
     }
 
-    public QwpIngressTestConnection(
+    /**
+     * A connection served by {@code state}, which it closes, through a receive buffer of {@code recvBufferSize} and
+     * a send buffer of {@code sendBufferSize} bytes. With {@code isHalfClosing} the socket's half-close succeeds, as
+     * a real socket's does, so a fatal CLOSE leaves the connection draining instead of disconnecting at once.
+     */
+    QwpIngressTestConnection(
             CairoEngine engine,
-            CairoConfiguration configuration,
-            int recvBufferSize,
+            HttpFullFatServerConfiguration httpConfig,
+            QwpIngressProcessorState state,
             SecurityContext securityContext,
+            boolean isDurableAckEnabled,
+            int recvBufferSize,
+            int sendBufferSize,
+            boolean isHalfClosing,
             byte[]... frames
     ) throws Exception {
-        final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration) {
-            @Override
-            public int getSendBufferSize() {
-                return TEST_SEND_BUFFER_SIZE;
-            }
-        };
         this.frames = frames;
         this.recvBufferSize = recvBufferSize;
+        this.sendBufferSize = sendBufferSize;
         this.processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
-        this.nf = new PhasedNetworkFacade(concat(frames));
+        this.nf = isHalfClosing ? new HalfClosingNetworkFacade(concat(frames)) : new PhasedNetworkFacade(concat(frames));
         this.recvBuf = Unsafe.malloc(recvBufferSize, MemoryTag.NATIVE_DEFAULT);
-        this.sendBuf = Unsafe.malloc(TEST_SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
-        this.rawSocket = new RecordingRawSocket(sendBuf, TEST_SEND_BUFFER_SIZE);
+        this.sendBuf = Unsafe.malloc(sendBufferSize, MemoryTag.NATIVE_DEFAULT);
+        this.rawSocket = new RecordingRawSocket(sendBuf, sendBufferSize);
         this.context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, recvBufferSize);
-        this.state = new QwpIngressProcessorState(recvBufferSize, httpConfig.getSendBufferSize(), engine, httpConfig.getLineHttpProcessorConfiguration());
+        this.state = state;
         state.of(-1, securityContext);
+        state.setDurableAckEnabled(isDurableAckEnabled);
         getLV().set(context, state);
+    }
+
+    private QwpIngressTestConnection(CairoEngine engine, HttpFullFatServerConfiguration httpConfig, int recvBufferSize, byte[]... frames) throws Exception {
+        this(
+                engine,
+                httpConfig,
+                new QwpIngressProcessorState(recvBufferSize, httpConfig.getSendBufferSize(), engine, httpConfig.getLineHttpProcessorConfiguration()),
+                AllowAllSecurityContext.INSTANCE,
+                false,
+                recvBufferSize,
+                TEST_SEND_BUFFER_SIZE,
+                false,
+                frames
+        );
     }
 
     /**
@@ -121,7 +142,7 @@ public final class QwpIngressTestConnection implements QuietCloseable {
     public void close() {
         context.close();
         Unsafe.free(recvBuf, recvBufferSize, MemoryTag.NATIVE_DEFAULT);
-        Unsafe.free(sendBuf, TEST_SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        Unsafe.free(sendBuf, sendBufferSize, MemoryTag.NATIVE_DEFAULT);
     }
 
     /**
@@ -147,5 +168,53 @@ public final class QwpIngressTestConnection implements QuietCloseable {
 
     public ObjList<byte[]> sentFrames() {
         return rawSocket.sentFrames;
+    }
+
+    // Makes the server's send numbered sendNumber, counted from 1, park as a slow peer's does.
+    void blockSend(int sendNumber) {
+        rawSocket.blockedSends.add(sendNumber);
+    }
+
+    /**
+     * Delivers the client's next {@code count} frames in one receive pass, in which a send may park. Returns true
+     * when one did: the frames behind it wait in the receive buffer for {@link #resumeSend()}.
+     */
+    boolean deliverFramesUntilSendParks(int count) throws Exception {
+        try {
+            deliverFrames(count);
+            return false;
+        } catch (PeerIsSlowToReadException e) {
+            return true;
+        }
+    }
+
+    // What the dispatcher does once the connection is gone.
+    void onConnectionClosed() {
+        processor.onConnectionClosed(context);
+    }
+
+    // What the dispatcher does once the parked send's peer reads.
+    void resumeSend() throws Exception {
+        processor.resumeSend(context);
+    }
+
+    private static HttpFullFatServerConfiguration testHttpConfig(CairoConfiguration configuration) {
+        return new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public int getSendBufferSize() {
+                return TEST_SEND_BUFFER_SIZE;
+            }
+        };
+    }
+
+    private static class HalfClosingNetworkFacade extends PhasedNetworkFacade {
+        HalfClosingNetworkFacade(byte[] data) {
+            super(data);
+        }
+
+        @Override
+        public int shutdown(long fd, int how) {
+            return 0;
+        }
     }
 }

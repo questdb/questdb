@@ -26,27 +26,20 @@ package io.questdb.test.cutlass.qwp.e2e;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
-import io.questdb.cairo.wal.WalUtils;
 import io.questdb.client.Sender;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
+import io.questdb.test.cairo.wal.WalEventFlushFaultFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.io.File;
 import java.time.temporal.ChronoUnit;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -76,7 +69,7 @@ public class QwpCommitBatchPrepareRealClientTest extends AbstractCairoTest {
     public void testPrepareFailureReplaysEveryRowOnce() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final EventFlushFaultFacade ff = new EventFlushFaultFacade();
+            final WalEventFlushFaultFacade ff = new WalEventFlushFaultFacade();
             try (DemoteAtLockEngine pinnedEngine = new DemoteAtLockEngine(pinnedConfiguration(ff))) {
                 assertPinnedMode(pinnedEngine);
                 final int port = RestartableQwpServer.pickFreePort();
@@ -89,9 +82,9 @@ public class QwpCommitBatchPrepareRealClientTest extends AbstractCairoTest {
                         sendRows(sender, 0);
                         awaitRows(pinnedEngine, 1);
                         // The next batch's prepare of pb fails once, with an error that does not stop the engine.
-                        ff.failNextEventFlush("pb~");
+                        ff.failEventFlush("pb~", false);
                         sendRows(sender, 1);
-                        TestUtils.assertEventually(() -> Assert.assertTrue("the prepare fault fired", ff.hasFired));
+                        TestUtils.assertEventually(() -> Assert.assertTrue("the prepare fault fired", ff.hasFired()));
                     }
                     awaitRows(pinnedEngine, 2);
                     Assert.assertFalse(pinnedEngine.isDurabilityFailed());
@@ -290,95 +283,6 @@ public class QwpCommitBatchPrepareRealClientTest extends AbstractCairoTest {
         public void close() throws InterruptedException {
             isRunning.set(false);
             thread.join();
-        }
-    }
-
-    /**
-     * Fails, once, the next flush of a table's WAL event file, with an error that is not a data-sync failure. A
-     * table is named by its directory prefix, such as {@code "pb~"}.
-     */
-    private static final class EventFlushFaultFacade extends TestFilesFacadeImpl {
-        private final Map<Long, String> eventFds = new ConcurrentHashMap<>();
-        // mapping address -> {length, fd} of the event files
-        private final ConcurrentSkipListMap<Long, long[]> eventMappings = new ConcurrentSkipListMap<>();
-        private volatile String failedTable;
-        volatile boolean hasFired;
-
-        @Override
-        public void barrierFsync(long fd) {
-            onFlush(fd);
-            super.barrierFsync(fd);
-        }
-
-        @Override
-        public boolean close(long fd) {
-            eventFds.remove(fd);
-            return super.close(fd);
-        }
-
-        @Override
-        public void fdatasync(long fd) {
-            onFlush(fd);
-            super.fdatasync(fd);
-        }
-
-        void failNextEventFlush(String table) {
-            failedTable = table;
-        }
-
-        @Override
-        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
-            if (eventFds.containsKey(fd)) {
-                eventMappings.put(addr, new long[]{len, fd});
-            }
-            return addr;
-        }
-
-        @Override
-        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
-            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
-            if (eventFds.containsKey(fd)) {
-                eventMappings.remove(addr);
-                eventMappings.put(newAddr, new long[]{newSize, fd});
-            }
-            return newAddr;
-        }
-
-        @Override
-        public void msync(long addr, long len, boolean async) {
-            if (!async) {
-                final Map.Entry<Long, long[]> mapping = eventMappings.floorEntry(addr);
-                if (mapping != null && addr < mapping.getKey() + mapping.getValue()[0]) {
-                    onFlush(mapping.getValue()[1]);
-                }
-            }
-            super.msync(addr, len, async);
-        }
-
-        @Override
-        public void munmap(long address, long size, int memoryTag) {
-            eventMappings.remove(address);
-            super.munmap(address, size, memoryTag);
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            final long fd = super.openRW(name, opts);
-            if (fd > -1 && Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME)) {
-                eventFds.put(fd, Utf8s.stringFromUtf8BytesSafe(name));
-            }
-            return fd;
-        }
-
-        private void onFlush(long fd) {
-            final String path = eventFds.get(fd);
-            final String failedTable = this.failedTable;
-            if (path != null && failedTable != null && path.contains(File.separator + failedTable)) {
-                this.failedTable = null;
-                hasFired = true;
-                throw CairoException.critical(0).put("test: prepare failed");
-            }
         }
     }
 }
