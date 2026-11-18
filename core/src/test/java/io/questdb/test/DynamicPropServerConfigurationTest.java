@@ -181,6 +181,26 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testBrowserTlsTerminationEnabled() throws Exception {
+        // The HTTP connections and the QWP upgrade processors read this flag off the
+        // objects ServerConfiguration.getHttpServerConfiguration() and
+        // getHttpMinServerConfiguration() return, which are the configuration wrappers
+        // and not the PropServerConfiguration behind them. Asserting through
+        // PropServerConfiguration alone passes even when a wrapper drops the property.
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+            }
+
+            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
+                serverMain.start();
+                Assert.assertTrue(serverMain.getConfiguration().getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+                Assert.assertTrue(serverMain.getConfiguration().getHttpMinServerConfiguration().isBrowserTlsTerminationEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testCairoMemoryLimitsReload() throws Exception {
         assertMemoryLeak(() -> {
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
@@ -1734,27 +1754,6 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
-    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
-        // The QWP upgrade processors read this flag off the object
-        // ServerConfiguration.getHttpServerConfiguration() returns, which is
-        // HttpServerConfigurationWrapper and not the PropServerConfiguration
-        // behind it. Asserting through PropServerConfiguration alone passes
-        // even when the wrapper drops the property on the floor.
-        assertMemoryLeak(() -> {
-            try (FileWriter w = new FileWriter(serverConf)) {
-                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
-            }
-
-            try (ServerMain serverMain = new ServerMain(getBootstrap())) {
-                serverMain.start();
-                Assert.assertTrue(
-                        serverMain.getConfiguration().getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled()
-                );
-            }
-        });
-    }
-
-    @Test
     public void testQwpBrowserTlsTerminationSameOriginUsesAmbientCredentials() throws Exception {
         // Behind a TLS-terminating proxy the socket is plaintext, yet the Web
         // Console's Origin is https://. HttpConnectionContext must treat that
@@ -1765,7 +1764,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
             try (FileWriter w = new FileWriter(serverConf)) {
                 w.write(QWP_ORIGINS_TEST_BOOT_CONFIG);
                 w.write("http.user=admin\nhttp.password=quest\n");
-                w.write(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
+                w.write(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath() + "=true\n");
             }
             try (ServerMain serverMain = new ServerMain(getBootstrap())) {
                 serverMain.start();
@@ -1809,7 +1808,7 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
                 String credential = browserCredentialProtocol(basic);
                 String offer = "questdb.qwp.v1, " + credential;
 
-                // A TLS terminator without qwp.browser.tls.termination.enabled turns the
+                // A TLS terminator without browser.tls.termination.enabled turns the
                 // page's own https Origin cross-origin, so its session cookie no longer counts.
                 String proxiedCookie = browserCredentialUpgrade(port, "/read/v1", "https://localhost:" + port,
                         "questdb.qwp.v1", "Cookie: " + createHttpSessionCookie(port) + "\r\n");

@@ -74,6 +74,16 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 
     /**
+     * Returns true when browsers reach this server over https through a TLS-terminating
+     * proxy, while the connection to the server is plaintext. The https origin of Host
+     * then counts as same-origin, and its http origin does not, wherever the server
+     * compares a browser's Origin with Host; custom configurations return false.
+     */
+    default boolean isBrowserTlsTerminationEnabled() {
+        return false;
+    }
+
+    /**
      * Enables fiber execution for this HTTP server when its resolved worker pool also
      * uses {@link io.questdb.mp.WorkerPoolMode#FIBER_HOST}.
      */

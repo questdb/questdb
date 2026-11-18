@@ -246,6 +246,11 @@ public class HttpMinServerConfigurationWrapper implements HttpServerConfiguratio
     }
 
     @Override
+    public boolean isBrowserTlsTerminationEnabled() {
+        return getDelegate().isBrowserTlsTerminationEnabled();
+    }
+
+    @Override
     public boolean isDaemonPool() {
         return getDelegate().isDaemonPool();
     }

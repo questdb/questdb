@@ -607,6 +607,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testBrowserTlsTerminationEnabled() throws Exception {
+        // both HTTP servers compare the Origin of a browser with Host, so both read the setting
+        assertBrowserTlsTerminationEnabled(false, new Properties(), null);
+
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, properties, null);
+
+        // the deprecated name still enables it, and the new name wins over it
+        final Properties deprecated = new Properties();
+        deprecated.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        assertBrowserTlsTerminationEnabled(true, deprecated, null);
+        deprecated.setProperty(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "false");
+        assertBrowserTlsTerminationEnabled(false, deprecated, null);
+
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
+        env.clear();
+        env.put(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getEnvVarName(), "true");
+        assertBrowserTlsTerminationEnabled(true, new Properties(), env);
+    }
+
+    @Test
     public void testConfigKeysAreValidInDefaultConfs() throws Exception {
         String[] configFiles = {
                 "../core/src/main/resources/io/questdb/site/conf/server.conf",
@@ -967,6 +991,22 @@ public class PropServerConfigurationTest {
 
         CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
         Assert.assertEquals(64L * Numbers.SIZE_1MB, cairo.getSqlParquetCacheMemorySize());
+    }
+
+    @Test
+    public void testDeprecatedQwpBrowserTlsTerminationKey() throws Exception {
+        // qwp.browser.tls.termination.enabled shipped before the setting applied to every HTTP
+        // endpoint, so a server.conf that carries it still starts under strict validation
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CONFIG_VALIDATION_STRICT.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+
+        PropServerConfiguration.ValidationResult result = validate(properties);
+        Assert.assertNotNull(result);
+        Assert.assertFalse(result.isError());
+        TestUtils.assertContains(result.message(), "Deprecated settings");
+        TestUtils.assertContains(result.message(), "qwp.browser.tls.termination.enabled: Replaced by `browser.tls.termination.enabled`");
     }
 
     @Test
@@ -2346,17 +2386,6 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testQwpBrowserTlsTerminationEnabled() throws Exception {
-        Properties properties = new Properties();
-        PropServerConfiguration configuration = newPropServerConfiguration(properties);
-        Assert.assertFalse(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
-
-        properties.setProperty(PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED.getPropertyPath(), "true");
-        configuration = newPropServerConfiguration(properties);
-        Assert.assertTrue(configuration.getHttpServerConfiguration().isQwpBrowserTlsTerminationEnabled());
-    }
-
-    @Test
     public void testQwpMaxRowsPerTable() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -3636,6 +3665,12 @@ public class PropServerConfigurationTest {
                 )
         );
         return pathsThatCanBePinned;
+    }
+
+    private void assertBrowserTlsTerminationEnabled(boolean expected, Properties properties, Map<String, String> env) throws Exception {
+        final PropServerConfiguration configuration = newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+        Assert.assertEquals(expected, configuration.getHttpServerConfiguration().isBrowserTlsTerminationEnabled());
+        Assert.assertEquals(expected, configuration.getHttpMinServerConfiguration().isBrowserTlsTerminationEnabled());
     }
 
     private void assertInputWorkRootCantBeSetTo(Properties properties, String value) throws Exception {

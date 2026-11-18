@@ -335,6 +335,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long instanceHashLo;
     private final boolean interruptOnClosedConnection;
     private final boolean ioURingEnabled;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final boolean isQueryTracingEnabled;
     private final boolean isReadOnlyInstance;
     private final int jsonCacheLimit;
@@ -535,7 +536,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
     private final BrowserAllowedOrigins qwpBrowserAllowedOrigins;
-    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
@@ -1621,6 +1621,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             } catch (IllegalArgumentException e) {
                 throw new ServerConfigurationException(PropertyKey.HTTP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
             }
+            // qwp.browser.tls.termination.enabled is the deprecated name of the setting, which only
+            // the QWP WebSocket upgrades read before every HTTP endpoint compared Origin with Host
+            this.isBrowserTlsTerminationEnabled = getBoolean(
+                    properties,
+                    env,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED,
+                    getBoolean(properties, env, PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED, false)
+            );
 
             if (loadAdditionalConfigurations && httpServerEnabled) {
                 this.jsonQueryConnectionCheckFrequency = getInt(properties, env, PropertyKey.HTTP_JSON_QUERY_CONNECTION_CHECK_FREQUENCY, 1_000_000);
@@ -2288,12 +2296,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             } catch (IllegalArgumentException e) {
                 throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
             }
-            this.qwpBrowserTlsTerminationEnabled = getBoolean(
-                    properties,
-                    env,
-                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
-                    false
-            );
             this.qwpEgressForcedZstdLevel = getInt(
                     properties,
                     env,
@@ -4185,6 +4187,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ENABLED);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_BLOCK_COUNT);
             registerDeprecated(PropertyKey.PG_UPDATE_CACHE_ROW_COUNT);
+            registerDeprecated(
+                    PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED,
+                    PropertyKey.BROWSER_TLS_TERMINATION_ENABLED
+            );
         }
 
         public ValidationResult validate(Properties properties) {
@@ -6737,6 +6743,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpMinServerEnabled;
         }
@@ -7035,6 +7046,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isBrowserTlsTerminationEnabled() {
+            return isBrowserTlsTerminationEnabled;
+        }
+
+        @Override
         public boolean isEnabled() {
             return httpServerEnabled;
         }
@@ -7052,11 +7068,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isQueryCacheEnabled() {
             return httpSqlCacheEnabled;
-        }
-
-        @Override
-        public boolean isQwpBrowserTlsTerminationEnabled() {
-            return qwpBrowserTlsTerminationEnabled;
         }
 
         @Override

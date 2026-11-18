@@ -55,6 +55,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
  * rebinding needs, unless http.allowed.hosts lists them.
  */
 public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
+    private static final String CROSS_ORIGIN_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the https origin of Host, but the connection is plaintext; behind a TLS-terminating proxy, set browser.tls.termination.enabled=true";
     private static final String CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
@@ -337,6 +338,73 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                     );
                     executor.execute(selectOne("localhost:9001"), SELECT_ONE_RESPONSE);
                 }));
+    }
+
+    @Test
+    public void testHttpsOriginOfHostAcceptedBehindTlsTerminator() throws Exception {
+        // Behind a TLS-terminating proxy the connection is plaintext, while the pages that
+        // the browser loads through the proxy have an https origin. A browser that sends no
+        // Sec-Fetch-Site, or a proxy that drops it, leaves only that Origin to compare with
+        // Host: browser.tls.termination.enabled, or its deprecated QWP name, makes it match,
+        // and then the http origin of Host no longer does.
+        final String httpsOrigin = "https://" + HOST;
+        final PropertyKey[] keys = {PropertyKey.BROWSER_TLS_TERMINATION_ENABLED, PropertyKey.QWP_BROWSER_TLS_TERMINATION_ENABLED};
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < keys.length; i++) {
+                try (
+                        TestServerMain serverMain = startWithEnvVariables(keys[i].getEnvVarName(), "true");
+                        HttpClient client = HttpClientFactory.newPlainTextInstance()
+                ) {
+                    HttpClient.ResponseHeaders response = send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", httpsOrigin);
+                    awaitStatusCode(response, "200");
+                    assertChunkedBody(response, SELECT_ONE_JSON);
+
+                    response = send(client, Endpoint.post("/write", null, "proxied_" + i + " v=" + i + "i\n"), false, null, "Origin", httpsOrigin);
+                    awaitStatusCode(response, "204");
+
+                    response = send(
+                            client,
+                            Endpoint.post("/imp?name=proxied_import_" + i + "&forceHeader=true", MULTIPART_CONTENT_TYPE, multipartBody(i + "," + i)),
+                            false,
+                            null,
+                            "Origin", httpsOrigin
+                    );
+                    awaitStatusCode(response, "200");
+                    assertChunkedBodyContains(response, "proxied_import_" + i);
+
+                    final long settingsVersion = serverMain.getEngine().getSettingsStore().getVersion();
+                    response = send(
+                            client,
+                            Endpoint.post("/settings?version=" + settingsVersion, null, "{\"instance_name\":\"proxied\"}"),
+                            false,
+                            null,
+                            "Origin", httpsOrigin
+                    );
+                    awaitStatusCode(response, "200");
+                    assertChunkedBody(response, "{\"status\":\"OK\"}\r\n");
+                    Assert.assertEquals(settingsVersion + 1, serverMain.getEngine().getSettingsStore().getVersion());
+
+                    // the min HTTP server follows the same setting
+                    response = send(client, new Endpoint(HTTP_MIN_PORT, "GET", "/status", null, null), false, null, "Origin", "https://localhost:" + HTTP_MIN_PORT);
+                    awaitStatusCode(response, "200");
+                    assertChunkedBody(response, "Status: Healthy");
+
+                    // a page served over plain HTTP has another origin, unless the browser reports it as
+                    // same-origin, and other origins stay rejected
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", "http://" + HOST), CROSS_ORIGIN_REJECTED);
+                    response = send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Sec-Fetch-Site", "same-origin", "Origin", "http://" + HOST);
+                    awaitStatusCode(response, "200");
+                    assertChunkedBody(response, SELECT_ONE_JSON);
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", "https://evil.example.com"), CROSS_ORIGIN_REJECTED);
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", httpsOrigin + "/"), CROSS_ORIGIN_REJECTED);
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Sec-Fetch-Site", "cross-site", "Origin", httpsOrigin), CROSS_SITE_REJECTED);
+
+                    serverMain.awaitTable("proxied_" + i);
+                    serverMain.assertSql("SELECT v FROM proxied_" + i, "v\n" + i + "\n");
+                    serverMain.assertSql("SELECT a FROM proxied_import_" + i, "a\n" + i + "\n");
+                }
+            }
+        });
     }
 
     @Test
@@ -672,8 +740,11 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                 {CROSS_ORIGIN_REJECTED, "Origin", "http://evil.example.com"},
                 // same host on another port: same site, but another origin
                 {CROSS_ORIGIN_REJECTED, "Origin", "http://localhost:1"},
-                {CROSS_ORIGIN_REJECTED, "Origin", "https://" + authority},
                 {CROSS_ORIGIN_REJECTED, "Origin", sameOrigin + "/"},
+                // a page loaded through a TLS-terminating proxy that the server has not been told about,
+                // and an https origin of another port
+                {CROSS_ORIGIN_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED, "Origin", "https://" + authority},
+                {CROSS_ORIGIN_REJECTED, "Origin", "https://localhost:1"},
                 // sandboxed frames, file: and data: documents, and file: pages in older browsers
                 {CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED, "Origin", "null"},
                 {CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED, "Origin", "file://"},

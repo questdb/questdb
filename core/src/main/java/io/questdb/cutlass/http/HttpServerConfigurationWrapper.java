@@ -366,6 +366,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public boolean isBrowserTlsTerminationEnabled() {
+        return getDelegate().isBrowserTlsTerminationEnabled();
+    }
+
+    @Override
     public boolean isDaemonPool() {
         return getDelegate().isDaemonPool();
     }
@@ -388,11 +393,6 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     @Override
     public boolean isQueryCacheEnabled() {
         return getDelegate().isQueryCacheEnabled();
-    }
-
-    @Override
-    public boolean isQwpBrowserTlsTerminationEnabled() {
-        return getDelegate().isQwpBrowserTlsTerminationEnabled();
     }
 
     @Override

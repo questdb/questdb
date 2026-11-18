@@ -57,7 +57,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
     // Names the rule rather than the header: an operator who hits it is almost
     // always behind a proxy that rewrote or dropped the port from Host, or one
-    // that terminates TLS without qwp.browser.tls.termination.enabled. The
+    // that terminates TLS without browser.tls.termination.enabled. The
     // handshake answers 400 with this text. HttpConnectionContext also logs it as
     // the reason when it answers a cross-origin upgrade with 401 before the
     // handshake runs, because the upgrade did not authenticate with the

@@ -219,9 +219,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
-    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
     // builds the principal-qualified select cache key, see SelectCacheKey
     private final StringSink scopedSelectCacheKeySink = new StringSink();
@@ -246,7 +246,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
-        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
+        this.isBrowserTlsTerminationEnabled = httpConfiguration.isBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
@@ -1575,7 +1575,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     private boolean isSecureConnection(HttpConnectionContext context) {
-        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
+        return context.getSocket().isTlsSessionStarted() || isBrowserTlsTerminationEnabled;
     }
 
     private byte mapErrorStatusAndMark(Throwable e) {

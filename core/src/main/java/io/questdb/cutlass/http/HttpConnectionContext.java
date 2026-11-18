@@ -84,6 +84,7 @@ import static io.questdb.network.IODispatcher.*;
 import static java.net.HttpURLConnection.*;
 
 public class HttpConnectionContext extends IOContext<HttpConnectionContext> implements Locality, Retry {
+    private static final String CROSS_ORIGIN_REQUEST_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the https origin of Host, but the connection is plaintext; behind a TLS-terminating proxy, set browser.tls.termination.enabled=true";
     private static final String CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_ORIGIN_REQUEST_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
@@ -775,13 +776,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
             return rejectProcessor.reject(HTTP_FORBIDDEN, reason);
         }
-        // a cross-origin request carries an Origin
-        if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, socket.isTlsSessionStarted())
+        // A cross-origin request carries an Origin. Behind a TLS-terminating proxy the
+        // connection is plaintext while the page has an https origin, which a browser
+        // that sends no Sec-Fetch-Site, or a proxy that drops it, leaves to compare.
+        final boolean isSecureConnection = socket.isTlsSessionStarted() || configuration.isBrowserTlsTerminationEnabled();
+        if (QwpIngressHttpProcessor.isCrossOrigin(headerParser, isSecureConnection)
                 && !configuration.getBrowserAllowedOrigins().isAllowed(origin)) {
-            return rejectProcessor.reject(
-                    HTTP_FORBIDDEN,
-                    BrowserAllowedOrigins.hasHttpScheme(origin) ? CROSS_ORIGIN_REQUEST_REJECTED : CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED
-            );
+            final String reason;
+            if (!BrowserAllowedOrigins.hasHttpScheme(origin)) {
+                reason = CROSS_ORIGIN_REQUEST_FROM_NON_HTTP_ORIGIN_REJECTED;
+            } else if (!isSecureConnection && QwpIngressHttpProcessor.isSameOrigin(origin, headerParser.getHeader(HEADER_HOST), true)) {
+                // the page came through a TLS-terminating proxy that the server has not been told about
+                reason = CROSS_ORIGIN_REQUEST_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED;
+            } else {
+                reason = CROSS_ORIGIN_REQUEST_REJECTED;
+            }
+            return rejectProcessor.reject(HTTP_FORBIDDEN, reason);
         }
         return processor;
     }
