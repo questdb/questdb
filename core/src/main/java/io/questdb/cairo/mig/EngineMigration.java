@@ -27,6 +27,7 @@ package io.questdb.cairo.mig;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
@@ -180,17 +181,25 @@ public class EngineMigration {
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
-                            int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
+                            final int storedTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
+                            // A version above latestTableVersion that is a storage marker (a table that currently
+                            // holds composite or Delta partitions, or is downgrade-locked, carries one of
+                            // ColumnType.storageVersion()) is not a migration-version number: the table is at
+                            // latestTableVersion for the migrations' purposes, and every writer marks the table
+                            // it writes (unless cairo.commit.mode.adaptive.downgrade is set), so skipping the
+                            // marked tables would skip them all. The marker stays: a migration up to
+                            // latestTableVersion is never written over it (ver <= latestTableVersion is false
+                            // from firstVersion on); the writer folds the composite marker back and a downgrade
+                            // start the lock. Any other version above latestTableVersion comes from a newer
+                            // binary and is left alone.
+                            final boolean isMarked = ColumnType.isCompositeStorageVersion(storedTableVersion)
+                                    || ColumnType.isDeltaStorageVersion(storedTableVersion)
+                                    || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);
+                            final int currentTableVersion = isMarked ? latestTableVersion : storedTableVersion;
                             // _upgrade.d records the compatible migrations every table at the table version has received
                             final int firstVersion = currentTableVersion < latestTableVersion
                                     ? currentTableVersion + 1
                                     : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
-                            // A version above latestTableVersion is an elevated storage version (a table
-                            // that currently holds composite or Delta partitions carries one).
-                            // It is not a migration-version number, so migration must leave it alone: the table
-                            // is already current, and re-running backward-compatible migrations against it is
-                            // neither needed nor guaranteed safe. The writer folds such a table back to plain
-                            // and restores latestTableVersion on its own when those partitions go away.
                             if (currentTableVersion <= latestTableVersion && firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
