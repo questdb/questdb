@@ -56,6 +56,7 @@ import static io.questdb.test.cutlass.qwp.QwpWireTestFixtures.statusLine;
  */
 public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
     private static final String CROSS_ORIGIN_FROM_HTTPS_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the https origin of Host, but the connection is plaintext; behind a TLS-terminating proxy, set browser.tls.termination.enabled=true";
+    private static final String CROSS_ORIGIN_FROM_HTTP_ORIGIN_OF_HOST_REJECTED = "cross-origin browser request rejected: Origin is the http origin of Host, but browser.tls.termination.enabled says that browsers reach the server through a TLS-terminating proxy, over https; open the page through the proxy, or set browser.tls.termination.enabled=false if browsers also reach the server directly";
     private static final String CROSS_ORIGIN_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
     private static final String CROSS_ORIGIN_REJECTED = "cross-origin browser request rejected: Origin does not match Host and is not listed in http.browser.allowed.origins";
     private static final String CROSS_SITE_FROM_NON_HTTP_ORIGIN_REJECTED = "cross-site browser request rejected: Sec-Fetch-Site is neither same-origin nor none, and Origin is not an http or https origin, like the null that file: pages and sandboxed frames send, so http.browser.allowed.origins cannot admit it; serve the page from an http or https origin and list that origin";
@@ -389,12 +390,29 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                     awaitStatusCode(response, "200");
                     assertChunkedBody(response, "Status: Healthy");
 
-                    // a page served over plain HTTP has another origin, unless the browser reports it as
-                    // same-origin, and other origins stay rejected
-                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", "http://" + HOST), CROSS_ORIGIN_REJECTED);
-                    response = send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Sec-Fetch-Site", "same-origin", "Origin", "http://" + HOST);
+                    // A page served over plain HTTP, past the proxy, has another origin, unless the browser
+                    // reports it as same-origin. The 403 names the setting, on both HTTP servers.
+                    final String httpOrigin = "http://" + HOST;
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", httpOrigin), CROSS_ORIGIN_FROM_HTTP_ORIGIN_OF_HOST_REJECTED);
+                    assertRejected(
+                            send(
+                                    client,
+                                    Endpoint.post("/imp?name=plain_import_" + i + "&forceHeader=true", MULTIPART_CONTENT_TYPE, multipartBody(i + "," + i)),
+                                    false,
+                                    null,
+                                    "Origin", httpOrigin
+                            ),
+                            CROSS_ORIGIN_FROM_HTTP_ORIGIN_OF_HOST_REJECTED
+                    );
+                    assertRejected(
+                            send(client, new Endpoint(HTTP_MIN_PORT, "GET", "/status", null, null), false, null, "Origin", "http://localhost:" + HTTP_MIN_PORT),
+                            CROSS_ORIGIN_FROM_HTTP_ORIGIN_OF_HOST_REJECTED
+                    );
+                    response = send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Sec-Fetch-Site", "same-origin", "Origin", httpOrigin);
                     awaitStatusCode(response, "200");
                     assertChunkedBody(response, SELECT_ONE_JSON);
+                    // other origins get the generic reason, an http one on another port included
+                    assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", "http://localhost:1"), CROSS_ORIGIN_REJECTED);
                     assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", "https://evil.example.com"), CROSS_ORIGIN_REJECTED);
                     assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Origin", httpsOrigin + "/"), CROSS_ORIGIN_REJECTED);
                     assertRejected(send(client, Endpoint.get("/exec?query=SELECT%201"), false, null, "Sec-Fetch-Site", "cross-site", "Origin", httpsOrigin), CROSS_SITE_REJECTED);
@@ -402,6 +420,7 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                     serverMain.awaitTable("proxied_" + i);
                     serverMain.assertSql("SELECT v FROM proxied_" + i, "v\n" + i + "\n");
                     serverMain.assertSql("SELECT a FROM proxied_import_" + i, "a\n" + i + "\n");
+                    serverMain.assertSql("SELECT count() FROM tables() WHERE table_name = 'plain_import_" + i + "'", "count\n0\n");
                 }
             }
         });
