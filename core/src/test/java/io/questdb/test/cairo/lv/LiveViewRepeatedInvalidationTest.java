@@ -531,6 +531,12 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     }
 
     @Test
+    public void testAnInvalidationQueuedBehindAFreezeLeavesAnInvalidDroppedViewAlone() throws Exception {
+        // The view is invalid before the freeze, as a view an operator drops to recreate it is.
+        assertQueuedInvalidationLeavesADroppedViewAlone(false, "invalidated before the freeze");
+    }
+
+    @Test
     public void testAnInvalidationWhoseWritesBothFailStaysInvalidInMemoryOnly() throws Exception {
         // As testASecondInvalidationPersistsTheFirstWhoseWriteFailed, but the turn's own write fails too. Both
         // failures name the first reason, the view stays invalid in memory with it, and a restart loads the view
