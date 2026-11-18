@@ -54,7 +54,7 @@ public class StringAggGroupByFunctionFactory implements FunctionFactory {
         return new StringAggGroupByFunction(
                 args.getQuick(0),
                 argPositions.getQuick(0),
-                args.getQuick(1).getChar(null),
+                String.valueOf(args.getQuick(1).getChar(null)),
                 configuration.getStrFunctionMaxBufferLength()
         );
     }
