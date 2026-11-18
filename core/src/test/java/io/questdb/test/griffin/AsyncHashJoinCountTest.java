@@ -916,6 +916,77 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInterruptionInsideCountOfTheLastFrame() throws Exception {
+        // A cap of one tuple leaves the rest of the probe's only frame to a continuation, since each
+        // of p's twelve rows meets three of b's under a residual that reads both inputs. A count after
+        // the first row counts that rest on the owner and meets the interruption there, with no frame
+        // left for its loop: the count fails with the interruption's reason, not with a short count.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p AS (SELECT (x % 3)::INT k, x v FROM long_sequence(12))");
+            execute("CREATE TABLE b AS (SELECT (x % 3)::INT k, x w FROM long_sequence(9))");
+            final String sql = "SELECT p.k, p.v, b.w FROM p JOIN b ON p.k = b.k AND b.w > p.v - 1_000";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // The interruption's reason, STATE_OK for none, and the error it raises.
+                final int[] reasons = {
+                        SqlExecutionCircuitBreaker.STATE_OK,
+                        SqlExecutionCircuitBreaker.STATE_CANCELLED,
+                        SqlExecutionCircuitBreaker.STATE_TIMEOUT,
+                };
+                final String[] errors = {null, "cancelled by user", "timeout, query aborted"};
+                for (int i = 0; i < reasons.length; i++) {
+                    final int reason = reasons[i];
+                    final AtomicBoolean isTripped = new AtomicBoolean();
+                    final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                        @Override
+                        public int getState() {
+                            return isTripped.get() ? reason : super.getState();
+                        }
+
+                        @Override
+                        public int getState(long millis, long fd) {
+                            return isTripped.get() ? reason : super.getState(millis, fd);
+                        }
+                    };
+                    final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        // The cursor holds the probe's last frame, whose task stopped at its cap.
+                        Assert.assertEquals(1, join.getProbeFrameCount());
+                        Assert.assertTrue(join.getAtom().getRing().getResumePosition(0) > -1);
+                        isTripped.set(true);
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        try {
+                            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                            if (errors[i] != null) {
+                                Assert.fail("expected the interruption: " + errors[i] + ", counted " + counter.get());
+                            }
+                            // The 36 pairs but the one read.
+                            Assert.assertEquals(35, counter.get());
+                        } catch (CairoException e) {
+                            Assert.assertNotNull(e.getMessage(), errors[i]);
+                            Assert.assertTrue(e.isInterruption());
+                            Assert.assertEquals(reason, e.getInterruptionReason());
+                            TestUtils.assertContains(e.getFlyweightMessage(), errors[i]);
+                        }
+                        // The count reached the continuation.
+                        Assert.assertEquals(1, join.getCountedContinuationCount());
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                    }
+                    assertReleased(join);
+                    // The factory serves the next execution.
+                    Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testThrowingFilterInsideCount() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
