@@ -492,6 +492,8 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                     assertRejected(send(client, Endpoint.post("/write", null, "listed_origin v=100i\n"), false, null, browserHeaders), headers[0]);
                     assertRejected(send(client, health, false, null, browserHeaders), headers[0]);
                 }
+                // the 204 follows the WAL commit, the table shows the rows once the WAL is applied
+                serverMain.awaitTable("listed_origin");
                 serverMain.assertSql("SELECT v FROM listed_origin ORDER BY v", "v\n0\n1\n2\n3\n");
             }
         });
@@ -670,6 +672,8 @@ public class HttpCrossSiteRequestTest extends AbstractBootstrapTest {
                     awaitStatusCode(response, "200");
                     assertChunkedBodyContains(response, "accepted_import");
                 }
+                // the 204 follows the WAL commit, the table shows the rows once the WAL is applied
+                serverMain.awaitTable("accepted");
                 serverMain.assertSql("SELECT v FROM accepted ORDER BY v", "v\n0\n1\n2\n3\n4\n");
                 serverMain.assertSql("SELECT a FROM accepted_import ORDER BY a", "a\n0\n1\n2\n3\n4\n");
             }
