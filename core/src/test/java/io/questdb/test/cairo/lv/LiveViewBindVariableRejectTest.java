@@ -25,10 +25,12 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
+import io.questdb.cairo.mv.MatViewRefreshSqlExecutionContext;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -570,6 +572,70 @@ public class LiveViewBindVariableRejectTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testParserAcceptsBindVariablesInAnExpressionRightAfterTheCreateCompile() throws Exception {
+        // parseExpression() does not go through parse(), which sets the refusal's state from the context it gets, so
+        // the cleanup parse() runs on its way out is all that disarms a compiler whose next use parses a bare
+        // expression (a live view's ANCHOR EXPRESSION, the WHERE of ALTER TABLE ... DROP PARTITION), after a
+        // refused and after a successful CREATE compile.
+        assertMemoryLeak(() -> {
+            createTables();
+            final String select = "SELECT ts, sym, $1 v, " + W + " s FROM base";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                armCreateCompile();
+                try {
+                    Misc.free(compiler.compile(select, sqlExecutionContext).getRecordCursorFactory());
+                    Assert.fail("the armed compile must refuse the variable");
+                } catch (SqlException e) {
+                    TestUtils.assertEquals(NON_DETERMINISTIC_MESSAGE + "$1", e.getFlyweightMessage());
+                    Assert.assertEquals("SELECT ts, sym, ".length(), e.getPosition());
+                } finally {
+                    disarmCreateCompile();
+                }
+                assertBindVariableExpressionParses(compiler);
+
+                armCreateCompile();
+                try {
+                    Misc.free(compiler.compile("SELECT ts, sym, " + W + " s FROM base", sqlExecutionContext).getRecordCursorFactory());
+                } finally {
+                    disarmCreateCompile();
+                }
+                assertBindVariableExpressionParses(compiler);
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshCompileOfAMatViewStillAcceptsABindVariable() throws Exception {
+        // The refresh of a materialized view compiles with the determinism guard armed, outside any live view
+        // refresh, but it is no live view compile, so the refusal stays out of it: a materialized view stored with
+        // a variable keeps compiling as before the refusal, the variable unbound and typed STRING.
+        assertMemoryLeak(() -> {
+            createTables();
+            try (
+                    MatViewRefreshSqlExecutionContext refreshContext = new MatViewRefreshSqlExecutionContext(engine, 0);
+                    TableReader baseReader = engine.getReader("base")
+            ) {
+                refreshContext.of(baseReader);
+                Assert.assertFalse(refreshContext.allowNonDeterministicFunctions());
+                Assert.assertFalse(refreshContext.isLiveViewRefresh());
+                Assert.assertFalse(refreshContext.isLiveViewCompile());
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compiler.compile("SELECT ts, sym, $1 v FROM base", refreshContext)
+                                .getRecordCursorFactory()
+                ) {
+                    final RecordMetadata metadata = factory.getMetadata();
+                    Assert.assertEquals(3, metadata.getColumnCount());
+                    Assert.assertEquals(ColumnType.TIMESTAMP, metadata.getColumnType(0));
+                    Assert.assertEquals(ColumnType.SYMBOL, metadata.getColumnType(1));
+                    Assert.assertEquals("v", metadata.getColumnName(2));
+                    Assert.assertEquals(ColumnType.STRING, metadata.getColumnType(2));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRefreshCompileStillAcceptsABindVariable() throws Exception {
         // The refresh context reports a live view refresh, so its compiles are never armed: a view stored with a
         // variable keeps compiling, the variable unbound and typed STRING, as before the refusal.
@@ -751,6 +817,15 @@ public class LiveViewBindVariableRejectTest extends AbstractLiveViewTest {
         sqlExecutionContext.setAllowNonDeterministicFunction(false);
     }
 
+    // The compiler parses a bare expression over a variable, as it parses a live view's ANCHOR EXPRESSION
+    private static void assertBindVariableExpressionParses(SqlCompiler compiler) throws SqlException {
+        final ExpressionNode expression = compiler.parseExpression("$1 + 1");
+        Assert.assertEquals(ExpressionNode.BIND_VARIABLE, expression.lhs.type);
+        sink.clear();
+        expression.toSink(sink);
+        TestUtils.assertEquals("$1 + 1", sink);
+    }
+
     private static void assertBindVariablesAccepted(SqlCompiler compiler) throws SqlException {
         bindVariableService.clear();
         bindVariableService.setStr(0, "abc");
@@ -766,11 +841,7 @@ public class LiveViewBindVariableRejectTest extends AbstractLiveViewTest {
                 sink
         );
         bindVariableService.clear();
-        final ExpressionNode expression = compiler.parseExpression("$1 + 1");
-        Assert.assertEquals(ExpressionNode.BIND_VARIABLE, expression.lhs.type);
-        sink.clear();
-        expression.toSink(sink);
-        TestUtils.assertEquals("$1 + 1", sink);
+        assertBindVariableExpressionParses(compiler);
     }
 
     // The columns of SELECT ts, sym, $1 v, W s FROM base with nothing bound: the variable is a STRING
