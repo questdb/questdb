@@ -26,4 +26,13 @@ package io.questdb.cairo.vm.api;
 
 //contiguous mapped appendable readable writable
 public interface MemoryCMARW extends MemoryCM, MemoryMARW, MemoryCMR {
+
+    /**
+     * By default, a remap that fails to grow this memory closes it, and the memory reads and writes nothing until
+     * its owner opens it again. With {@code isMappingKeptOnFailedRemap}, the memory stays as it was before the
+     * write that tried to grow it: mapped, with the same size and append position. For owners that read their
+     * file after a failed write, to roll it back, such as TxWriter. On every platform a failed remap leaves the
+     * previous mapping in place, see {@code Files.mremap0()}.
+     */
+    void setMappingKeptOnFailedRemap(boolean isMappingKeptOnFailedRemap);
 }

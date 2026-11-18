@@ -322,6 +322,7 @@ public final class TableUtils {
     static final int TODO_META_INDEX_OFFSET = 48;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
+    static final byte TODO_TRUNCATE_KEEP_SYMBOL_MAPS = 3;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
     // Polynomial multiplier for the _txn and _cv checksums, copied from Hash.hashMem64 so that the on-disk
     // checksum stays stable whatever happens to the std Hash helpers.
@@ -2140,10 +2141,7 @@ public final class TableUtils {
         final long page = ff.mremap(fd, prevAddress, prevSize, newSize, offset, mapMode, memoryTag);
         if (page == FilesFacade.MAP_FAILED) {
             int errno = ff.errno();
-            // Closing memory will truncate size to current append offset.
-            // Since the failed resize can occur before append offset can be
-            // explicitly set, we must assume that file size should be
-            // equal to previous memory size
+            // The mapping at prevAddress stays valid and the caller still owns it: see Files.mremap0()
             throw CairoException.critical(errno).put("could not remap file [previousSize=").put(prevSize)
                     .put(", newSize=").put(newSize)
                     .put(", offset=").put(offset)

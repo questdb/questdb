@@ -184,10 +184,10 @@ public class SymbolCache implements DirectUtf8SymbolLookup, Closeable {
                 Unsafe.loadFence();
 
                 if (txReader.unsafeReadVersion() == txReader.getVersion()) {
-                    // Check if _cv file has to be reloaded
+                    // Check if _cv file has to be reloaded. Only the version _txn names loads: a version ahead of it
+                    // can roll back and its number come back with other column versions.
                     if (!cvReadOk || columnVersionReader.getVersion() != txColumnVersion) {
-                        cvReadOk = columnVersionReader.readSafe();
-                        cvReadOk &= columnVersionReader.getVersion() == txColumnVersion;
+                        cvReadOk = columnVersionReader.readSafe(txColumnVersion);
                     }
                     if (cvReadOk) {
                         return count;

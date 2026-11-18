@@ -829,6 +829,10 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_mmap0
 static inline jlong internal_mremap0
         (jint fd, jlong address, jlong previousLen, jlong newLen, jlong offset, jint flags) {
     jlong newAddress = Java_io_questdb_std_Files_mmap0((JNIEnv *) NULL, (jclass) NULL, fd, newLen, offset, flags, 0);
+    if (newAddress == -1) {
+        // As mremap(2) does on Linux, a failed remap leaves the old view in place: the caller still owns it.
+        return -1;
+    }
     // Note that unmapping will not flush dirty pages because the mapping to address is shared with newAddress
     Java_io_questdb_std_Files_munmap0((JNIEnv *) NULL, (jclass) NULL, address, previousLen);
     return newAddress;

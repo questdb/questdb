@@ -62,6 +62,8 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     // narrow the msync to the appended range and skip it when nothing was appended. When false, sync()
     // msyncs the full extent.
     private boolean isAppendOnly = false;
+    // Set by owners that read the memory after a failed write; see MemoryCMARW.setMappingKeptOnFailedRemap()
+    private boolean isMappingKeptOnFailedRemap = false;
     // Append offset covered by the last msync (append-only path only). It can only be stale-low (a fresh,
     // remapped or truncated memory resets it to 0), never stale-high, so the worst case is one extra msync.
     private long lastSyncedAppendOffset = 0;
@@ -385,6 +387,7 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
         boolean tAppendOnly = this.isAppendOnly;
         this.isAppendOnly = other.isAppendOnly;
         other.isAppendOnly = tAppendOnly;
+        // isMappingKeptOnFailedRemap stays: it is how the owner of this instance handles a failed write.
     }
 
     @Override
@@ -475,6 +478,11 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     @Override
     public void setAppendOnly(boolean isAppendOnly) {
         this.isAppendOnly = isAppendOnly;
+    }
+
+    @Override
+    public void setMappingKeptOnFailedRemap(boolean isMappingKeptOnFailedRemap) {
+        this.isMappingKeptOnFailedRemap = isMappingKeptOnFailedRemap;
     }
 
     @Override
@@ -574,15 +582,18 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                     Files.MAP_RW,
                     memoryTag
             );
-            ff.madvise(pageAddress, newSize, madviseOpts);
         } catch (Throwable e) {
-            appendAddress = pageAddress + previousSize;
-            close(false);
+            // The previous mapping is still in place, see Files.mremap0()
+            if (!isMappingKeptOnFailedRemap) {
+                appendAddress = pageAddress + previousSize;
+                close(false);
+            }
             throw e;
         }
         size = newSize;
         lim = pageAddress + newSize;
         appendAddress = pageAddress + offset;
+        ff.madvise(pageAddress, newSize, madviseOpts);
     }
 
     private void map0(FilesFacade ff, long size) {

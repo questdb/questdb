@@ -184,6 +184,26 @@ public class TxnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsOpenFollowsMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableModel model = new TableModel(configuration, "isOpen", PartitionBy.DAY);
+            model.timestamp();
+            AbstractCairoTest.create(model);
+            final TxReader txReader = new TxReader(TestFilesFacadeImpl.INSTANCE);
+            try (Path path = new Path()) {
+                // nothing is mapped before ofRO()
+                Assert.assertFalse(txReader.isOpen());
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("isOpen")).concat(TableUtils.TXN_FILE_NAME);
+                txReader.ofRO(path.$(), TableUtils.getTimestampType(model), PartitionBy.DAY);
+                Assert.assertTrue(txReader.isOpen());
+            } finally {
+                txReader.close();
+            }
+            Assert.assertFalse(txReader.isOpen());
+        });
+    }
+
+    @Test
     public void testNoFalsePositiveUnderConcurrentSymbolWrites() throws Throwable {
         // A writer mutates the live committed record in place, bumping transient symbol counts
         // (collectValueCount -> writeTransientSymbolCount) and resetting lag without a version bump, while

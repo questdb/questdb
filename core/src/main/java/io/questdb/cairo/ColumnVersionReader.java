@@ -298,6 +298,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return isAreaWithinFile(offset, size, fileLength) && unsafeVerifyAreaChecksum(offset, size, fileLength);
     }
 
+    /**
+     * Whether {@code _cv} is mapped: not before {@link #ofRO}, after {@link #close()}, or once growing the file
+     * failed in mremap, which unmaps it.
+     */
+    public boolean isOpen() {
+        return mem != null && mem.isOpen();
+    }
+
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
         isInitialChecksumVerificationRequired = true;
         version = -1;
@@ -369,25 +377,59 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     /**
-     * {@link #readSafe(MillisecondClock, long)}, then fails fast if the consistent read landed below
-     * {@code expectedVersion}, the column version a stable {@code _txn} record names.
+     * {@link #readSafe(MillisecondClock, long)} for {@code expectedVersion}, the column version a stable
+     * {@code _txn} record names: returns true when this reader then holds that version.
      * <p>
-     * The writer publishes {@code _cv} before the {@code _txn} record that references it, so a reader that
-     * loaded {@code _txn} first never legitimately finds {@code _cv} older. Either the live area is torn and
-     * {@link #readSafe()} fell back to the previous commit, or the file lags the transaction. Waiting repairs
-     * neither, and a caller that loops until the versions agree would spin for good, so the ordering
-     * invariant, not a deadline, decides.
+     * Returns false while the file is ahead of {@code expectedVersion}, without holding the column versions of
+     * the file's version: the ordinary race with a commit in flight, published in {@code _cv} and not yet in
+     * {@code _txn}, for the caller to re-read {@code _txn}. Until {@code _txn} names it, the commit can still
+     * fail, and the writer then rolls {@code _cv} back and publishes its next commit under the same version
+     * number. A version number identifies column versions only once {@code _txn} names it: a reader holding the
+     * failed commit's column versions would find their number in the next commit's {@code _txn} and keep them.
+     * {@link TableReaderMetadata#prepareTransition(long)} applies no {@code _meta} ahead of {@code _txn} either.
+     * A mapping that has not verified an area yet still reads a live area one version ahead, to verify it: when
+     * it is torn, {@link #readSafe()} falls back to the previous version, the one {@code _txn} names.
      * <p>
-     * A newer version is the ordinary race with a commit in flight (published in {@code _cv}, not yet in
-     * {@code _txn}) and is returned as is, for the caller to re-read {@code _txn}.
+     * Fails fast if the consistent read landed below {@code expectedVersion}. The writer publishes {@code _cv}
+     * before the {@code _txn} record that references it, so a reader that loaded {@code _txn} first never
+     * legitimately finds {@code _cv} older. Either the live area is torn and {@link #readSafe()} fell back to the
+     * previous commit, or the file lags the transaction. Waiting repairs neither, and a caller that loops until
+     * the versions agree would spin for good, so the ordering invariant, not a deadline, decides.
      */
-    public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout, long expectedVersion) {
+    public boolean readSafe(MillisecondClock microsecondClock, long spinLockTimeout, long expectedVersion) {
+        if (isAheadOf(expectedVersion)) {
+            return false;
+        }
         readSafe(microsecondClock, spinLockTimeout);
+        if (version == expectedVersion) {
+            return true;
+        }
         if (version < expectedVersion) {
             throw columnVersionBehindException(expectedVersion);
         }
+        forgetVersion();
+        return false;
     }
 
+    /**
+     * One attempt of {@link #readSafe(MillisecondClock, long, long)} for a caller that retries on its own: true
+     * when this reader holds {@code expectedVersion}, false when a commit raced the read or the file does not
+     * hold {@code expectedVersion}.
+     */
+    public boolean readSafe(long expectedVersion) {
+        if (isAheadOf(expectedVersion) || !readSafe()) {
+            return false;
+        }
+        if (version > expectedVersion) {
+            forgetVersion();
+        }
+        return version == expectedVersion;
+    }
+
+    /**
+     * Loads whichever version the file holds, including one a commit in flight published ahead of {@code _txn}.
+     * A reader that follows {@code _txn} reads with {@link #readSafe(MillisecondClock, long, long)} instead.
+     */
     public boolean readSafe() {
         long version = unsafeGetVersion();
         if (version == this.version && !isInitialChecksumVerificationRequired) {
@@ -438,11 +480,16 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 Unsafe.loadFence();
                 if (version == unsafeGetVersion()) {
                     isInitialChecksumVerificationRequired = true;
-                    //noinspection NonAtomicOperationOnVolatileField
-                    bodyChecksumFallbackCount++;
                     boolean otherOk = unsafeLoadAndVerifyOtherArea(version);
                     Unsafe.loadFence();
-                    if (version == unsafeGetVersion()) {
+                    // An unchanged version number does not prove an unchanged area: a commit that rolls back
+                    // leaves its version number to the next commit. When the live area verifies now, a writer
+                    // replaced it while this read ran, perhaps the other area too, so the read retries instead.
+                    final boolean isLiveAreaReplaced = version != unsafeGetVersion() || (version > 0 && isAreaIntact(version));
+                    Unsafe.loadFence();
+                    if (!isLiveAreaReplaced && version == unsafeGetVersion()) {
+                        //noinspection NonAtomicOperationOnVolatileField
+                        bodyChecksumFallbackCount++;
                         // The header and both areas stayed stable across the fallback.
                         if (otherOk) {
                             // Adopt the previous committed area (published at version - 1), as the _txn
@@ -466,7 +513,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                                 .put(", size=").put(size)
                                 .put(']');
                     }
-                    // Version changed during the fallback: concurrent write, retry.
+                    // Version changed during the fallback, or a writer replaced the live area: concurrent write, retry.
                 }
                 // Version changed: concurrent write, retry.
             }
@@ -549,6 +596,10 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return version;
     }
 
+    long unsafeGetVersion() {
+        return mem.getLong(OFFSET_VERSION_64);
+    }
+
     /**
      * The error for a consistent read that could not reach {@code expectedVersion}. Two shapes, told apart
      * by whether this reader fell back from exactly that version: a torn live area (the file names
@@ -566,6 +617,21 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 .put("_cv is behind the column version _txn references [version=").put(version)
                 .put(", expected=").put(expectedVersion)
                 .put(']');
+    }
+
+    // Drops column versions that _txn does not name yet: the area one version ahead that the first read of a
+    // mapping verifies, or a commit published after isAheadOf() looked.
+    private void forgetVersion() {
+        version = -1;
+        cachedColumnVersionList.clear();
+    }
+
+    // Whether the file holds a version past expectedVersion, which readSafe(MillisecondClock, long, long) does not
+    // read. A mapping that has not verified an area yet reads the area one version ahead all the same, for the
+    // torn fallback.
+    private boolean isAheadOf(long expectedVersion) {
+        final long fileVersion = unsafeGetVersion();
+        return fileVersion > expectedVersion && (fileVersion - 1 != expectedVersion || !isInitialChecksumVerificationRequired);
     }
 
     /**
@@ -648,9 +714,5 @@ public class ColumnVersionReader implements Closeable, Mutable {
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }
-    }
-
-    private long unsafeGetVersion() {
-        return mem.getLong(OFFSET_VERSION_64);
     }
 }

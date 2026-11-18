@@ -226,6 +226,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * Rollback to previous version that is stored before the current version in the file.
      * This function cannot be called multiple times in a row without commit() in between because
      * only one previous version is stored.
+     * The next commit publishes the rolled back version number again, with other column versions. Readers
+     * that follow _txn never hold a version _txn has not named, see
+     * ColumnVersionReader.readSafe(MillisecondClock, long, long).
      */
     public void rollback() {
         mem.putLong(OFFSET_VERSION_64, version - 1);
