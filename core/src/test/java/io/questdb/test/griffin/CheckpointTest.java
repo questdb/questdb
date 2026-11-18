@@ -42,6 +42,7 @@ import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DatabaseCheckpointAgent;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
@@ -57,6 +58,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexChainEntry;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
@@ -115,6 +117,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -210,6 +213,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @After
     public void tearDown() throws Exception {
+        DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(null);
         super.tearDown();
         path.trimTo(rootLen);
         configuration.getFilesFacade().rmdir(path.slash());
@@ -287,6 +291,51 @@ public class CheckpointTest extends AbstractCairoTest {
 
             execute("checkpoint create");
             execute("checkpoint release");
+        });
+    }
+
+    @Test
+    public void testCheckpointDefinitionRetryWriteFailure() throws Exception {
+        // When an ALTER makes CHECKPOINT CREATE write a never-refreshed view again, and the write of the view's
+        // definition into the checkpoint fails, the checkpoint fails with the error of that checkpoint file. The live
+        // view keeps no state file and stays valid, and the next checkpoint succeeds.
+        assertMemoryLeak(() -> {
+            createNeverRefreshedMatView("SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final String checkpointDefinitionFile;
+            try (Path definitionPath = new Path()) {
+                checkpointDefinitionFile = definitionPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory())
+                        .concat(viewToken).concat(MatViewDefinition.MAT_VIEW_DEFINITION_FILE_NAME).toString();
+            }
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                try {
+                    execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                drainWalQueue();
+                testFilesFacade.failingOpenRwFile = new Utf8String(checkpointDefinitionFile);
+                isSeamRun.set(true);
+            });
+            try {
+                execute("CHECKPOINT CREATE");
+                Assert.fail("the definition write must fail");
+            } catch (CairoException e) {
+                final StringSink expected = new StringSink();
+                expected.put("error creating checkpoint [table=").put(viewToken)
+                        .put(", error=could not open read-write [file=").put(checkpointDefinitionFile).put("]]");
+                TestUtils.assertEquals(expected, e.getFlyweightMessage());
+            } finally {
+                testFilesFacade.failingOpenRwFile = null;
+            }
+            Assert.assertTrue(isSeamRun.get());
+            assertNoLiveMatViewState(viewToken);
+            assertMatViewValid();
+            execute("CHECKPOINT CREATE");
+            Assert.assertEquals(1, readCheckpointedMatViewDefinition(viewToken).getRefreshLimitHoursOrMonths());
+            execute("CHECKPOINT RELEASE");
+            assertNoLiveMatViewState(viewToken);
         });
     }
 
@@ -5411,6 +5460,51 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRetriesLockedNeverRefreshedMatView() throws Exception {
+        // CHECKPOINT CREATE waits for a never-refreshed view whose readers are locked, and once they unlock, writes the
+        // view again, into the checkpoint: the live view keeps no state file and stays valid, the checkpoint holds the
+        // view's definition and no state, and the next checkpoint succeeds.
+        assertMemoryLeak(() -> {
+            final String viewSql = "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h";
+            createNeverRefreshedMatView(viewSql);
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            engine.releaseInactive();
+            Assert.assertTrue(engine.lockReadersByTableToken(viewToken));
+            final AtomicBoolean isUnlockedAtCheck = new AtomicBoolean();
+            // the checkpoint's first check is the one of its wait for the locked view
+            try (NetworkSqlExecutionCircuitBreaker unlockingCircuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, circuitBreakerConfiguration) {
+                @Override
+                public void statefulThrowExceptionIfTrippedNoThrottle() {
+                    if (!isUnlockedAtCheck.get()) {
+                        engine.unlockReaders(viewToken);
+                        isUnlockedAtCheck.set(true);
+                    }
+                }
+
+                @Override
+                protected boolean testConnection(long fd) {
+                    return false;
+                }
+            }) {
+                engine.checkpointCreate(unlockingCircuitBreaker, false);
+            } finally {
+                if (!isUnlockedAtCheck.get()) {
+                    engine.unlockReaders(viewToken);
+                }
+            }
+            Assert.assertTrue(isUnlockedAtCheck.get());
+            assertNoLiveMatViewState(viewToken);
+            path.trimTo(rootLen).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
+            Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+            Assert.assertEquals(viewSql, readCheckpointedMatViewDefinition(viewToken).getMatViewSql());
+            assertMatViewValid();
+            execute("CHECKPOINT RELEASE");
+            execute("CHECKPOINT CREATE");
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
     public void testCheckpointStatus() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(0);
@@ -6550,6 +6644,12 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertNoLiveMatViewState(TableToken viewToken) {
+        try (Path statePath = new Path()) {
+            Assert.assertFalse(TableUtils.isMatViewStateFileExists(configuration, statePath, viewToken.getDirName()));
+        }
+    }
+
     private static void configureCircuitBreakerTimeoutOnFirstCheck() {
         circuitBreaker.setTimeout(-100);
         circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
@@ -6619,6 +6719,16 @@ public class CheckpointTest extends AbstractCairoTest {
             // countCheck at offset +24 remains unchanged
             // This creates: valueCount=11, countCheck=10 (torn write simulation)
         }
+    }
+
+    // A base table with one row, and the view price_1h over it that has never refreshed: REFRESH MANUAL DEFERRED takes
+    // no refresh at creation, so the view has no state file.
+    private static void createNeverRefreshedMatView(String viewSql) throws SqlException {
+        execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base_price VALUES ('a', 1.0, '2024-09-13T00:10')");
+        execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL DEFERRED AS (" + viewSql + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertNoLiveMatViewState(engine.verifyTableName("price_1h"));
     }
 
     private static void createTableWithRowsAfterCheckpoint(String tableName) throws SqlException {
@@ -6706,6 +6816,16 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
+    // The definition that the checkpoint holds for the view.
+    private static MatViewDefinition readCheckpointedMatViewDefinition(TableToken viewToken) {
+        try (Path checkpointDbPath = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            checkpointDbPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+            final MatViewDefinition definition = new MatViewDefinition();
+            MatViewDefinition.readFrom(engine, definition, reader, checkpointDbPath, checkpointDbPath.size(), viewToken);
+            return definition;
+        }
+    }
+
     // Runs the restore's rebuild of the table's files, the indexes of every partition included.
     private static void rebuildIndexesOnRestore(CairoConfiguration restoreConfiguration, TableToken tableToken) {
         try (
@@ -6714,6 +6834,16 @@ public class CheckpointTest extends AbstractCairoTest {
         ) {
             restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
         }
+    }
+
+    private void assertMatViewValid() throws Exception {
+        assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_name\tview_status\tinvalidation_reason
+                        price_1h\tvalid\t
+                        """);
     }
 
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {
@@ -7942,6 +8072,8 @@ public class CheckpointTest extends AbstractCairoTest {
         boolean errorOnSync = false;
         boolean errorOnSyncfs = false;
         boolean errorOnTriggerFileRemoval = false;
+        // Fails the opening for writing of this file, while set.
+        volatile Utf8String failingOpenRwFile;
         // Reports every entry the volume flush lists as of unknown type, as a file system without entry types does.
         boolean isEntryTypeUnknown = false;
         // Takes the syncfs(2) path on any OS, and records the dir behind every syncfs call.
@@ -8006,6 +8138,15 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRW(LPSZ name, int opts) {
+            final Utf8String file = failingOpenRwFile;
+            if (file != null && Utf8s.equals(file, name)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
         public int sync() {
             if (!errorOnSync && !isWindowsSyncSimulated) {
                 return super.sync();
@@ -8030,6 +8171,7 @@ public class CheckpointTest extends AbstractCairoTest {
             errorOnTriggerFileRemoval = false;
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
+            failingOpenRwFile = null;
             isEntryTypeUnknown = false;
             isSyncfsForced = false;
             isWindowsSyncSimulated = false;

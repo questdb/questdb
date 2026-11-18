@@ -54,10 +54,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -67,10 +69,12 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
 /**
  * {@code ALTER MATERIALIZED VIEW v [WITH BASE b] AS (<select>)}: replaces a view's SQL, and with WITH BASE naming
@@ -118,6 +122,12 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             2024-01-01T01:00:00.000000Z\tb\t2.0
             """;
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
+
+    @After
+    public void releaseCheckpoint() throws Exception {
+        // a test that failed while it held a checkpoint must not fail the tests that follow it
+        engine.checkpointRelease();
+    }
 
     @After
     public void tearDownSeams() {
@@ -561,6 +571,50 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointCancelledAtDefinitionRetry() throws Exception {
+        // A cancel at the definition retry of the pass that writes a never-refreshed view again, after a second ALTER,
+        // fails CHECKPOINT CREATE with the cancel. That pass wrote the view into the checkpoint, not into the live view,
+        // which keeps no state file and stays valid, and the next checkpoint succeeds.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createBaseWithNeverRefreshedView();
+            final TableToken viewToken = viewToken();
+            final AtomicBoolean isRetrySeamRun = new AtomicBoolean();
+            try (NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker()) {
+                circuitBreaker.resetTimer();
+                final Runnable retrySeam = () -> {
+                    applyAlter(ALTER_PREFIX + "SET REFRESH LIMIT 2 HOURS");
+                    circuitBreaker.cancel();
+                    isRetrySeamRun.set(true);
+                };
+                DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                    applyAlter(ALTER_PREFIX + "SET REFRESH LIMIT 1 HOUR");
+                    // the seam runs once: arm it again for the pass that writes the view again
+                    DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(retrySeam);
+                });
+                try {
+                    engine.checkpointCreate(circuitBreaker, false);
+                    Assert.fail("the cancel must fail the checkpoint");
+                } catch (CairoException e) {
+                    final StringSink expected = new StringSink();
+                    expected.put("error creating checkpoint [table=").put(viewToken).put(", error=cancelled by user]");
+                    TestUtils.assertEquals(expected, e.getFlyweightMessage());
+                }
+            }
+            Assert.assertTrue(isRetrySeamRun.get());
+            assertNoLiveViewState(viewToken);
+            // the pass that the cancel stopped wrote the definition of the first ALTER into the checkpoint
+            Assert.assertEquals(1, readCheckpointedDefinition(viewToken).getRefreshLimitHoursOrMonths());
+            Assert.assertEquals(2, viewDefinition().getRefreshLimitHoursOrMonths());
+            assertViewStatus("valid", "");
+            execute("CHECKPOINT CREATE");
+            Assert.assertEquals(2, readCheckpointedDefinition(viewToken).getRefreshLimitHoursOrMonths());
+            execute("CHECKPOINT RELEASE");
+            assertNoLiveViewState(viewToken);
+        });
+    }
+
+    @Test
     public void testCheckpointDefinitionAppliedBeforeTableCopy() throws Exception {
         // A definition event that applies after CHECKPOINT CREATE wrote the view's definition and before it copied the
         // view's table makes the checkpoint write the view again, so a restore has the new definition.
@@ -586,6 +640,190 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             assertViewStatus("valid", "");
             assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testCheckpointDefinitionAppliedBeforeTableCopyOfNeverRefreshedView() throws Exception {
+        // A definition event that applies after CHECKPOINT CREATE wrote the definition of a view that has never
+        // refreshed, and so has no state file, makes the checkpoint write the view again, into the checkpoint: the live
+        // view keeps the files the ALTER left, with no state file, and stays valid, the checkpoint holds the altered
+        // definition and no state, and the next checkpoint succeeds. The cases cover each kind of ALTER that replaces
+        // the definition (SET REFRESH LIMIT, SET REFRESH EVERY and AS), a full and an incremental checkpoint, and a
+        // view name of multi-byte characters.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        final String newSql = "SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h";
+        final ObjList<CheckpointAlterCase> cases = new ObjList<>();
+        cases.add(new CheckpointAlterCase("price_1h", "SET REFRESH LIMIT 1 HOUR", false, definition -> {
+            Assert.assertEquals(MatViewDefinition.REFRESH_TYPE_MANUAL, definition.getRefreshType());
+            Assert.assertEquals(1, definition.getRefreshLimitHoursOrMonths());
+            Assert.assertEquals(VIEW_SQL, definition.getMatViewSql());
+        }));
+        cases.add(new CheckpointAlterCase("price_1h", "SET REFRESH EVERY 1h", false, definition -> {
+            Assert.assertEquals(MatViewDefinition.REFRESH_TYPE_TIMER, definition.getRefreshType());
+            Assert.assertEquals(1, definition.getTimerInterval());
+            Assert.assertEquals('h', definition.getTimerUnit());
+            Assert.assertEquals(VIEW_SQL, definition.getMatViewSql());
+        }));
+        cases.add(new CheckpointAlterCase("price_1h", "AS (" + newSql + ")", false, definition -> {
+            Assert.assertEquals(MatViewDefinition.REFRESH_TYPE_MANUAL, definition.getRefreshType());
+            Assert.assertEquals(newSql, definition.getMatViewSql());
+        }));
+        cases.add(new CheckpointAlterCase("price_1h", "SET REFRESH LIMIT 1 HOUR", true, definition -> {
+            Assert.assertEquals(MatViewDefinition.REFRESH_TYPE_MANUAL, definition.getRefreshType());
+            Assert.assertEquals(1, definition.getRefreshLimitHoursOrMonths());
+        }));
+        cases.add(new CheckpointAlterCase("цена_1ч", "AS (" + newSql + ")", false, definition -> {
+            Assert.assertEquals(MatViewDefinition.REFRESH_TYPE_MANUAL, definition.getRefreshType());
+            Assert.assertEquals(newSql, definition.getMatViewSql());
+        }));
+        assertMemoryLeak(() -> {
+            createBase("base");
+            execute("INSERT INTO base VALUES ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z')");
+            drainWalQueue();
+            for (int i = 0, n = cases.size(); i < n; i++) {
+                final CheckpointAlterCase alterCase = cases.getQuick(i);
+                try {
+                    final String viewName = alterCase.viewName();
+                    createNeverRefreshedView(viewName, VIEW_SQL);
+                    final TableToken viewToken = engine.verifyTableName(viewName);
+                    final StringSink liveFilesAfterAlter = new StringSink();
+                    DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                        applyAlter("ALTER MATERIALIZED VIEW \"" + viewName + "\" " + alterCase.alterTail());
+                        liveFilesAfterAlter.put(listLiveViewDir(viewToken));
+                    });
+                    if (alterCase.isIncremental()) {
+                        engine.checkpointCreate(sqlExecutionContext.getCircuitBreaker(), true);
+                    } else {
+                        execute("CHECKPOINT CREATE");
+                    }
+                    Assert.assertTrue("the seam must run", liveFilesAfterAlter.length() > 0);
+                    // the checkpoint writes nothing into the live view
+                    TestUtils.assertEquals(liveFilesAfterAlter, listLiveViewDir(viewToken));
+                    assertNoLiveViewState(viewToken);
+                    Assert.assertFalse(isCheckpointFilePresent(viewToken, MatViewState.MAT_VIEW_STATE_FILE_NAME));
+                    alterCase.definitionCheck().accept(readCheckpointedDefinition(viewToken));
+                    assertViewStatus(viewName, "valid", "");
+                    execute("CHECKPOINT RELEASE");
+                    execute("CHECKPOINT CREATE");
+                    execute("CHECKPOINT RELEASE");
+                    // the checkpoint of the next case copies one view, the one its seam alters
+                    execute("DROP MATERIALIZED VIEW \"" + viewName + "\"");
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    throw new AssertionError(alterCase.describe(), th);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointDefinitionRetryAfterUnreadableViewState() throws Exception {
+        // A view state file that CHECKPOINT CREATE finds but cannot read makes it copy no state. When an ALTER then
+        // makes it write the view again, it writes into the checkpoint, not into the live view.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        final AtomicReference<Utf8String> unreadableStateFile = new AtomicReference<>();
+        // reports the file present while it is set, and BlockFileReader then finds it too small to read
+        final TestFilesFacadeImpl unreadableStateFacade = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                final Utf8String file = unreadableStateFile.get();
+                return (file != null && Utf8s.equals(file, path)) || super.exists(path);
+            }
+        };
+        assertMemoryLeak(unreadableStateFacade, () -> {
+            createBaseWithNeverRefreshedView();
+            final TableToken viewToken = viewToken();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                unreadableStateFile.set(new Utf8String(path.toString()));
+            }
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                unreadableStateFile.set(null);
+                applyAlter(ALTER_PREFIX + "SET REFRESH LIMIT 1 HOUR");
+                isSeamRun.set(true);
+            });
+            try {
+                execute("CHECKPOINT CREATE");
+            } finally {
+                unreadableStateFile.set(null);
+            }
+            Assert.assertTrue(isSeamRun.get());
+            assertNoLiveViewState(viewToken);
+            Assert.assertFalse(isCheckpointFilePresent(viewToken, MatViewState.MAT_VIEW_STATE_FILE_NAME));
+            Assert.assertEquals(1, readCheckpointedDefinition(viewToken).getRefreshLimitHoursOrMonths());
+            assertViewStatus("valid", "");
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointDefinitionRetryAfterViewStateAppears() throws Exception {
+        // A view that has no state file when CHECKPOINT CREATE writes its definition, and has one when an ALTER makes
+        // the checkpoint write the view again, since a refresh ran in between: the checkpoint holds the altered
+        // definition and the refreshed state, and the live state file stays as the refresh wrote it.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createBaseWithNeverRefreshedView();
+            final TableToken viewToken = viewToken();
+            final String newSql = "SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h";
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                // REFRESH waits for the definition event of the ALTER to apply
+                applyAlter(ALTER_PREFIX + "AS (" + newSql + ")");
+                try {
+                    execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                drainWalAndMatViewQueues();
+                isSeamRun.set(true);
+            });
+            execute("CHECKPOINT CREATE");
+            Assert.assertTrue(isSeamRun.get());
+            // the refresh caught up with the base's one commit
+            Assert.assertEquals(1, readLiveState(viewToken).getLastRefreshBaseTxn());
+            Assert.assertEquals(1, readCheckpointedState(viewToken).getLastRefreshBaseTxn());
+            Assert.assertEquals(newSql, readCheckpointedDefinition(viewToken).getMatViewSql());
+            assertViewStatus("valid", "");
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointDefinitionRetryKeepsLiveViewAcrossRestart() throws Exception {
+        // After CHECKPOINT CREATE wrote a never-refreshed view again for an ALTER, a restart loads the view with the
+        // altered definition and no refresh, valid, and takes a checkpoint.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createBaseWithNeverRefreshedView();
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                applyAlter(ALTER_PREFIX + "SET REFRESH LIMIT 1 HOUR");
+                isSeamRun.set(true);
+            });
+            execute("CHECKPOINT CREATE");
+            Assert.assertTrue(isSeamRun.get());
+            execute("CHECKPOINT RELEASE");
+            restartEngine((restarted, context) -> {
+                final TableToken viewToken = restarted.verifyTableName("price_1h");
+                Assert.assertEquals(1, restarted.getDependentViewGraph().getViewDefinition(viewToken).getRefreshLimitHoursOrMonths());
+                final MatViewState state = restarted.getMatViewStateStore().getViewState(viewToken);
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(-1, state.getLastRefreshBaseTxn());
+                assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views()")
+                        .withEngine(restarted)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_name\tview_status\tinvalidation_reason
+                                price_1h\tvalid\t
+                                """);
+                restarted.execute("CHECKPOINT CREATE", context);
+                restarted.execute("CHECKPOINT RELEASE", context);
+            });
         });
     }
 
@@ -639,6 +877,53 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             } finally {
                 execute("CHECKPOINT RELEASE");
             }
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreOfNeverRefreshedViewAlteredBeforeTableCopy() throws Exception {
+        // A checkpoint of a never-refreshed view whose SQL an ALTER replaced before the checkpoint copied the view's
+        // table holds no state, and restores the new SQL and a view that has never refreshed, whose first refresh
+        // builds it with the new SQL. The base table has a one-character name: a view definition misread as a view
+        // state then parses without an error, so only what the checkpoint holds shows a write into the wrong file.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        assertMemoryLeak(() -> {
+            createBase("b");
+            execute("""
+                    INSERT INTO b VALUES
+                    ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('a', 3.0, 3.0, '2024-01-01T00:20:00.000000Z'),
+                    ('b', 2.0, 2.0, '2024-01-01T01:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            createNeverRefreshedView("price_1h", "SELECT ts, sym, last(price) AS price FROM b SAMPLE BY 1h");
+            final TableToken viewToken = viewToken();
+            final String newSql = "SELECT ts, sym, max(price) AS price FROM b SAMPLE BY 1h";
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                applyAlter(ALTER_PREFIX + "AS (" + newSql + ")");
+                isSeamRun.set(true);
+            });
+            execute("CHECKPOINT CREATE");
+            Assert.assertTrue(isSeamRun.get());
+            Assert.assertFalse(isCheckpointFilePresent(viewToken, MatViewState.MAT_VIEW_STATE_FILE_NAME));
+            // nothing refreshes the view before the restore, so it has no live state file either
+            assertNoLiveViewState(viewToken);
+            restoreCheckpoint();
+            Assert.assertEquals(newSql, viewDefinition().getMatViewSql());
+            Assert.assertFalse(viewState().isInvalid());
+            assertRefreshBaseTxn(-1);
+            execute("CHECKPOINT RELEASE");
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            // the maximum price of each symbol within the hour
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t3.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    """);
+            assertSqlCursors(newSql + " ORDER BY ts, sym", "price_1h ORDER BY ts, sym");
         });
     }
 
@@ -2887,6 +3172,16 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         }
     }
 
+    // Runs an ALTER from a checkpoint seam and applies the view's WAL, so that the checkpoint sees the new definition.
+    private static void applyAlter(String sql) {
+        try {
+            execute(sql);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+        drainWalQueue();
+    }
+
     private static void armViewTxnFailure(AtomicBoolean isFailArmed, StringSink failingPart, int txnsAhead) {
         // With one transaction per sequencer part, each transaction opens a part of its own, numbered from 0.
         failingPart.clear();
@@ -2925,6 +3220,12 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertNoLiveViewState(TableToken viewToken) {
+        try (Path path = new Path()) {
+            Assert.assertFalse(TableUtils.isMatViewStateFileExists(configuration, path, viewToken.getDirName()));
+        }
+    }
+
     private static void assertDependents(String baseTableName, String... expected) {
         final io.questdb.std.ObjList<TableToken> sink = new io.questdb.std.ObjList<>();
         engine.getDependentViewGraph().getDependentViews(engine.verifyTableName(baseTableName), sink);
@@ -2941,6 +3242,30 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             Thread.currentThread().interrupt();
             throw new AssertionError(e);
         }
+    }
+
+    private static boolean isCheckpointFilePresent(TableToken viewToken, String fileName) {
+        try (Path path = new Path()) {
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory()).concat(viewToken).concat(fileName);
+            return TestFilesFacadeImpl.INSTANCE.exists(path.$());
+        }
+    }
+
+    // The names in the view's live table directory, sorted.
+    private static String listLiveViewDir(TableToken viewToken) {
+        final TreeSet<String> names = new TreeSet<>();
+        final StringSink name = new StringSink();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(viewToken);
+            TestFilesFacadeImpl.INSTANCE.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+                if (Files.notDots(pUtf8NameZ)) {
+                    name.clear();
+                    Utf8s.utf8ToUtf16Z(pUtf8NameZ, name);
+                    names.add(name.toString());
+                }
+            });
+        }
+        return String.join(",", names);
     }
 
     private static NetworkSqlExecutionCircuitBreaker newCircuitBreaker() {
@@ -2972,6 +3297,16 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    // The definition that the checkpoint holds for the view.
+    private static MatViewDefinition readCheckpointedDefinition(TableToken viewToken) {
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            path.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+            final MatViewDefinition definition = new MatViewDefinition();
+            MatViewDefinition.readFrom(engine, definition, reader, path, path.size(), viewToken);
+            return definition;
+        }
     }
 
     // A restart of the view states: the store reloads them from disk, as at startup.
@@ -3204,6 +3539,22 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         assertRefreshBaseTxn(1);
     }
 
+    // A base with one row, base txn 1, and the view price_1h over it, see createNeverRefreshedView().
+    private void createBaseWithNeverRefreshedView() throws Exception {
+        createBase("base");
+        execute("INSERT INTO base VALUES ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z')");
+        drainWalQueue();
+        createNeverRefreshedView("price_1h", VIEW_SQL);
+    }
+
+    // A view that has never refreshed: REFRESH MANUAL DEFERRED takes no refresh at creation, so the view has no state
+    // file.
+    private void createNeverRefreshedView(String viewName, String sql) throws Exception {
+        execute("CREATE MATERIALIZED VIEW \"" + viewName + "\" REFRESH MANUAL DEFERRED AS (" + sql + ") PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertNoLiveViewState(engine.verifyTableName(viewName));
+    }
+
     // The base of the positional copy tests: SYMBOL columns of 65, 65 and 64 characters, each holding one value, and
     // two rows in the first hour, whose price has the maximum 9.0 and the minimum 1.0.
     private void createLongNameBase(String name) throws Exception {
@@ -3275,6 +3626,13 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         }
     }
 
+    private MatViewStateReader readLiveState(TableToken viewToken) {
+        try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+            reader.of(path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            return new MatViewStateReader().of(reader, viewToken);
+        }
+    }
+
     // Stops the engine and starts another one on the same data directory, which loads the views from disk.
     private void restartEngine(RestartedEngineCheck check) throws Exception {
         engine.releaseInactive();
@@ -3328,5 +3686,19 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface RestartedEngineCheck {
         void run(CairoEngine restarted, SqlExecutionContext context) throws Exception;
+    }
+
+    // An ALTER MATERIALIZED VIEW that applies while CHECKPOINT CREATE copies the view, see
+    // testCheckpointDefinitionAppliedBeforeTableCopyOfNeverRefreshedView(), and the check of the definition that the
+    // checkpoint holds after it.
+    private record CheckpointAlterCase(
+            String viewName,
+            String alterTail,
+            boolean isIncremental,
+            Consumer<MatViewDefinition> definitionCheck
+    ) {
+        String describe() {
+            return "view=" + viewName + ", alter=" + alterTail + ", incremental=" + isIncremental;
+        }
     }
 }

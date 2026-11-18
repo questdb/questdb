@@ -406,6 +406,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         LOG.info().$("skipping, table is concurrently dropped [table=").$(tableToken).I$();
                                         break;
                                     }
+                                    // A retried pass may follow one that left the path on the view's live state file.
+                                    path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
                                     // For mat views, copy view definition and state before copying the underlying table.
                                     // This way, the state copy will never hold a txn number that is newer than what's
