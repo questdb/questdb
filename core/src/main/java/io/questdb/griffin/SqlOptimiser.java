@@ -7277,8 +7277,12 @@ public class SqlOptimiser implements Mutable {
             }
             child.getOrderByDirection().addAll(base.getOrderByDirection());
         }
-        // Frame: if child has a non-default frame, use child's; otherwise copy from base
-        if (!child.isNonDefaultFrame() && base.isNonDefaultFrame()) {
+        // Frame: if child has its own frame, use child's; otherwise copy from base.
+        // isNonDefaultFrame() ignores the exclusion, so the default RANGE frame with
+        // EXCLUDE CURRENT ROW (or GROUP, TIES) has to be checked separately.
+        final boolean isChildFrameSet = child.isNonDefaultFrame() || child.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS;
+        final boolean isBaseFrameSet = base.isNonDefaultFrame() || base.getExclusionKind() != WindowExpression.EXCLUDE_NO_OTHERS;
+        if (!isChildFrameSet && isBaseFrameSet) {
             child.setFramingMode(base.getFramingMode());
             child.setRowsLo(base.getRowsLo());
             child.setRowsLoExpr(
