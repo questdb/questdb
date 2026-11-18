@@ -221,7 +221,7 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
     private static void assertSlotCachedProbe(FuzzTable probe, FuzzTable build) throws Exception {
         final String sql = "SELECT * FROM " + probe.getName() + " p LEFT JOIN " + build.getName() + " b ON p.sym = b.sym";
         final String expected = ParallelHashJoinTestUtils.ordinary(sql, sqlExecutionContext);
-        final boolean wasEnabled = sqlExecutionContext.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(true);
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = ParallelHashJoinTestUtils.find(factory);
@@ -234,7 +234,7 @@ public class FuzzStorageShapeCoverageTest extends AbstractCairoTest {
             }
             TestUtils.assertEquals(sql, expected, ParallelHashJoinTestUtils.result(factory, sqlExecutionContext));
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(wasEnabled);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 

@@ -167,7 +167,7 @@ public class AsyncHashJoinConcurrentStacksTest extends AbstractCairoTest {
     }
 
     private static String rows(CairoEngine db, String sql, SqlExecutionContextImpl context, boolean isParallel) throws Exception {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(isParallel);
         try (RecordCursorFactory factory = db.select(sql, context)) {
             Assert.assertEquals(sql, isParallel, find(factory) != null);
@@ -178,7 +178,7 @@ public class AsyncHashJoinConcurrentStacksTest extends AbstractCairoTest {
             }
             return sink.toString();
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 

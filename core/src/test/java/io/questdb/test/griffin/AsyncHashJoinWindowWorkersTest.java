@@ -536,7 +536,7 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     // The rows of the ordinary plan's join under the query, which the operator's own cursor returns
     // whatever the query's LIMIT.
     private static String ordinaryJoinRows(CairoEngine db, String sql, SqlExecutionContextImpl context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory factory = db.select(sql, context)) {
             RecordCursorFactory join = factory;
@@ -546,18 +546,18 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
             Assert.assertTrue(join.getClass().getName(), join.getClass().getSimpleName().contains("Join"));
             return printRows(join, context);
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 
     private static String ordinaryRows(CairoEngine db, String sql, SqlExecutionContextImpl context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory factory = db.select(sql, context)) {
             Assert.assertNull(sql, find(factory));
             return printRows(factory, context);
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 
