@@ -531,8 +531,8 @@ public class SqlUtil {
      * designated timestamp of its table, which a temporal join takes when a read drops the ORDER BY that
      * gave it another one, is one the principal that records the view may read. The compile that plans the
      * SELECT lists it, and the caller checks the principal's permission on it, see
-     * {@link ViewWildcardSources#authorizeOwnReads}: opening that plan checks nothing when the plan scans
-     * nothing, such as when a filter that is false by default folds it to an empty table, while a read that
+     * {@link ViewWildcardSources#authorizeOwnReads}: nothing opens that plan, and it may scan nothing at all,
+     * such as when a filter that is false by default folds it to an empty table, while a read that
      * overrides the filter scans the column. The compile of the reads planned otherwise lists no such
      * column, nor a {@code *} for a wildcard of that view that view lends to no read, see
      * {@link SqlCompiler#collectOtherReadDependencies}: the column stays one a reader of the view needs
@@ -3346,8 +3346,8 @@ public class SqlUtil {
          * the plan, a view it expands and the plan does not, and a view the plan expands and it does not: a view
          * altered, dropped or created between the compiles. Only a compile that expands the views the plan
          * expands runs the SELECT of the plan, and so runs the PIVOT IN sub-queries the plan ran, in the order the
-         * plan ran them, see {@link #takePivotIn}. The statement then compiles both again, as it does when the
-         * plan finds a view out of date as it opens, see StaleViewCheckFactory.
+         * plan ran them, see {@link #takePivotIn}. The statement then compiles both again, as it does when a view
+         * the plan expands has changed by the time the statement records the view, see SqlCompilerImpl.verifyViews().
          *
          * @param views the definitions of the views the other compile expands, as its parse recorded them
          */
@@ -3386,6 +3386,11 @@ public class SqlUtil {
         // the start of the values of the recorded PIVOT IN sub-query at index in pivotInValues
         int getPivotInValueLo(int pivotInIndex) {
             return pivotInIndex > 0 ? pivotInValueHis.getQuick(pivotInIndex - 1) : 0;
+        }
+
+        // the definitions of the views the plan expands, as its parse recorded them, see recordViews()
+        ObjList<ViewDefinition> getViews() {
+            return views;
         }
 
         /**
@@ -3565,12 +3570,12 @@ public class SqlUtil {
          * views the scans read their tables through, which lend the scans the columns they lend, and the columns no
          * view lends to the SELECT, those of the tables the SELECT reads itself included, or any column of such a
          * table when the scans read none of it, as a scan that counts the rows does. The view lends all of them to its
-         * readers, see {@link SqlUtil#collectTableColumnReads}. Opening a plan checks the same, see
-         * {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}, but nothing opens the plan of the reads
-         * planned otherwise, see {@link SqlCompiler#collectOtherReadDependencies}, and the plan of the view's own
-         * SELECT scans nothing when it folds to an empty table, as it does when a filter is false by default, while a
-         * read that overrides the filter scans those columns. It checks the tables the scans read, not the ones their
-         * names resolve to now, and the views as the SELECT expanded them.
+         * readers, see {@link SqlUtil#collectTableColumnReads}. Opening a plan would check the same, see
+         * {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}, but the view statements open no plan of the
+         * SELECT, whose open does work in proportion to the data, and the plan of the view's own SELECT scans nothing
+         * when it folds to an empty table, as it does when a filter is false by default, while a read that overrides
+         * the filter scans those columns. It checks the tables the scans read, not the ones their names resolve to
+         * now, and the views as the SELECT expanded them.
          *
          * @param securityContext the context of the principal that records the view
          */

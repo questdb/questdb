@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.test.cairo.security.NoSystemAdminSecurityContext;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -43,7 +44,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * Pins the view-as-security-boundary contract on two paths:
+ * Pins the view-as-security-boundary contract on three paths:
  * <ul>
  * <li>CREATE VIEW records a {@code SELECT *} projection as a {@code "*"} wildcard entry in the
  * view's persisted dependency map (collected from the raw, pre-optimisation model - optimise()
@@ -55,6 +56,9 @@ import static org.junit.Assert.fail;
  * keeps {@link CairoException#isAuthorizationError()}, so the caller reports it as forbidden.
  * The retry loop's CairoException catch rewraps only genuine compile errors as
  * {@link SqlException}.</li>
+ * <li>A source that checks the reader as its cursor opens, such as {@code reader_pool()}, checks
+ * every reader of a view over it. The view statements open no cursor of their SELECT, so the
+ * check runs at each read of the view rather than when the view is recorded.</li>
  * </ul>
  * The default {@link AllowAllSecurityContext} grants everything, so both contracts are exercised
  * with narrow deny-one-permission contexts.
@@ -105,6 +109,33 @@ public class ViewAuthorizationTest extends AbstractViewTest {
             try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
                 assertEquals(9, readViewRowCount(denyContext));
             }
+        });
+    }
+
+    @Test
+    public void testViewOverAdminOnlySourceChecksEachReader() throws Exception {
+        assertMemoryLeak(() -> {
+            // reader_pool() lists the pooled readers to admins only, and checks the reader as its cursor opens. The
+            // view statements open no cursor of their SELECT, so a principal that is no admin records a view over it,
+            // and every read of the view checks the reader: the view lends no permission on what the source lists.
+            try (
+                    SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new NoSystemAdminSecurityContext())
+            ) {
+                execute("CREATE VIEW v AS (SELECT * FROM reader_pool())", context);
+                execute("ALTER VIEW v AS (SELECT table_name FROM reader_pool())", context);
+                execute("CREATE OR REPLACE VIEW v AS (SELECT table_name, current_txn FROM reader_pool())", context);
+                drainWalAndViewQueues();
+                assertViewState("v");
+                assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().failsWith("system admin required");
+            }
+            assertQuery("SELECT count() FROM v WHERE table_name = 'no_such_table'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            0
+                            """);
         });
     }
 

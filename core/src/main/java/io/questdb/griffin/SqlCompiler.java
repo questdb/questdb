@@ -241,8 +241,8 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     /**
      * Compiles the SELECT of a view as a query of its own, which requires no order of its result, and returns its
-     * plan, whose metadata CREATE VIEW records for the view. The plan CREATE VIEW opens keeps the order a reader of
-     * the view requires, and its metadata can differ, such as by the designated timestamp. This takes the values of
+     * plan, whose metadata CREATE VIEW records for the view. The plan CREATE VIEW generates keeps the order a reader
+     * of the view requires, and its metadata can differ, such as by the designated timestamp. This takes the values of
      * the PIVOT IN sub-queries from what the compile that planned the SELECT recorded, rather than running the
      * sub-queries again, and finds a view out of date when it expands another definition of it, or another set of
      * views, than that compile, see {@link SqlUtil.ViewCompileRecord}. It retries nothing: a table or a view out of

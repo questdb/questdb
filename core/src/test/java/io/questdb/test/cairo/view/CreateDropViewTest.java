@@ -25,13 +25,10 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
-import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,12 +49,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 public class CreateDropViewTest extends AbstractViewTest {
-    // an aggregate over a view that orders x by a column other than its designated timestamp, see
-    // createOrderedViewBase(), whose plan holds native memory from the moment it is generated
-    private static final String GROUP_BY_OVER_ORDERED_VIEW = "SELECT k, sum(a) s FROM ordered_x";
-    // a window function over the same view
+    // the body of iv, see createInnerViewBase()
+    private static final String INNER_VIEW_SQL = "SELECT ts, k, a FROM x";
+    // a window function over a view that orders x by a column other than its designated timestamp
     private static final String WINDOW_OVER_ORDERED_VIEW = "SELECT ts, k, sum(a) OVER () s FROM ordered_x";
     // a window function over the columns of a PIVOT whose IN sub-query reads cats, see createPivotBase()
     private static final String WINDOW_OVER_PIVOT = """
@@ -380,25 +377,6 @@ public class CreateDropViewTest extends AbstractViewTest {
     }
 
     @Test
-    public void testCreateViewDeniedAtOpenFreesItsPlans() throws Exception {
-        assertMemoryLeak(() -> {
-            createOrderedViewBase();
-            // SELECT on ordered_x is revoked as the plan of the SELECT opens, after CREATE VIEW compiled the SELECT as
-            // a query of its own for the metadata of the view.
-            final String sql = "CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")";
-            try (SqlExecutionContext context = contextOf(new RevokingSecurityContext("ordered_x"))) {
-                assertExceptionNoLeakCheck(sql, "CREATE VIEW ".length(), "permission denied [view=ordered_x]", context);
-            }
-            assertNull(engine.getTableTokenIfExists("v"));
-
-            execute(sql);
-            drainViewQueue();
-            assertViewState("v");
-            assertGroupByOverOrderedViewRead();
-        });
-    }
-
-    @Test
     public void testCreateViewFailsWhenItsSelectStopsCompiling() throws Exception {
         assertMemoryLeak(() -> {
             createPivotBase();
@@ -428,7 +406,7 @@ public class CreateDropViewTest extends AbstractViewTest {
 
     @Test
     public void testCreateViewRecordsDesignatedTimestampOfViewCompile() throws Exception {
-        // The plan CREATE VIEW opens keeps the order a reader of the view inherits, such as the ORDER BY of a
+        // The plan CREATE VIEW generates keeps the order a reader of the view inherits, such as the ORDER BY of a
         // sub-query under a window function, which the SELECT as a query of its own drops. The view records the
         // metadata of the latter, as the view compile that follows CREATE VIEW does, so the catalog stays as it is.
         assertMemoryLeak(() -> {
@@ -472,42 +450,6 @@ public class CreateDropViewTest extends AbstractViewTest {
     }
 
     @Test
-    public void testCreateViewRetriesWhenTableChangesAtOpen() throws Exception {
-        assertMemoryLeak(() -> {
-            createOrderedViewBase();
-            // The open of the plan of the SELECT finds x changed, after CREATE VIEW compiled the SELECT as a query of
-            // its own for the metadata of the view. CREATE VIEW compiles both again.
-            final AlteringSecurityContext securityContext = new AlteringSecurityContext(1);
-            try (SqlExecutionContext context = contextOf(securityContext)) {
-                execute("CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")", context);
-            }
-            assertEquals(1, securityContext.changeCount);
-            drainViewQueue();
-            assertViewState("v");
-            assertGroupByOverOrderedViewRead();
-        });
-    }
-
-    @Test
-    public void testCreateViewRetriesWhenTableChangesAtOpenRunOut() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 0);
-        assertMemoryLeak(() -> {
-            createOrderedViewBase();
-            final AlteringSecurityContext securityContext = new AlteringSecurityContext(1);
-            try (SqlExecutionContext context = contextOf(securityContext)) {
-                assertExceptionNoLeakCheck(
-                        "CREATE VIEW v AS (" + GROUP_BY_OVER_ORDERED_VIEW + ")",
-                        0,
-                        "cached query plan cannot be used because table schema has changed [table=x",
-                        context
-                );
-            }
-            assertEquals(1, securityContext.changeCount);
-            assertNull(engine.getTableTokenIfExists("v"));
-        });
-    }
-
-    @Test
     public void testCreateViewRunsPivotInSubQueryOnce() throws Exception {
         assertMemoryLeak(() -> {
             createPivotBase();
@@ -517,7 +459,7 @@ public class CreateDropViewTest extends AbstractViewTest {
             execute("CREATE TABLE vals (v LONG)");
             // values each group of data has a row of
             execute("INSERT INTO vals VALUES (1), (3)");
-            // An aggregate or a window function at the top of the SELECT makes the plan CREATE VIEW opens keep the
+            // An aggregate or a window function at the top of the SELECT makes the plan CREATE VIEW generates keep the
             // order a reader requires, so CREATE VIEW compiles the SELECT once more, as a query of its own, for the
             // metadata of the view. That compile takes the values of the PIVOT IN sub-query from the first one.
             final String pivotOfCats = "SELECT * FROM data PIVOT (sum(val) FOR cat IN (SELECT c FROM cats) GROUP BY grp)";
@@ -619,6 +561,130 @@ public class CreateDropViewTest extends AbstractViewTest {
         });
     }
 
+    @Test
+    public void testViewStatementsCompileAgainWhenViewTheyReadChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            createInnerViewBase();
+            // iv changes after the compile of the SELECT collected the dependencies of the view, which say that the
+            // view lends a of x. The statement opens no plan of the SELECT, which would find iv out of date, so it
+            // checks the views the SELECT reads itself, and compiles the SELECT again: the view lends b of x, which iv
+            // reads now.
+            for (String statement : new String[]{"CREATE VIEW", "CREATE OR REPLACE VIEW", "ALTER VIEW"}) {
+                final AtomicInteger generationCount = new AtomicInteger();
+                final String sql = statement + " v AS (SELECT k, a FROM iv)";
+                alterInnerViewAsPlanGenerates(generationCount, () -> execute(sql));
+                assertEquals(statement, 2, generationCount.get());
+                assertEquals(statement, "{iv=[], x=[b, k]}", dependenciesOf("v"));
+                drainViewQueue();
+                assertViewState("v");
+                assertQuery("SELECT * FROM v ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ta
+                                k1\t2
+                                k2\t4
+                                """);
+                execute("ALTER VIEW iv AS (" + INNER_VIEW_SQL + ")");
+                drainViewQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testViewStatementsCompileAgainWhenViewTheyReadChangesRunOut() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 0);
+        assertMemoryLeak(() -> {
+            createInnerViewBase();
+            final String[] statements = {"CREATE VIEW", "CREATE OR REPLACE VIEW", "ALTER VIEW"};
+            for (String statement : statements) {
+                if (!statement.equals("CREATE VIEW")) {
+                    execute("CREATE VIEW IF NOT EXISTS v AS (SELECT k FROM x)");
+                    drainViewQueue();
+                }
+                final long seqTxn = getViewDefinition("iv").getSeqTxn();
+                final AtomicInteger generationCount = new AtomicInteger();
+                final String sql = statement + " v AS (SELECT k, a FROM iv)";
+                try {
+                    alterInnerViewAsPlanGenerates(generationCount, () -> execute(sql));
+                    fail("expected [" + sql + "] to run out of attempts");
+                } catch (SqlException e) {
+                    assertEquals(sql, statement.equals("CREATE VIEW") ? 0 : sql.indexOf('('), e.getPosition());
+                    TestUtils.assertEquals(
+                            "cached query plan cannot be used because table schema has changed [table=iv', expectedSeqTxn="
+                                    + seqTxn + ", actualSeqTxn=" + getViewDefinition("iv").getSeqTxn() + ']',
+                            e.getFlyweightMessage()
+                    );
+                }
+                assertEquals(sql, 1, generationCount.get());
+                if (statement.equals("CREATE VIEW")) {
+                    assertNull(engine.getTableTokenIfExists("v"));
+                } else {
+                    assertViewDefinition("v", "SELECT k FROM x");
+                    assertEquals("{x=[k]}", dependenciesOf("v"));
+                }
+                execute("ALTER VIEW iv AS (" + INNER_VIEW_SQL + ")");
+                drainViewQueue();
+            }
+        });
+    }
+
+    @Test
+    public void testViewStatementsReadNoRowOfTheirSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL)");
+            execute("INSERT INTO t VALUES ('aa'), ('bb')");
+            execute("CREATE VIEW v_altered AS (SELECT s FROM t)");
+            execute("CREATE VIEW v_replaced AS (SELECT s FROM t)");
+            drainViewQueue();
+            // The plan of the SELECT reads every row of the sub-query of the IN filter as its cursor opens, and every
+            // row of the sub-query fails. The view statements open no cursor of the plan, so each records the view, and
+            // a read of it fails.
+            final String viewSql = "SELECT s FROM t WHERE s IN (SELECT substring(s, 1, length(s) - 10) FROM t)";
+            execute("CREATE VIEW v AS (" + viewSql + ")");
+            execute("CREATE VIEW IF NOT EXISTS v_if_not_exists AS (" + viewSql + ")");
+            execute("CREATE OR REPLACE VIEW v_new AS (" + viewSql + ")");
+            execute("CREATE OR REPLACE VIEW v_replaced AS (" + viewSql + ")");
+            execute("ALTER VIEW v_altered AS (" + viewSql + ")");
+            drainViewQueue();
+            for (String viewName : new String[]{"v", "v_if_not_exists", "v_new", "v_replaced", "v_altered"}) {
+                assertViewDefinition(viewName, viewSql);
+                assertViewState(viewName);
+                assertQuery("SELECT * FROM " + viewName)
+                        .noLeakCheck()
+                        .failsWith("negative substring length is not allowed");
+            }
+        });
+    }
+
+    // Runs the code, which runs a view statement, with a barrier that makes a of iv, see createInnerViewBase(), read b
+    // of x as the statement generates the plan of its SELECT for the first time, after the compile of the SELECT
+    // collected the dependencies of the view. Counts the plans the statement generates in generationCount.
+    private static void alterInnerViewAsPlanGenerates(
+            AtomicInteger generationCount,
+            TestUtils.LeakProneCode code
+    ) throws Exception {
+        final AtomicBoolean isAltering = new AtomicBoolean();
+        SqlCompilerImpl.setViewFactoryGenerationBarrier(() -> {
+            // ALTER VIEW generates the plan of its SELECT too
+            if (!isAltering.get() && generationCount.getAndIncrement() == 0) {
+                isAltering.set(true);
+                try {
+                    execute("ALTER VIEW iv AS (SELECT ts, k, b a FROM x)");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                } finally {
+                    isAltering.set(false);
+                }
+            }
+        });
+        try {
+            code.run();
+        } finally {
+            SqlCompilerImpl.setViewFactoryGenerationBarrier(null);
+        }
+    }
+
     // Asserts the designated timestamp, null for none, of the plan of the SELECT as a query of its own, which is the
     // plan the view compile records the metadata of.
     private static void assertTimestampOfQueryOfItsOwn(String sql, @Nullable String expectedTimestamp) throws Exception {
@@ -627,24 +693,11 @@ public class CreateDropViewTest extends AbstractViewTest {
         }
     }
 
-    // The context of the principal the security context authorizes, which the security context consults.
-    private static SqlExecutionContext contextOf(OpeningSecurityContext securityContext) {
-        final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(
-                securityContext,
-                bindVariableService,
-                null,
-                -1,
-                null
-        );
-        securityContext.executionContext = context;
-        return context;
-    }
-
-    // x, and ordered_x, which orders the rows of x by a column other than its designated timestamp
-    private static void createOrderedViewBase() throws SqlException {
-        execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO x VALUES (0, 'k1', 3), (3_600_000_000, 'k2', 1), (7_200_000_000, 'k1', 2)");
-        execute("CREATE VIEW ordered_x AS (SELECT * FROM x ORDER BY a)");
+    // x, and iv, which reads a of x, see INNER_VIEW_SQL
+    private static void createInnerViewBase() throws SqlException {
+        execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO x VALUES (0, 'k1', 1, 2), (3_600_000_000, 'k2', 3, 4)");
+        execute("CREATE VIEW iv AS (" + INNER_VIEW_SQL + ")");
         drainViewQueue();
     }
 
@@ -725,18 +778,6 @@ public class CreateDropViewTest extends AbstractViewTest {
                 .returns("designatedTimestamp\n" + (expectedTimestamp != null ? expectedTimestamp : "") + '\n');
     }
 
-    // Asserts the rows of the view v of GROUP_BY_OVER_ORDERED_VIEW.
-    private void assertGroupByOverOrderedViewRead() throws Exception {
-        assertQuery("SELECT * FROM v ORDER BY k")
-                .noLeakCheck()
-                .expectSize()
-                .returns("""
-                        k\ts
-                        k1\t5
-                        k2\t1
-                        """);
-    }
-
     // Creates the view v of the SELECT, whose PIVOT IN sub-query reads the table, with each statement that creates a
     // view, and asserts that the statement runs the sub-query once, that the view records the metadata of the SELECT
     // as a query of its own, before and after the view compile that follows, and that the view returns the rows,
@@ -769,61 +810,6 @@ public class CreateDropViewTest extends AbstractViewTest {
                     assertViewState("v");
                 }
                 execute("DROP VIEW v");
-            }
-        }
-    }
-
-    // Adds a column to x as the plan of the SELECT of CREATE VIEW opens, the first changeLimit times, as an ALTER TABLE
-    // between the compile of the plan and its open would.
-    private static final class AlteringSecurityContext extends OpeningSecurityContext {
-        private final int changeLimit;
-        private int changeCount;
-
-        private AlteringSecurityContext(int changeLimit) {
-            this.changeLimit = changeLimit;
-        }
-
-        @Override
-        void onOpen(ViewDefinition viewDefinition) {
-            if (changeCount < changeLimit) {
-                changeCount++;
-                try {
-                    execute("ALTER TABLE x ADD COLUMN extra" + changeCount + " INT");
-                } catch (SqlException e) {
-                    throw new AssertionError(e);
-                }
-            }
-        }
-    }
-
-    // Grants everything, and runs onOpen() as the plan of the SELECT of CREATE VIEW checks SELECT on a view as it
-    // opens. CREATE VIEW opens the plan as a metadata probe, which its compiles of the SELECT are not, see contextOf().
-    private static abstract class OpeningSecurityContext extends AllowAllSecurityContext {
-        private SqlExecutionContext executionContext;
-
-        @Override
-        public void authorizeSelect(ViewDefinition viewDefinition) {
-            if (executionContext.isMetadataProbe()) {
-                onOpen(viewDefinition);
-            }
-        }
-
-        abstract void onOpen(ViewDefinition viewDefinition);
-    }
-
-    // Denies SELECT on the view of the name as the plan of the SELECT of CREATE VIEW opens, after the compile of the
-    // SELECT checked it, as a REVOKE between the compile and the open would.
-    private static final class RevokingSecurityContext extends OpeningSecurityContext {
-        private final String viewName;
-
-        private RevokingSecurityContext(String viewName) {
-            this.viewName = viewName;
-        }
-
-        @Override
-        void onOpen(ViewDefinition viewDefinition) {
-            if (viewDefinition.getViewToken().getTableName().equals(viewName)) {
-                throw CairoException.authorization().put("permission denied [view=").put(viewName).put(']');
             }
         }
     }

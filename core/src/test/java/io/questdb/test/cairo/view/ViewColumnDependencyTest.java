@@ -3176,29 +3176,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         throw new AssertionError("the statement did not fail: " + sql);
     }
 
-    private static String dependenciesOf(String viewName) {
-        final ViewDefinition viewDefinition = getViewDefinition(viewName);
-        Assert.assertNotNull(viewDefinition);
-        return dependenciesOf(viewDefinition.getDependencies());
-    }
-
-    private static String dependenciesOf(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
-        final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
-        final ObjList<CharSequence> tableNames = dependencies.keys();
-        for (int i = 0, n = tableNames.size(); i < n; i++) {
-            final LowerCaseCharSequenceHashSet columnNames = dependencies.get(tableNames.getQuick(i));
-            final TreeSet<String> columns = new TreeSet<>();
-            for (int j = 0, m = columnNames.getKeyCount(); j < m; j++) {
-                final CharSequence columnName = columnNames.getKey(j);
-                if (columnName != null) {
-                    columns.add(columnName.toString());
-                }
-            }
-            sorted.put(tableNames.getQuick(i).toString(), columns);
-        }
-        return sorted.toString();
-    }
-
     // Runs the statement and returns the position and the message of the error it fails with.
     private static String failureOf(String sql, SqlExecutionContext context) {
         try {

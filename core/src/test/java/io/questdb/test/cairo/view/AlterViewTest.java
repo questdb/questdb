@@ -144,8 +144,8 @@ public class AlterViewTest extends AbstractViewTest {
     @Test
     public void testAlterViewReadsNoRowOfTheBody() throws Exception {
         // A read of the view keeps the ORDER BY of the sub-query under the aggregate, and the sort holds every row of
-        // x, more than the sort memory allows. ALTER VIEW and CREATE OR REPLACE VIEW open the plan of the body, as
-        // CREATE VIEW does, and read no row of it, so they record the body, which a read then runs out of memory for.
+        // x, more than the sort memory allows. ALTER VIEW and CREATE OR REPLACE VIEW, like CREATE VIEW, open no cursor
+        // of the plan of the body, so they record the body, which a read then runs out of memory for.
         setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 16_384);
         setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 16_384);
         assertMemoryLeak(() -> {

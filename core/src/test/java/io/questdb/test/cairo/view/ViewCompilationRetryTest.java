@@ -218,7 +218,7 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
             }
             final RacingSecurityContext securityContext = new RacingSecurityContext(isCursorOpen, true, 1);
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, null, null, -1, null)) {
-                // A nested metadata probe must survive both the failed open and its retry.
+                // A nested metadata probe must survive both the failed attempt and its retry.
                 context.setMetadataProbe(isCursorOpen);
                 final long queryErrors = queryErrorCount();
                 execute(statement + " v AS (" + VIEW_SQL + ")", context);

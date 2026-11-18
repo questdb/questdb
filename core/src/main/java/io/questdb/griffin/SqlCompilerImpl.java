@@ -1403,22 +1403,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return ColumnType.isTimestamp(to) && ColumnType.isConvertibleFrom(from, to);
     }
 
-    // Opens the cursor of the plan of a view's SELECT and closes it, reading no row: the open authorizes the
-    // principal's reads of what the plan scans. Nobody is handed a row, so the open is flagged as a metadata probe,
-    // which an audited view in the SELECT does not record as a read. The flag covers the open only, and comes back
-    // as it was, since any execution context may set it.
-    private static void openViewPlan(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
-        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-        executionContext.setMetadataProbe(true);
-        final RecordCursor cursor;
-        try {
-            cursor = factory.getCursor(executionContext);
-        } finally {
-            executionContext.setMetadataProbe(wasMetadataProbe);
-        }
-        Misc.free(cursor);
-    }
-
     /**
      * Copies the reason out of {@code e} so it survives being wrapped in a new {@link SqlException}.
      * <p>
@@ -2767,12 +2751,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         .put(']');
                             }
                         }
-                        // Open the plan, as executeCreateView() does, which authorizes the principal's reads of what
-                        // it scans, and read no row of it: the plan keeps the ORDER BY of a sub-query that a reader's
-                        // SELECT inherits, see optimiseViewQuery(), and its first row would sort every row of such a
-                        // sub-query. Nobody is handed a row, so the open is flagged like the probe in
-                        // executeCreateView: an audited view in the new body must not record a read.
-                        openViewPlan(factory, executionContext);
+                        verifyViews(queryModel.getReferencedViews());
                     }
 
                     if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
@@ -6560,7 +6539,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // the plan of the SELECT as a query of its own, whose metadata the view records when newFactory
                     // keeps an order a reader requires, see compileViewMetadataFactory()
                     RecordCursorFactory metadataFactory = null;
-                    RecordCursor newCursor;
                     long expiryPolicyVersion;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
@@ -6576,21 +6554,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         executionContext
                                 );
                             }
-                            // This cursor exists to report column types, not to hand anyone rows.
-                            // Flag it so that an audited view in the SELECT does not record a read.
-                            // The flag covers the cursor open only: the compile above runs with it
-                            // clear, so whatever consumes it has to emit at open, not at generate.
-                            // Restored rather than cleared - any execution context may set this, so
-                            // an outer probe has to survive an inner one.
-                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                            executionContext.setMetadataProbe(true);
-                            try {
-                                newCursor = newFactory.getCursor(executionContext);
-                            } finally {
-                                executionContext.setMetadataProbe(wasMetadataProbe);
-                            }
+                            verifyViews(viewCompileRecord.getViews());
                             if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
-                                Misc.free(newCursor);
                                 newFactory = Misc.free(newFactory);
                                 if (retryCount >= maxRecompileAttempts) {
                                     throw SqlException.position(0).put("too many row-expiry policy changes during view compilation");
@@ -6642,7 +6607,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
                         }
                     } finally {
-                        Misc.free(newCursor);
                         Misc.free(newFactory);
                         Misc.free(metadataFactory);
                     }
@@ -7303,9 +7267,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             isViewPlanOrderedForReader = optimiser.hasTopLevelOrderChangedPlan();
             final boolean isOrderByCleared = optimiser.isOrderByCleared();
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
-            // The view lends its readers the columns its plan reads that no view it reads lends. Opening the plan
-            // checks the principal's permission on what it scans, but a plan that folds to an empty table, as by a
-            // filter an OVERRIDABLE variable makes false by default, scans nothing as it opens.
+            // The view lends its readers the columns its plan reads that no view it reads lends. The view statements
+            // open no cursor of the plan, see verifyViews(), so this checks the principal's permission on what the plan
+            // scans, also when the plan folds to an empty table, as by a filter an OVERRIDABLE variable makes false
+            // by default, which a read that overrides the variable does not.
             viewWildcardSources.authorizeOwnReads(executionContext.getSecurityContext());
             final boolean isReadPlannedOtherwise = viewWildcardSources.hasReadPlannedOtherwise();
             final boolean isReadFilteredOtherwise = viewWildcardSources.hasReadFilteredOtherwise();
@@ -7553,9 +7518,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     final IQueryModel queryModel = executionModel.getQueryModel();
                     engine.getViewGraph().validateNoCycle(viewToken, queryModel);
                     // A table out of date makes the loop compile the SELECT again, the dependencies included.
-                    try (RecordCursorFactory factory = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
-                        // like ALTER VIEW, open the plan and read no row of it, see alterViewExecution()
-                        openViewPlan(factory, executionContext);
+                    try (RecordCursorFactory ignored = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
+                        verifyViews(queryModel.getReferencedViews());
                     }
                     if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                         engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
@@ -7649,6 +7613,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
         }
         model.setQueryModel(queryModel);
+    }
+
+    // Finds out of date a view the SELECT of a view statement expanded that has changed since, as the plan of the
+    // SELECT finds it as it opens, see StaleViewCheckFactory, so the statement compiles the SELECT again, the
+    // dependencies of the view included. The view statements open no cursor of the plan, whose open would do work in
+    // proportion to the data, such as running the sub-query of an IN filter or ranking the values of a symbol it sorts
+    // by. The compile of the SELECT has checked the principal's reads of what the plan scans by name, see
+    // SqlUtil.ViewWildcardSources.authorizeOwnReads(). A source that checks the reader as its cursor opens, such as an
+    // admin-only function, checks every reader of the view.
+    private void verifyViews(ObjList<ViewDefinition> views) {
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final ViewDefinition view = views.getQuick(i);
+            engine.verifyViewToken(view.getViewToken(), view.getSeqTxn());
+        }
     }
 
     // A view the principal may not see fails exactly like a missing one, see tableExistsOrFail().
