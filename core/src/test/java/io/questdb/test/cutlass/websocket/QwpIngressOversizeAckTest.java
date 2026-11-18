@@ -78,14 +78,17 @@ public class QwpIngressOversizeAckTest extends AbstractQwpBootstrapTest {
                     PropertyKey.CAIRO_COMMIT_MODE.getEnvVarName(), "adaptive"
             )) {
                 final ObjList<String> tables = tablesForOkAckFrame(3 * SEND_BUFFER_SIZE, 100);
+                final CursorWebSocketSendLoop loop;
                 try (QwpWebSocketSender sender = (QwpWebSocketSender) Sender.fromConfig("ws::addr=localhost:"
                         + serverMain.getHttpServerPort() + ";request_durable_ack=local;close_flush_timeout_millis=30000;")) {
                     final long fsn = publishOneFrame(sender, tables);
                     assertAcked(sender, fsn);
-                    final CursorWebSocketSendLoop loop = sender.cursorSendLoopForTest();
-                    Assert.assertTrue("the local durable ack must trim the frame", loop.getTotalLocalDurableAcks() > 0);
-                    Assert.assertTrue(loop.getTotalDurableTrimAdvances() > 0);
+                    loop = sender.cursorSendLoopForTest();
                 }
+                // The I/O thread counts the trim only after it publishes the ack that ends the wait above;
+                // close() waits for that thread to stop, so the counters are final here.
+                Assert.assertTrue("the client must receive the local durable ack", loop.getTotalLocalDurableAcks() > 0);
+                Assert.assertTrue("the local durable ack must trim the frame", loop.getTotalDurableTrimAdvances() > 0);
                 assertOneRowEach(serverMain, tables);
             }
         });
