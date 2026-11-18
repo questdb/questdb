@@ -53,7 +53,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.zip.CRC32;
 
 public class Mig941Test extends AbstractCairoTest {
 
@@ -540,6 +544,40 @@ public class Mig941Test extends AbstractCairoTest {
                 } finally {
                     ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_DEFAULT);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testMigrateKeepsCurrentPmStamp() throws Exception {
+        // The Delta switch stamps a seqTxn into _pm only, which data.parquet does not hold. A rerun
+        // keeps a _pm that resolves a footer for the parquet size, and its stamp with it.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
+            execute("INSERT INTO t VALUES(2, '2024-06-11T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts > 0");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final TableToken token = engine.verifyTableName("t");
+            long partitionTs;
+            long partitionNameTxn;
+            long parquetFileSize;
+            try (TableReader reader = engine.getReader(token)) {
+                partitionTs = reader.getTxFile().getPartitionTimestampByIndex(0);
+                partitionNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                parquetFileSize = reader.getTxFile().getPartitionParquetFileSize(0);
+            }
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForParquetPartitionMetadata(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, partitionNameTxn);
+                stampSeqTxn(path, 777);
+                Assert.assertEquals(777, resolvedSeqTxn(ff, path, parquetFileSize));
+
+                runMig941(token);
+                Assert.assertEquals("the _pm stamp must survive the migration", 777, resolvedSeqTxn(ff, path, parquetFileSize));
             }
         });
     }
@@ -1105,10 +1143,8 @@ public class Mig941Test extends AbstractCairoTest {
 
     @Test
     public void testMigrateRegeneratesEquivalentPm() throws Exception {
-        // Mig941 carries no staleness check: it regenerates every parquet partition's
-        // _pm unconditionally. This pins that the regeneration is idempotent -- it
-        // reproduces the write-path _pm (same size) and a second run leaves the file
-        // unchanged -- so re-running the migration never damages a healthy _pm.
+        // Re-running the migration never damages a healthy _pm: it keeps the write-path
+        // _pm (same size), and a second run leaves the file unchanged.
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES(1, '2024-06-10T00:00:00.000000Z')");
@@ -1134,8 +1170,7 @@ public class Mig941Test extends AbstractCairoTest {
                 Assert.assertTrue("_pm should exist", writePathPmSize > 0);
             }
 
-            // First migration run regenerates the _pm to a file equivalent to the
-            // write-path output.
+            // The first migration run keeps the write-path _pm.
             runMig941(token);
             long firstRunSize;
             try (Path path = new Path()) {
@@ -1145,8 +1180,7 @@ public class Mig941Test extends AbstractCairoTest {
                 Assert.assertEquals("regenerated _pm should match the write-path _pm size", writePathPmSize, firstRunSize);
             }
 
-            // Second run is idempotent: regenerating an unchanged partition yields
-            // the same _pm.
+            // The second run is idempotent.
             runMig941(token);
             try (Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
@@ -1643,6 +1677,34 @@ public class Mig941Test extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static long resolvedSeqTxn(FilesFacade ff, Path path, long parquetFileSize) {
+        final ParquetMetaFileReader reader = new ParquetMetaFileReader();
+        final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), reader);
+        Assert.assertNotEquals("_pm must open", 0, addr);
+        final long size = reader.getFileSize();
+        try {
+            Assert.assertTrue("_pm must resolve a footer", reader.resolveFooter(parquetFileSize));
+            return reader.getResolvedSeqTxn();
+        } finally {
+            reader.clear();
+            ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        }
+    }
+
+    // Rewrites the seqTxn of the last _pm footer in place and recomputes its CRC. The footer must hold a
+    // seqTxn and no scratchpad, so the seqTxn sits just before the CRC and the length trailer.
+    private static void stampSeqTxn(Path path, long seqTxn) throws Exception {
+        final var file = Paths.get(path.toString());
+        final ByteBuffer bytes = ByteBuffer.wrap(Files.readAllBytes(file)).order(ByteOrder.LITTLE_ENDIAN);
+        final int committedSize = (int) bytes.getLong(ParquetMetaFileReader.HEADER_PARQUET_META_FILE_SIZE_OFF);
+        final int crcOffset = committedSize - 2 * Integer.BYTES;
+        bytes.putLong(crcOffset - Long.BYTES, seqTxn);
+        final CRC32 crc = new CRC32();
+        crc.update(bytes.array(), Long.BYTES, crcOffset - Long.BYTES);
+        bytes.putInt(crcOffset, (int) crc.getValue());
+        Files.write(file, bytes.array());
     }
 
     private void runMig941(TableToken token) {

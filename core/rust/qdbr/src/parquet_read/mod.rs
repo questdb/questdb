@@ -14,7 +14,7 @@ pub mod slicer;
 #[cfg(test)]
 mod top_rows_tests;
 
-pub use row_groups::{ParquetDecoder, RowGroupBuffers};
+pub use row_groups::{ExternalColumnView, ParquetDecoder, RowGroupBuffers};
 
 #[repr(C)]
 pub struct DecodeContext {

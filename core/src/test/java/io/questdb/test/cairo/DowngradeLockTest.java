@@ -480,19 +480,25 @@ public class DowngradeLockTest extends AbstractCairoTest {
 
     @Test
     public void testStorageVersionMarkers() {
-        Assert.assertEquals(ColumnType.VERSION, ColumnType.storageVersion(false, false));
-        Assert.assertEquals(ColumnType.COMPOSITE_STORAGE_VERSION, ColumnType.storageVersion(true, false));
-        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, ColumnType.storageVersion(false, true));
-        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, ColumnType.storageVersion(true, true));
-        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION);
+        Assert.assertEquals(ColumnType.VERSION, ColumnType.storageVersion(false, false, false));
+        Assert.assertEquals(ColumnType.COMPOSITE_STORAGE_VERSION, ColumnType.storageVersion(true, false, false));
+        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, ColumnType.storageVersion(false, false, true));
+        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, ColumnType.storageVersion(true, false, true));
+        Assert.assertEquals(ColumnType.DELTA_STORAGE_VERSION, ColumnType.storageVersion(false, true, false));
+        Assert.assertEquals(ColumnType.DELTA_STORAGE_VERSION, ColumnType.storageVersion(true, true, false));
+        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION, ColumnType.storageVersion(false, true, true));
+        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION, ColumnType.storageVersion(true, true, true));
+        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION);
         for (int v = ColumnType.VERSION; v <= ColumnType.MAX_STORAGE_VERSION; v++) {
             final boolean composite = ColumnType.isCompositeStorageVersion(v);
+            final boolean delta = ColumnType.isDeltaStorageVersion(v);
             final boolean locked = ColumnType.isDowngradeLockedStorageVersion(v);
             if (v == ColumnType.VERSION || v > ColumnType.MIGRATION_VERSION - 1) {
-                Assert.assertEquals(v, ColumnType.storageVersion(composite, locked));
+                Assert.assertEquals(v, ColumnType.storageVersion(composite, delta, locked));
             } else {
-                // Migration-step numbers in between carry neither marker.
+                // Migration-step numbers in between carry no marker.
                 Assert.assertFalse(composite);
+                Assert.assertFalse(delta);
                 Assert.assertFalse(locked);
             }
         }
