@@ -1063,6 +1063,40 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPeriodRefreshTrimmingIncompletePeriodSkipsGapPastWorkingIntervals() throws Exception {
+        // A period view has refreshed its periods up to 2024-01-04, over a base without a partition of 2024-01-02. A
+        // late row into 2024-01-01 and a row of the incomplete period of 2024-01-04 queue two cached intervals, which the
+        // cost model keeps apart. The incremental refresh trims the second one away with the incomplete period, and
+        // clips up to the end of the last complete period, past the gap of 2024-01-02, which no working interval spans
+        // any more. The gap check leaves that gap alone, and the refresh recomputes only the late row's bucket.
+        assertMemoryLeak(() -> {
+            createPeriodTimerView();
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T01:00:00.000000Z");
+            execute("INSERT INTO base VALUES ('c', 3.0, '2024-01-03T00:10:00.000000Z')");
+            drainWalQueue();
+            runIncrementalRefresh("2024-01-04T12:00:00");
+            assertRefreshPosition(2, "2024-01-04T00:00:00");
+            assertBasePartitions("2024-01-01\n2024-01-03\n");
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-04T12:10:00.000000Z");
+            execute("INSERT INTO base VALUES ('a', 11.0, '2024-01-01T00:20:00.000000Z')");
+            execute("INSERT INTO base VALUES ('d', 4.0, '2024-01-04T10:10:00.000000Z')");
+            drainWalQueue();
+            disableIntervalClustering();
+            runIncrementalRefresh("2024-01-04T12:30:00");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t11.0
+                    2024-01-01T05:00:00.000000Z\tb\t2.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertRefreshPosition(4, "2024-01-04T00:00:00");
+            assertViewCaughtUp("price_1h");
+            assertViewValid();
+        });
+    }
+
+    @Test
     public void testPeriodViewBehindBaseTtlKeepsRows() throws Exception {
         // A period view's last refreshed period falls behind the base's TTL: the view refreshed its
         // periods up to 2024-01-01, a user RANGE wrote 2024-01-01 and 2024-01-02 ahead of them, and
@@ -2066,6 +2100,22 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
 
     private static String isoMicros(LocalDateTime utc) {
         return utc.format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")) + ".000000Z";
+    }
+
+    // Drives the commit-gap cost model of price_1h to a zero threshold, so that its next incremental refresh keeps
+    // each cached interval as a cluster of its own.
+    private static void disableIntervalClustering() {
+        final MatViewState state = getViewState();
+        Assert.assertTrue(state.tryLock());
+        try {
+            for (int i = 0; i < 128; i++) {
+                state.recordCommitNanos(1);
+                state.recordScanMetrics(Long.MAX_VALUE / 8, 1);
+            }
+            Assert.assertEquals(0, state.getCommitGapThresholdTsUnits());
+        } finally {
+            state.unlock();
+        }
     }
 
     private static MatViewState getViewState() {
