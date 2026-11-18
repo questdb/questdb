@@ -30,11 +30,9 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.LogCapture;
@@ -68,9 +66,6 @@ import static io.questdb.cairo.lv.LiveViewRefreshStats.BASE_METADATA_DRIFT_RECOM
  */
 public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
     private static final String DEDUP_CLAUSE = "DEDUP UPSERT KEYS(created_at, account_id)";
-    // Long enough for a thread to start and reach its first statement on a loaded CI host; only a broken
-    // drop ever waits it out.
-    private static final long DROP_TRIP_WAIT_NANOS = 60_000_000_000L;
     // VIEW_SQL and RECOMPUTE_SQL with a filter no row of the fixture passes: every amount is positive.
     private static final String EMPTY_RECOMPUTE_SQL = """
             (
@@ -680,29 +675,6 @@ public class LiveViewRecoveryCancellationTest extends AbstractLiveViewTxTest {
         Assert.assertEquals("a cancellation must not count toward the flush-retry budget", 0, instance.getFlushRetryCount());
         Assert.assertEquals("a cancellation must not start a flush-retry streak", Numbers.LONG_NULL, instance.getFlushRetryStartUs());
         Assert.assertEquals("a cancellation must not arm the refresh-retry back-off", Numbers.LONG_NULL, instance.getRefreshRetryNotBeforeUs());
-    }
-
-    // Starts DROP LIVE VIEW lv on a thread of its own and waits until the drop has tripped the view's
-    // refresh breaker, which it does before it waits for the turn in flight to release the refresh latch.
-    private static Thread startDropAndAwaitTheTrip(LiveViewInstance instance, AtomicReference<Throwable> dropError) {
-        final Thread dropper = new Thread(() -> {
-            try {
-                engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
-            } catch (Throwable th) {
-                dropError.set(th);
-            } finally {
-                clearWorkerThreadLocals();
-            }
-        }, "lv-dropper");
-        dropper.start();
-        final long deadlineNanos = System.nanoTime() + DROP_TRIP_WAIT_NANOS;
-        while (!instance.getRefreshCancelledFlag().get()) {
-            if (System.nanoTime() > deadlineNanos) {
-                throw new AssertionError("the drop never tripped the refresh breaker");
-            }
-            Os.pause();
-        }
-        return dropper;
     }
 
     private static boolean timelineExists(LiveViewInstance instance) {

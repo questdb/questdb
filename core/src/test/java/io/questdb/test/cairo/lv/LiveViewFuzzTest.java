@@ -550,6 +550,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     private int markerLiveInsideThePauseOwedSealEpisodes;
     private int restoredAfterThePauseOwedSealEpisodes;
     private int restoredAfterThePauseResumedOwedSealEpisodes;
+    // Runs of testFuzzBaseDdlInvalidation whose invalid view a second invalidating operation reached:
+    // see invalidateBaseAgain.
+    private int secondBaseInvalidations;
     // Set while testFuzzDedup or testFuzzReplaceRange runs: every other owed-seal episode of its
     // batch, from the first, counted rather than drawn, so a pinned-seed batch of another test
     // draws what it drew before, ends on a second late row whose replacement commit fails inside
@@ -708,7 +711,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // specific invalidation reason, that the view's materialized output
         // stays queryable and byte-identical to the pre-invalidation snapshot,
         // and (where the base still exists) that further base ingestion never
-        // reaches the invalid view.
+        // reaches the invalid view. A second invalidating operation then
+        // reaches the invalid view, which keeps the first one's reason, in
+        // memory and across a restart.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
         assertMemoryLeak(() -> {
@@ -716,6 +721,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 runBaseDdlInvalidationFuzz(rnd, op, 40 + rnd.nextInt(80));
             }
         });
+        Assert.assertEquals("every run must invalidate its view a second time", 5, secondBaseInvalidations);
     }
 
     @Test
@@ -1723,6 +1729,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             Assert.assertTrue("the checkpoint timeline must exist on disk: " + timelinePath,
                     configuration.getFilesFacade().exists(timelinePath.$()));
         }
+    }
+
+    private static void assertFirstReasonStands(int op, String firstReason, String secondReason, CharSequence actual) {
+        Assert.assertTrue(
+                "the first invalidation's reason must stand [op=" + op + ", second=" + secondReason + ", actual=" + actual + ']',
+                Chars.contains(actual, firstReason) && !Chars.contains(actual, secondReason)
+        );
     }
 
     // Asserts the lead-ordering invariant on a view's published slot: no un-flushed
@@ -5616,7 +5629,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // invalidating base-DDL op and asserts the transition end to end: the view
     // flips INVALID with the operation-specific reason, its materialized output
     // stays queryable and byte-identical to the snapshot, and further base
-    // ingestion (where the base still exists) never reaches it.
+    // ingestion (where the base still exists) never reaches it. A second
+    // invalidating op (invalidateBaseAgain) then reaches the invalid view, which
+    // keeps the first op's reason, in memory and across a restart.
     // op: 0 = DROP referenced column, 1 = RENAME referenced column,
     // 2 = retype referenced column, 3 = RENAME TABLE base, 4 = DROP TABLE base.
     private void runBaseDdlInvalidationFuzz(Rnd rnd, int op, int rowCount) throws Exception {
@@ -5649,6 +5664,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS base2");
+        execute("DROP TABLE IF EXISTS base3");
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         LOG.info().$("LV base-DDL invalidation fuzz: op=").$(op).$(", variant=").$(variant)
@@ -5672,6 +5688,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         final StringSink sink = new StringSink();
         final StringSink snapshot = new StringSink();
+        final String expectedReason;
+        final String secondReason;
         LiveViewRefreshJob job = null;
         try {
             execute(createSql);
@@ -5687,7 +5705,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
             printSql("(lv) ORDER BY 1", snapshot);
 
-            final String expectedReason;
             switch (op) {
                 case 0 -> {
                     execute("ALTER TABLE base DROP COLUMN " + column);
@@ -5741,13 +5758,67 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 printSql("(lv) ORDER BY 1", sink);
                 TestUtils.assertEquals("post-invalidation ingestion must not reach the view", snapshot, sink);
             }
+
+            secondReason = invalidateBaseAgain(rnd, op);
+            drainWalQueue();
+            Assert.assertTrue(instance.isInvalid());
+            assertFirstReasonStands(op, expectedReason, secondReason, instance.getInvalidationReason());
+            secondBaseInvalidations++;
         } finally {
             Misc.free(job);
         }
 
+        // A restart loads the first reason from the view's state file.
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.buildViewGraphs();
+        sink.clear();
+        printSql("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'", sink);
+        TestUtils.assertContains(sink, "invalid\t");
+        assertFirstReasonStands(op, expectedReason, secondReason, sink);
+
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE IF EXISTS base");
         execute("DROP TABLE IF EXISTS base2");
+        execute("DROP TABLE IF EXISTS base3");
+    }
+
+    // A second invalidating operation, which reaches the view runBaseDdlInvalidationFuzz invalidated through
+    // the view's base name: on the base itself after a column op, and after op 3, which renamed the base, or
+    // op 4, which dropped it, on a namesake table created under that name. Returns the operation's reason.
+    private String invalidateBaseAgain(Rnd rnd, int op) throws SqlException {
+        if (op <= 2) {
+            if (rnd.nextBoolean()) {
+                execute("RENAME TABLE base TO base2");
+                return "base table rename";
+            }
+            execute("DROP TABLE base");
+            return "base table drop";
+        }
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        if (op == 3) {
+            execute("DROP TABLE base");
+            return "base table drop";
+        }
+        return switch (rnd.nextInt(3)) {
+            case 0 -> {
+                execute("RENAME TABLE base TO base3");
+                yield "base table rename";
+            }
+            case 1 -> {
+                execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-01T00:00:00.000000Z', 'AA', 1)");
+                drainWalQueue();
+                execute("UPDATE base SET i = 2");
+                yield "update operation";
+            }
+            // Every projection reads sym.
+            default -> {
+                execute("ALTER TABLE base DROP COLUMN sym");
+                yield "drop column operation [column=sym]";
+            }
+        };
     }
 
     // Freeze-and-continue fuzz where base-table TTL is the removal trigger (see

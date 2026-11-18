@@ -3228,6 +3228,9 @@ public class CairoEngine implements Closeable, WriterSource {
      * instance — notably the refresh worker on flush retry budget exhaustion.
      * Mirrors the lock + persist pattern
      * of {@link #invalidateLiveViewsForBaseTable0}.
+     * <p>
+     * An invalidation never replaces another: the view keeps the first one's reason and
+     * time, and a view a DROP has marked dropped is left to the drop.
      */
     public void invalidateLiveView(LiveViewInstance instance, String reason) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
@@ -3236,7 +3239,19 @@ public class CairoEngine implements Closeable, WriterSource {
             // the snapshot reflects the pre-invalidation state and the agent's
             // _lv.s copy is not raced by this rewrite.
             instance.waitForUnfrozen();
+            // DROP LIVE VIEW marks the view dropped under this monitor before it tears the view's
+            // files down, so a view found dropped here is the drop's: write nothing over its teardown.
+            if (instance.isDropped()) {
+                return;
+            }
             final LiveViewStateReader reader = instance.getStateReader();
+            // The first invalidation stands. Callers decide while the view is still valid and get here
+            // later, off the refresh latch, so another invalidation can have landed in between: keep its
+            // reason and time, in memory and in _lv.s. The rewrite still runs, so the view is durably
+            // invalid even when the first one's write failed.
+            final boolean isInvalid = reader.isInvalid();
+            final CharSequence persistedReason = isInvalid ? reader.getInvalidationReason() : reason;
+            final long persistedTimestampUs = isInvalid ? reader.getInvalidationTimestampUs() : invalidationTimestampUs;
             // Persist _lv.s BEFORE flipping the in-memory invalid bit. WalPurgeJob releases this
             // view's base-WAL purge floor as soon as it observes the in-memory bit (an unsynchronized
             // read), so writing the durable state first closes the window where a concurrent purge
@@ -3246,10 +3261,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // On persist failure the view still flips invalid in-memory: invalidation is a terminal
             // circuit-breaker that must stop the refresh worker even when _lv.s is unwritable (a broken
             // disk is exactly what exhausts the flush-retry budget driving this call). A view
-            // invalidated in-memory only loads valid on restart and resumes. Both callers' causes are
-            // re-checked there: the ahead-of-base guard runs on every scan, and a fault that persists
-            // exhausts the flush-retry budget again. A fault that has cleared lets the view refresh on
-            // from its durable state, which is consistent.
+            // invalidated in-memory only loads valid on restart and resumes, unless a later
+            // invalidation rewrites _lv.s with its reason. Both callers' causes are re-checked there:
+            // the ahead-of-base guard runs on every scan, and a fault that persists exhausts the
+            // flush-retry budget again. A fault that has cleared lets the view refresh on from its
+            // durable state, which is consistent.
             try (
                     BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                     Path path = new Path()
@@ -3258,8 +3274,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 blockFileWriter.of(path.$());
                 LiveViewState.append(
                         true,
-                        reason,
-                        invalidationTimestampUs,
+                        persistedReason,
+                        persistedTimestampUs,
                         reader.getSubscribeFromSeqTxn(),
                         reader.getLastProcessedSeqTxn(),
                         reader.getAppliedWatermark(),
@@ -3270,12 +3286,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 );
             } catch (Throwable t) {
                 LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                        .$(", reason=").$safe(reason)
+                        .$(", reason=").$safe(persistedReason)
                         .$(", error=").$(t).I$();
             }
             // Publish the in-memory flip after the persist attempt: on the happy path the durable
             // state already leads it; if the persist failed the terminal circuit-breaker still fires.
-            instance.markInvalid(reason, invalidationTimestampUs);
+            if (!isInvalid) {
+                instance.markInvalid(reason, invalidationTimestampUs);
+            }
         }
         // Free refresh-worker-internal runtime state now that the view is
         // INVALID. Best-effort: if a refresh cycle is in flight the latch CAS
@@ -3293,7 +3311,8 @@ public class CairoEngine implements Closeable, WriterSource {
      * For each affected view the persisted {@code invalidation_reason} appends the
      * offending dependency column name (e.g. {@code drop column operation
      * [column=value]}), so an operator can tell from {@code live_views()} exactly
-     * which dependency broke without cross-reading the view's SELECT.
+     * which dependency broke without cross-reading the view's SELECT, unless the view
+     * is already invalid, which keeps its first reason.
      */
     public void invalidateLiveViewsForBaseSchemaChange(
             TableToken baseTableToken,
@@ -4976,23 +4995,33 @@ public class CairoEngine implements Closeable, WriterSource {
                     // state and the agent's _lv.s copy is not raced by this
                     // rewrite.
                     instance.waitForUnfrozen();
+                    // As in invalidateLiveView: a view a DROP has marked dropped is the drop's, so
+                    // write nothing over its teardown, and the first invalidation's reason and time
+                    // stand, in memory and in _lv.s, which is still rewritten.
+                    if (instance.isDropped()) {
+                        continue;
+                    }
                     final LiveViewStateReader reader = instance.getStateReader();
+                    final boolean isInvalid = reader.isInvalid();
+                    final CharSequence persistedReason = isInvalid ? reader.getInvalidationReason() : viewReason;
+                    final long persistedTimestampUs = isInvalid ? reader.getInvalidationTimestampUs() : invalidationTimestampUs;
                     // Persist _lv.s before flipping the in-memory invalid bit, matching
                     // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
                     // writing the durable state first keeps a concurrent purge from releasing the
                     // floor while _lv.s still records the view as valid. On persist failure the view
                     // still flips invalid in-memory (best-effort, terminal), but a restart loads it
-                    // valid. Only a cause the restart can see again re-derives the invalidation:
-                    // buildViewGraphs synthesizes one for a dropped or renamed base, and drainBaseWal
-                    // for a mat view TRUNCATE the base already applied. A one-shot cause that the
-                    // apply job never revisits, such as an UPDATE, is lost, and the view resumes.
+                    // valid, unless a later invalidation rewrites _lv.s with its reason. Only a
+                    // cause the restart can see again re-derives the invalidation: buildViewGraphs
+                    // synthesizes one for a dropped or renamed base, and drainBaseWal for a mat
+                    // view TRUNCATE the base already applied. A one-shot cause that the apply job
+                    // never revisits, such as an UPDATE, is lost, and the view resumes.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());
                         LiveViewState.append(
                                 true,
-                                viewReason,
-                                invalidationTimestampUs,
+                                persistedReason,
+                                persistedTimestampUs,
                                 reader.getSubscribeFromSeqTxn(),
                                 reader.getLastProcessedSeqTxn(),
                                 reader.getAppliedWatermark(),
@@ -5003,10 +5032,12 @@ public class CairoEngine implements Closeable, WriterSource {
                         );
                     } catch (Throwable t) {
                         LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
-                                .$(", reason=").$safe(viewReason)
+                                .$(", reason=").$safe(persistedReason)
                                 .$(", error=").$(t).I$();
                     }
-                    instance.markInvalid(viewReason, invalidationTimestampUs);
+                    if (!isInvalid) {
+                        instance.markInvalid(viewReason, invalidationTimestampUs);
+                    }
                 }
                 // Free refresh-worker-internal runtime state now that the view
                 // is INVALID. Best-effort: a refresh cycle in flight defers the

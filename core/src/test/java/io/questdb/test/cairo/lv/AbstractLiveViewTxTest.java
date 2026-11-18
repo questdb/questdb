@@ -27,10 +27,14 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The tx table and the live view lv over it - a running sum and count per account, reset each day by
@@ -38,6 +42,9 @@ import org.junit.Assert;
  * drive, with the plain-SQL recompute they check the view against.
  */
 abstract class AbstractLiveViewTxTest extends AbstractLiveViewTest {
+    // Long enough for a thread to start and reach its first statement on a loaded CI host; only a broken
+    // drop ever waits it out.
+    static final long DROP_TRIP_WAIT_NANOS = 60_000_000_000L;
     static final String RECOMPUTE_SQL = """
             (
                 SELECT created_at, account_id,
@@ -88,6 +95,29 @@ abstract class AbstractLiveViewTxTest extends AbstractLiveViewTest {
 
     static String repairRow(int day, int hour, String account) {
         return "('2026-01-0" + day + "T0" + hour + ":00:00.000000Z', '" + account + "', 1.0)";
+    }
+
+    // Starts DROP LIVE VIEW lv on a thread of its own and waits until the drop has tripped the view's
+    // refresh breaker, which it does before it waits for the turn in flight to release the refresh latch.
+    static Thread startDropAndAwaitTheTrip(LiveViewInstance instance, AtomicReference<Throwable> dropError) {
+        final Thread dropper = new Thread(() -> {
+            try {
+                engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+            } catch (Throwable th) {
+                dropError.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-dropper");
+        dropper.start();
+        final long deadlineNanos = System.nanoTime() + DROP_TRIP_WAIT_NANOS;
+        while (!instance.getRefreshCancelledFlag().get()) {
+            if (System.nanoTime() > deadlineNanos) {
+                throw new AssertionError("the drop never tripped the refresh breaker");
+            }
+            Os.pause();
+        }
+        return dropper;
     }
 
     // What a process stop does: the registry drops its instances and every reader and writer goes back.

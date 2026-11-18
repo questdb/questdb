@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * lifted, reporting a missing file, and runs an action once, at the first such open in another, which
  * then goes ahead.
  */
-final class LiveViewBaseAmountOpenFault extends TestFilesFacadeImpl {
+class LiveViewBaseAmountOpenFault extends TestFilesFacadeImpl {
     private final AtomicReference<String> failedPartition = new AtomicReference<>();
     private final AtomicBoolean isMissingFileErrnoPending = new AtomicBoolean();
     private final AtomicReference<Runnable> openAction = new AtomicReference<>();

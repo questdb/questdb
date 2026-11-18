@@ -39,6 +39,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewRefreshTask;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.lv.WalSegmentPageFrameCursor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -553,16 +554,22 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // (sweep cursor, sealed seed boundaries, in-mem tier) mid-sweep, a path
         // the non-seed DROP-during-refresh test never reaches. Whatever the
         // interleaving, the drop must leave the registry empty and the base table
-        // intact, with no leak or crash.
+        // intact, with no leak or crash. An invalidation of the base's views races
+        // the drop too, and never writes the state file of the view the drop marked
+        // dropped.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runDropDuringSeed(rnd, 4, 700));
+        final InvalidationAfterDropCount invalidationsAfterDrop = new InvalidationAfterDropCount();
+        assertMemoryLeak(invalidationsAfterDrop, () -> runDropDuringSeed(rnd, 4, 700, invalidationsAfterDrop));
     }
 
     @Test
     public void testConcurrentDropDuringRefresh() throws Exception {
-        // DROP LIVE VIEW races a refresh-driver thread pumping the refresh job.
+        // DROP LIVE VIEW races a refresh-driver thread pumping the refresh job, and an
+        // invalidation of the base's views, which never writes the state file of the
+        // view the drop marked dropped.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runDropDuringRefresh(rnd, 4, 700));
+        final InvalidationAfterDropCount invalidationsAfterDrop = new InvalidationAfterDropCount();
+        assertMemoryLeak(invalidationsAfterDrop, () -> runDropDuringRefresh(rnd, 4, 700, invalidationsAfterDrop));
     }
 
     @Test
@@ -1951,6 +1958,48 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         return true;
     }
 
+    // Builds a thread that awaits the barrier and then invalidates the base's live views, at a point it draws:
+    // as soon as DROP LIVE VIEW marks the view dropped, or after a random number of pauses. It invalidates them
+    // through a base UPDATE, which invalidates them once a WAL apply, the refresh driver's, applies it to a row,
+    // or through the base-table writer directly. Draws its knobs from rnd and logs them, so a seed reproduces
+    // the run.
+    private Thread newBaseInvalidatorThread(
+            Rnd rnd,
+            LiveViewInstance instance,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final boolean isUpdate = rnd.nextBoolean();
+        final boolean isAtDropMark = rnd.nextBoolean();
+        final int spins = rnd.nextInt(100_000);
+        LOG.info().$("LV concurrency base invalidator: update=").$(isUpdate)
+                .$(", atDropMark=").$(isAtDropMark)
+                .$(", spins=").$(spins).$();
+        return new Thread(() -> {
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                barrier.await();
+                if (isAtDropMark) {
+                    // The main thread fires the drop right after the barrier; only a broken drop waits this out.
+                    awaitDropped(instance, 60_000);
+                } else {
+                    for (int spin = spins; spin > 0; spin--) {
+                        Os.pause();
+                    }
+                }
+                if (isUpdate) {
+                    execute("UPDATE base SET x = x + 1", context);
+                } else {
+                    engine.invalidateLiveViewsForBaseTable(baseToken, "invalidated during the drop");
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-base-invalidator");
+    }
+
     // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,
     // ... one batch per refresh tick. Each row's var-length values are derived from its
@@ -3075,8 +3124,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // sweep while writers ingest the suffix. The earliest rows are pre-committed so
     // the sweep has real history to chew through when the drop lands mid-sweep. The
     // contract is a clean teardown of the seed state (sweep cursor, rolling
-    // sealed seed boundaries, in-mem tier): registry empty, base intact, no leak.
-    private void runDropDuringSeed(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // sealed seed boundaries, in-mem tier): registry empty, base intact, no leak. A thread
+    // that invalidates the base's views races the drop as well, and no invalidation writes
+    // the state file of the view once the drop marked it dropped.
+    private void runDropDuringSeed(
+            Rnd rnd,
+            int numWriters,
+            int rowCount,
+            InvalidationAfterDropCount invalidationsAfterDrop
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -3107,6 +3163,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         drainWalQueue();
 
         execute(createSql);
+        invalidationsAfterDrop.of(engine.getLiveViewRegistry().getViewInstance("lv"));
 
         LOG.info().$("LV concurrency DROP-during-seed: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$(", preCount=").$(preCount)
@@ -3116,15 +3173,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean refreshing = new AtomicBoolean(true);
         try {
-            // numWriters writers + the refresh driver + this (main) thread, released
-            // together, so by the time the main thread fires the DROP the writers
-            // are ingesting and the driver is driving the seed sweep.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the base invalidator + this (main)
+            // thread, released together, so by the time the main thread fires the DROP the
+            // writers are ingesting and the driver is driving the seed sweep.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 3);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread invalidator = newBaseInvalidatorThread(rnd, engine.getLiveViewRegistry().getViewInstance("lv"), baseToken, barrier, errors);
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
@@ -3144,12 +3202,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 t.start();
             }
             driver.start();
+            invalidator.start();
             barrier.await();
             execute("DROP LIVE VIEW lv"); // races the in-flight seed + ingestion
 
             for (Thread t : writers) {
                 t.join();
             }
+            invalidator.join();
             refreshing.set(false);
             driver.join();
 
@@ -3163,6 +3223,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // Clean teardown: the view is gone from the registry and the base table
         // survived intact. No leak - assertMemoryLeak wraps the whole run.
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        Assert.assertEquals("an invalidation must not write over a drop", 0, invalidationsAfterDrop.getStateFileOpens());
         drainWalQueue();
         assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
 
@@ -3172,8 +3233,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // DROP LIVE VIEW races a refresh-driver thread that keeps pumping the refresh job
     // while writers ingest. The refresh job swallows per-view failures
     // (handleRefreshFailure), so a torn-down view never throws into the driver - the
-    // contract under test is a clean teardown, not a thrown error.
-    private void runDropDuringRefresh(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // contract under test is a clean teardown, not a thrown error. A thread that
+    // invalidates the base's views races the drop as well, and no invalidation writes
+    // the state file of the view once the drop marked it dropped.
+    private void runDropDuringRefresh(
+            Rnd rnd,
+            int numWriters,
+            int rowCount,
+            InvalidationAfterDropCount invalidationsAfterDrop
+    ) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -3193,6 +3261,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
 
         execute(createSql);
+        invalidationsAfterDrop.of(engine.getLiveViewRegistry().getViewInstance("lv"));
 
         LOG.info().$("LV concurrency DROP-during-refresh: writers=").$(numWriters)
                 .$(", rows=").$(rowCount).$(", n=").$(n).$(", sql=").$(viewSql).$();
@@ -3202,16 +3271,17 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean refreshing = new AtomicBoolean(true);
         try {
-            // numWriters writers + the refresh driver + this (main) thread, released
-            // together, so by the time the main thread fires the DROP the writers are
-            // ingesting and the driver is turning the refresh job - the drop lands
-            // mid-flight.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the base invalidator + this (main)
+            // thread, released together, so by the time the main thread fires the DROP the
+            // writers are ingesting and the driver is turning the refresh job - the drop
+            // lands mid-flight.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 3);
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread invalidator = newBaseInvalidatorThread(rnd, engine.getLiveViewRegistry().getViewInstance("lv"), baseToken, barrier, errors);
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
@@ -3231,12 +3301,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 t.start();
             }
             driver.start();
+            invalidator.start();
             barrier.await();
             execute("DROP LIVE VIEW lv"); // races the in-flight refresh
 
             for (Thread t : writers) {
                 t.join();
             }
+            invalidator.join();
             refreshing.set(false);
             driver.join();
 
@@ -3251,6 +3323,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // survived intact (the view drop leaves its row set untouched). No leak -
         // assertMemoryLeak wraps the whole run.
         Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+        Assert.assertEquals("an invalidation must not write over a drop", 0, invalidationsAfterDrop.getStateFileOpens());
         drainWalQueue();
         assertQuery("SELECT count(*) FROM base").noRandomAccess().expectSize().returns("count\n" + rowCount + "\n");
 
@@ -4736,6 +4809,47 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         private static boolean isFrameOf(StackWalker.StackFrame frame, Class<?> clazz, String methodName) {
             return clazz.getName().equals(frame.getClassName()) && methodName.equals(frame.getMethodName());
+        }
+    }
+
+    // Counts the opens for writing of one live view's state file that an invalidation, made by either of
+    // CairoEngine's two invalidation writers, makes once the view is marked dropped: an invalidation that
+    // writes over a DROP LIVE VIEW's teardown. A refresh turn the drop waits for may still write the file
+    // after the mark, before the drop tears anything down, so the count leaves those opens out.
+    private static final class InvalidationAfterDropCount extends TestFilesFacadeImpl {
+        private final AtomicInteger stateFileOpens = new AtomicInteger();
+        // The file name, with the view's directory and the separators ahead of it, of the watched state file.
+        private volatile String watchedFileName;
+        private volatile LiveViewInstance watchedInstance;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final String fileName = watchedFileName;
+            if (fileName != null
+                    && Utf8s.endsWithAscii(name, fileName)
+                    && watchedInstance.isDropped()
+                    && isInvalidation()) {
+                stateFileOpens.incrementAndGet();
+            }
+            return super.openRW(name, opts);
+        }
+
+        int getStateFileOpens() {
+            return stateFileOpens.get();
+        }
+
+        // Sets the instance before the name the open checks first.
+        void of(LiveViewInstance instance) {
+            watchedInstance = instance;
+            watchedFileName = Files.SEPARATOR + instance.getLiveViewToken().getDirName() + Files.SEPARATOR + LiveViewState.LIVE_VIEW_STATE_FILE_NAME;
+        }
+
+        private static boolean isInvalidation() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> CairoEngine.class.getName().equals(frame.getClassName())
+                            && ("invalidateLiveView".equals(frame.getMethodName())
+                            || "invalidateLiveViewsForBaseTable0".equals(frame.getMethodName()))
+            ));
         }
     }
 }
