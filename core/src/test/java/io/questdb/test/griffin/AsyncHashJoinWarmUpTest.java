@@ -29,8 +29,6 @@ import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.log.Log;
@@ -367,7 +365,7 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
             createTables();
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(FRAME_COUNT * FRAME_ROWS);
-            final long rows = countOrdinary(CONTINUED);
+            final long rows = ordinaryRowCount(CONTINUED, sqlExecutionContext);
             try (RecordCursorFactory factory = select(CONTINUED)) {
                 final AsyncHashJoinAtom atom = getAtom(factory);
                 // A count from the start dispatches a count-only task per frame: the first count runs
@@ -669,22 +667,6 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
         }));
     }
 
-    private static long countOrdinary(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (
-                RecordCursorFactory factory = select(sql);
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            long rows = 0;
-            while (cursor.hasNext()) {
-                rows++;
-            }
-            return rows;
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
     // The frames and chunks of the last execution that ran either stepper, every kind together.
     private static long countRuns(AsyncHashJoinAtom atom, boolean isWarm) {
         return atom.getStepperRunCount(STEPPER_RUN_TASK, isWarm)
@@ -704,25 +686,5 @@ public class AsyncHashJoinWarmUpTest extends AbstractCairoTest {
         final AsyncHashJoinRecordCursorFactory join = find(factory);
         Assert.assertNotNull(join);
         return join.getAtom();
-    }
-
-    // The ordinary plan's rows, printed as the test prints the rows that it reads off the operator's
-    // cursor under a first read.
-    private static String ordinaryRows(String sql, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
-        context.setParallelHashJoinEnabled(false);
-        try (
-                RecordCursorFactory factory = context.getCairoEngine().select(sql, context);
-                RecordCursor cursor = factory.getCursor(context)
-        ) {
-            Assert.assertNull(find(factory));
-            final StringSink rows = new StringSink();
-            while (cursor.hasNext()) {
-                CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), rows, true);
-            }
-            return rows.toString();
-        } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
-        }
     }
 }

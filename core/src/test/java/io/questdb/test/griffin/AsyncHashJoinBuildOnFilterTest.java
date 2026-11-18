@@ -590,12 +590,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                                             Frame forward scan on: d
                             """);
             // The ordinary plan prints the residual as the join's filter.
-            sqlExecutionContext.setParallelHashJoinEnabled(false);
-            try (RecordCursorFactory factory = select("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 = 0")) {
-                TestUtils.assertContains(plan(factory, sqlExecutionContext), "filter: d.w%3=0");
-            } finally {
-                sqlExecutionContext.setParallelHashJoinEnabled(true);
-            }
+            TestUtils.assertContains(ordinaryPlan("SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w % 3 = 0", sqlExecutionContext), "filter: d.w%3=0");
         });
     }
 
@@ -679,7 +674,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 assertExecution(factory, truncated, true, true, truncatedKeys);
                 execute("TRUNCATE TABLE e");
                 assertExecution(factory, truncated, true, true, truncatedKeys);
-                Assert.assertEquals(count("SELECT count() FROM t"), ordinaryRowCount(truncated));
+                Assert.assertEquals(count("SELECT count() FROM t"), ordinaryRowCount(truncated, sqlExecutionContext));
                 execute("INSERT INTO e SELECT * FROM d");
                 assertExecution(factory, truncated, true, true, truncatedKeys);
             }
@@ -835,7 +830,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 }
             });
             final String expected = ordinary(sql, sqlExecutionContext);
-            final long expectedRows = ordinaryRowCount(sql);
+            final long expectedRows = ordinaryRowCount(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -1030,6 +1025,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                 sqlExecutionContext.changePageFrameSizes(frameRows, frameRows);
                 for (long minRows : new long[]{Long.MAX_VALUE, 0}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
+                    final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
                     sqlExecutionContext.setParallelHashJoinEnabled(false);
                     try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertNull(find(factory));
@@ -1039,7 +1035,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
                             }
                         });
                     } finally {
-                        sqlExecutionContext.setParallelHashJoinEnabled(true);
+                        sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
                     }
                     try (RecordCursorFactory factory = select(sql)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -1287,7 +1283,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
             for (String residual : new String[]{"d.w > 1_000_000", "d.w = 7"}) {
                 final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND " + residual;
                 assertChainsHandedOn(sql, "SELECT count() FROM (SELECT k, count() c FROM d WHERE " + residual.replace("d.", "") + ") WHERE c > 1");
-                Assert.assertEquals(sql, probeRows, ordinaryRowCount(sql));
+                Assert.assertEquals(sql, probeRows, ordinaryRowCount(sql, sqlExecutionContext));
             }
             // A column of NULLs alone: one residual over it keeps every row, and another none.
             execute("CREATE TABLE dn AS (SELECT (x % 5)::INT k, x w, NULL::LONG n FROM long_sequence(20))");
@@ -1361,7 +1357,7 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             final RecordCursor.Counter counter = new RecordCursor.Counter();
             cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
-            Assert.assertEquals(sql, ordinaryRowCount(sql), counter.get());
+            Assert.assertEquals(sql, ordinaryRowCount(sql, sqlExecutionContext), counter.get());
         }
         final boolean isIndexed = isHandedOn && repeatedKeys != null && count(repeatedKeys) > 0;
         Assert.assertEquals(sql, passes + (isIndexed ? 1 : 0), stage.getChainLengthIndexCount());
@@ -1459,26 +1455,12 @@ public class AsyncHashJoinBuildOnFilterTest extends AbstractCairoTest {
     }
 
     private static long ordinaryCount(String sql) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(false);
         try {
             return count(sql);
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
-    // The rows of the query's ordinary plan, which runs no operator, read one by one.
-    private static long ordinaryRowCount(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertNull(sql, find(factory));
-            long count = 0;
-            while (cursor.hasNext()) {
-                count++;
-            }
-            return count;
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 }

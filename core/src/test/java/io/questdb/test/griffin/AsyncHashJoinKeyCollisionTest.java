@@ -27,16 +27,13 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -102,18 +99,13 @@ public class AsyncHashJoinKeyCollisionTest extends AbstractCairoTest {
 
     @Test
     public void testFourWorkersFramesOfOneRowBuildsInRounds() throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(4, WorkerPoolMode.LEGACY), (db, compiler, ignore) -> {
-            try (
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, 4)
-                            .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)
-            ) {
-                context.setParallelHashJoinEnabled(true);
-                context.changePageFrameSizes(1, 1);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
-                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1);
-                assertCases(db, context);
-            }
-        }, configuration, LOG));
+        assertMemoryLeak(() -> executeOnWorkers(WorkerPoolMode.LEGACY, 4, null, configuration, LOG, (db, context) -> {
+            context.setParallelHashJoinEnabled(true);
+            context.changePageFrameSizes(1, 1);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1);
+            assertCases(db, context);
+        }));
     }
 
     @Test

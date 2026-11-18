@@ -523,7 +523,7 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
                     "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN d ON t.k = d.k AND d.vch ~ 'v[1-3]' WHERE d.w IS NULL OR d.w > t.v",
                     "SELECT t.k, t.v, d.w, d.s FROM t JOIN d ON t.k = d.k WHERE t.v > 3 AND d.s <> t.sym",
             }) {
-                final String expected = printRows(sql, false);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     Assert.assertNotNull(find(factory));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -620,16 +620,6 @@ public class AsyncHashJoinPairFilterTest extends AbstractCairoTest {
     private static String planText(String sql) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             return plan(factory, sqlExecutionContext);
-        }
-    }
-
-    // The query's rows, as CursorPrinter prints them, under the operator or under the ordinary plan.
-    private static String printRows(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            return printRows(cursor, factory.getMetadata(), Integer.MAX_VALUE);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
         }
     }
 

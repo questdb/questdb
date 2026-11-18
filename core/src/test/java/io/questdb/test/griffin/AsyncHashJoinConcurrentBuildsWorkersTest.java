@@ -25,12 +25,10 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
@@ -260,7 +258,7 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
                 try (RecordCursorFactory factory = db.select(sql, context)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(sql, join);
-                    final long rowCount = ordinaryRowCount(db, context, sql);
+                    final long rowCount = ordinaryRowCount(sql, context);
                     try (RecordCursor cursor = factory.getCursor(context)) {
                         for (int i = 0; i < 1_000; i++) {
                             Assert.assertTrue(cursor.hasNext());
@@ -296,7 +294,7 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
         execute(mode, (db, context) -> {
             final String sql = "SELECT t.k, t.v, d.w FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k";
             final String expected = ordinary(sql, context);
-            final long rowCount = ordinaryRowCount(db, context, sql);
+            final long rowCount = ordinaryRowCount(sql, context);
             final Thread owner = Thread.currentThread();
             final AtomicBoolean isArmed = new AtomicBoolean();
             final AtomicBoolean isHeld = new AtomicBoolean();
@@ -368,7 +366,7 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
         execute(mode, (db, context) -> {
             final String sql = "SELECT t.k, t.v, d.w, d2.w2 FROM t JOIN d ON t.k = d.k JOIN d2 ON t.l = d2.l";
-            final long rowCount = ordinaryRowCount(db, context, sql);
+            final long rowCount = ordinaryRowCount(sql, context);
             context.setParallelHashJoinEnabled(true);
             try (RecordCursorFactory factory = db.select(sql, context)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -476,20 +474,5 @@ public class AsyncHashJoinConcurrentBuildsWorkersTest extends AbstractCairoTest 
 
     private static boolean isOnStack(String methodName) {
         return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE) && frame.getMethodName().equals(methodName)));
-    }
-
-    // The rows of the query's ordinary plan.
-    private static long ordinaryRowCount(CairoEngine db, SqlExecutionContextImpl context, String sql) throws Exception {
-        context.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = db.select(sql, context); RecordCursor cursor = factory.getCursor(context)) {
-            Assert.assertNull(find(factory));
-            long count = 0;
-            while (cursor.hasNext()) {
-                count++;
-            }
-            return count;
-        } finally {
-            context.setParallelHashJoinEnabled(true);
-        }
     }
 }

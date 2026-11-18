@@ -102,7 +102,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = SHAPES[0];
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
             try (RecordCursorFactory factory = select(sql)) {
@@ -147,7 +147,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             // walks the chain of key 2's matches.
             execute("CREATE TABLE m2 AS (SELECT CASE WHEN x < 4 THEN 2 ELSE 3 END k, x * 10 w FROM long_sequence(4))");
             final String sql = "SELECT t.v, m2.w FROM t JOIN m2 ON t.k = m2.k";
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -201,7 +201,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             final long[] firstReads = {1, 3, FRAME_ROWS, 5, 10};
             final int[] firstWindows = {1, 1, 1, 2, 3};
             for (String sql : SHAPES) {
-                final String expected = ordinaryRows(sql);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(sql, join);
@@ -249,7 +249,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                 useSteppers(isCopy);
                 try {
                     for (String star : STARS) {
-                        final String expected = ordinaryRows(star);
+                        final String expected = ordinaryRows(star, sqlExecutionContext);
                         try (RecordCursorFactory factory = select(star)) {
                             final AsyncHashJoinRecordCursorFactory join = find(factory);
                             Assert.assertNotNull(star, join);
@@ -287,7 +287,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                     "SELECT t.ts, d1.w" + join + " ORDER BY t.ts DESC",
             };
             for (String sql : marked) {
-                final String expected = ordinaryRows(sql);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
                     Assert.assertNotNull(sql, asyncJoin);
@@ -317,7 +317,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             // A join in a scalar sub-query of the WHERE clause, whose cursor the filter's function
             // opens with the query's: the client reads the rows of the outer query, not the join's.
             final String subQuery = "SELECT v FROM t WHERE v = (SELECT t2.v FROM t t2 JOIN d1 ON t2.k = d1.k WHERE d1.w > t2.v + 35)";
-            final String expectedSubQuery = ordinaryRows(subQuery);
+            final String expectedSubQuery = ordinaryRows(subQuery, sqlExecutionContext);
             try (RecordCursorFactory factory = select(subQuery)) {
                 Assert.assertNull(find(factory));
                 try (RecordCursor cursor = openUnder(factory, 1)) {
@@ -327,7 +327,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             }
             for (int i = 0; i < unmarked.length; i++) {
                 final String sql = unmarked[i];
-                final String expected = ordinaryRows(sql);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory asyncJoin = find(factory);
                     if (asyncJoin != null) {
@@ -349,7 +349,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = SHAPES[0];
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -385,7 +385,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             createTables();
             for (String sql : new String[]{STARS[2], STARS[2] + " WHERE d3.w3 > t.v"}) {
-                final String expected = ordinaryRows(sql);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(sql, join);
@@ -440,7 +440,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             // Only t's rows of key 3, the third of each frame, meet m's one row.
             execute("CREATE TABLE m AS (SELECT 3 k, 33 w FROM long_sequence(1))");
             final String sql = "SELECT t.v, m.w FROM t JOIN m ON t.k = m.k";
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -471,7 +471,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             final String sql = SHAPES[0];
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -518,15 +518,6 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             return factory.getCursor(sqlExecutionContext);
         } finally {
             sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
-        }
-    }
-
-    private static String ordinaryRows(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return printRows(factory);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
         }
     }
 

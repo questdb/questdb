@@ -180,7 +180,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(4, 4);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
-            final String expected = printRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", sqlExecutionContext);
             final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
             try {
@@ -208,7 +208,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             execute("CREATE TABLE u AS (SELECT (x % 3)::INT k, x w FROM long_sequence(3))");
             sqlExecutionContext.changePageFrameSizes(4, 4);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
-            final String expected = printRows("SELECT * FROM t LEFT JOIN u ON t.k = u.k", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN u ON t.k = u.k", sqlExecutionContext);
             final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
             try {
@@ -325,7 +325,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(4, 4);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             for (String sql : QUERIES) {
-                final String expected = printRows(sql, false);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 // A LIMIT closes the cursor inside a frame whose continuation is pending. The optimiser
                 // gives a LIMIT to the left input's filter, which the join then cannot steal.
                 if (!sql.contains("t.v > 1")) {
@@ -355,7 +355,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT (x % 3)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(12)) TIMESTAMP(ts) PARTITION BY HOUR");
             execute("CREATE TABLE d AS (SELECT (x % 3)::INT k, x w FROM long_sequence(6))");
-            final String expected = printRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", sqlExecutionContext);
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
             // The owner's residual and post-join filter go back to the top with the cursor, as the
             // serial join's filter and the filter over it do, and learn that the cursor closed, also
@@ -438,7 +438,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(4, 4);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 1);
-            final String expected = printRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k", sqlExecutionContext);
             final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine, 0);
             // An execution that must not be interrupted, as a WAL apply's, reads every row although the
             // breaker trips inside the first frame's task and before its continuation.
@@ -603,16 +603,6 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
     private static String printRows(RecordCursorFactory factory, SqlExecutionContext context) throws SqlException {
         try (RecordCursor cursor = factory.getCursor(context)) {
             return printRows(cursor, factory.getMetadata(), Integer.MAX_VALUE);
-        }
-    }
-
-    // The query's rows, as CursorPrinter prints them, under the operator or under the ordinary plan.
-    private static String printRows(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql)) {
-            return printRows(factory, sqlExecutionContext);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
         }
     }
 

@@ -1033,7 +1033,7 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
     public void testProbeFilterWhoseCursorClosedThrows() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            final String expected = printRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k WHERE t.v > 30", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k WHERE t.v > 30", sqlExecutionContext);
             // The probe filter fails as the cursor closes. The cursor goes on releasing the rest, the
             // scans' readers and the builds included, reports the failure, and opens again.
             final RecordingFilter filter = new RecordingFilter(true);
@@ -1155,7 +1155,7 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
                     "SELECT t.k, t.v, d2.w, d2.s FROM t LEFT JOIN (SELECT * FROM d WHERE w > 10) d2 ON t.k = d2.k WHERE t.v > 7",
                     "SELECT t.k, t.v, d2.w, d2.s FROM t JOIN (SELECT * FROM d WHERE w > 10) d2 ON t.k = d2.k WHERE t.str ~ 'str[13]'",
             }) {
-                final String expected = printRows(sql, false);
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
                     Assert.assertNotNull(find(factory));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -1172,7 +1172,7 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
             }
             // The owner's probe filter goes back to the top with the cursor, as the filter the join
             // stole it from does, and closes with it.
-            final String expected = printRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k WHERE t.v > 30", false);
+            final String expected = ordinaryRows("SELECT * FROM t LEFT JOIN d ON t.k = d.k WHERE t.v > 30", sqlExecutionContext);
             final RecordingFilter filter = new RecordingFilter(false);
             try (
                     RecordCursorFactory probeQuery = select("SELECT * FROM t");
@@ -1404,20 +1404,6 @@ public class AsyncHashJoinFilterTest extends AbstractCairoTest {
         factory.halfClose();
         return new HashJoinInput(base, identity(base.getMetadata().getColumnCount()),
                 new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, bindVarFunctions, filter, null, null, 1, 0, 0, 0));
-    }
-
-    // The query's rows, as CursorPrinter prints them, under the operator or under the ordinary plan.
-    private static String printRows(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            final StringSink sink = new StringSink();
-            while (cursor.hasNext()) {
-                CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), sink, true);
-            }
-            return sink.toString();
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
     }
 
     // Up to the given number of the cursor's next rows, as CursorPrinter prints them.

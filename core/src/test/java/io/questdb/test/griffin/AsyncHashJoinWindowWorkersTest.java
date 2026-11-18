@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,7 +44,6 @@ import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -239,72 +237,70 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     private static void assertFrameOneHeldWithFramesAhead(WorkerPoolMode mode, HeldFrameAction action) throws Exception {
         // A window of three frames, which the dispatch limit sets and the ring's default budget keeps.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                createTables(db, context);
-                context.changePageFrameSizes(64, 64);
-                final String expected = ordinaryRows(db, WALK_T, context);
-                context.setParallelHashJoinEnabled(true);
-                final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
-                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db, 0);
-                context.with(breaker);
-                try (RecordCursorFactory factory = db.select(WALK_T, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    final RecordMetadata metadata = factory.getMetadata();
-                    final StringSink sink = new StringSink();
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        final Record record = cursor.getRecord();
-                        // The first row dispatched the first window: frames 0, 1 and 2.
-                        Assert.assertTrue(cursor.hasNext());
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            context.changePageFrameSizes(64, 64);
+            final String expected = ordinaryRows(db, WALK_T, context);
+            context.setParallelHashJoinEnabled(true);
+            final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(db, 0);
+            context.with(breaker);
+            try (RecordCursorFactory factory = db.select(WALK_T, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final RecordMetadata metadata = factory.getMetadata();
+                final StringSink sink = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    // The first row dispatched the first window: frames 0, 1 and 2.
+                    Assert.assertTrue(cursor.hasNext());
+                    CursorPrinter.println(record, metadata, sink);
+                    Assert.assertEquals(3, join.getDispatchedFrameCount());
+                    awaitReducedFrames(join);
+                    // Frame 1's first row: the consumer took frame 1, which was ready, and frame 3
+                    // went out, ...
+                    while (cursor.hasNext()) {
                         CursorPrinter.println(record, metadata, sink);
-                        Assert.assertEquals(3, join.getDispatchedFrameCount());
-                        awaitReducedFrames(join);
-                        // Frame 1's first row: the consumer took frame 1, which was ready, and frame 3
-                        // went out, ...
-                        while (cursor.hasNext()) {
-                            CursorPrinter.println(record, metadata, sink);
-                            if (record.getLong(0) == 65) {
-                                break;
-                            }
-                        }
-                        Assert.assertEquals(65, record.getLong(0));
-                        Assert.assertEquals(4, join.getDispatchedFrameCount());
-                        // ... which the workers join while the consumer holds frame 1.
-                        awaitReducedFrames(join);
-                        Assert.assertEquals(4, join.getReducedFrameCount());
-                        switch (action) {
-                            case READ_ON -> {
-                                while (cursor.hasNext()) {
-                                    CursorPrinter.println(record, metadata, sink);
-                                }
-                                TestUtils.assertEquals(expected, sink);
-                            }
-                            case CANCEL -> {
-                                breaker.cancel();
-                                final CairoException e = Assert.assertThrows(CairoException.class, () -> {
-                                    //noinspection StatementWithEmptyBody
-                                    while (cursor.hasNext()) {
-                                    }
-                                });
-                                Assert.assertTrue(e.isCancellation());
-                                TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
-                            }
-                            case CLOSE -> {
-                                // The cursor closes with frames 2 and 3 joined and unread.
-                            }
+                        if (record.getLong(0) == 65) {
+                            break;
                         }
                     }
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    Assert.assertEquals(0, db.getBusyReaderCount());
-                    breaker.reset();
-                    TestUtils.assertEquals(expected, printRows(factory, context));
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                } finally {
-                    context.with(previous);
+                    Assert.assertEquals(65, record.getLong(0));
+                    Assert.assertEquals(4, join.getDispatchedFrameCount());
+                    // ... which the workers join while the consumer holds frame 1.
+                    awaitReducedFrames(join);
+                    Assert.assertEquals(4, join.getReducedFrameCount());
+                    switch (action) {
+                        case READ_ON -> {
+                            while (cursor.hasNext()) {
+                                CursorPrinter.println(record, metadata, sink);
+                            }
+                            TestUtils.assertEquals(expected, sink);
+                        }
+                        case CANCEL -> {
+                            breaker.cancel();
+                            final CairoException e = Assert.assertThrows(CairoException.class, () -> {
+                                //noinspection StatementWithEmptyBody
+                                while (cursor.hasNext()) {
+                                }
+                            });
+                            Assert.assertTrue(e.isCancellation());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+                        }
+                        case CLOSE -> {
+                            // The cursor closes with frames 2 and 3 joined and unread.
+                        }
+                    }
                 }
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertEquals(0, db.getBusyReaderCount());
+                breaker.reset();
+                TestUtils.assertEquals(expected, printRows(factory, context));
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            } finally {
+                context.with(previous);
             }
-        }, configuration, LOG));
+        }));
     }
 
     private static void assertFramesAheadInSqlContexts(WorkerPoolMode mode) throws Exception {
@@ -345,37 +341,35 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     private static void assertHotKeyOverrunsTheCap(WorkerPoolMode mode) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                // The first probe row's key matches fifty build rows, which the residual keeps: the
-                // first frame's task writes them all, past the cap of the frame's four rows, and stops
-                // after that row, and the consumer joins the rest of the frame on the owner's slot in
-                // two chunks of the same cap, rows 2 and 3, then row 4, while the workers join the
-                // frames ahead. Every other probe row meets two rows of d: each later frame's task
-                // stops after two rows, and one chunk joins the other two.
-                db.execute("CREATE TABLE t AS (SELECT CASE WHEN x = 1 THEN 7 ELSE (x % 3)::INT END k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY HOUR", context);
-                db.execute("CREATE TABLE d AS (SELECT CASE WHEN x <= 50 THEN 7 ELSE (x % 3)::INT END k, x w FROM long_sequence(56))", context);
-                context.changePageFrameSizes(4, 4);
-                final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000";
-                final String expected = ordinary(sql, context);
-                context.setParallelHashJoinEnabled(true);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    for (int execution = 0; execution < 2; execution++) {
-                        Assert.assertEquals(expected, result(factory, context));
-                        Assert.assertEquals(2 + 11, join.getAtom().getContinuationCount());
-                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            // The first probe row's key matches fifty build rows, which the residual keeps: the
+            // first frame's task writes them all, past the cap of the frame's four rows, and stops
+            // after that row, and the consumer joins the rest of the frame on the owner's slot in
+            // two chunks of the same cap, rows 2 and 3, then row 4, while the workers join the
+            // frames ahead. Every other probe row meets two rows of d: each later frame's task
+            // stops after two rows, and one chunk joins the other two.
+            db.execute("CREATE TABLE t AS (SELECT CASE WHEN x = 1 THEN 7 ELSE (x % 3)::INT END k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(48)) TIMESTAMP(ts) PARTITION BY HOUR", context);
+            db.execute("CREATE TABLE d AS (SELECT CASE WHEN x <= 50 THEN 7 ELSE (x % 3)::INT END k, x w FROM long_sequence(56))", context);
+            context.changePageFrameSizes(4, 4);
+            final String sql = "SELECT t.k, t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v - 1_000";
+            final String expected = ordinary(sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int execution = 0; execution < 2; execution++) {
+                    Assert.assertEquals(expected, result(factory, context));
+                    Assert.assertEquals(2 + 11, join.getAtom().getContinuationCount());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
                     }
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        //noinspection StatementWithEmptyBody
-                        while (cursor.hasNext()) {
-                        }
-                        Assert.assertEquals(12, join.getProbeFrameCount());
-                    }
+                    Assert.assertEquals(12, join.getProbeFrameCount());
                 }
             }
-        }, configuration, LOG));
+        }));
     }
 
     private static void assertMemoryLimitsWithFramesAhead(WorkerPoolMode mode) throws Exception {
@@ -464,50 +458,48 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 256 * 3 * Long.BYTES);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 512);
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                createTables(db, context);
-                context.changePageFrameSizes(1, 256);
-                for (String sql : new String[]{
-                        // Sparse frames, then dense ones.
-                        "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k WHERE t.v % 64 = 0 OR t.v > 5_000",
-                        "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v WHERE t.v % 64 = 0 OR t.v > 5_000",
-                        // Fan-out under a residual and a post-join filter: frames of 512 / 4 rows.
-                        "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v",
-                        "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k JOIN d ON t.k = d.k WHERE d.w + u.w > t.v",
-                        // LIMITs: the first window, and LIMITs that it leaves as they are.
-                        "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v LIMIT 3",
-                        "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k LIMIT 700",
-                        "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k ORDER BY ts DESC LIMIT 5",
-                        "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v LIMIT -7",
-                }) {
-                    final String expected = ordinary(sql, context);
-                    context.setParallelHashJoinEnabled(true);
-                    try (RecordCursorFactory factory = db.select(sql, context)) {
-                        final AsyncHashJoinRecordCursorFactory join = find(factory);
-                        Assert.assertNotNull(sql, join);
-                        for (int execution = 0; execution < 2; execution++) {
-                            Assert.assertEquals(sql, expected, result(factory, context));
-                            Assert.assertEquals(sql, 0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        }
-                        if (sql.endsWith("LIMIT 3")) {
-                            // The first frame's task alone went out before the first row, and joined
-                            // three rows, the workers' tasks included.
-                            try (RecordCursor cursor = factory.getCursor(context)) {
-                                Assert.assertTrue(cursor.hasNext());
-                                Assert.assertEquals(sql, 1, join.getDispatchedFrameCount());
-                                Assert.assertEquals(sql, 3, join.getAtom().getJoinedProbeRowCount());
-                            }
-                        } else if (!sql.contains("LIMIT")) {
-                            // The fan-out-aware frames need no continuation.
-                            Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
-                        }
-                    } finally {
-                        context.setParallelHashJoinEnabled(false);
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            context.changePageFrameSizes(1, 256);
+            for (String sql : new String[]{
+                    // Sparse frames, then dense ones.
+                    "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k WHERE t.v % 64 = 0 OR t.v > 5_000",
+                    "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v WHERE t.v % 64 = 0 OR t.v > 5_000",
+                    // Fan-out under a residual and a post-join filter: frames of 512 / 4 rows.
+                    "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v",
+                    "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k JOIN d ON t.k = d.k WHERE d.w + u.w > t.v",
+                    // LIMITs: the first window, and LIMITs that it leaves as they are.
+                    "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v LIMIT 3",
+                    "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k LIMIT 700",
+                    "SELECT t.v, u.w, d.w FROM t JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k ORDER BY ts DESC LIMIT 5",
+                    "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k AND d.w > t.v LIMIT -7",
+            }) {
+                final String expected = ordinary(sql, context);
+                context.setParallelHashJoinEnabled(true);
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(sql, join);
+                    for (int execution = 0; execution < 2; execution++) {
+                        Assert.assertEquals(sql, expected, result(factory, context));
+                        Assert.assertEquals(sql, 0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     }
+                    if (sql.endsWith("LIMIT 3")) {
+                        // The first frame's task alone went out before the first row, and joined
+                        // three rows, the workers' tasks included.
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(sql, 1, join.getDispatchedFrameCount());
+                            Assert.assertEquals(sql, 3, join.getAtom().getJoinedProbeRowCount());
+                        }
+                    } else if (!sql.contains("LIMIT")) {
+                        // The fan-out-aware frames need no continuation.
+                        Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
+                    }
+                } finally {
+                    context.setParallelHashJoinEnabled(false);
                 }
             }
-        }, configuration, LOG));
+        }));
     }
 
     // Waits until the workers joined every probe frame dispatched so far.
@@ -539,10 +531,6 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
         db.execute("CREATE TABLE u AS (SELECT (x % 50)::INT k, x * 7 w FROM long_sequence(50))", context);
         // Four rows of d per key.
         db.execute("CREATE TABLE d AS (SELECT (x % 50)::INT k, x * 100 w FROM long_sequence(200))", context);
-    }
-
-    private static SqlExecutionContextImpl newContext(CairoEngine db) {
-        return new SqlExecutionContextImpl(db, WORKER_COUNT).with(AllowAllSecurityContext.INSTANCE, null, null, -1, null);
     }
 
     // The rows of the ordinary plan's join under the query, which the operator's own cursor returns
@@ -622,30 +610,23 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     // Runs the code on a pool of workers in the given mode, with a window of three frames, over t8,
     // 64 probe rows of four keys in one partition, cut into eight frames of eight rows, and d3, three
     // rows of each key, whose w, 100 and up, passes every probe row's v, up to 64.
-    private static void withEightFrames(WorkerPoolMode mode, EightFramesCode code) throws Exception {
+    private static void withEightFrames(WorkerPoolMode mode, WorkersCode code) throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                db.execute("""
-                        CREATE TABLE t8 AS (
-                            SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts
-                            FROM long_sequence(64)
-                        ) TIMESTAMP(ts) PARTITION BY DAY
-                        """, context);
-                db.execute("CREATE TABLE d3 AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))", context);
-                context.changePageFrameSizes(8, 8);
-                context.setParallelHashJoinEnabled(true);
-                code.run(db, context);
-            }
-        }, configuration, LOG));
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            db.execute("""
+                    CREATE TABLE t8 AS (
+                        SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts
+                        FROM long_sequence(64)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            db.execute("CREATE TABLE d3 AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))", context);
+            context.changePageFrameSizes(8, 8);
+            context.setParallelHashJoinEnabled(true);
+            code.run(db, context);
+        }));
     }
 
     private enum HeldFrameAction {
         CANCEL, CLOSE, READ_ON
-    }
-
-    @FunctionalInterface
-    private interface EightFramesCode {
-        void run(CairoEngine db, SqlExecutionContextImpl context) throws Exception;
     }
 }

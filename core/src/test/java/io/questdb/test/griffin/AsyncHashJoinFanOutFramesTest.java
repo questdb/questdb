@@ -539,6 +539,7 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     // Compares the operator's rows with the ordinary plan's, in order, row by row, checks that the
     // operator's execution needed no continuation, and returns the probe frames it cut.
     private static int assertDefaultFrames(String sql) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory expected = select(sql)) {
             Assert.assertNull(sql, find(expected));
@@ -556,7 +557,7 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 

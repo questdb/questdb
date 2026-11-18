@@ -205,7 +205,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             // partitions of six rows makes one frame, a frame of four rows taking in the short tail.
             final String sql = "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k";
             // The rows of t's first frame.
-            final long firstFrameRows = ordinaryRowCount(sql + " WHERE t.v <= 6");
+            final long firstFrameRows = ordinaryRowCount(sql + " WHERE t.v <= 6", sqlExecutionContext);
             for (boolean isCopy : new boolean[]{false, true}) {
                 // The factories that compile from here on run the stages' hidden copies from their first
                 // task, or, as on a JVM that cannot define hidden classes, the shared template.
@@ -243,7 +243,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             // count. Each of t's ten hourly partitions of six rows makes one frame.
             final String sql = "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk";
             // The rows of t's first two frames, less the one read.
-            final long countedRows = ordinaryRowCount(sql + " WHERE t.v <= 12") - 1;
+            final long countedRows = ordinaryRowCount(sql + " WHERE t.v <= 12", sqlExecutionContext) - 1;
             assertCancelledAfterIndexPass(sql, 1, 2, countedRows, join -> {
                 // The count added the rest of the frame that the cursor held and the rows of the next
                 // frame, whose task joined it into tuples, before its check met the cancellation.
@@ -306,7 +306,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             // t's first frame joins into 7 rows, its second into 4 more: the 1st and the 9th rows lie in
             // each.
             final String sql = "SELECT t.v, m.w FROM t JOIN m ON t.k = m.k";
-            final String expected = printRows(sql, false);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             final int rowCount = lineCount(expected);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -356,7 +356,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         final RecordCursor.Counter counter = new RecordCursor.Counter();
                         cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
-                        Assert.assertEquals(changing, ordinaryRowCount(changing), counter.get());
+                        Assert.assertEquals(changing, ordinaryRowCount(changing, sqlExecutionContext), counter.get());
                     }
                     Assert.assertEquals(passes + 1, stage.getChainLengthIndexCount());
                 }
@@ -551,7 +551,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
                     Assert.assertEquals(plan, isCompiled, plan.contains("Async JIT Hash Join"));
                     TestUtils.assertContains(plan, "filter: 5<v");
                     // A count from the first row and from the middle of the second frame.
-                    final long rowCount = ordinaryRowCount(sql);
+                    final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
                     try (RecordCursorFactory factory = select(sql)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
                         Assert.assertNotNull(join);
@@ -834,7 +834,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             createTables();
             sqlExecutionContext.changePageFrameSizes(4, 4);
             final String sql = "SELECT t.v, m.w FROM t JOIN m ON t.k = m.k";
-            final long rowCount = ordinaryRowCount(sql);
+            final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
             final String cross = "SELECT a.x, b.v, b.w FROM (SELECT x FROM long_sequence(3)) a CROSS JOIN (" + sql + ") b";
             // Three rows of a, each with every row of the join.
             assertResultIndexes("SELECT count(*) FROM (" + cross + ")", 1);
@@ -883,7 +883,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             createTables();
             sqlExecutionContext.changePageFrameSizes(4, 4);
             final String sql = "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk";
-            final long rowCount = ordinaryRowCount(sql);
+            final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -1209,7 +1209,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     }
 
     private static int[] assertCountAfterEveryRow(String sql, RecordCursorFactory factory) throws SqlException {
-        final String expected = printRows(sql, false);
+        final String expected = ordinaryRows(sql, sqlExecutionContext);
         final int rowCount = lineCount(expected);
         final int[] counts = new int[3];
         final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -1241,7 +1241,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     // that every one of those executions, each of which has rows left to count, indexed the chain
     // lengths of the given number of stages once, however often it counted.
     private static void assertCountAfterEveryRowIndexes(String sql, int indexedStageCount) throws SqlException {
-        final long rowCount = ordinaryRowCount(sql);
+        final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
             Assert.assertNotNull(sql, join);
@@ -1261,7 +1261,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             int indexedStageCount,
             @Nullable Consumer<AsyncHashJoinRecordCursorFactory> whileOpen
     ) throws SqlException {
-        final long rowCount = ordinaryRowCount(sql);
+        final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
             Assert.assertNotNull(sql, join);
@@ -1290,7 +1290,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
     // execution; the second execution, whose orientation the first one settled, counts the passes.
     private static void assertCountStarIndexes(String sql, int indexedStageCount) throws SqlException {
         final String count = "SELECT count(*) FROM (" + sql + ")";
-        final long rowCount = ordinaryRowCount(sql);
+        final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
         try (RecordCursorFactory factory = select(count)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
             Assert.assertNotNull(count, join);
@@ -1344,13 +1344,13 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         final String count = "SELECT count(*) FROM (" + sql + ")";
         final String plan = assertParallelHashJoin(count, sqlExecutionContext);
         TestUtils.assertContains(plan, "Count");
-        Assert.assertEquals(count, "timestamp: -1\ncount\n" + ordinaryRowCount(sql) + ":LONG\n\n", ordinary(count, sqlExecutionContext));
+        Assert.assertEquals(count, "timestamp: -1\ncount\n" + ordinaryRowCount(sql, sqlExecutionContext) + ":LONG\n\n", ordinary(count, sqlExecutionContext));
         try (RecordCursorFactory factory = select(count)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
             Assert.assertNotNull(count, join);
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue(cursor.hasNext());
-                Assert.assertEquals(count, ordinaryRowCount(sql), cursor.getRecord().getLong(0));
+                Assert.assertEquals(count, ordinaryRowCount(sql, sqlExecutionContext), cursor.getRecord().getLong(0));
                 Assert.assertEquals(count, join.getProbeFrameCount(), join.getCountOnlyFrameCount());
                 Assert.assertEquals(count, 0, join.getCountedTupleFrameCount());
                 Assert.assertEquals(count, 0, join.getCountedContinuationCount());
@@ -1418,22 +1418,6 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
             }
         }
         return count;
-    }
-
-    // The rows of the query's ordinary plan.
-    private static long ordinaryRowCount(String sql) throws SqlException {
-        return lineCount(printRows(sql, false));
-    }
-
-    // The query's rows, as CursorPrinter prints them, under the operator or under the ordinary plan.
-    private static String printRows(String sql, boolean isParallel) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            return printRows(cursor, factory.getMetadata(), Integer.MAX_VALUE);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
     }
 
     // Up to the given number of the cursor's next rows, as CursorPrinter prints them.

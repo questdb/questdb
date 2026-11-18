@@ -125,16 +125,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                 Assert.assertNotNull(join);
                 final HashJoinTupleRing ring = join.getAtom().getRing();
                 // The ordinary plan counts the rows.
-                final long rows;
-                sqlExecutionContext.setParallelHashJoinEnabled(false);
-                try (
-                        RecordCursorFactory ordinary = select(sql);
-                        RecordCursor cursor = ordinary.getCursor(sqlExecutionContext)
-                ) {
-                    rows = countRows(cursor);
-                } finally {
-                    sqlExecutionContext.setParallelHashJoinEnabled(true);
-                }
+                final long rows = ordinaryRowCount(sql, sqlExecutionContext);
                 try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(4, join.getDispatchedFrameCount());

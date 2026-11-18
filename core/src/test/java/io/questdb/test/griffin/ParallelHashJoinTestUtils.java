@@ -117,7 +117,7 @@ public final class ParallelHashJoinTestUtils {
      * operator's plan.
      */
     public static String assertParallelHashJoin(String sql, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         try {
             final String expected = ordinary(sql, context);
             context.setParallelHashJoinEnabled(true);
@@ -131,7 +131,7 @@ public final class ParallelHashJoinTestUtils {
                 return plan;
             }
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 
@@ -140,7 +140,7 @@ public final class ParallelHashJoinTestUtils {
      * operator and equals the plan with the operator off, and so does its result.
      */
     public static void assertOrdinaryPlan(String sql, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         try {
             context.setParallelHashJoinEnabled(false);
             final String expectedPlan;
@@ -157,7 +157,7 @@ public final class ParallelHashJoinTestUtils {
                 Assert.assertEquals(sql, expected, result(factory, context));
             }
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 
@@ -202,7 +202,7 @@ public final class ParallelHashJoinTestUtils {
      * plan asked for and that reading it fails.
      */
     public static String error(String sql, boolean isParallel, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(isParallel);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             Assert.assertEquals(sql, isParallel, find(factory) != null);
@@ -215,7 +215,7 @@ public final class ParallelHashJoinTestUtils {
                 return e.getPosition() + ": " + e.getFlyweightMessage();
             }
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
         return null;
     }
@@ -274,13 +274,13 @@ public final class ParallelHashJoinTestUtils {
      * The result of the query's ordinary plan, which runs no operator.
      */
     public static String ordinary(String sql, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             Assert.assertFalse(sql, plan(factory, context).contains(OPERATOR));
             return result(factory, context);
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 
@@ -288,12 +288,56 @@ public final class ParallelHashJoinTestUtils {
      * The query's plan with the operator off.
      */
     public static String ordinaryPlan(String sql, SqlExecutionContext context) throws SqlException {
-        final boolean wasEnabled = context.isParallelHashJoinEnabled();
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
         context.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             return plan(factory, context);
         } finally {
-            context.setParallelHashJoinEnabled(wasEnabled);
+            context.setParallelHashJoinEnabled(isEnabledBefore);
+        }
+    }
+
+    /**
+     * The number of rows of the query's ordinary plan, which runs no operator, read one by one.
+     */
+    public static long ordinaryRowCount(String sql, SqlExecutionContext context) throws SqlException {
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(false);
+        try (
+                RecordCursorFactory factory = context.getCairoEngine().select(sql, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            Assert.assertNull(sql, find(factory));
+            long count = 0;
+            while (cursor.hasNext()) {
+                count++;
+            }
+            return count;
+        } finally {
+            context.setParallelHashJoinEnabled(isEnabledBefore);
+        }
+    }
+
+    /**
+     * The rows of the query's ordinary plan, which runs no operator, as {@code CursorPrinter} prints
+     * them with their types, one line per row, without a header.
+     */
+    public static String ordinaryRows(String sql, SqlExecutionContext context) throws SqlException {
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(false);
+        try (
+                RecordCursorFactory factory = context.getCairoEngine().select(sql, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            Assert.assertNull(sql, find(factory));
+            final StringSink rows = new StringSink();
+            final RecordMetadata metadata = factory.getMetadata();
+            while (cursor.hasNext()) {
+                CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
+            }
+            return rows.toString();
+        } finally {
+            context.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 

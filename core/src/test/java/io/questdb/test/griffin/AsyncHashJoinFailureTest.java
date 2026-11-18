@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -50,7 +49,6 @@ import io.questdb.std.Rows;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -378,73 +376,70 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 32);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64);
         for (WorkerPoolMode mode : WorkerPoolMode.values()) {
-            assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(2, mode), (db, compiler, ignore) -> {
-                try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, 2)
-                        .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)) {
-                    context.setParallelHashJoinEnabled(true);
-                    context.changePageFrameSizes(16, 16);
-                    // 64 frames of t, all in one partition, so that a row id's partition index is
-                    // its frame's index.
-                    final String t = "t_" + mode.name().toLowerCase();
-                    final String d = "d_" + mode.name().toLowerCase();
-                    db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
-                            + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
-                    db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
-                    final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
-                    final Thread owner = Thread.currentThread();
-                    final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
-                    final AtomicBoolean isClosing = new AtomicBoolean();
-                    final AtomicInteger startsAfterClose = new AtomicInteger();
-                    final AtomicInteger heldWorkers = new AtomicInteger();
-                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-                        @Override
-                        public boolean onGet(Record rec, int count) {
-                            final int frame = Rows.toPartitionIndex(rec.getRowId());
-                            if (startedFrames.add(frame) && isClosing.get()) {
-                                startsAfterClose.incrementAndGet();
-                            }
-                            if (frame > 0 && Thread.currentThread() != owner && !isClosing.get()) {
-                                // The worker holds its frame until the consumer's close() cancelled the
-                                // frames and waits for those in flight.
-                                heldWorkers.incrementAndGet();
-                                while (!isClosing.get()) {
-                                    if (isAwaitingFrames(owner)) {
-                                        isClosing.set(true);
-                                    } else {
-                                        Thread.onSpinWait();
-                                    }
+            assertMemoryLeak(() -> executeOnWorkers(mode, 2, null, configuration, LOG, (db, context) -> {
+                context.setParallelHashJoinEnabled(true);
+                context.changePageFrameSizes(16, 16);
+                // 64 frames of t, all in one partition, so that a row id's partition index is
+                // its frame's index.
+                final String t = "t_" + mode.name().toLowerCase();
+                final String d = "d_" + mode.name().toLowerCase();
+                db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
+                        + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
+                final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
+                final Thread owner = Thread.currentThread();
+                final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
+                final AtomicBoolean isClosing = new AtomicBoolean();
+                final AtomicInteger startsAfterClose = new AtomicInteger();
+                final AtomicInteger heldWorkers = new AtomicInteger();
+                TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                    @Override
+                    public boolean onGet(Record rec, int count) {
+                        final int frame = Rows.toPartitionIndex(rec.getRowId());
+                        if (startedFrames.add(frame) && isClosing.get()) {
+                            startsAfterClose.incrementAndGet();
+                        }
+                        if (frame > 0 && Thread.currentThread() != owner && !isClosing.get()) {
+                            // The worker holds its frame until the consumer's close() cancelled the
+                            // frames and waits for those in flight.
+                            heldWorkers.incrementAndGet();
+                            while (!isClosing.get()) {
+                                if (isAwaitingFrames(owner)) {
+                                    isClosing.set(true);
+                                } else {
+                                    Thread.onSpinWait();
                                 }
                             }
-                            return true;
                         }
-                    });
-                    try (RecordCursorFactory factory = db.select(sql, context)) {
-                        final AsyncHashJoinRecordCursorFactory join = find(factory);
-                        Assert.assertNotNull(join);
-                        TestUtils.assertContains(plan(factory, context), "filter: (test_latched_counter() or v<0)");
-                        try (RecordCursor cursor = factory.getCursor(context)) {
-                            Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(64, join.getProbeFrameCount());
-                            // Both workers hold a frame, with the rest of the window queued behind them.
-                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-                            while (heldWorkers.get() < 2) {
-                                Assert.assertTrue("the workers took no frame", System.nanoTime() < deadline);
-                                Thread.onSpinWait();
-                            }
-                        }
-                        // The workers held their frames, and only the frame that a worker took before
-                        // the cancellation, after the first one, started once the consumer closed.
-                        Assert.assertEquals(2, heldWorkers.get());
-                        Assert.assertTrue("frames started after close: " + startsAfterClose.get(), startsAfterClose.get() <= 1);
-                        Assert.assertTrue("frames started: " + startedFrames.size(), startedFrames.size() < 32);
-                        assertReleased(join, db);
-                        TestLatchedCounterFunctionFactory.reset(null);
-                        Assert.assertEquals(ordinary(sql, context), result(factory, context));
-                    } finally {
-                        TestLatchedCounterFunctionFactory.reset(null);
+                        return true;
                     }
+                });
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    TestUtils.assertContains(plan(factory, context), "filter: (test_latched_counter() or v<0)");
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(64, join.getProbeFrameCount());
+                        // Both workers hold a frame, with the rest of the window queued behind them.
+                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                        while (heldWorkers.get() < 2) {
+                            Assert.assertTrue("the workers took no frame", System.nanoTime() < deadline);
+                            Thread.onSpinWait();
+                        }
+                    }
+                    // The workers held their frames, and only the frame that a worker took before
+                    // the cancellation, after the first one, started once the consumer closed.
+                    Assert.assertEquals(2, heldWorkers.get());
+                    Assert.assertTrue("frames started after close: " + startsAfterClose.get(), startsAfterClose.get() <= 1);
+                    Assert.assertTrue("frames started: " + startedFrames.size(), startedFrames.size() < 32);
+                    assertReleased(join, db);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    Assert.assertEquals(ordinary(sql, context), result(factory, context));
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
                 }
-            }, configuration, LOG));
+            }));
         }
     }
 
@@ -604,7 +599,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(4, 4);
             final String sql = "SELECT t.v, m.w, d2.w2 FROM t JOIN m ON t.k = m.k JOIN d2 ON t.lk = d2.lk";
             final String expected = ordinary(sql, sqlExecutionContext);
-            final long rowCount = ordinaryRowCount(sql);
+            final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
             final int prefix = 3;
             final long indexBytes = (8 + 15) * Integer.BYTES;
             try (RecordCursorFactory factory = select(sql)) {
@@ -891,21 +886,6 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             }
         }
         return false;
-    }
-
-    // The rows of the query's ordinary plan.
-    private static long ordinaryRowCount(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            Assert.assertNull(find(factory));
-            long count = 0;
-            while (cursor.hasNext()) {
-                count++;
-            }
-            return count;
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
     }
 
     // The phase of a parallel hash join's execution that threw the exception, by its stack.

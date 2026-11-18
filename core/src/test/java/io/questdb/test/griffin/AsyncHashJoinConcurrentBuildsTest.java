@@ -47,6 +47,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
@@ -370,24 +371,20 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
                 // Limits from a few bytes up fail the query at its allocations in turn, the concurrent
                 // builds' among them; each failure releases every build and slot, and the first limit
                 // that admits the query reads the rows.
-                int concurrentFailures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                        if (isThrownFrom(e, HashJoinBuildRoundAtom.class.getName(), "buildConcurrently")) {
-                            concurrentFailures++;
-                        }
-                    }
-                    assertReleased(join);
-                }
-                Assert.assertTrue(concurrentFailures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                final AtomicInteger concurrentFailures = new AtomicInteger();
+                assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, sqlExecutionContext),
+                        e -> {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                            if (isThrownFrom(e, HashJoinBuildRoundAtom.class.getName(), "buildConcurrently")) {
+                                concurrentFailures.incrementAndGet();
+                            }
+                        },
+                        () -> assertReleased(join)
+                );
+                Assert.assertTrue(concurrentFailures.get() > 0);
             }
             assertQuery("SELECT count() FROM d1").noLeakCheck().noRandomAccess().expectSize().returns("count\n20\n");
         });
@@ -407,24 +404,20 @@ public class AsyncHashJoinConcurrentBuildsTest extends AbstractCairoTest {
                 // Limits from a few bytes up fail the query at its allocations in turn, those of the
                 // build's rounds among them; each failure releases the build and every slot, and the
                 // first limit that admits the query reads the rows.
-                int roundFailures = 0;
-                for (long limit = 4; ; limit *= 2) {
-                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
-                    try {
-                        Assert.assertEquals(expected, result(factory, sqlExecutionContext));
-                        break;
-                    } catch (CairoException e) {
-                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                        if (isThrownFrom(e, STAGE, "buildInRounds")) {
-                            roundFailures++;
-                        }
-                    }
-                    assertReleased(join);
-                }
-                Assert.assertTrue(roundFailures > 0);
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
-                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                final AtomicInteger roundFailures = new AtomicInteger();
+                assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, sqlExecutionContext),
+                        e -> {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                            if (isThrownFrom(e, STAGE, "buildInRounds")) {
+                                roundFailures.incrementAndGet();
+                            }
+                        },
+                        () -> assertReleased(join)
+                );
+                Assert.assertTrue(roundFailures.get() > 0);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertTrue(join.getAtom().getStage(0).isBuiltInRounds());

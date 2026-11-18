@@ -285,79 +285,78 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 32);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 64);
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                createTables(db, context);
-                // The filter of the probe input runs in the probe reducer, the filter of the build
-                // input in the build's first round.
-                final String sql = isRound
-                        ? "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) d ON t.k = d.k"
-                        : "SELECT t.k, t.v, d.w, d.s FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k";
-                final String reducerClass = isRound ? STAGE : ATOM;
-                final String reducer = isRound ? "partitionFrame" : "probeFrame";
-                context.changePageFrameSizes(64, 64);
-                final String expected = ordinary(sql, context);
-                final Thread owner = Thread.currentThread();
-                final AtomicBoolean isArmed = new AtomicBoolean();
-                // One pair per execution: a worker counts the first down once it holds a task, and the
-                // owner counts the second down once it runs a task while a worker holds one.
-                final AtomicReference<CountDownLatch> workerHeldRef = new AtomicReference<>();
-                final AtomicReference<CountDownLatch> ownerRanRef = new AtomicReference<>();
-                final AtomicInteger heldWorkers = new AtomicInteger();
-                final AtomicBoolean isTimedOut = new AtomicBoolean();
-                final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
-                    @Override
-                    public boolean onGet(Record rec, int count) {
-                        final CountDownLatch workerHeld = workerHeldRef.get();
-                        final CountDownLatch ownerRan = ownerRanRef.get();
-                        if (isArmed.get() && ownerRan.getCount() > 0 && isOnStack(reducerClass, reducer)) {
-                            try {
-                                if (Thread.currentThread() == owner) {
-                                    // The owner runs a task of its own sequence while a worker holds one.
-                                    if (!workerHeld.await(30, TimeUnit.SECONDS)) {
-                                        isTimedOut.set(true);
-                                    }
-                                    ownerRan.countDown();
-                                } else {
-                                    // A worker holds its task, and its slot, until the owner ran one.
-                                    heldWorkers.incrementAndGet();
-                                    workerHeld.countDown();
-                                    if (!ownerRan.await(30, TimeUnit.SECONDS)) {
-                                        isTimedOut.set(true);
-                                    }
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            context.setParallelHashJoinEnabled(true);
+            createTables(db, context);
+            // The filter of the probe input runs in the probe reducer, the filter of the build
+            // input in the build's first round.
+            final String sql = isRound
+                    ? "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) d ON t.k = d.k"
+                    : "SELECT t.k, t.v, d.w, d.s FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k";
+            final String reducerClass = isRound ? STAGE : ATOM;
+            final String reducer = isRound ? "partitionFrame" : "probeFrame";
+            context.changePageFrameSizes(64, 64);
+            final String expected = ordinary(sql, context);
+            final Thread owner = Thread.currentThread();
+            final AtomicBoolean isArmed = new AtomicBoolean();
+            // One pair per execution: a worker counts the first down once it holds a task, and the
+            // owner counts the second down once it runs a task while a worker holds one.
+            final AtomicReference<CountDownLatch> workerHeldRef = new AtomicReference<>();
+            final AtomicReference<CountDownLatch> ownerRanRef = new AtomicReference<>();
+            final AtomicInteger heldWorkers = new AtomicInteger();
+            final AtomicBoolean isTimedOut = new AtomicBoolean();
+            final TestLatchedCounterFunctionFactory.Callback callback = new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    final CountDownLatch workerHeld = workerHeldRef.get();
+                    final CountDownLatch ownerRan = ownerRanRef.get();
+                    if (isArmed.get() && ownerRan.getCount() > 0 && isOnStack(reducerClass, reducer)) {
+                        try {
+                            if (Thread.currentThread() == owner) {
+                                // The owner runs a task of its own sequence while a worker holds one.
+                                if (!workerHeld.await(30, TimeUnit.SECONDS)) {
+                                    isTimedOut.set(true);
                                 }
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                                throw new AssertionError(e);
+                                ownerRan.countDown();
+                            } else {
+                                // A worker holds its task, and its slot, until the owner ran one.
+                                heldWorkers.incrementAndGet();
+                                workerHeld.countDown();
+                                if (!ownerRan.await(30, TimeUnit.SECONDS)) {
+                                    isTimedOut.set(true);
+                                }
                             }
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new AssertionError(e);
                         }
-                        return true;
                     }
-                };
-                TestLatchedCounterFunctionFactory.reset(callback);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    for (int run = 0; run < 2; run++) {
-                        final CountDownLatch ownerRan = new CountDownLatch(1);
-                        workerHeldRef.set(new CountDownLatch(1));
-                        ownerRanRef.set(ownerRan);
-                        heldWorkers.set(0);
-                        isArmed.set(true);
-                        context.changePageFrameSizes(64, 64);
-                        Assert.assertEquals(expected, result(factory, context));
-                        isArmed.set(false);
-                        Assert.assertFalse("the owner and a worker did not hold tasks at once", isTimedOut.get());
-                        Assert.assertEquals(0, ownerRan.getCount());
-                        // Only a task of the reducer counts the latches down, so the build ran in
-                        // rounds when the reducer is the round's.
-                        Assert.assertTrue(heldWorkers.get() > 0);
-                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    }
+                    return true;
+                }
+            };
+            TestLatchedCounterFunctionFactory.reset(callback);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int run = 0; run < 2; run++) {
+                    final CountDownLatch ownerRan = new CountDownLatch(1);
+                    workerHeldRef.set(new CountDownLatch(1));
+                    ownerRanRef.set(ownerRan);
+                    heldWorkers.set(0);
+                    isArmed.set(true);
+                    context.changePageFrameSizes(64, 64);
+                    Assert.assertEquals(expected, result(factory, context));
+                    isArmed.set(false);
+                    Assert.assertFalse("the owner and a worker did not hold tasks at once", isTimedOut.get());
+                    Assert.assertEquals(0, ownerRan.getCount());
+                    // Only a task of the reducer counts the latches down, so the build ran in
+                    // rounds when the reducer is the round's.
+                    Assert.assertTrue(heldWorkers.get() > 0);
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
                 }
             }
-        }, configuration, LOG));
+        }));
     }
 
     // Walking joins on three threads at once, whose frames all go out through the one shard's reduce

@@ -121,7 +121,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 for (int i = 0; i < limits.length; i++) {
                     bindVariableService.setLong("lim", limits[i]);
                     final String label = "LIMIT " + limits[i];
-                    final String expected = ordinaryRows(sql);
+                    final String expected = ordinaryRows(sql, sqlExecutionContext);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(label, expected, printRows(cursor, factory.getMetadata()));
                         cursor.toTop();
@@ -344,7 +344,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(sql, 2, join.getDispatchedFrameCount());
                     }
-                    Assert.assertEquals(sql, ordinaryRows(sql), printRows(factory));
+                    Assert.assertEquals(sql, ordinaryRows(sql, sqlExecutionContext), printRows(factory));
                     try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(sql, ordinaryJoinRows(sql), printRows(cursor, join.getMetadata()));
                     }
@@ -490,7 +490,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = select(sql)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
                         Assert.assertNotNull(join);
-                        Assert.assertEquals(sql, ordinaryRows(sql), printRows(factory));
+                        Assert.assertEquals(sql, ordinaryRows(sql, sqlExecutionContext), printRows(factory));
                         // No task stopped short of its frame's end, which a first window under a LIMIT of
                         // one or three rows would have made it do.
                         Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
@@ -588,8 +588,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             try {
                 for (String limit : new String[]{" LIMIT 5, 0", " LIMIT :lo, :hi"}) {
                     final String sql = STARS[0] + limit;
-                    final String expected = ordinaryRows(sql);
-                    Assert.assertEquals(sql, ordinaryRows(STARS[0] + " LIMIT 5"), expected);
+                    final String expected = ordinaryRows(sql, sqlExecutionContext);
+                    Assert.assertEquals(sql, ordinaryRows(STARS[0] + " LIMIT 5", sqlExecutionContext), expected);
                     try (RecordCursorFactory factory = select(sql)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
                         Assert.assertNotNull(sql, join);
@@ -633,7 +633,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     bindVariableService.setLong("lo", bounds[i][0]);
                     bindVariableService.setLong("hi", bounds[i][1]);
                     final String label = "LIMIT " + bounds[i][0] + ", " + bounds[i][1];
-                    final String expected = ordinaryRows(sql);
+                    final String expected = ordinaryRows(sql, sqlExecutionContext);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertEquals(label, expected, printRows(cursor, factory.getMetadata()));
                         cursor.toTop();
@@ -700,7 +700,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                         3:INT\t40:LONG
                         """;
                 Assert.assertEquals(expected, printRows(factory));
-                Assert.assertEquals(expected, ordinaryRows(last));
+                Assert.assertEquals(expected, ordinaryRows(last, sqlExecutionContext));
                 try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
@@ -723,7 +723,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 Assert.assertEquals("INT", ColumnType.nameOf(bindVariableService.getFunction(0).getType()));
                 bindVariableService.setInt(0, 3);
                 Assert.assertEquals("", printRows(factory));
-                Assert.assertEquals("", ordinaryRows(sql));
+                Assert.assertEquals("", ordinaryRows(sql, sqlExecutionContext));
             } finally {
                 bindVariableService.clear();
             }
@@ -903,6 +903,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             int[] firstWindows,
             boolean[] continuations
     ) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         try {
             sqlExecutionContext.setParallelHashJoinEnabled(false);
             bindVariableService.clear();
@@ -941,7 +942,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 }
             }
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
             bindVariableService.clear();
         }
     }
@@ -949,6 +950,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     // The type that the compile gives $1, left undefined, and the query's columns, or the compile's
     // error. Asserts whether the plan runs the operator.
     private static String compileUntyped(String sql, boolean isParallel, boolean isOperatorExpected) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
         bindVariableService.clear();
         try (RecordCursorFactory factory = select(sql)) {
@@ -963,7 +965,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
         } catch (SqlException e) {
             return "[" + e.getPosition() + "] " + e.getFlyweightMessage();
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
             bindVariableService.clear();
         }
     }
@@ -995,6 +997,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
 
     // The plan of an EXPLAIN compiled with its bind variables undefined.
     private static String explainUntyped(String sql, boolean isParallel) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(isParallel);
         bindVariableService.clear();
         try (
@@ -1007,7 +1010,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             }
             return sink.toString();
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
             bindVariableService.clear();
         }
     }
@@ -1033,6 +1036,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     // The rows of the ordinary plan's outermost join, which the LIMIT and the projections over it
     // leave out, as the parallel join's own cursor returns them.
     private static String ordinaryJoinRows(String sql) throws SqlException {
+        final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
         sqlExecutionContext.setParallelHashJoinEnabled(false);
         try (RecordCursorFactory factory = select(sql)) {
             RecordCursorFactory join = factory;
@@ -1042,16 +1046,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             Assert.assertTrue(join.getClass().getName(), join.getClass().getSimpleName().contains("Join"));
             return printRows(join);
         } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
-    private static String ordinaryRows(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql)) {
-            return printRows(factory);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
+            sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
         }
     }
 

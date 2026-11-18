@@ -32,14 +32,12 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewState;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
@@ -47,7 +45,6 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -169,69 +166,67 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
 
     @Test
     public void testCancellationAtEachCheckWithSlotCaches() throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, WorkerPoolMode.LEGACY), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                createTables(db, context);
-                context.changePageFrameSizes(64, 64);
-                final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym" + SELECTIVE;
-                final String expected = ordinary(sql, context);
-                context.setParallelHashJoinEnabled(true);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    assertExecution(factory, join, expected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
-                    final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
-                    final TrippingCircuitBreaker counting = new TrippingCircuitBreaker(previous, Long.MAX_VALUE);
-                    context.with(counting);
-                    try {
-                        Assert.assertEquals(expected, result(factory, context));
+        assertMemoryLeak(() -> executeOnWorkers(WorkerPoolMode.LEGACY, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            context.changePageFrameSizes(64, 64);
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym" + SELECTIVE;
+            final String expected = ordinary(sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                assertExecution(factory, join, expected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
+                final SqlExecutionCircuitBreaker previous = context.getCircuitBreaker();
+                final TrippingCircuitBreaker counting = new TrippingCircuitBreaker(previous, Long.MAX_VALUE);
+                context.with(counting);
+                try {
+                    Assert.assertEquals(expected, result(factory, context));
+                } finally {
+                    context.with(previous);
+                }
+                final long checks = counting.checks.get();
+                Assert.assertTrue("checks: " + checks, checks > 2);
+                int cancellations = 0;
+                // The cancellations of an open cursor, whose tracker tells what the execution left.
+                int trackedCancellations = 0;
+                for (long tripAt = 1; tripAt <= checks; tripAt++) {
+                    final TrippingCircuitBreaker breaker = new TrippingCircuitBreaker(previous, tripAt);
+                    context.with(breaker);
+                    // Stays null when the check cancels the cursor's opening, before any slot translates.
+                    MemoryTracker tracker = null;
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        tracker = context.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        // The owner's checks vary with the workers' pace, so an execution may end before
+                        // the check.
+                        Assert.assertTrue("ended past check " + tripAt, breaker.checks.get() < tripAt);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isCancellation());
+                        cancellations++;
+                        if (tracker != null) {
+                            trackedCancellations++;
+                        }
                     } finally {
                         context.with(previous);
                     }
-                    final long checks = counting.checks.get();
-                    Assert.assertTrue("checks: " + checks, checks > 2);
-                    int cancellations = 0;
-                    // The cancellations of an open cursor, whose tracker tells what the execution left.
-                    int trackedCancellations = 0;
-                    for (long tripAt = 1; tripAt <= checks; tripAt++) {
-                        final TrippingCircuitBreaker breaker = new TrippingCircuitBreaker(previous, tripAt);
-                        context.with(breaker);
-                        // Stays null when the check cancels the cursor's opening, before any slot translates.
-                        MemoryTracker tracker = null;
-                        try (RecordCursor cursor = factory.getCursor(context)) {
-                            tracker = context.getMemoryTracker();
-                            Assert.assertNotNull(tracker);
-                            //noinspection StatementWithEmptyBody
-                            while (cursor.hasNext()) {
-                            }
-                            // The owner's checks vary with the workers' pace, so an execution may end before
-                            // the check.
-                            Assert.assertTrue("ended past check " + tripAt, breaker.checks.get() < tripAt);
-                        } catch (CairoException e) {
-                            Assert.assertTrue(e.getMessage(), e.isCancellation());
-                            cancellations++;
-                            if (tracker != null) {
-                                trackedCancellations++;
-                            }
-                        } finally {
-                            context.with(previous);
-                        }
-                        // The closed cursor released every byte that its execution charged, the caches that
-                        // the slots grew before the cancellation included.
-                        if (tracker != null) {
-                            Assert.assertEquals("tracked after check " + tripAt, 0, tracker.getUsed());
-                        }
-                        Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
-                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                        Assert.assertEquals(0, db.getBusyReaderCount());
+                    // The closed cursor released every byte that its execution charged, the caches that
+                    // the slots grew before the cancellation included.
+                    if (tracker != null) {
+                        Assert.assertEquals("tracked after check " + tripAt, 0, tracker.getUsed());
                     }
-                    Assert.assertTrue("cancellations: " + cancellations, cancellations > 2);
-                    Assert.assertTrue("tracked cancellations: " + trackedCancellations, trackedCancellations > 0);
-                    Assert.assertEquals(expected, result(factory, context));
+                    Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, db.getBusyReaderCount());
                 }
+                Assert.assertTrue("cancellations: " + cancellations, cancellations > 2);
+                Assert.assertTrue("tracked cancellations: " + trackedCancellations, trackedCancellations > 0);
+                Assert.assertEquals(expected, result(factory, context));
             }
-        }, configuration, LOG));
+        }));
     }
 
     @Test
@@ -350,7 +345,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             // factory reads every row under each, and 18,749 rows read first translate through the
             // slots, 18,750 open the shared cache, as does no bound, and 18,749 go back to the slots.
             final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
-            final String expected = ordinaryRows(sql);
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
@@ -417,13 +412,14 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             assertProbeKeyCount("fw", 0, PROBE_KEY_COUNT);
             final StringSink actual = new StringSink();
             printSql("SELECT * FROM mv ORDER BY ts, w", actual);
+            final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
             sqlExecutionContext.setParallelHashJoinEnabled(false);
             try {
                 final StringSink expected = new StringSink();
                 printSql("SELECT * FROM (" + view + ") ORDER BY ts, w", expected);
                 TestUtils.assertEquals(expected, actual);
             } finally {
-                sqlExecutionContext.setParallelHashJoinEnabled(true);
+                sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
             }
         });
     }
@@ -786,57 +782,55 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     // of the mode, whose slots each translate through a cache of their own, then an execution during
     // which a writer commits new texts, and the executions after it.
     private static void assertWorkerPoolsAndAConcurrentWriter(WorkerPoolMode mode) throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (SqlExecutionContextImpl context = newContext(db)) {
-                createTables(db, context);
-                // Frames of 64 rows spread the March rows over the workers' slots, each of which
-                // translates through a cache of its own; the slots move between threads and carriers.
-                context.changePageFrameSizes(64, 64);
-                final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03'";
-                final String expected = ordinary(sql, context);
-                context.setParallelHashJoinEnabled(true);
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    for (int execution = 0; execution < 20; execution++) {
-                        assertExecution(factory, join, expected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
-                    }
-                    // A writer commits 20,000 new texts, and rows of them, to a later March day while a
-                    // cursor is open: the cursor reads the rows of its snapshot.
-                    final String snapshot = printRows(sql, false, context);
-                    final StringSink rows = new StringSink();
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        final Record record = cursor.getRecord();
-                        Assert.assertTrue(cursor.hasNext());
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            // Frames of 64 rows spread the March rows over the workers' slots, each of which
+            // translates through a cache of its own; the slots move between threads and carriers.
+            context.changePageFrameSizes(64, 64);
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03'";
+            final String expected = ordinary(sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int execution = 0; execution < 20; execution++) {
+                    assertExecution(factory, join, expected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
+                }
+                // A writer commits 20,000 new texts, and rows of them, to a later March day while a
+                // cursor is open: the cursor reads the rows of its snapshot.
+                final String snapshot = ordinaryRows(sql, context);
+                final StringSink rows = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    Assert.assertTrue(cursor.hasNext());
+                    CursorPrinter.println(record, factory.getMetadata(), rows, true);
+                    assertSlotCached(join);
+                    db.execute("INSERT INTO f SELECT 'n' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-05', 1_000_000) FROM long_sequence(20_000)", context);
+                    while (cursor.hasNext()) {
                         CursorPrinter.println(record, factory.getMetadata(), rows, true);
-                        assertSlotCached(join);
-                        db.execute("INSERT INTO f SELECT 'n' || x, 's3_' || (x % 50), (x % 100)::INT, x, timestamp_sequence('2024-03-05', 1_000_000) FROM long_sequence(20_000)", context);
-                        while (cursor.hasNext()) {
-                            CursorPrinter.println(record, factory.getMetadata(), rows, true);
-                        }
                     }
-                    TestUtils.assertEquals(snapshot, rows);
-                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    try (TableReader reader = db.getReader("f")) {
-                        Assert.assertEquals(PROBE_KEY_COUNT + 20_000, reader.getSymbolMapReader(0).getSymbolCount());
-                    }
-                    // The next execution reads 21,000 rows over a dictionary of 320,000 texts, which open
-                    // the shared cache: 21,000 >= ceil(320,000 / 16) = 20,000.
-                    final String grown = ordinary(sql, context);
-                    Assert.assertEquals(rowCount(expected) + 20_000, rowCount(grown));
-                    assertExecution(factory, join, grown, join1 -> assertSharedCache(join1.getAtom().getStage(0), 0, 4L * (PROBE_KEY_COUNT + 20_000)), context);
                 }
-                // The March partition alone still translates through the slots: 1,000 < 20,000.
-                final String march = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03-01'";
-                final String marchExpected = ordinary(march, context);
-                context.setParallelHashJoinEnabled(true);
-                try (RecordCursorFactory factory = db.select(march, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    assertExecution(factory, join, marchExpected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
+                TestUtils.assertEquals(snapshot, rows);
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                try (TableReader reader = db.getReader("f")) {
+                    Assert.assertEquals(PROBE_KEY_COUNT + 20_000, reader.getSymbolMapReader(0).getSymbolCount());
                 }
+                // The next execution reads 21,000 rows over a dictionary of 320,000 texts, which open
+                // the shared cache: 21,000 >= ceil(320,000 / 16) = 20,000.
+                final String grown = ordinary(sql, context);
+                Assert.assertEquals(rowCount(expected) + 20_000, rowCount(grown));
+                assertExecution(factory, join, grown, join1 -> assertSharedCache(join1.getAtom().getStage(0), 0, 4L * (PROBE_KEY_COUNT + 20_000)), context);
             }
-        }, configuration, LOG));
+            // The March partition alone still translates through the slots: 1,000 < 20,000.
+            final String march = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03-01'";
+            final String marchExpected = ordinary(march, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(march, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                assertExecution(factory, join, marchExpected, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached, context);
+            }
+        }));
     }
 
     // A table of f's columns that holds the first rows of f's March partition, and whose sym dictionary
@@ -871,39 +865,6 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         }
     }
 
-    private static SqlExecutionContextImpl newContext(CairoEngine db) {
-        return new SqlExecutionContextImpl(db, WORKER_COUNT).with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
-    }
-
-    // The rows of the query, as CursorPrinter prints them, under the operator or under the ordinary plan.
-    private static String printRows(String sql, boolean isParallel, SqlExecutionContext context) throws SqlException {
-        final boolean wasParallel = context.isParallelHashJoinEnabled();
-        context.setParallelHashJoinEnabled(isParallel);
-        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context); RecordCursor cursor = factory.getCursor(context)) {
-            Assert.assertEquals(sql, isParallel, find(factory) != null);
-            final StringSink rows = new StringSink();
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                CursorPrinter.println(record, factory.getMetadata(), rows, true);
-            }
-            return rows.toString();
-        } finally {
-            context.setParallelHashJoinEnabled(wasParallel);
-        }
-    }
-
-    // The rows of a result: after its two lines of metadata, two lines per row, its values and the
-    // values that its SYMBOL, STRING and VARCHAR columns read through other paths.
-    // The ordinary plan's rows, as printRows() prints them.
-    private static String ordinaryRows(String sql) throws SqlException {
-        sqlExecutionContext.setParallelHashJoinEnabled(false);
-        try (RecordCursorFactory factory = select(sql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-            return printRows(cursor, factory);
-        } finally {
-            sqlExecutionContext.setParallelHashJoinEnabled(true);
-        }
-    }
-
     private static String printRows(RecordCursor cursor, RecordCursorFactory factory) {
         final StringSink sink = new StringSink();
         while (cursor.hasNext()) {
@@ -912,6 +873,8 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    // The rows of a result: after its two lines of metadata, two lines per row, its values and the
+    // values that its SYMBOL, STRING and VARCHAR columns read through other paths.
     private static long rowCount(CharSequence result) {
         long lines = 0;
         for (int i = 0, n = result.length(); i < n; i++) {

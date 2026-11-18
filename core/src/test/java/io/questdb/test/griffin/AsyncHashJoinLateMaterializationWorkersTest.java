@@ -25,9 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.log.Log;
@@ -35,8 +33,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
-import io.questdb.test.mp.TestWorkerPool;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -90,49 +86,44 @@ public class AsyncHashJoinLateMaterializationWorkersTest extends AbstractCairoTe
     }
 
     private static void assertLateDecoding(WorkerPoolMode mode) throws Exception {
-        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
-            try (
-                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, WORKER_COUNT)
-                            .with(AllowAllSecurityContext.INSTANCE, null, null, -1, null)
-            ) {
-                for (String ddl : AsyncHashJoinLateMaterializationTest.DDL) {
-                    db.execute(ddl, context);
-                }
-                db.execute("CREATE TABLE d2 AS (SELECT (x % 4)::INT k, x::INT w FROM long_sequence(12))", context);
-                for (Object[] query : QUERIES) {
-                    final String sql = (String) query[0];
-                    final int taskColumns = (Integer) query[1];
-                    final int framesWithRows = (Integer) query[2];
-                    final String expected = ordinary(sql, context);
-                    context.setParallelHashJoinEnabled(true);
-                    try (RecordCursorFactory factory = db.select(sql, context)) {
-                        final AsyncHashJoinRecordCursorFactory join = find(factory);
-                        Assert.assertNotNull(sql, join);
-                        final AsyncHashJoinAtom atom = join.getAtom();
-                        final int probeColumns = join.getSpec().getLeftInput().getMetadata().getColumnCount();
-                        for (int run = 0; run < 2; run++) {
-                            // The owner waits until a worker took a probe slot.
-                            final CountDownLatch probeSlot = new CountDownLatch(1);
-                            atom.getPerWorkerLocks().setTestAcquireLatch(probeSlot);
-                            try {
-                                Assert.assertEquals(sql, expected, result(factory, context));
-                            } finally {
-                                atom.getPerWorkerLocks().setTestAcquireLatch(null);
-                            }
-                            Assert.assertEquals(sql, 0, probeSlot.getCount());
-                            Assert.assertEquals(sql, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
-                            Assert.assertNotNull(sql, atom.getProbeTaskColumns());
-                            Assert.assertEquals(sql, taskColumns, atom.getProbeTaskColumns().size());
-                            Assert.assertEquals(sql, AsyncHashJoinLateMaterializationTest.PARQUET_FRAMES, atom.getParquetProbeFrameCount());
-                            Assert.assertEquals(
-                                    sql,
-                                    (long) framesWithRows * probeColumns + (long) (AsyncHashJoinLateMaterializationTest.PARQUET_FRAMES - framesWithRows) * taskColumns,
-                                    atom.getDecodedProbeColumnCount()
-                            );
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            for (String ddl : AsyncHashJoinLateMaterializationTest.DDL) {
+                db.execute(ddl, context);
+            }
+            db.execute("CREATE TABLE d2 AS (SELECT (x % 4)::INT k, x::INT w FROM long_sequence(12))", context);
+            for (Object[] query : QUERIES) {
+                final String sql = (String) query[0];
+                final int taskColumns = (Integer) query[1];
+                final int framesWithRows = (Integer) query[2];
+                final String expected = ordinary(sql, context);
+                context.setParallelHashJoinEnabled(true);
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(sql, join);
+                    final AsyncHashJoinAtom atom = join.getAtom();
+                    final int probeColumns = join.getSpec().getLeftInput().getMetadata().getColumnCount();
+                    for (int run = 0; run < 2; run++) {
+                        // The owner waits until a worker took a probe slot.
+                        final CountDownLatch probeSlot = new CountDownLatch(1);
+                        atom.getPerWorkerLocks().setTestAcquireLatch(probeSlot);
+                        try {
+                            Assert.assertEquals(sql, expected, result(factory, context));
+                        } finally {
+                            atom.getPerWorkerLocks().setTestAcquireLatch(null);
                         }
+                        Assert.assertEquals(sql, 0, probeSlot.getCount());
+                        Assert.assertEquals(sql, 0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertNotNull(sql, atom.getProbeTaskColumns());
+                        Assert.assertEquals(sql, taskColumns, atom.getProbeTaskColumns().size());
+                        Assert.assertEquals(sql, AsyncHashJoinLateMaterializationTest.PARQUET_FRAMES, atom.getParquetProbeFrameCount());
+                        Assert.assertEquals(
+                                sql,
+                                (long) framesWithRows * probeColumns + (long) (AsyncHashJoinLateMaterializationTest.PARQUET_FRAMES - framesWithRows) * taskColumns,
+                                atom.getDecodedProbeColumnCount()
+                        );
                     }
                 }
             }
-        }, configuration, LOG));
+        }));
     }
 }

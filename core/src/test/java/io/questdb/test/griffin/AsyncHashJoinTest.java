@@ -717,6 +717,7 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                 // The metadata is the ordinary join's: the left input's columns, then the right one's,
                 // and the left input's designated timestamp.
                 final RecordMetadata metadata = join.getMetadata();
+                final boolean isEnabledBefore = sqlExecutionContext.isParallelHashJoinEnabled();
                 sqlExecutionContext.setParallelHashJoinEnabled(false);
                 try (RecordCursorFactory ordinary = select(sql)) {
                     Assert.assertNull(find(ordinary));
@@ -734,7 +735,7 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                     Assert.assertEquals(2, expected.getTimestampIndex());
                     Assert.assertEquals(2, metadata.getTimestampIndex());
                 } finally {
-                    sqlExecutionContext.setParallelHashJoinEnabled(true);
+                    sqlExecutionContext.setParallelHashJoinEnabled(isEnabledBefore);
                 }
                 Assert.assertFalse(join.recordCursorSupportsRandomAccess());
                 Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, join.getScanDirection());
