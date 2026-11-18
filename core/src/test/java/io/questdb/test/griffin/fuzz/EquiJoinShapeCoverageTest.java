@@ -60,6 +60,9 @@ public class EquiJoinShapeCoverageTest {
     private static final int GENERATOR_DRAWS = 20_000;
     // A query's LIMIT, literal or bound, which comes last.
     private static final Pattern LIMIT = Pattern.compile(" LIMIT (?:\\d+, )?-?(?:\\d+|\\$1)$");
+    // The WHERE clause of the LIMIT form of EquiJoinClause that states the LIMIT under a WHERE that
+    // holds no column, which it adds only to a query without a WHERE clause.
+    private static final String RUNTIME_CONSTANT_FILTER_LIMIT_FORM = " WHERE now() > '2000-01-01'";
     // The head of the LIMIT form of EquiJoinClause that states the LIMIT over a sub-query.
     private static final String SUB_QUERY_LIMIT_FORM = "SELECT * FROM (";
 
@@ -118,7 +121,9 @@ public class EquiJoinShapeCoverageTest {
         int bareWithOtherFilters = 0;
         int orderedOverFilteredLeft = 0;
         for (int i = 0; i < CORPUS_SIZE; i++) {
-            // The query that a LIMIT form wraps holds the order that its LIMIT needs.
+            // The query that a LIMIT form wraps holds the order that its LIMIT needs, and its WHERE
+            // clause, if any, the query's filters: the WHERE that holds no column, which a LIMIT
+            // form adds, goes with the form.
             final String sql = unwrapLimitForm(EquiJoinClause.generate(rnd, left, right, null, false).sql());
             if (!Pattern.compile(" LIMIT (?:\\d+, )?-?\\d+$").matcher(sql).find()) {
                 continue;
@@ -548,8 +553,8 @@ public class EquiJoinShapeCoverageTest {
     }
 
     // The query that a LIMIT form of EquiJoinClause states, with its LIMIT: the query of a sub-query
-    // or a CTE over it, or the first branch of a UNION ALL of it with itself; any other query as it
-    // is.
+    // or a CTE over it, the first branch of a UNION ALL of it with itself, or the query without the
+    // WHERE that holds no column; any other query as it is.
     private static String unwrapLimitForm(String sql) {
         final Matcher limit = LIMIT.matcher(sql);
         if (!limit.find()) {
@@ -566,6 +571,10 @@ public class EquiJoinShapeCoverageTest {
         final int union = indexAtDepthZero(sql, " UNION ALL ", 0);
         if (union > 0) {
             return sql.substring(0, union) + limitClause;
+        }
+        final int filter = indexAtDepthZero(sql, RUNTIME_CONSTANT_FILTER_LIMIT_FORM, 0);
+        if (filter > 0) {
+            return sql.substring(0, filter) + sql.substring(filter + RUNTIME_CONSTANT_FILTER_LIMIT_FORM.length());
         }
         return sql;
     }
