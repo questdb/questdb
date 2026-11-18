@@ -267,6 +267,8 @@ public class SqlParser {
     // it, see MAX_DECLARED_VARIABLE_NODES.
     private int declaredVariableNodeCount;
     private int digit;
+    // Whether parse() is parsing the SELECT that CREATE LIVE VIEW stores, see checkLiveViewSelectBindVariable().
+    private boolean isLiveViewSelectParse;
     private boolean pivotMode = false;
     // the principal of the statement being parsed, see isExpandableView()
     private SecurityContext securityContext;
@@ -8458,6 +8460,22 @@ public class SqlParser {
         }
     }
 
+    /**
+     * Refuses a bind variable written in the SELECT that CREATE LIVE VIEW stores, at its token: the view's
+     * refreshes and restarts compile that text with nothing bound, so the value bound at CREATE could never
+     * be reproduced. The expression parser calls this for every bind variable it parses. The body of a view
+     * the SELECT reads is not the SELECT's text: another statement wrote it, and the compile may drop its
+     * variables (an OVERRIDABLE default the reader overrides, a column the reader does not read), so it is
+     * left to the rules that judge the compiled plan. parseDeclaredQuery() takes the views off
+     * viewsBeingCompiled while it parses a copy of a sub-query the statement declared, so such a copy
+     * counts as the statement's text.
+     */
+    void checkLiveViewSelectBindVariable(ExpressionNode node) throws SqlException {
+        if (isLiveViewSelectParse && viewsBeingCompiled.size() == 0) {
+            throw SqlException.nonDeterministicColumn(node.position, node.token, "live view");
+        }
+    }
+
     void clear() {
         declaredQueries.clear();
         declaredQueryDigits.clear();
@@ -8560,7 +8578,18 @@ public class SqlParser {
 
     ExecutionModel parse(GenericLexer lexer, SqlExecutionContext executionContext, SqlParserCallback sqlParserCallback) throws SqlException {
         recordStatementTextLength(lexer);
-        final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
+        // CairoEngine.createLiveView compiles the SELECT a live view stores in the caller's context, with the
+        // live view compile and the determinism guard armed. The caller's bind values are visible there, but
+        // every refresh and restart compiles the same text with nothing bound.
+        isLiveViewSelectParse = executionContext.isLiveViewCompile()
+                && !executionContext.isLiveViewRefresh()
+                && !executionContext.allowNonDeterministicFunctions();
+        final ExecutionModel model;
+        try {
+            model = parse0(lexer, executionContext, sqlParserCallback);
+        } finally {
+            isLiveViewSelectParse = false;
+        }
         attachViewReads(model);
         return model;
     }

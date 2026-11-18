@@ -146,6 +146,29 @@ public class PGLiveViewTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateWithBindParameterFailsOnEveryExecution() throws Exception {
+        // A prepared CREATE LIVE VIEW whose SELECT carries a parameter, in the projection and in WHERE, executed
+        // twice. pgjdbc sends the parameter as $1 where ? stood, and the view's refreshes and restarts would
+        // compile its SELECT with nothing bound, so CREATE refuses it. Both executions report the parameter's
+        // position, which the server sends one-based, and neither leaves a view behind.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String window = "count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn";
+            final String projection = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, ? v, " + window + " FROM base";
+            try (PreparedStatement create = connection.prepareStatement(projection)) {
+                create.setString(1, "abc");
+                assertCreateRefusesParameterTwice(create, projection);
+            }
+            final String filter = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS SELECT ts, x, " + window + " FROM base WHERE x > ?";
+            try (PreparedStatement create = connection.prepareStatement(filter)) {
+                create.setInt(1, 1);
+                assertCreateRefusesParameterTwice(create, filter);
+            }
+        });
+    }
+
+    @Test
     public void testCreateWithCompileErrorInScriptReportsScriptPosition() throws Exception {
         // In simple mode the server parses the whole script, so an error position is an offset into the
         // script, one-based on the wire. A CREATE LIVE VIEW after another statement reports an error from
@@ -208,6 +231,36 @@ public class PGLiveViewTest extends BasePGTest {
     }
 
     @Test
+    public void testCreateWithInlinedParameterInSimpleMode() throws Exception {
+        // In simple mode pgjdbc writes the parameter into the statement as a literal, 'abc', so the server reads
+        // no bind variable: the view is created, and its column holds the value.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, _, _, _) -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String sql = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM BEGINNING AS SELECT ts, x, ? v, "
+                    + "count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base";
+            try (PreparedStatement create = connection.prepareStatement(sql)) {
+                create.setString(1, "abc");
+                create.execute();
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-04-01T00:00:00.000000Z', 1), ('2026-04-01T01:00:00.000000Z', 2)");
+                drive(job);
+                assertQuery("SELECT ts, x, v, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\tv\trn
+                                2026-04-01T00:00:00.000000Z\t1\tabc\t1
+                                2026-04-01T01:00:00.000000Z\t2\tabc\t2
+                                """);
+            }
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testCreateWithUnstorableColumnFailsOnEveryExecution() throws Exception {
         // A prepared CREATE LIVE VIEW whose SELECT projects an untyped NULL, executed twice. Both
         // executions refuse the column at its position, which the server sends one-based, and
@@ -235,6 +288,23 @@ public class PGLiveViewTest extends BasePGTest {
                 }
             }
         });
+    }
+
+    // Executes create, whose one parameter stands where ? stands in sql, twice: each execution must refuse the
+    // parameter at that position and leave no view.
+    private static void assertCreateRefusesParameterTwice(PreparedStatement create, String sql) throws Exception {
+        for (int i = 0; i < 2; i++) {
+            try {
+                create.execute();
+                Assert.fail("execution " + i + " must refuse the parameter: " + sql);
+            } catch (PSQLException e) {
+                final ServerErrorMessage serverError = e.getServerErrorMessage();
+                Assert.assertNotNull(serverError);
+                Assert.assertEquals("non-deterministic function cannot be used in live view: $1", serverError.getMessage());
+                Assert.assertEquals(sql, sql.indexOf('?') + 1, serverError.getPosition());
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+        }
     }
 
     // Applies the base and runs the refresh job with the clock past FLUSH EVERY until it reports no work.
