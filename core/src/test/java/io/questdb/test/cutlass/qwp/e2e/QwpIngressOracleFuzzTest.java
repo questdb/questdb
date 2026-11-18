@@ -446,7 +446,8 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs stage acks.
+     * Producers interleave 3-26 DEDUP tables, some add a column, the server bounces, and half the runs use a
+     * 512-1023 byte send buffer, which acks of 11 or more tables can outgrow, making the server stage them.
      */
     @Test
     public void testOracleMultiTableTortureUnderServerBounces() throws Exception {

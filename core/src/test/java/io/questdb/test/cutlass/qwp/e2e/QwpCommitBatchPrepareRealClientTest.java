@@ -98,24 +98,6 @@ public class QwpCommitBatchPrepareRealClientTest extends AbstractCairoTest {
         Assert.assertEquals(GROUP_WINDOW_US, engine.getConfiguration().getAdaptiveCommitGroupWindowUs());
     }
 
-    // Waits for each table to hold rowsPerTable rows, each value once.
-    private void awaitRows(CairoEngine engine, int rowsPerTable) throws Exception {
-        TestUtils.assertEventually(() -> {
-            drainWalQueue(engine);
-            for (String table : TABLES) {
-                final StringBuilder expected = new StringBuilder("count\tcount_distinct\n");
-                expected.append(rowsPerTable).append('\t').append(rowsPerTable).append('\n');
-                assertQuery("SELECT count(), count_distinct(v) FROM " + table)
-                        .withEngine(engine)
-                        .withContext(TestUtils.createSqlExecutionCtx(engine))
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns(expected.toString());
-            }
-        });
-    }
-
     private static void createTables() throws Exception {
         for (String table : TABLES) {
             execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -188,6 +170,24 @@ public class QwpCommitBatchPrepareRealClientTest extends AbstractCairoTest {
                     }
                     awaitRows(demotableEngine, 3);
                 }
+            }
+        });
+    }
+
+    // Waits for each table to hold rowsPerTable rows, each value once.
+    private void awaitRows(CairoEngine engine, int rowsPerTable) throws Exception {
+        TestUtils.assertEventually(() -> {
+            drainWalQueue(engine);
+            for (String table : TABLES) {
+                final StringBuilder expected = new StringBuilder("count\tcount_distinct\n");
+                expected.append(rowsPerTable).append('\t').append(rowsPerTable).append('\n');
+                assertQuery("SELECT count(), count_distinct(v) FROM " + table)
+                        .withEngine(engine)
+                        .withContext(TestUtils.createSqlExecutionCtx(engine))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected.toString());
             }
         });
     }

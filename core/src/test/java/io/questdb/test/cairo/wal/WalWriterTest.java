@@ -7557,7 +7557,7 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     // The out-of-order flag that the WAL event of the segment's only transaction carries.
-    private static void assertWalEventOutOfOrder(TableToken token, String walName, int segmentId, long segmentRows, boolean expected) {
+    private static void assertWalEventOutOfOrder(TableToken token, String walName, int segmentId, long segmentRows, boolean isOutOfOrderExpected) {
         try (WalReader reader = engine.getWalReader(AllowAllSecurityContext.INSTANCE, token, walName, segmentId, segmentRows)) {
             final WalEventCursor eventCursor = reader.getWalEventCursor();
             assertTrue(eventCursor.hasNext());
@@ -7565,7 +7565,7 @@ public class WalWriterTest extends AbstractCairoTest {
             final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
             assertEquals(0, dataInfo.getStartRowID());
             assertEquals(segmentRows, dataInfo.getEndRowID());
-            assertEquals(expected, dataInfo.isOutOfOrder());
+            assertEquals(isOutOfOrderExpected, dataInfo.isOutOfOrder());
             assertFalse(eventCursor.hasNext());
         }
     }

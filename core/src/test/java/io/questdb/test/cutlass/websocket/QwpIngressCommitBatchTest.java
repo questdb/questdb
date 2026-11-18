@@ -481,9 +481,6 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Each table commits once, and one ack covers every frame.
-     */
     @Test
     public void testCommitBatchPreparesOnlyUnderSyncAndAdaptive() throws Exception {
         assertMemoryLeak(() -> {
@@ -496,7 +493,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 try (CairoEngine pinnedEngine = new CairoEngine(pinnedConfiguration(modes[m], windows[m], TestFilesFacadeImpl.INSTANCE))) {
                     assertPinnedMode(pinnedEngine, modes[m], windows[m]);
                     final boolean isPrepared = modes[m] == CommitMode.SYNC || modes[m] == CommitMode.ADAPTIVE;
-                    final boolean[] wasPreparedInHook = {false};
+                    final boolean[] isPreparedInHook = {false};
                     final ObjList<byte[]> sent;
                     try (Connection connection = new Connection(
                             pinnedEngine,
@@ -508,12 +505,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                             createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(a, 300L, 3_000_000L))
                     )) {
                         final QwpIngressProcessorState state = connection.getState();
-                        state.setAfterPreparePhaseHook(() -> wasPreparedInHook[0] = state.getCommitBatchWriter(0).isCommitPrepared()
+                        state.setAfterPreparePhaseHook(() -> isPreparedInHook[0] = state.getCommitBatchWriter(0).isCommitPrepared()
                                 && state.getCommitBatchWriter(1).isCommitPrepared());
                         connection.deliverFrames(3);
                         sent = connection.sentFrames();
                         Assert.assertEquals(CommitMode.toString(modes[m]), isPrepared ? 1 : 0, state.getPreparePhaseCount());
-                        Assert.assertEquals(isPrepared, wasPreparedInHook[0]);
+                        Assert.assertEquals(isPrepared, isPreparedInHook[0]);
                     }
                     Assert.assertEquals("one ack covers the pass", 2, maxCumulativeOkAck(sent));
                     Assert.assertEquals(1, lastTxn(pinnedEngine, a));
@@ -526,6 +523,9 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Each table commits once, and one ack covers every frame.
+     */
     @Test
     public void testCommitBatchSpansInterleavedTables() throws Exception {
         assertMemoryLeak(() -> {
