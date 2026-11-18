@@ -377,7 +377,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertQuery("select case from long_sequence(1)")
                     .noLeakCheck()
-                    .fails(7, "unbalanced 'case'");
+                    .fails(17, "'when' expected");
             assertQuery("select case end from long_sequence(1)")
                     .noLeakCheck()
                     .fails(12, "'when' expected");
@@ -395,7 +395,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .fails(16, "'when' expected");
             assertQuery("select case x/2 z end from long_sequence(1)")
                     .noLeakCheck()
-                    .fails(18, "'when' expected");
+                    .fails(16, "'when' expected");
             assertQuery("select case 1+5 end from long_sequence(1)")
                     .noLeakCheck()
                     .fails(16, "'when' expected");
@@ -457,6 +457,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingEnd() throws Exception {
+        assertQuery("select case when x > 1 then 'a' from long_sequence(1)")
+                .fails(32, "'when', 'else' or 'end' expected");
+        assertQuery("select case when x > 1 then 'a' else 'b' from long_sequence(1)")
+                .fails(41, "'then' or 'end' expected");
+        assertQuery("select case x when 1 then 'a' end k, case x when 2 then 'b' k from long_sequence(1)")
+                .fails(60, "'when', 'else' or 'end' expected");
+    }
+
+    @Test
     public void testCaseWithNoElseInSelectClause() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select case x when 1 then 0 end c from long_sequence(3)")
@@ -505,6 +515,25 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("x\n");
         });
+    }
+
+    @Test
+    public void testCastWithMultiWordTypeInBranches() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE WHEN x > 1 THEN cast(x AS double precision) END a,
+                    CASE WHEN cast(x AS double precision) > 1 THEN 'big' ELSE 'small' END b,
+                    CASE WHEN x > 1 THEN cast('2021-12-31T15:15:51.663Z' AS timestamp with time zone) END c,
+                    CASE WHEN x > 1 THEN '2021-12-31T15:15:51.663Z'::timestamp with time zone END d
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td
+                        1\tnull\tsmall\t\t
+                        2\t2.0\tbig\t2021-12-31T15:15:51.663000Z\t2021-12-31T15:15:51.663000Z
+                        """);
     }
 
     @Test
@@ -2003,6 +2032,29 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     end\s
                 from tanc""")
                 .fails(107, "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]");
+    }
+
+    @Test
+    public void testSimpleCaseWithFunctionOperand() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE abs(x - 2) WHEN 1 THEN 'one' WHEN 0 THEN 'zero' ELSE 'other' END a,
+                    CASE (abs(x - 2)) WHEN 1 THEN 'one' ELSE 'other' END b,
+                    CASE cast(x AS int) WHEN 2 THEN 'two' END c,
+                    CASE (x) WHEN 3 THEN 'three' END d,
+                    CASE concat('v', x) WHEN 'v1' THEN 'first' ELSE 'rest' END e,
+                    CASE nullif(x, 2) WHEN 2 THEN 'two' WHEN 1 THEN 'one' ELSE 'none' END f
+                FROM long_sequence(4)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf
+                        1\tone\tone\t\t\tfirst\tone
+                        2\tzero\tother\ttwo\t\trest\tnone
+                        3\tone\tone\t\tthree\trest\tnone
+                        4\tother\tother\t\t\trest\tnone
+                        """);
     }
 
     @Test
