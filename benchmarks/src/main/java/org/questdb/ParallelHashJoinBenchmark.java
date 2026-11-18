@@ -95,7 +95,14 @@ import java.util.concurrent.locks.LockSupport;
  *   <li>{@code shape}: the query, see {@link #sql()}. {@code STAR_*} join the fact table with the
  *       three dimensions (INNER or LEFT; unfiltered, under a selective probe filter or under a
  *       post-join filter), {@code SINGLE_*} with one dimension each, {@code WIDE} reads every column
- *       of the star (consumer bound), {@code LIMIT_*} stop after 100 rows, {@code FANOUT_*} join a
+ *       of the star (consumer bound), {@code LIMIT_*} stop after 100 rows: {@code LIMIT_1K} and
+ *       {@code LIMIT_LARGE} of the join's own query, {@code LIMIT_SUBQUERY}, {@code LIMIT_CTE},
+ *       {@code LIMIT_ORDER_QUALIFIED}, {@code LIMIT_ASOF} and {@code LIMIT_UNION_ALL} of
+ *       {@code SINGLE_LARGE} under a sub-query, a CTE, an {@code ORDER BY f.ts DESC}, as the master
+ *       of an ASOF join and in both branches of a UNION ALL, whose LIMIT reaches the join, and
+ *       {@code LIMIT_WINDOW}, {@code LIMIT_CROSS} and {@code LIMIT_SNOWFLAKE} under a window
+ *       function, a CROSS JOIN and a LEFT join keyed on the dimension, whose LIMIT does not,
+ *       {@code FANOUT_*} join a
  *       dimension with hot duplicate keys (no predicate, an ON residual, a post-join filter),
  *       {@code PARQUET_*} and {@code MIXED_PROBE} read Parquet partitions, the Parquet probe also
  *       under a selective probe filter and under an INNER lookup that most rows miss,
@@ -223,6 +230,8 @@ public class ParallelHashJoinBenchmark {
     // The rows that an HTTP page of 1,000 rows without a row count reads: one past the page.
     private static final long PAGE_ROWS = 1_001;
     private static final String POOL_NAME = "hashjoinbench";
+    // The SINGLE_LARGE shape's join, which the LIMIT_* shapes over other operators read.
+    private static final String SINGLE_LARGE_JOIN = "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
@@ -275,6 +284,8 @@ public class ParallelHashJoinBenchmark {
             "SINGLE_1K", "SINGLE_100K", "SINGLE_LARGE",
             "WIDE",
             "LIMIT_1K", "LIMIT_LARGE",
+            "LIMIT_SUBQUERY", "LIMIT_CTE", "LIMIT_ORDER_QUALIFIED", "LIMIT_ASOF", "LIMIT_UNION_ALL",
+            "LIMIT_WINDOW", "LIMIT_CROSS", "LIMIT_SNOWFLAKE",
             "PAGE_1K", "PAGE_LARGE", "FETCH_1K", "FETCH_LARGE",
             "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
             "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
@@ -822,6 +833,14 @@ public class ParallelHashJoinBenchmark {
             case "WIDE" -> "SELECT * FROM fact f" + STAR_JOINS;
             case "LIMIT_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k LIMIT 100";
             case "LIMIT_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "LIMIT_SUBQUERY" -> "SELECT * FROM (" + SINGLE_LARGE_JOIN + ") LIMIT 100";
+            case "LIMIT_CTE" -> "WITH j AS (" + SINGLE_LARGE_JOIN + ") SELECT * FROM j LIMIT 100";
+            case "LIMIT_ORDER_QUALIFIED" -> SINGLE_LARGE_JOIN + " ORDER BY f.ts DESC LIMIT 100";
+            case "LIMIT_ASOF" -> "SELECT f.id, f.v, d3.w, t.w tw FROM fact f JOIN d3 ON f.k3 = d3.k ASOF JOIN dtiny t LIMIT 100";
+            case "LIMIT_UNION_ALL" -> SINGLE_LARGE_JOIN + " UNION ALL " + SINGLE_LARGE_JOIN + " LIMIT 100";
+            case "LIMIT_WINDOW" -> "SELECT f.id, f.v, d3.w, row_number() OVER () rn FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "LIMIT_CROSS" -> "SELECT j.id, j.v, j.w, c.x FROM (" + SINGLE_LARGE_JOIN + ") j CROSS JOIN long_sequence(2) c LIMIT 100";
+            case "LIMIT_SNOWFLAKE" -> "SELECT f.id, f.v, d3.w, d1.w w1 FROM fact f JOIN d3 ON f.k3 = d3.k LEFT JOIN d1 ON d3.k = d1.k LIMIT 100";
             case "PAGE_1K", "FETCH_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
             case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
             // A quarter of the fact rows meet a hot key with eight matches.

@@ -524,6 +524,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    // The inputs whose rows a LIMIT over their owner bounds, and their owners, paired by index: the
+    // master of an ASOF or LT join, which reads one row of it per row it returns, and each branch of
+    // a UNION ALL, which returns every row it reads; see handOverLimit(). They hold the factories of
+    // the compilation under way, and the outermost generate() clears them as it returns or fails.
+    private final ObjList<RecordCursorFactory> limitBoundedInputOwners = new ObjList<>();
+    private final ObjList<RecordCursorFactory> limitBoundedInputs = new ObjList<>();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
@@ -772,6 +778,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
+        clearLimitBoundedInputs();
         generationState.clear();
     }
 
@@ -780,6 +787,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         generationState.setPreparationHook(null);
         generationState.clear();
         sharedFactoryCache.clear();
+        clearLimitBoundedInputs();
         Throwable failure = null;
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             try {
@@ -965,6 +973,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // identities, so neither borrowed factories nor snapshots may survive an attempt.
                 generationState.clear();
                 sharedFactoryCache.clear();
+                clearLimitBoundedInputs();
             }
         }
     }
@@ -992,6 +1001,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             if (parserIndex == 0) {
                 sharedFactoryCache.clear();
+                clearLimitBoundedInputs();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
@@ -1081,6 +1091,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public ListColumnFilter getIndexColumnFilter() {
         return listColumnFilterA;
+    }
+
+    /**
+     * The inputs that the compilation under way recorded for its LIMITs to follow, see
+     * {@code handOverLimit()}; none once the outermost compilation returned or failed.
+     */
+    @TestOnly
+    public int getLimitBoundedInputCountForTesting() {
+        return limitBoundedInputs.size();
     }
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
@@ -2737,6 +2756,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // Records an input whose owner reads at most one row of it per row the owner returns, so that a
+    // LIMIT over the owner bounds the input's rows; see handOverLimit().
+    private void addLimitBoundedInput(RecordCursorFactory owner, RecordCursorFactory input) {
+        limitBoundedInputOwners.add(owner);
+        limitBoundedInputs.add(input);
+    }
+
     private void backupWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, backupWhereClauseRef);
     }
@@ -3020,6 +3046,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!hasPrimaryFailure) {
             CairoException.rethrowCleanupFailure(failure);
         }
+    }
+
+    private void clearLimitBoundedInputs() {
+        limitBoundedInputOwners.clear();
+        limitBoundedInputs.clear();
     }
 
     @Nullable
@@ -7870,12 +7901,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
+                                final RecordCursorFactory temporalJoinMaster = master;
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it
                                 closeSlaveOnFailure = false;
+                                // Every ASOF and LT join reads one row of the master that it takes
+                                // per row it returns.
+                                addLimitBoundedInput(master, temporalJoinMaster);
                                 break;
                             case IQueryModel.JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -8999,15 +9034,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw th;
                 }
             }
-            if (master instanceof AsyncHashJoinRecordCursorFactory join) {
-                // The query's LIMIT applies to the parallel hash join's rows, which then joins at
-                // first only the probe rows the LIMIT may need. The LIMIT itself stays above it. The
-                // model that states the LIMIT hands it over from generateLimit(), once the SELECT
-                // lists above the join compiled: parsing it here would type its bind variables
-                // before the SELECT lists do. The LIMIT only narrows the join's first window, and
-                // never changes its rows.
-                join.ofLimitAdvice(model.getLimitAdviceLo(), model.getLimitAdviceHi());
-            }
             return master;
         } catch (Throwable e) {
             Misc.free(master, e);
@@ -9500,19 +9526,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
-            // The parallel hash join that the optimiser advised this very LIMIT takes a parse of its
-            // own, see generateJoins(). The parse above typed the LIMIT's bind variables, after the
-            // SELECT lists of this model and of the models below it, so this one types none.
-            for (RecordCursorFactory base = factory; base != null; base = base.getBaseFactory()) {
-                if (base instanceof AsyncHashJoinRecordCursorFactory join) {
-                    if (join.isLimitAdvised(limitLo, limitHi)) {
-                        join.ofLimit(getLoFunction(model, executionContext));
-                        // The join owns the lower bound, and frees it with itself should this fail.
-                        join.ofLimitHi(getHiFunction(model, executionContext));
-                    }
-                    break;
-                }
-            }
+            // The parse above typed the LIMIT's bind variables, after the SELECT lists of this model
+            // and of the models below it, so the parses of the joins that take the LIMIT type none.
+            handOverLimit(factory, model, executionContext);
             final Function adoptedLoFunc = loFunc;
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
@@ -15145,6 +15161,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 castFunctionsA,
                 castFunctionsB
         );
+        // The union returns every row it reads, from the first branch until it runs out, then from
+        // the second.
+        addLimitBoundedInput(unionFactory, factoryA);
+        addLimitBoundedInput(unionFactory, factoryB);
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
@@ -15683,6 +15703,58 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private void guardAgainstFromToWithKeyedSampleBy(boolean isFromTo) throws SqlException {
         if (isFromTo) {
             throw SqlException.$(0, "FROM-TO intervals are not supported for keyed SAMPLE BY queries");
+        }
+    }
+
+    /**
+     * Hands the model's LIMIT to every parallel hash join whose rows it bounds, see
+     * {@link AsyncHashJoinRecordCursorFactory#ofLimit}: the joins that a walk from the LIMIT's base
+     * factory reaches through factories that read at most one row of their input per row they
+     * return. Projections, the SYMBOL casts over a union and runtime-constant filters read their
+     * base's rows one for one, or none; the master of an ASOF or LT join and the branches of a UNION
+     * ALL are inputs that their owners read so, see {@link #addLimitBoundedInput}. Any other factory,
+     * such as a sort, a filter, a GROUP BY or another LIMIT, may read more rows of its input than it
+     * returns, and ends the walk, as a parallel hash join does. Each join takes a parse of the LIMIT
+     * of its own. The LIMIT only narrows a join's first window, and never changes its rows.
+     */
+    private void handOverLimit(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        // The walk collects the joins first, since a parse may generate a sub-query, and keeps the
+        // inputs it has yet to visit, the branches of a UNION ALL, in a list.
+        ObjList<AsyncHashJoinRecordCursorFactory> joins = null;
+        ObjList<RecordCursorFactory> pendingInputs = null;
+        RecordCursorFactory current = factory;
+        while (current != null) {
+            if (current instanceof SelectedRecordCursorFactory
+                    || current instanceof VirtualRecordCursorFactory
+                    || current instanceof UnionSymbolCastRecordCursorFactory
+                    || current instanceof RuntimeConstGateRecordCursorFactory) {
+                current = current.getBaseFactory();
+                continue;
+            }
+            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+                if (joins == null) {
+                    joins = new ObjList<>();
+                }
+                joins.add(join);
+            } else {
+                for (int i = 0, n = limitBoundedInputOwners.size(); i < n; i++) {
+                    if (limitBoundedInputOwners.getQuick(i) == current) {
+                        if (pendingInputs == null) {
+                            pendingInputs = new ObjList<>();
+                        }
+                        pendingInputs.add(limitBoundedInputs.getQuick(i));
+                    }
+                }
+            }
+            current = pendingInputs != null && pendingInputs.size() > 0 ? pendingInputs.popLast() : null;
+        }
+        if (joins != null) {
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
+                join.ofLimit(getLoFunction(model, executionContext));
+                // The join owns the lower bound, and frees it with itself should this fail.
+                join.ofLimitHi(getHiFunction(model, executionContext));
+            }
         }
     }
 

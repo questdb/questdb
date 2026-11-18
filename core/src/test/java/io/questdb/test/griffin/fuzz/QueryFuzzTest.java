@@ -1085,6 +1085,28 @@ public class QueryFuzzTest extends AbstractCairoTest {
         );
     }
 
+    // Pins the LIMIT forms of the generated equi-join queries, see EquiJoinClause: the LIMIT of a
+    // sub-query or a CTE over the joins, of a UNION ALL, of an ASOF or LT join of which the joins are
+    // the master, and of the joins under a WHERE that holds no column, which the parallel hash join
+    // takes, as the parallel join axis compares the rows with the ordinary plan's. Frames of two rows
+    // leave a small LIMIT fewer frames to dispatch than the probe has.
+    @Test
+    public void testParallelJoinLimitFormsAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "99"},
+                        {"questdb.fuzz.s1", "100"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "LIMIT forms " + runner.getParallelJoinLimitFormRuns(),
+                        runner.getParallelJoinLimitFormRuns() > 0
+                ))
+        );
+    }
+
     // A ring budget below one frame's tuples leaves the ring one entry, and a dispatch limit of zero
     // reduces every frame on the owner. A query of the pinned seed swaps its first join's inputs and
     // defines the stages' stepper copies while it runs. The dispatch limit of zero holds for every
@@ -1877,7 +1899,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getParallelJoinPartialReadStacked()).$(" stacked, ")
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
-                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first; ")
+                .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first, ")
+                .$(runner.getParallelJoinLimitFormRuns()).$(" whose LIMIT reached the join from outside its own query; ")
                 .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies (")
                 .$(runner.getParallelJoinStepperCopyStackedRuns()).$(" stacked in the query's orientation, ")
                 .$(runner.getParallelJoinStepperCopySwappedRuns()).$(" swapped on copies defined as they compiled, ")

@@ -189,7 +189,8 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
     public void testExecPagesWithoutCountBoundTheFirstWindow() throws Exception {
         // [query, query parameters, the rows that the join's first window was cut for]. A page
         // without a row count reads the rows up to its last one and one more; a count, no page or
-        // a join that is not the query's rows leaves the window as it is.
+        // a join that is not the query's rows leaves the window as it is, but for the LIMIT of a
+        // query over a sub-query of the join, which the join takes.
         final Object[][] requests = {
                 {STAR, "limit=1,7", 8L},
                 {STAR, "limit=1,7&count=true", Long.MAX_VALUE},
@@ -201,7 +202,7 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
                 {STAR, "limit=21,5", 22L},
                 {STAR, "limit=9223372036854775807,9223372036854775806", Long.MAX_VALUE},
                 {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
-                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", Long.MAX_VALUE},
+                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", 50L},
                 {STAR, "limit=2,4", 5L},
         };
         final ObjList<String> expected = new ObjList<>();
@@ -274,7 +275,8 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
         // [query, query parameters, the rows that the join's first window was cut for]. A CSV export
         // without a row count reads the rows up to the larger of its skip and stop and one more; a
         // count, no limit, a Parquet export, which reads every row, or a join that is not the
-        // query's rows leaves the window as it is.
+        // query's rows leaves the window as it is, but for the LIMIT of a query over a sub-query of
+        // the join, which the join takes.
         final Object[][] requests = {
                 {STAR, "limit=1,7", 8L},
                 {STAR, "limit=1,7&count=true", Long.MAX_VALUE},
@@ -288,7 +290,7 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
                 {STAR, "limit=9223372036854775807,9223372036854775806", Long.MAX_VALUE},
                 {STAR, "limit=9223372036854775806,9223372036854775806", Long.MAX_VALUE},
                 {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
-                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", Long.MAX_VALUE},
+                {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", 50L},
                 {STAR, "limit=2,4", 5L},
         };
         final ObjList<String> expected = new ObjList<>();

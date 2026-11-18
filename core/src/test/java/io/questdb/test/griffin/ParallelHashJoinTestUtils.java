@@ -37,6 +37,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -257,6 +259,48 @@ public final class ParallelHashJoinTestUtils {
             }
         }
         return null;
+    }
+
+    /**
+     * Every parallel hash join inside a compiled query, in the order its plan lists them: those that
+     * {@link #find} reaches through the base factories, and those under joins and set operations,
+     * which no base factory names, such as the master of an ASOF join or a branch of a UNION ALL.
+     */
+    public static ObjList<AsyncHashJoinRecordCursorFactory> findAll(RecordCursorFactory factory, SqlExecutionContext context) {
+        return findAll(factory, context, AsyncHashJoinRecordCursorFactory.class);
+    }
+
+    /**
+     * Every factory of the given type inside a compiled query, the query's own included, in the
+     * order its plan lists them, see {@link #findAll(RecordCursorFactory, SqlExecutionContext)}.
+     */
+    public static <T extends RecordCursorFactory> ObjList<T> findAll(RecordCursorFactory factory, SqlExecutionContext context, Class<T> type) {
+        final ObjList<T> found = new ObjList<>();
+        if (type.isInstance(factory)) {
+            found.add(type.cast(factory));
+        }
+        // The plan prints every factory of the query as a child or as a value of its parent.
+        final TextPlanSink sink = new TextPlanSink() {
+            @Override
+            public PlanSink child(Plannable p) {
+                collect(p);
+                return super.child(p);
+            }
+
+            @Override
+            public PlanSink val(Plannable p) {
+                collect(p);
+                return super.val(p);
+            }
+
+            private void collect(Plannable p) {
+                if (type.isInstance(p) && found.indexOf(p) < 0) {
+                    found.add(type.cast(p));
+                }
+            }
+        };
+        sink.of(factory, context);
+        return found;
     }
 
     /**

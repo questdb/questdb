@@ -28,6 +28,7 @@ import io.questdb.Metrics;
 import io.questdb.cutlass.pgwire.DefaultPGCircuitBreakerRegistry;
 import io.questdb.cutlass.pgwire.PGServer;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
@@ -58,6 +59,14 @@ import java.sql.Types;
 public class PGAsyncHashJoinLimitTest extends BasePGTest {
     // [residual value, LIMIT]: the values each execution binds.
     private static final long[][] BINDS = {{3, 2}, {0, 500}, {7, -5}, {100, 0}, {3, 17}, {0, 1}};
+    // The LIMITs that each execution of OUTER_LIMIT_QUERIES binds.
+    private static final long[] OUTER_LIMITS = {2, 500, -5, 0, 17, 1};
+    // A LIMIT that the joins take from outside their own queries: over a sub-query of the join, and
+    // over a UNION ALL of an INNER and a LEFT join.
+    private static final String[] OUTER_LIMIT_QUERIES = {
+            "SELECT * FROM (SELECT f.ts, f.k, f.v, d.w FROM f JOIN d ON f.k = d.k) LIMIT ?",
+            "SELECT f.k, f.v, d.w FROM f JOIN d ON f.k = d.k UNION ALL SELECT f.k, f.v, d.w FROM f LEFT JOIN d ON f.k = d.k LIMIT ?",
+    };
     private static final String[] QUERIES = {
             "SELECT f.ts, f.k, f.v, d.w FROM f LEFT JOIN d ON f.k = d.k AND d.w > ? LIMIT ?",
             "SELECT f.k, f.v, d.w, e.w FROM f JOIN d ON f.k = d.k LEFT JOIN d e ON f.k = e.k AND e.w > f.v + ? LIMIT ?",
@@ -91,6 +100,16 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
     }
 
     @Test
+    public void testNamedStatementsWithBoundOuterLimit() throws Exception {
+        assertOuterLimitStatements(null);
+    }
+
+    @Test
+    public void testNamedStatementsWithBoundOuterLimitOnQueryWorkers() throws Exception {
+        assertOuterLimitStatements(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
     public void testUntypedParameterSharedWithTheLimit() throws Exception {
         assertUntypedParameter(null);
     }
@@ -108,6 +127,19 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
             final StringSink actual = new StringSink();
             withServer(false, queryPoolMode, port -> read(port, expected, false));
             withServer(true, queryPoolMode, port -> read(port, actual, true));
+            Assert.assertTrue(expected.length() > 0);
+            TestUtils.assertEquals(expected, actual);
+        });
+    }
+
+    private void assertOuterLimitStatements(@Nullable WorkerPoolMode queryPoolMode) throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The rows of every query and LIMIT, read through the ordinary plan.
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            withServer(false, queryPoolMode, port -> readOuterLimits(port, expected, false));
+            withServer(true, queryPoolMode, port -> readOuterLimits(port, actual, true));
             Assert.assertTrue(expected.length() > 0);
             TestUtils.assertEquals(expected, actual);
         });
@@ -164,6 +196,38 @@ public class PGAsyncHashJoinLimitTest extends BasePGTest {
                             }
                         }
                         Assert.assertEquals(plan.toString(), isParallel, plan.toString().contains("Hash Join workers:"));
+                    }
+                }
+            }
+        }
+    }
+
+    // Executes every outer LIMIT query's named statement with every LIMIT, twice over, in binary and
+    // text transfer, and appends the rows to the sink. On the server that runs the operator, each
+    // execution's joins take its LIMIT: the last of them to open its cursor cut its first window
+    // for a positive LIMIT's rows, and for every row otherwise.
+    private void readOuterLimits(int port, StringSink sink, boolean isParallel) throws Exception {
+        final StringSink rows = new StringSink();
+        for (boolean isBinary : new boolean[]{true, false}) {
+            for (String sql : OUTER_LIMIT_QUERIES) {
+                // A prepare threshold of 1 makes pgjdbc parse a named statement once and bind it again
+                // on every later execution.
+                try (
+                        Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1);
+                        PreparedStatement statement = connection.prepareStatement(sql)
+                ) {
+                    for (int pass = 0; pass < 2; pass++) {
+                        for (long limit : OUTER_LIMITS) {
+                            statement.setLong(1, limit);
+                            AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
+                            try (ResultSet resultSet = statement.executeQuery()) {
+                                rows.clear();
+                                printToSink(rows, resultSet, null);
+                            }
+                            final long firstWindowRows = isParallel ? (limit > 0 ? limit : Long.MAX_VALUE) : -1;
+                            Assert.assertEquals(sql + ", LIMIT " + limit, firstWindowRows, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
+                            sink.put(sql).put(' ').put(limit).put('\n').put(rows);
+                        }
                     }
                 }
             }

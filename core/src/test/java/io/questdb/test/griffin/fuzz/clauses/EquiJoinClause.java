@@ -121,6 +121,13 @@ import org.jetbrains.annotations.Nullable;
  * form of the query keeps the filter and the other does not: a literal filter that folds to a
  * constant against its bind form, or an indexed shadow table that reads the filter through its
  * index.
+ * <p>
+ * Half of the queries with a {@code LIMIT}, but those that inject a fault, state it so that it reaches
+ * the joins from outside their own query, or through an operator over them, see
+ * {@link #applyLimitForm}: the {@code LIMIT} of a sub-query or a CTE over the query, of a UNION ALL of
+ * the query with itself, or of the query under an ASOF or LT join of which the joins are the master,
+ * or under a WHERE that holds no column. The forms draw from a generator of their own, seeded from
+ * the query's, so that every query keeps the draws it made before they existed.
  */
 public final class EquiJoinClause {
     public static final String LEFT_ALIAS = "l";
@@ -153,6 +160,14 @@ public final class EquiJoinClause {
     // SYMBOL, 46-50 LONG and VARCHAR and 51-55 INT and LONG; 56-57 INT against LONG and 58-59 the
     // designated timestamps. All but the INT and SYMBOL keys stage their key into a map.
     private static final int KEY_PICKS = 60;
+    // The LIMIT forms of applyLimitForm(), and the draw past them that keeps the query as it is.
+    private static final int LIMIT_FORM_AS_OF = 3;
+    private static final int LIMIT_FORM_CTE = 1;
+    private static final int LIMIT_FORM_LT = 4;
+    private static final int LIMIT_FORM_RUNTIME_CONSTANT_FILTER = 5;
+    private static final int LIMIT_FORM_SUB_QUERY = 0;
+    private static final int LIMIT_FORM_UNION_ALL = 2;
+    private static final int LIMIT_FORMS = 12;
     private static final String LONG_KEY = "lk";
     // The share of its table that a narrowed dimension keeps: the rows of its first one to six
     // hours, twelve at most of at least sixty.
@@ -161,6 +176,8 @@ public final class EquiJoinClause {
     // input's: a snowflake join, which the operator leaves to an ordinary hash join over it.
     private static final int SNOWFLAKE_ONE_IN_N = 12;
     private static final String SYMBOL_KEY = "sym";
+    // The alias of the slave of an ASOF or LT join that a LIMIT form adds, see applyLimitForm().
+    private static final String TIME_SERIES_ALIAS = "a";
     private static final String TS = "ts";
     private static final String VARCHAR_KEY = "vk";
 
@@ -190,6 +207,7 @@ public final class EquiJoinClause {
     ) {
         // The draws below depend neither on ctx nor on injectFaultFn, but for the fault's site, so
         // the bind variant, which a fault query never runs, regenerates the same tree.
+        final Rnd formRnd = new Rnd(rnd.getSeed0() ^ 0x9E37_79B9_7F4A_7C15L, rnd.getSeed1() ^ 0xC2B2_AE3D_27D4_EB4FL);
         final boolean isStar = tables != null;
         final boolean isFirstLeftJoin = rnd.nextBoolean();
         // A third of a star's INNER first joins read two unfiltered tables, which the joins' order
@@ -315,6 +333,8 @@ public final class EquiJoinClause {
                         .put(crossPredicate(rnd, l, LEFT_ALIAS, join.input, join.alias)).put(')');
             }
         }
+        // An ASOF or LT join, or a WHERE, of a LIMIT form goes here, see applyLimitForm().
+        final int fromEnd = sql.length();
 
         final ObjList<String> conjuncts = new ObjList<>();
         if (rnd.nextBoolean() && !isSwapProne) {
@@ -370,7 +390,8 @@ public final class EquiJoinClause {
         }
 
         boolean hasOrderBy = true;
-        switch (rnd.nextInt(6)) {
+        final int orderPick = rnd.nextInt(6);
+        switch (orderPick) {
             // The left input's designated timestamp descending: a backward probe scan.
             case 0 -> sql.put(" ORDER BY ").put(LEFT_ALIAS).put('.').put(TS).put(" DESC");
             // Ascending, which the left input already scans in, and which fixes the join's order.
@@ -386,12 +407,16 @@ public final class EquiJoinClause {
         }
         final boolean hasLimit = rnd.nextInt(6) == 0;
         String limitReuse = null;
+        boolean isOrdered = hasOrderBy;
+        int limitStart = -1;
         if (hasLimit) {
             if (!hasOrderBy && isLeftFiltered) {
                 // A bare LIMIT would be pushed into the left input's filter (questdb/questdb#7982);
                 // the order adds no draw, so the bind form keeps the literal form's tree.
                 sql.put(" ORDER BY ").put(LEFT_ALIAS).put('.').put(TS);
+                isOrdered = true;
             }
+            limitStart = sql.length();
             final String sign = rnd.nextBoolean() ? "" : "-";
             final String value = Integer.toString(1 + rnd.nextInt(30));
             final String lowerBound = rnd.nextInt(3) == 0 ? rnd.nextInt(10) + ", " : "";
@@ -405,10 +430,17 @@ public final class EquiJoinClause {
             }
         }
         final String text = sql.toString();
-        return new GeneratedQuery(
-                limitReuse == null ? text : text.substring(0, projectionEnd) + limitReuse + text.substring(projectionEnd),
-                !hasLimit && windows == 0
-        );
+        String query = limitReuse == null ? text : text.substring(0, projectionEnd) + limitReuse + text.substring(projectionEnd);
+        if (hasLimit && !injectFaultFn) {
+            // The LIMIT's value in the projection moved the clauses after it.
+            final int shift = limitReuse == null ? 0 : limitReuse.length();
+            // An ASOF or LT join needs the joins' rows in ascending timestamp order: neither a
+            // backward left input nor an ORDER BY other than the left input's timestamp, ascending,
+            // nor a window function, whose order the scan may follow.
+            final boolean isAscending = !l.isBackward && windows == 0 && (!hasOrderBy || orderPick == 1);
+            query = applyLimitForm(formRnd, query, fromEnd + shift, limitStart + shift, isOrdered, isAscending, conjuncts.size() > 0, l, right);
+        }
+        return new GeneratedQuery(query, !hasLimit && windows == 0);
     }
 
     /**
@@ -506,6 +538,63 @@ public final class EquiJoinClause {
     }
 
     /**
+     * On half of the draws, states the query's LIMIT in a form that reaches the parallel hash joins
+     * from outside their own query, or through an operator over them, if the query allows the form,
+     * and otherwise leaves the query as it is: the LIMIT of a sub-query over the query, or of a CTE
+     * of it; of a UNION ALL of the query with itself, unless it has an ORDER BY, which a branch
+     * would have to keep; of the query whose joins are the master of an ASOF join, keyed on the left
+     * input's SYMBOL key or not, under a TOLERANCE or not, or of an LT join, both of which need the
+     * joins' rows in ascending timestamp order; or of the query under a WHERE that reads no column,
+     * which runs once per execution, unless the query has a WHERE.
+     *
+     * @param fromEnd    the end of the query's FROM clause, the joins included
+     * @param limitStart the start of the query's LIMIT, its last clause
+     */
+    private static String applyLimitForm(
+            Rnd formRnd,
+            String query,
+            int fromEnd,
+            int limitStart,
+            boolean isOrdered,
+            boolean isAscending,
+            boolean hasWhere,
+            Input l,
+            FuzzTable slave
+    ) {
+        final String head = query.substring(0, limitStart);
+        final String limit = query.substring(limitStart);
+        final int form = formRnd.nextInt(LIMIT_FORMS);
+        switch (form) {
+            case LIMIT_FORM_SUB_QUERY:
+                return "SELECT * FROM (" + head + ')' + limit;
+            case LIMIT_FORM_CTE:
+                return "WITH q AS (" + head + ") SELECT * FROM q" + limit;
+            case LIMIT_FORM_UNION_ALL:
+                return isOrdered ? query : head + " UNION ALL " + head + limit;
+            case LIMIT_FORM_AS_OF:
+            case LIMIT_FORM_LT: {
+                if (!isAscending) {
+                    return query;
+                }
+                final StringSink join = new StringSink();
+                join.put(form == LIMIT_FORM_AS_OF ? " ASOF JOIN " : " LT JOIN ").put(slave.getName()).put(' ').put(TIME_SERIES_ALIAS);
+                if (formRnd.nextBoolean()) {
+                    join.put(" ON ").put(TIME_SERIES_ALIAS).put('.').put(SYMBOL_KEY)
+                            .put(" = ").put(LEFT_ALIAS).put('.').put(l.name(SYMBOL_KEY));
+                }
+                if (form == LIMIT_FORM_AS_OF && formRnd.nextInt(4) == 0) {
+                    join.put(" TOLERANCE 1h");
+                }
+                return query.substring(0, fromEnd) + join + query.substring(fromEnd);
+            }
+            case LIMIT_FORM_RUNTIME_CONSTANT_FILTER:
+                return hasWhere ? query : query.substring(0, fromEnd) + " WHERE now() > '2000-01-01'" + query.substring(fromEnd);
+            default:
+                return query;
+        }
+    }
+
+    /**
      * A comparison of two inputs that is never an equality, so that it stays a filter over the
      * joined pairs: the designated timestamps, the INT key against the LONG one, or two numeric
      * columns, one of each input.
@@ -564,12 +653,12 @@ public final class EquiJoinClause {
     private static Input narrowedInput(Rnd rnd, FuzzTable table) {
         final String fromSql = "(SELECT * FROM " + FuzzNames.table(rnd, table.getName())
                 + " WHERE " + TS + " < " + hourOf2024(1 + rnd.nextInt(6)) + ')';
-        return new Input(fromSql, table.getColumns(), false, false, NARROWED_SHARE);
+        return new Input(fromSql, table.getColumns(), false, false, false, NARROWED_SHARE);
     }
 
     // The table itself, unfiltered.
     private static Input tableInput(Rnd rnd, FuzzTable table) {
-        return new Input(FuzzNames.table(rnd, table.getName()), table.getColumns(), true, false, 1);
+        return new Input(FuzzNames.table(rnd, table.getName()), table.getColumns(), true, false, false, 1);
     }
 
     /**
@@ -585,14 +674,14 @@ public final class EquiJoinClause {
         final String tableName = FuzzNames.table(rnd, table.getName());
         final int pick = rnd.nextInt(40);
         if (pick < 30) {
-            return new Input(tableName, table.getColumns(), true, false, 1);
+            return new Input(tableName, table.getColumns(), true, false, false, 1);
         }
         if (pick >= 38) {
             final int limit = 10 + rnd.nextInt(50);
-            return new Input("(SELECT * FROM " + tableName + " LIMIT " + limit + ')', table.getColumns(), false, false, limit / 150.0);
+            return new Input("(SELECT * FROM " + tableName + " LIMIT " + limit + ')', table.getColumns(), false, false, false, limit / 150.0);
         }
         if (pick >= 36) {
-            return new Input("(SELECT * FROM " + tableName + " ORDER BY " + TS + " DESC)", table.getColumns(), false, false, 1);
+            return new Input("(SELECT * FROM " + tableName + " ORDER BY " + TS + " DESC)", table.getColumns(), false, false, true, 1);
         }
         final ObjList<FuzzColumn> exposed = new ObjList<>();
         final StringSink sql = new StringSink();
@@ -617,7 +706,7 @@ public final class EquiJoinClause {
             sql.put(" WHERE ").put(new PredicateGenerator(rnd, 1).generate(table.getColumns(), null, ctx));
         }
         sql.put(')');
-        return new Input(sql.toString(), exposed, false, isFiltered, 1);
+        return new Input(sql.toString(), exposed, false, isFiltered, false, 1);
     }
 
     /**
@@ -668,16 +757,19 @@ public final class EquiJoinClause {
     private static final class Input {
         final ObjList<FuzzColumn> columns;
         final String fromSql;
+        // The table scanned in descending timestamp order.
+        final boolean isBackward;
         // A projection with a WHERE clause, which the input's filter runs.
         final boolean isFiltered;
         final boolean isTable;
         final double rowShare;
 
-        Input(String fromSql, ObjList<FuzzColumn> columns, boolean isTable, boolean isFiltered, double rowShare) {
+        Input(String fromSql, ObjList<FuzzColumn> columns, boolean isTable, boolean isFiltered, boolean isBackward, double rowShare) {
             this.fromSql = fromSql;
             this.columns = columns;
             this.isTable = isTable;
             this.isFiltered = isFiltered;
+            this.isBackward = isBackward;
             this.rowShare = rowShare;
         }
 

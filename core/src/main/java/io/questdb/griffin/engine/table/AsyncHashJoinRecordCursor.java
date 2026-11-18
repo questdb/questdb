@@ -77,7 +77,8 @@ import io.questdb.std.Os;
  * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, so that duplicate matches rarely leave the rest of
  * a frame to a serial continuation.
  * <p>
- * Under a LIMIT that the query states, see {@link AsyncHashJoinRecordCursorFactory#ofLimit}, the
+ * Under a LIMIT that bounds the rows that the cursor's reader reads, which the join takes from its
+ * own query or from one over it, see {@link AsyncHashJoinRecordCursorFactory#ofLimit}, the
  * cursor first dispatches only the leading frames whose rows reach the LIMIT, if they fit the
  * window, and the task of the last of them joins only as many of its rows as the LIMIT needs; the
  * consumer, if it reads further, continues that frame itself, in chunks that double, before the

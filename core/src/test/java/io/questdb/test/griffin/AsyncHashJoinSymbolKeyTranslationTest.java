@@ -42,6 +42,7 @@ import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -589,6 +590,19 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             } finally {
                 sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
             }
+            // A LIMIT that reaches the join over every probe row: through a sub-query, a CTE, an ASOF
+            // join of which the join is the master, and the first branch of a UNION ALL, of SYMBOL
+            // columns. The join reads the LIMIT's five rows, fewer than ceil(300,000 / 16), and
+            // translates through the slots.
+            final String full = "SELECT f.ts, f.sym, f.v, d.w FROM f JOIN d ON f.sym = d.sym";
+            for (String sql : new String[]{
+                    "SELECT * FROM (" + full + ") LIMIT 5",
+                    "WITH j AS (" + full + ") SELECT ts, sym, w FROM j LIMIT 5",
+                    "SELECT f.ts, f.sym, d.w, g.v gv FROM f JOIN d ON f.sym = d.sym ASOF JOIN f g LIMIT 5",
+                    full + " UNION ALL " + full + " LIMIT 5",
+            }) {
+                Assert.assertEquals(sql, 5, rowCount(assertFirstJoinTranslation(sql, AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached)));
+            }
             // Set operations, whose sides run the operator.
             final String other = "SELECT f.ts, f.sym, f.v, d.w FROM f JOIN d ON f.sym = d.sym WHERE f.ts IN '2024-03-01T00:05'";
             for (String operation : new String[]{" UNION ", " UNION ALL ", " EXCEPT ", " INTERSECT "}) {
@@ -764,6 +778,19 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         Assert.assertTrue(stage.isSymbolKeySlotCached(key));
         Assert.assertFalse(stage.isSymbolKeyCacheFilledFromBuild(key));
         Assert.assertEquals(0, stage.getSymbolKeyCacheSizeInBytes(key));
+    }
+
+    // Compiles the query with the operator on, checks one execution of the first join of its plan,
+    // which getBaseFactory() may not reach, compares two more with the ordinary plan, and returns the
+    // ordinary plan's result.
+    private static String assertFirstJoinTranslation(String sql, TranslationCheck check) throws SqlException {
+        final String expected = ordinary(sql, sqlExecutionContext);
+        try (RecordCursorFactory factory = select(sql)) {
+            final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, sqlExecutionContext);
+            Assert.assertTrue(sql, joins.size() > 0);
+            assertExecution(factory, joins.getQuick(0), expected, check);
+        }
+        return expected;
     }
 
     // Compiles the query with the operator on, checks one execution, compares two more with the

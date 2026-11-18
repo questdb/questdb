@@ -41,6 +41,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -104,6 +105,16 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     @Test
     public void testCountAfterRowsMeetsTheFramesAheadOnThreadWorkers() throws Exception {
         assertCountAfterRowsMeetsTheFramesAhead(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testFirstWindowUnderAnOuterLimitOnFiberWorkers() throws Exception {
+        assertFirstWindowUnderAnOuterLimit(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testFirstWindowUnderAnOuterLimitOnThreadWorkers() throws Exception {
+        assertFirstWindowUnderAnOuterLimit(WorkerPoolMode.LEGACY);
     }
 
     @Test
@@ -203,6 +214,41 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                     TestUtils.assertEquals(expected, printRows(cursor, factory.getMetadata()));
                 }
                 Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            }
+        });
+    }
+
+    private static void assertFirstWindowUnderAnOuterLimit(WorkerPoolMode mode) throws Exception {
+        withEightFrames(mode, (db, context) -> {
+            db.execute("CREATE TABLE q8 AS (SELECT (x % 4)::INT k, x * 7 p, timestamp_sequence('2024-01-01', 30_000_000) ts FROM long_sequence(128)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            // LIMIT 3 needs three probe rows of frame 0, each of which meets three rows of d3: the
+            // LIMIT reaches the join through a sub-query, as the master of an ASOF join and in each
+            // branch of a UNION ALL, whose first branch holds the rows. The workers join frame 0
+            // alone, as the first window holds it alone, and the second branch never builds.
+            for (String sql : new String[]{
+                    "SELECT * FROM (" + WALK + ") LIMIT 3",
+                    "SELECT t8.v, d3.w, q8.p FROM t8 LEFT JOIN d3 ON t8.k = d3.k AND d3.w > t8.v ASOF JOIN q8 ON (k) LIMIT 3",
+                    WALK + " UNION ALL " + WALK + " LIMIT 3",
+            }) {
+                assertParallelHashJoin(sql, context);
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, context);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(sql, cursor.hasNext());
+                        Assert.assertEquals(sql, 1, joins.getQuick(0).getDispatchedFrameCount());
+                        int rows = 1;
+                        while (cursor.hasNext()) {
+                            rows++;
+                        }
+                        Assert.assertEquals(sql, 3, rows);
+                        for (int i = 0, n = joins.size(); i < n; i++) {
+                            Assert.assertEquals(sql, i == 0 ? 1 : 0, joins.getQuick(i).getDispatchedFrameCount());
+                        }
+                    }
+                    for (int i = 0, n = joins.size(); i < n; i++) {
+                        Assert.assertEquals(sql, 0, joins.getQuick(i).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    }
+                }
             }
         });
     }
