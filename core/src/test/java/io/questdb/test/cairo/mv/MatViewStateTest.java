@@ -183,6 +183,8 @@ public class MatViewStateTest extends AbstractCairoTest {
                     "sample by 1h";
 
             execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view price_1h set refresh limit 1 hour");
             drainWalQueue();
             int iterations = 10;
             TableToken tableToken = engine.verifyTableName("price_1h");

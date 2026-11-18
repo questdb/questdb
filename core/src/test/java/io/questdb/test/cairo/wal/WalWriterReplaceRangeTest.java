@@ -685,6 +685,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
             Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
@@ -762,6 +764,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
             Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
@@ -838,6 +842,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
 
@@ -1349,6 +1355,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
             Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
@@ -1429,6 +1437,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
             execute("create table base (s symbol, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv_applied as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
             execute("create materialized view mv_skipped as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv_applied set refresh limit 1 hour");
+            execute("alter materialized view mv_skipped set refresh limit 1 hour");
             drainWalQueue();
             final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
             final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01"); // exclusive
@@ -1527,6 +1538,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
             Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());
@@ -1602,6 +1615,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table base (s string, v double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("create materialized view mv as (select s, last(v) v, ts from base sample by 1h) partition by DAY");
+            // the plain DATA commits below are backfills, which a view takes into the frozen zone of its REFRESH LIMIT
+            execute("alter materialized view mv set refresh limit 1 hour");
             drainWalQueue();
             final TableToken tableToken = engine.verifyTableName("mv");
             Assert.assertTrue("mv must be a materialized view", tableToken.isMatView());

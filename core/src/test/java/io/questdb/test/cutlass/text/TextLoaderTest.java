@@ -1301,6 +1301,68 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportIntoMatViewDropsBatchesAfterRefreshLimitRemoved() throws Exception {
+        // Every maxUncommittedRows rows an import commits through the writer it took when the backfill gate let it in.
+        // Once ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0 has applied, each of these commits is refused and no row
+        // lands. CairoTextWriter.onFieldsPartitioned takes the refusal of such a commit for a row error and goes on,
+        // counting the refused rows as imported, a separate bug, so this test asserts only what the view holds.
+        assertNoLeak(textLoader -> {
+            createBackfillableMatView();
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, false);
+            textLoader.setForceHeaders(true);
+            textLoader.setMaxUncommittedRows(2);
+            // the structure analysis of the first chunk takes the writer through the gate
+            parseChunk(textLoader, "ts,cnt\n1970-01-01T00:01:40.000000Z,1\n");
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 0 HOUR");
+            drainWalAndMatViewQueues();
+            // frozen-zone rows: the import commits its four rows two at a time, which leaves wrapUp() nothing to commit
+            parseChunk(textLoader, """
+                    1970-01-01T00:01:41.000000Z,2
+                    1970-01-01T00:01:42.000000Z,3
+                    1970-01-01T00:01:43.000000Z,4
+                    """);
+            textLoader.wrapUp();
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testImportIntoMatViewRejectedAfterRefreshLimitRemoved() throws Exception {
+        // An import keeps the writer it took when the backfill gate let it in. Once ALTER MATERIALIZED VIEW ... SET
+        // REFRESH LIMIT 0 has applied, the import's commit is refused with the gate's message and its row does not
+        // land; once the limit is back, the same import goes through.
+        assertNoLeak(textLoader -> {
+            createBackfillableMatView();
+            final String csv = "ts,cnt\n1970-01-01T00:01:40.000000Z,99\n";
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, false);
+            textLoader.setForceHeaders(true);
+            parseChunk(textLoader, csv);
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 0 HOUR");
+            drainWalAndMatViewQueues();
+            try {
+                textLoader.wrapUp();
+                Assert.fail("the import's commit must be refused once the view has no REFRESH LIMIT");
+            } catch (CairoException e) {
+                TestUtils.assertEquals("cannot modify materialized view [view=test]", e.getFlyweightMessage());
+            }
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+
+            execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            configureLoaderDefaults(textLoader, (byte) ',', Atomicity.SKIP_ROW, false);
+            textLoader.setForceHeaders(true);
+            playText0(textLoader, csv, 1024, NOOP_TRANSFORMER);
+            textLoader.clear();
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT count() FROM test").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
@@ -3919,6 +3981,18 @@ public class TextLoaderTest extends AbstractCairoTest {
         });
     }
 
+    // A view `test` with REFRESH LIMIT 1 HOUR over a base row at 1970-01-01T02:00: its frozen zone ends at 01:00.
+    private static void createBackfillableMatView() throws Exception {
+        execute("CREATE TABLE base_price (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO base_price VALUES ('1970-01-01T02:00:00.000000Z', 1)");
+        drainWalQueue();
+        execute("CREATE MATERIALIZED VIEW test AS (SELECT ts, count() cnt FROM base_price SAMPLE BY 1h)");
+        drainWalAndMatViewQueues();
+        execute("ALTER MATERIALIZED VIEW test SET REFRESH LIMIT 1 HOUR");
+        drainWalAndMatViewQueues();
+        Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("test")));
+    }
+
     private static String extractLast(Path path) {
         String nameStr = path.toString();
         String[] pathElements = nameStr.split(PATH_SEP_REGEX);
@@ -3961,6 +4035,20 @@ public class TextLoaderTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(buf, len, MemoryTag.NATIVE_TEXT_PARSER_RSS);
             Unsafe.free(smallBuf, 1, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        }
+    }
+
+    // Parses one chunk of the text as an upload delivers it, without wrapping up the import.
+    private static void parseChunk(TextLoader textLoader, String chunk) throws TextException {
+        final byte[] bytes = chunk.getBytes(Files.UTF_8);
+        final long buf = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
+        try {
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(buf + i, bytes[i]);
+            }
+            textLoader.parse(buf, buf + bytes.length, AllowAllSecurityContext.INSTANCE);
+        } finally {
+            Unsafe.free(buf, bytes.length, MemoryTag.NATIVE_TEXT_PARSER_RSS);
         }
     }
 

@@ -33,12 +33,17 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewBackfillValidator;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.sql.InsertOperation;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -48,11 +53,14 @@ import static io.questdb.test.tools.TestUtils.assertContains;
  * Direct unit coverage for {@link MatViewBackfillValidator} passthrough
  * branches and bucket-whole enforcement. The MatViewTest suite exercises the
  * validator end-to-end through SQL; this class targets the passthrough paths
- * (non-DATA txn type, REPLACE_RANGE dedup mode, empty txn, LIMIT=0, sampler
- * setup) which are coverage-dead through SQL and pins the documented
- * stale-TUD-cache behaviour where LIMIT=0 bypasses the bucket-whole check.
+ * (non-DATA txn type, REPLACE_RANGE dedup mode, empty txn, sampler setup)
+ * which are coverage-dead through SQL, the refusal of user commits into a view
+ * without a frozen zone (no REFRESH LIMIT, or the wall-clock escape hatch on),
+ * and the write handles that outlive ALTER ... SET REFRESH LIMIT 0.
  */
 public class MatViewBackfillValidatorTest extends AbstractCairoTest {
+    // the backfill gate's refusal, which the commit-time check repeats for a view without a frozen zone
+    private static final String GATE_MESSAGE = "cannot modify materialized view [view=price_1h]";
 
     @Test
     public void testValidateAcceptsBucketBelowBoundary() throws Exception {
@@ -95,31 +103,202 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testValidatePassthroughOnLimitZero() throws Exception {
-        // Pin the documented stale-TUD-cache behaviour: when REFRESH LIMIT is 0
-        // the validator returns early without enforcing the bucket-whole rule.
-        // The entry-point gate (engine.isBackfillableMatView) is meant to be
-        // the authoritative contract; this branch exists so internal write
-        // paths and stale ILP/QWP TUD caches do not crash but are documented
-        // as a known limitation -- direct INSERTs are caught by the
-        // compile-time gate, but ILP rows can slip through until cache TTL.
+    public void testRejectionFollowsAppliedRefreshLimit() throws Exception {
+        // A commit is checked under the view definition that the view's WAL has applied. While SET REFRESH LIMIT 0
+        // waits for its apply, the old limit holds for a compiled INSERT as it does for the backfill gate; once it
+        // applies, the compiled INSERT is refused.
         assertMemoryLeak(() -> {
-            createBaseAndView();
-            // No SET REFRESH LIMIT => refreshLimitHoursOrMonths == 0.
-            drainWalAndMatViewQueues();
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (InsertOperation insert = compileInsert(compiler)) {
+                    execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 0 HOUR");
+                    // sequenced, not applied: the gate and the commit-time check still read the limit of 1 hour
+                    Assert.assertTrue(engine.isBackfillableMatView(viewToken));
+                    executeInsert(insert, 2.0, "2024-09-10T08:00");
+                    final CompiledQuery freshInsert = compiler.compile("INSERT INTO price_1h VALUES ('a', 3.0, '2024-09-10T07:30')", sqlExecutionContext);
+                    Assert.assertEquals(CompiledQuery.INSERT, freshInsert.getType());
+                    freshInsert.popInsertOperation().close();
 
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+                    // the apply runs the ALTER, then the backfill sequenced after it
+                    drainWalQueue();
+                    Assert.assertFalse(engine.isBackfillableMatView(viewToken));
+                    assertInsertRejectedByGate(insert, 4.0, "2024-09-10T07:00");
+                }
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t2.0\t2024-09-10T08:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testStaleInsertAsSelectRejectedAfterRefreshLimitRemoved() throws Exception {
+        // An INSERT AS SELECT keeps its compiled plan the way an INSERT does, and its commit meets the same check:
+        // once SET REFRESH LIMIT 0 has applied, it lands no row.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            execute("CREATE TABLE src (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES ('a', 1.0, '2024-09-10T09:00')");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile("INSERT INTO price_1h SELECT sym, price, ts FROM src", sqlExecutionContext);
+                Assert.assertEquals(CompiledQuery.INSERT_AS_SELECT, cq.getType());
+                try (InsertOperation insert = cq.popInsertOperation()) {
+                    insert.execute(sqlExecutionContext);
+                    drainWalAndMatViewQueues();
+
+                    setRefreshLimit("0 HOUR");
+                    execute("INSERT INTO src VALUES ('a', 2.0, '2024-09-10T08:00')");
+                    final long viewSeqTxn = viewSeqTxn();
+                    try {
+                        insert.execute(sqlExecutionContext);
+                        Assert.fail("expected the commit to be refused without REFRESH LIMIT");
+                    } catch (CairoException e) {
+                        TestUtils.assertEquals(GATE_MESSAGE, e.getFlyweightMessage());
+                    }
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                }
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testStaleInsertRejectedAfterRefreshLimitRemoved() throws Exception {
+        // A compiled INSERT passes the backfill gate once, when it compiles; pg-wire keeps it prepared and in its
+        // insert cache. Executed again after SET REFRESH LIMIT 0 has applied, its commit is refused with the gate's
+        // message, and the view keeps its rows through the next refresh. Once the limit is back, the same INSERT
+        // backfills the frozen zone again.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try (InsertOperation insert = compileInsert(compiler)) {
+                    executeInsert(insert, 1.0, "2024-09-10T09:00");
+                    drainWalAndMatViewQueues();
+
+                    setRefreshLimit("0 HOUR");
+                    // a fresh compile meets the backfill gate
+                    assertExceptionNoLeakCheck(
+                            "INSERT INTO price_1h VALUES ('a', 2.0, '2024-09-10T12:00')",
+                            12,
+                            GATE_MESSAGE,
+                            sqlExecutionContext
+                    );
+                    final long viewSeqTxn = viewSeqTxn();
+                    assertInsertRejectedByGate(insert, 77.0, "2024-09-10T12:00");
+                    assertInsertRejectedByGate(insert, 2.0, "2024-09-10T08:00");
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    drainWalAndMatViewQueues();
+                    assertViewRows("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t8.0\t2024-09-10T10:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """);
+
+                    execute("INSERT INTO base_price VALUES ('a', 5.0, '2024-09-10T13:05')");
+                    drainWalQueue();
+                    execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                    drainWalAndMatViewQueues();
+                    assertViewRows("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t8.0\t2024-09-10T10:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            a\t5.0\t2024-09-10T13:00:00.000000Z
+                            """);
+                    // the view holds what its SQL gives on the base, and the backfill accepted under the limit
+                    assertSqlCursors(
+                            "SELECT sym::STRING sym, price, ts FROM (" +
+                                    "SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h " +
+                                    "UNION ALL SELECT 'a', 1.0, '2024-09-10T09:00'::TIMESTAMP" +
+                                    ") ORDER BY ts",
+                            "SELECT sym::STRING sym, price, ts FROM price_1h ORDER BY ts"
+                    );
+                    assertQuery("SELECT view_status FROM materialized_views()")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("view_status\nvalid\n");
+
+                    setRefreshLimit("1 HOUR");
+                    executeInsert(insert, 2.0, "2024-09-10T08:00");
+                    // the anchor min(13:05, 12:30) = 12:30 less 1 hour is 11:30, which floors to the 11:00 bucket
+                    try {
+                        executeInsert(insert, 77.0, "2024-09-10T12:00");
+                        Assert.fail("expected the bucket-whole rejection");
+                    } catch (CairoException e) {
+                        TestUtils.assertEquals(
+                                managedZoneMessage("2024-09-10T12:00:00", "2024-09-10T12:00:00", "2024-09-10T13:00:00", "2024-09-10T11:00:00"),
+                                e.getFlyweightMessage()
+                        );
+                    }
+                }
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t2.0\t2024-09-10T08:00:00.000000Z
+                    a\t1.0\t2024-09-10T09:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    a\t5.0\t2024-09-10T13:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testValidateAcceptsFrozenRowWithRefreshLimitInMonths() throws Exception {
+        // A REFRESH LIMIT in months is stored as a negative count. The view still has a frozen zone, so a user commit
+        // takes the bucket-whole check rather than the refusal of a view without REFRESH LIMIT.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 MONTH");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("price_1h"));
+            Assert.assertEquals(-1, state.getViewDefinition().getRefreshLimitHoursOrMonths());
             final MatViewBackfillValidator validator = newValidator();
 
-            // A row that would be rejected if LIMIT were set is silently
-            // passed through here. The contract is documented in
-            // MatViewBackfillValidator's javadoc.
-            validator.validate(
-                    WalTxnType.DATA,
-                    WalUtils.WAL_DEDUP_MODE_DEFAULT,
-                    parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z"),
-                    parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z")
-            );
+            // the anchor min(12:00, 12:30) = 2024-09-10T12:00 less one month puts the boundary floor at 2024-08-10T12:00
+            final long frozenTs = parseFloorPartialTimestamp("2024-08-01T00:00");
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, frozenTs, frozenTs);
+            assertRejectedInManagedZone(validator, "2024-09-01T00:00:00", "2024-09-01T00:00:00", "2024-09-01T01:00:00", "2024-08-10T12:00:00");
+        });
+    }
+
+    @Test
+    public void testValidatePassesNonUserCommitsWithoutRefreshLimit() throws Exception {
+        // Only a DATA commit with the default dedup mode and rows is a user write. Refresh and row-expiry commits, DDL
+        // and state events, the other dedup modes and empty commits reach a view without REFRESH LIMIT unchecked.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            final MatViewBackfillValidator validator = newValidator();
+            final long ts = parseFloorPartialTimestamp("2024-09-10T12:00");
+            validator.validate(WalTxnType.MAT_VIEW_DATA, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE, ts, ts);
+            validator.validate(WalTxnType.MAT_VIEW_DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.SQL, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.TRUNCATE, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.MAT_VIEW_INVALIDATE, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.MAT_VIEW_DEFINITION, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.VIEW_DEFINITION, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.LIVE_VIEW_DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE, ts, ts);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_NO_DEDUP, ts, ts);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_UPSERT_NEW, ts, ts);
+            // empty commits: no row moved the max timestamp off its sentinel
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, Long.MAX_VALUE, -1);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, Long.MAX_VALUE, Long.MIN_VALUE);
         });
     }
 
@@ -174,6 +353,56 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testValidateRejectsUserCommitUnderWallClockEscapeHatch() throws Exception {
+        // With the wall-clock escape hatch on, the frozen-zone feature is off and the view accepts no user write, as
+        // the backfill gate says: the commit-time check refuses it with the gate's message instead of checking its
+        // bucket against a boundary the feature no longer publishes. Commits other than a user write pass, and the
+        // view takes backfill again once the hatch is off.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            final MatViewBackfillValidator validator = newValidator();
+            final long frozenTs = parseFloorPartialTimestamp("2024-09-10T09:00");
+            final long managedTs = parseFloorPartialTimestamp("2024-09-10T11:30");
+
+            // hatch off: the anchor min(12:00, 12:30) less 1 hour puts the boundary floor at 11:00
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, frozenTs, frozenTs);
+            assertRejectedInManagedZone(validator, "2024-09-10T11:30:00", "2024-09-10T11:00:00", "2024-09-10T12:00:00", "2024-09-10T11:00:00");
+
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            assertRejectedByGate(validator, frozenTs, frozenTs);
+            assertRejectedByGate(validator, managedTs, managedTs);
+            validator.validate(WalTxnType.MAT_VIEW_DATA, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE, managedTs, managedTs);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE, managedTs, managedTs);
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, Long.MAX_VALUE, -1);
+
+            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "false");
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, frozenTs, frozenTs);
+        });
+    }
+
+    @Test
+    public void testValidateRejectsUserCommitWithoutRefreshLimit() throws Exception {
+        // Without REFRESH LIMIT the view has no frozen zone and accepts no user write: a commit from a handle that
+        // passed the backfill gate before ALTER ... SET REFRESH LIMIT 0 is refused with the gate's message, wherever
+        // its rows fall.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            final MatViewBackfillValidator validator = newValidator();
+            // the epoch, the earliest designated timestamp a row can have
+            assertRejectedByGate(validator, 0, 0);
+            final long frozenTs = parseFloorPartialTimestamp("2024-09-10T09:00");
+            assertRejectedByGate(validator, frozenTs, frozenTs);
+            final long managedTs = parseFloorPartialTimestamp("2024-09-10T12:00");
+            assertRejectedByGate(validator, managedTs, managedTs);
+            // the latest designated timestamp a row can have
+            final long latestTs = parseFloorPartialTimestamp("9999-12-31T23:59:59.999999");
+            assertRejectedByGate(validator, latestTs, latestTs);
+            assertRejectedByGate(validator, 0, managedTs);
+        });
+    }
+
+    @Test
     public void testWalWriterMarksDistressedOnNonCairoExceptionFromValidator() throws Exception {
         // WalWriter.commit0 contract: a validator that throws anything other
         // than CairoException is treated as an internal validator fault. The
@@ -211,6 +440,42 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
                         walWriter.isDistressed()
                 );
             }
+        });
+    }
+
+    @Test
+    public void testWalWriterRejectsCommitAfterRefreshLimitRemoved() throws Exception {
+        // A transaction that a writer opened while the view had REFRESH LIMIT commits under the definition applied at
+        // commit: once SET REFRESH LIMIT 0 has applied, the commit is refused with the gate's message and rolled
+        // back, and nothing reaches the view's WAL. The writer stays healthy and commits again once the limit is back.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("price_1h"))) {
+                appendViewRow(walWriter, 2.0, "2024-09-10T09:00");
+                setRefreshLimit("0 HOUR");
+                final long viewSeqTxn = viewSeqTxn();
+                try {
+                    walWriter.commit();
+                    Assert.fail("expected the commit to be refused without REFRESH LIMIT");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(GATE_MESSAGE, e.getFlyweightMessage());
+                }
+                Assert.assertFalse(walWriter.isDistressed());
+                Assert.assertEquals(0, walWriter.getUncommittedRowCount());
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                setRefreshLimit("1 HOUR");
+                appendViewRow(walWriter, 3.0, "2024-09-10T09:00");
+                walWriter.commit();
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t3.0\t2024-09-10T09:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
         });
     }
 
@@ -409,36 +674,78 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testValidatePassthroughOnWallClockEscapeHatch() throws Exception {
-        // With the wall-clock escape hatch on the whole frozen-zone feature is off: the
-        // entry-point gate already rejects user backfills, so the validator must pass DATA
-        // txns through (computeBoundaryBucketFloor surfaces LONG_NULL) rather than enforce the
-        // bucket-whole rule on a boundary the feature no longer publishes. Exercised directly
-        // because the SQL path never reaches the validator once the gate is closed.
-        assertMemoryLeak(() -> {
-            createBaseAndView();
-            execute("INSERT INTO base_price VALUES('a', 9.0, '2024-09-10T12:00')");
-            execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
-            drainWalAndMatViewQueues();
+    private void assertViewRows(String expected) throws Exception {
+        assertQuery("price_1h ORDER BY ts, price").timestamp("ts").noLeakCheck().expectSize().returns(expected);
+    }
 
-            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
-            final MatViewBackfillValidator validator = newValidator();
+    // The base holds rows at 10:10 and 12:00 on 2024-09-10, the FULL refresh builds the view's 10:00 and 12:00
+    // buckets, and the clock reads 12:30: with REFRESH LIMIT 1 HOUR the frozen zone ends at the 11:00 bucket floor.
+    private void createRefreshedView() throws Exception {
+        createBaseAndView();
+        execute("INSERT INTO base_price VALUES ('a', 8.0, '2024-09-10T10:10'), ('a', 9.0, '2024-09-10T12:00')");
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+        drainWalAndMatViewQueues();
+        assertViewRows("""
+                sym\tprice\tts
+                a\t8.0\t2024-09-10T10:00:00.000000Z
+                a\t9.0\t2024-09-10T12:00:00.000000Z
+                """);
+        currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30");
+    }
 
-            // Sanity: with the hatch off the managed-zone row (bucket [11:00,12:00), end 12:00
-            // past boundary floor 11:00) is rejected.
-            final long managedZoneTs = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
-            try {
-                validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, managedZoneTs, managedZoneTs);
-                Assert.fail("expected bucket-whole rejection with the escape hatch off");
-            } catch (CairoException e) {
-                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
-            }
+    private static void appendViewRow(WalWriter walWriter, double price, String ts) {
+        final TableWriter.Row row = walWriter.newRow(parseFloorPartialTimestamp(ts));
+        row.putSym(0, "a");
+        row.putDouble(1, price);
+        row.append();
+    }
 
-            // Escape hatch on: the same row now passes through.
-            setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
-            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, managedZoneTs, managedZoneTs);
-        });
+    private static void assertInsertRejectedByGate(InsertOperation insert, double price, String ts) throws SqlException {
+        try {
+            executeInsert(insert, price, ts);
+            Assert.fail("expected the commit to be refused without REFRESH LIMIT [ts=" + ts + ']');
+        } catch (CairoException e) {
+            TestUtils.assertEquals(GATE_MESSAGE, e.getFlyweightMessage());
+        }
+    }
+
+    private static void assertRejectedByGate(MatViewBackfillValidator validator, long txnMinTs, long txnMaxTs) {
+        try {
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, txnMinTs, txnMaxTs);
+            Assert.fail("expected the commit to be refused without a frozen zone [txnMaxTs=" + txnMaxTs + ']');
+        } catch (CairoException e) {
+            TestUtils.assertEquals(GATE_MESSAGE, e.getFlyweightMessage());
+            Assert.assertFalse(e.isCritical());
+        }
+    }
+
+    // Timestamps without the fraction and zone suffix, which the message prints as .000000Z.
+    private static void assertRejectedInManagedZone(
+            MatViewBackfillValidator validator,
+            String maxRowTs,
+            String rowBucketLo,
+            String rowBucketHi,
+            String boundaryBucketFloor
+    ) {
+        final long ts = parseFloorPartialTimestamp(maxRowTs);
+        try {
+            validator.validate(WalTxnType.DATA, WalUtils.WAL_DEDUP_MODE_DEFAULT, ts, ts);
+            Assert.fail("expected the bucket-whole rejection [maxRowTs=" + maxRowTs + ']');
+        } catch (CairoException e) {
+            TestUtils.assertEquals(managedZoneMessage(maxRowTs, rowBucketLo, rowBucketHi, boundaryBucketFloor), e.getFlyweightMessage());
+            Assert.assertFalse(e.isCritical());
+        }
+    }
+
+    // INSERT with the price and the timestamp as bind variables, which each execution reads anew.
+    private static InsertOperation compileInsert(SqlCompiler compiler) throws SqlException {
+        bindVariableService.clear();
+        bindVariableService.setDouble("price", 0.0);
+        bindVariableService.setTimestamp("ts", 0);
+        final CompiledQuery cq = compiler.compile("INSERT INTO price_1h VALUES ('a', :price, :ts)", sqlExecutionContext);
+        Assert.assertEquals(CompiledQuery.INSERT, cq.getType());
+        return cq.popInsertOperation();
     }
 
     private static void createBaseAndView() throws Exception {
@@ -454,8 +761,29 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
         );
     }
 
+    private static void executeInsert(InsertOperation insert, double price, String ts) throws SqlException {
+        bindVariableService.setDouble("price", price);
+        bindVariableService.setTimestamp("ts", parseFloorPartialTimestamp(ts));
+        insert.execute(sqlExecutionContext);
+    }
+
+    private static String managedZoneMessage(String maxRowTs, String rowBucketLo, String rowBucketHi, String boundaryBucketFloor) {
+        return "backfill row falls in or past the managed zone of materialized view [view=price_1h, maxRowTs=" + maxRowTs
+                + ".000000Z, rowBucket=[" + rowBucketLo + ".000000Z, " + rowBucketHi + ".000000Z), boundaryBucketFloor="
+                + boundaryBucketFloor + ".000000Z]; backfill bucket end must be at-or-before the boundary bucket floor";
+    }
+
     private static MatViewBackfillValidator newValidator() {
         final TableToken viewToken = engine.verifyTableName("price_1h");
         return new MatViewBackfillValidator(engine, viewToken);
+    }
+
+    private static void setRefreshLimit(String limit) throws Exception {
+        execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT " + limit);
+        drainWalAndMatViewQueues();
+    }
+
+    private static long viewSeqTxn() {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("price_1h"));
     }
 }

@@ -1605,8 +1605,8 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
         Assert.assertEquals(10_002, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
     }
 
-    // Commits of one row each in the 00:00 bucket, written straight to the view's WAL without view state, as a user
-    // backfill commits.
+    // Commits of one row each in the 00:00 bucket, written straight to the view's WAL without view state, as a range
+    // refresh commits.
     private void commitViewRowsWithoutState(int count) {
         final long ts = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
         try (WalWriter writer = engine.getWalWriter(viewToken())) {
@@ -1615,7 +1615,7 @@ public class MatViewBaseIdentityTest extends AbstractCairoTest {
                 row.putSym(1, "a");
                 row.putDouble(2, 100 + i);
                 row.append();
-                writer.commit();
+                writer.commitWithParams(ts, ts + 3_600_000_000L, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
             }
         }
     }

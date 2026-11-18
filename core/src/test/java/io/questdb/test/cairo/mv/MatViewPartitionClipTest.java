@@ -1437,10 +1437,10 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
     @Test
     public void testUnappliedViewRowsKeepGapCommits() throws Exception {
         // A view transaction that the WAL apply has not reached writes a row into 2024-01-02, a gap of the base that
-        // never held rows, as an earlier refresh's commit can while the apply lags behind. A user RANGE that runs
-        // before the apply cannot see the row in the view's applied data, so it keeps a commit for every gap, and the
-        // row survives the RANGE's commits, which apply after it. Once the row is applied, a RANGE keeps the commit
-        // of its gap only.
+        // never held rows, as an earlier refresh's commit can while the apply lags behind: it replaces the row's
+        // bucket, as a refresh commit does. A user RANGE that runs before the apply cannot see the row in the view's
+        // applied data, so it keeps a commit for every gap, and the row survives the RANGE's commits, which apply
+        // after it. Once the row is applied, a RANGE keeps the commit of its gap only.
         assertMemoryLeak(() -> {
             // A fixed clock past the base's newest row keeps the view's refresh timestamps, and so its status,
             // deterministic.
@@ -1462,7 +1462,7 @@ public class MatViewPartitionClipTest extends AbstractCairoTest {
                 row.putSym(1, "z");
                 row.putDouble(2, 9.0);
                 row.append();
-                walWriter.commit();
+                walWriter.commitWithParams(ts("2024-01-02T00:00:00"), ts("2024-01-02T01:00:00"), WAL_DEDUP_MODE_REPLACE_RANGE);
             }
             final String range = "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-06T00:00:00.000000Z'";
             long viewTxns = walTxnCount("price_1h");

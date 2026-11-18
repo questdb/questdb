@@ -65,14 +65,14 @@ import org.jetbrains.annotations.Nullable;
  * are passed through untouched; only generic {@link WalTxnType#DATA} with the
  * default dedup mode -- user INSERT/COPY/ILP/QWP -- is checked.
  * <p>
- * When {@code REFRESH LIMIT == 0} no frozen zone exists; the validator passes
- * user DATA writes through and relies on the entry-point gate
- * ({@code engine.isBackfillableMatView}) as the authoritative contract for
- * rejecting user backfills. Internal/test write paths still need to commit DATA
- * txns through this writer, so a hard reject here would break them. Stale
- * ILP/QWP {@code TableUpdateDetails} caches that outlive an
- * {@code ALTER ... SET REFRESH LIMIT 0} may slip rows through until the cache
- * TTL expires; the next FULL refresh's {@code truncateSoft} resets the view.
+ * Without {@code REFRESH LIMIT}, or with the wall-clock escape hatch on, no
+ * frozen zone exists and the view accepts no user write: the validator refuses
+ * every user DATA txn that has rows, with the entry-point gate's message. The
+ * gate ({@code engine.isBackfillableMatView}) runs once, when a write handle is
+ * created. A compiled INSERT, an open transaction, an ILP/QWP
+ * {@code TableUpdateDetails} or a running import outlives
+ * {@code ALTER ... SET REFRESH LIMIT 0}, and only this check sees the view
+ * definition its commit lands under.
  */
 public final class MatViewBackfillValidator implements WalPreCommitValidator {
     private static final Log LOG = LogFactory.getLog(MatViewBackfillValidator.class);
@@ -386,17 +386,14 @@ public final class MatViewBackfillValidator implements WalPreCommitValidator {
         if (def == null) {
             return;
         }
-        // No REFRESH LIMIT means no frozen zone exists, so a user could not
-        // have reached the WAL writer via the entry-point gate
-        // (isBackfillableMatView). Low-level WAL-state tests and any future
-        // internal write path can still legitimately commit DATA txns through
-        // this writer, so let them through -- the entry-point gate remains the
-        // contract. Stale ILP/QWP TableUpdateDetails caches that hold a TUD
-        // for a mat view whose LIMIT has just been ALTERed to 0 can slip rows
-        // through until the cache TTL expires, but the next FULL refresh's
-        // truncateSoft will reset the view anyway.
-        if (def.getRefreshLimitHoursOrMonths() == 0) {
-            return;
+        // Without REFRESH LIMIT, or with the wall-clock escape hatch on, the view has no frozen
+        // zone and accepts no backfill. A write handle passed the entry-point gate when it was
+        // created and can outlive ALTER ... SET REFRESH LIMIT 0, so this check, which reads the
+        // definition the commit lands under, refuses its rows with the gate's message.
+        if (def.getRefreshLimitHoursOrMonths() == 0 || engine.getConfiguration().isMatViewRefreshLimitWallClockEnabled()) {
+            throw CairoException.nonCritical()
+                    .put("cannot modify ").put(matViewToken.getType().keyword())
+                    .put(" [view=").put(matViewToken.getTableName()).put(']');
         }
 
         // Sampler is cached on the instance and reused across commits; sample
