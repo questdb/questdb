@@ -175,8 +175,14 @@ public final class ColumnType {
     public static final int DOWNGRADE_LOCKED_STORAGE_VERSION = 431;
     // Both markers at once: composite partitions and _cv checksum trailers.
     public static final int DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION = 432;
+    // Stored in _meta while a table holds Delta partitions. Above the composite and downgrade-lock
+    // markers, because builds that read those must refuse a Delta table instead of misreading it.
+    // A Delta table may also hold composite partitions; the Delta marker covers both.
+    public static final int DELTA_STORAGE_VERSION = 433;
+    // Delta partitions and _cv checksum trailers at once.
+    public static final int DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION = 434;
     // The highest storage version this binary can read and write.
-    public static final int MAX_STORAGE_VERSION = DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION;
+    public static final int MAX_STORAGE_VERSION = DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION;
     static final int[] GEO_TYPE_SIZE_POW2;
     private static final boolean ALLOW_DEFAULT_STRING_CHANGE = false;
     private static final int ARRAY_ELEMTYPE_FIELD_MASK = 0x3F;
@@ -549,6 +555,10 @@ public final class ColumnType {
         return colType >= DECIMAL8 && colType <= DECIMAL256;
     }
 
+    public static boolean isDeltaStorageVersion(int storageVersion) {
+        return storageVersion == DELTA_STORAGE_VERSION || storageVersion == DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION;
+    }
+
     public static boolean isDesignatedTimestamp(int columnType) {
         return tagOf(columnType) == TIMESTAMP && (columnType & TYPE_FLAG_DESIGNATED_TIMESTAMP) != 0;
     }
@@ -558,7 +568,9 @@ public final class ColumnType {
      * which an older binary must not write over.
      */
     public static boolean isDowngradeLockedStorageVersion(int storageVersion) {
-        return storageVersion == DOWNGRADE_LOCKED_STORAGE_VERSION || storageVersion == DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION;
+        return storageVersion == DOWNGRADE_LOCKED_STORAGE_VERSION
+                || storageVersion == DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION
+                || storageVersion == DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION;
     }
 
     public static boolean isDouble(int columnType) {
@@ -773,10 +785,13 @@ public final class ColumnType {
     }
 
     /**
-     * The {@code _meta} storage version for a table's shape: {@link #VERSION} plain, raised by the composite
-     * and downgrade-lock markers.
+     * The {@code _meta} storage version for a table's shape: {@link #VERSION} plain, raised by the composite,
+     * Delta and downgrade-lock markers. The Delta marker covers composite partitions too.
      */
-    public static int storageVersion(boolean composite, boolean downgradeLocked) {
+    public static int storageVersion(boolean composite, boolean delta, boolean downgradeLocked) {
+        if (delta) {
+            return downgradeLocked ? DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION : DELTA_STORAGE_VERSION;
+        }
         if (composite) {
             return downgradeLocked ? DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION : COMPOSITE_STORAGE_VERSION;
         }

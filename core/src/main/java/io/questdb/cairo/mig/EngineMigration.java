@@ -183,7 +183,7 @@ public class EngineMigration {
                         try {
                             final int storedTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             // A version above latestTableVersion that is a storage marker (a table that currently
-                            // holds composite partitions, or is downgrade-locked, carries one of
+                            // holds composite or Delta partitions, or is downgrade-locked, carries one of
                             // ColumnType.storageVersion()) is not a migration-version number: the table is at
                             // latestTableVersion for the migrations' purposes, and every writer marks the table
                             // it writes (unless cairo.commit.mode.adaptive.downgrade is set), so skipping the
@@ -193,6 +193,7 @@ public class EngineMigration {
                             // start the lock. Any other version above latestTableVersion comes from a newer
                             // binary and is left alone.
                             final boolean isMarked = ColumnType.isCompositeStorageVersion(storedTableVersion)
+                                    || ColumnType.isDeltaStorageVersion(storedTableVersion)
                                     || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);
                             final int currentTableVersion = isMarked ? latestTableVersion : storedTableVersion;
                             // _upgrade.d records the compatible migrations every table at the table version has received

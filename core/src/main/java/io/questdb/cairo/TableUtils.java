@@ -122,6 +122,9 @@ public final class TableUtils {
     // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
     public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";
+    // Delta state of one partition version: <partition>/_delta/_catalog.
+    public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
+    public static final String DELTA_DIR_NAME = "_delta";
     public static final String DETACHED_DIR_MARKER = ".detached";
     // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
     public static final String DETACHING_DIR_MARKER = ".detaching";
@@ -3433,7 +3436,7 @@ public final class TableUtils {
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        // A table that currently holds composite partitions, or is downgrade-locked because its _cv
+        // A table that currently holds composite or Delta partitions, or is downgrade-locked because its _cv
         // carries checksum trailers, carries a version in (ColumnType.VERSION, ColumnType.MAX_STORAGE_VERSION]
         // rather than ColumnType.VERSION; all are readable by this binary, so accept the whole
         // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
