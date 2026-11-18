@@ -1970,6 +1970,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCommitModeAdaptiveDowngrade() {
+        return getDelegate().isCommitModeAdaptiveDowngrade();
+    }
+
+    @Override
     public boolean isCopierChunkedEnabled() {
         return getDelegate().isCopierChunkedEnabled();
     }
