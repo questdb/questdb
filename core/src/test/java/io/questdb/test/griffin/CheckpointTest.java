@@ -333,7 +333,7 @@ public class CheckpointTest extends AbstractCairoTest {
             assertNoLiveMatViewState(viewToken);
             assertMatViewValid();
             execute("CHECKPOINT CREATE");
-            Assert.assertEquals(1, readCheckpointedMatViewDefinition(viewToken).getRefreshLimitHoursOrMonths());
+            Assert.assertEquals(1, readCheckpointedMatViewDefinition(configuration.getCheckpointRoot(), viewToken).getRefreshLimitHoursOrMonths());
             execute("CHECKPOINT RELEASE");
             assertNoLiveMatViewState(viewToken);
         });
@@ -5496,7 +5496,7 @@ public class CheckpointTest extends AbstractCairoTest {
             assertNoLiveMatViewState(viewToken);
             path.trimTo(rootLen).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$();
             Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(path.$()));
-            Assert.assertEquals(viewSql, readCheckpointedMatViewDefinition(viewToken).getMatViewSql());
+            Assert.assertEquals(viewSql, readCheckpointedMatViewDefinition(configuration.getCheckpointRoot(), viewToken).getMatViewSql());
             assertMatViewValid();
             execute("CHECKPOINT RELEASE");
             execute("CHECKPOINT CREATE");
@@ -6271,6 +6271,40 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSnapshotPrepareRetriesAlteredNeverRefreshedMatView() throws Exception {
+        // When an ALTER makes SNAPSHOT PREPARE write a never-refreshed view again, it writes the view into the legacy
+        // snapshot, not into the live view: the snapshot holds the altered definition and no state, the live view keeps
+        // no state file and stays valid, and the next snapshot succeeds.
+        assertMemoryLeak(() -> {
+            createNeverRefreshedMatView("SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final AtomicBoolean isSeamRun = new AtomicBoolean();
+            DatabaseCheckpointAgent.setOnMatViewDefinitionCheckpointedForTesting(() -> {
+                try {
+                    execute("ALTER MATERIALIZED VIEW price_1h SET REFRESH LIMIT 1 HOUR");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                drainWalQueue();
+                isSeamRun.set(true);
+            });
+            execute("SNAPSHOT PREPARE");
+            Assert.assertTrue(isSeamRun.get());
+            Assert.assertEquals(1, readCheckpointedMatViewDefinition(configuration.getLegacyCheckpointRoot(), viewToken).getRefreshLimitHoursOrMonths());
+            try (Path snapshotStatePath = new Path()) {
+                snapshotStatePath.of(configuration.getLegacyCheckpointRoot()).concat(configuration.getDbDirectory())
+                        .concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                Assert.assertFalse(TestFilesFacadeImpl.INSTANCE.exists(snapshotStatePath.$()));
+            }
+            assertNoLiveMatViewState(viewToken);
+            assertMatViewValid();
+            execute("SNAPSHOT COMPLETE");
+            execute("SNAPSHOT PREPARE");
+            execute("SNAPSHOT COMPLETE");
+        });
+    }
+
+    @Test
     public void testSnapshotPrepareSavesToSnapshotFolder() throws Exception {
         final String tableName = "test";
         path.of(configuration.getDbRoot()).concat("empty_folder").slash$();
@@ -6816,10 +6850,10 @@ public class CheckpointTest extends AbstractCairoTest {
         }
     }
 
-    // The definition that the checkpoint holds for the view.
-    private static MatViewDefinition readCheckpointedMatViewDefinition(TableToken viewToken) {
+    // The definition that the checkpoint under the root, a checkpoint or a legacy snapshot, holds for the view.
+    private static MatViewDefinition readCheckpointedMatViewDefinition(CharSequence checkpointRoot, TableToken viewToken) {
         try (Path checkpointDbPath = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
-            checkpointDbPath.of(configuration.getCheckpointRoot()).concat(configuration.getDbDirectory());
+            checkpointDbPath.of(checkpointRoot).concat(configuration.getDbDirectory());
             final MatViewDefinition definition = new MatViewDefinition();
             MatViewDefinition.readFrom(engine, definition, reader, checkpointDbPath, checkpointDbPath.size(), viewToken);
             return definition;
