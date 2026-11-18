@@ -408,8 +408,10 @@ fn read_row(bufs: &ColumnChunkBuffers, column_type: ColumnType, i: usize) -> Opt
         }
         ColumnTypeTag::Decimal256 => {
             let words: Vec<u64> = at(32)
-                .chunks_exact(8)
-                .map(|w| u64::from_le_bytes(w.try_into().unwrap()))
+                .as_chunks::<8>()
+                .0
+                .iter()
+                .map(|w| u64::from_le_bytes(*w))
                 .collect();
             if words == [i64::MIN as u64, 0, 0, 0] {
                 None
