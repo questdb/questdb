@@ -1087,9 +1087,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
 
     // A ring budget below one frame's tuples leaves the ring one entry, and a dispatch limit of zero
     // reduces every frame on the owner. A query of the pinned seed swaps its first join's inputs and
-    // defines the stages' stepper copies while it runs.
+    // defines the stages' stepper copies while it runs. The dispatch limit of zero holds for every
+    // query, not only the equi-join band's, whose pressure would otherwise lift it to the default,
+    // which follows the host's query workers: two on a two-core host, which leaves rings of two
+    // entries that the frames of the other queries share.
     @Test
     public void testParallelJoinSingleEntryRingAxis() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 0);
         withSystemProperties(
                 new String[][]{
                         {FuzzConfig.QUERIES_PROP, "300"},
@@ -1097,7 +1101,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s1", "27182"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},
-                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
                         {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
                 },

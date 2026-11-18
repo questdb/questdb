@@ -94,6 +94,9 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     public void setUp() {
         super.setUp();
         sqlExecutionContext.setParallelHashJoinEnabled(true);
+        // The default dispatch limit follows the host's query workers, two on a two-core host, so
+        // the tests pin one that lets a full window hold every frame.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, FRAME_COUNT);
     }
 
     @After
@@ -347,7 +350,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
                 } finally {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, null);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, FRAME_COUNT);
                 }
             }
         });

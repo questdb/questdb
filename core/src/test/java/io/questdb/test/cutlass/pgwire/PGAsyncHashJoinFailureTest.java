@@ -104,6 +104,9 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
     private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final StackWalker STACK_WALKER = StackWalker.getInstance();
     private static final String STAR = "SELECT f.k, f.v, d1.w, d2.w2 FROM f LEFT JOIN d1 ON f.k = d1.k JOIN d2 ON f.l = d2.l";
+    // The statement timeout of the timed-out executions: the sites' queries take up to about 0.8 s
+    // on a slow CI host, and the execution after the timed-out one runs within it.
+    private static final long STATEMENT_TIMEOUT_MS = 3_000;
     private static final int WORKER_COUNT = 4;
     private static volatile TestLatchedCounterFunctionFactory.Callback current;
     // test_latched_counter() takes the callback when it compiles, and the server keeps the compiled
@@ -651,14 +654,14 @@ public class PGAsyncHashJoinFailureTest extends BasePGTest {
                 @Override
                 public boolean onGet(Record rec, int count) {
                     if (count >= site.latchCount && !isLatched.get() && site.isAtSite.getAsBoolean() && isLatched.compareAndSet(false, true)) {
-                        Os.sleep(1_000);
+                        Os.sleep(STATEMENT_TIMEOUT_MS + 500);
                     }
                     return true;
                 }
             };
             withServer(true, false, null, port -> {
                 try (
-                        Connection connection = getConnection(port, false, true, 500);
+                        Connection connection = getConnection(port, false, true, STATEMENT_TIMEOUT_MS);
                         PreparedStatement statement = connection.prepareStatement(site.sql)
                 ) {
                     try {

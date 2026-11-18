@@ -180,6 +180,10 @@ public class AsyncHashJoinBuildOnFilterWorkersTest extends AbstractCairoTest {
     private static void assertWholePushedResidual(WorkerPoolMode mode) throws Exception {
         // A cap of one tuple, which a task lifts to its frame's rows.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 1);
+        // A window wider than the pool, so that the workers take frames past the first while the
+        // owner holds it: the default dispatch limit follows the host's query workers, two on a
+        // two-core host, and the owner may join both frames of such a window itself.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4 * WORKER_COUNT);
         assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignore) -> {
             try (
                     SqlExecutionContextImpl context = new SqlExecutionContextImpl(db, WORKER_COUNT)
