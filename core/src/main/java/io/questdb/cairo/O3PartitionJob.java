@@ -507,7 +507,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // fresh sibling partition. A valid move wins over a discretionary fresh-version rewrite; only the
             // prefix's republish needing a geometry generation stands in its way, in which case the fresh
             // version below is the reclaim.
-            final int moveTailCut = isCompositeSource ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
+            // Two kept pieces starting on one timestamp cannot be published as pieces, here or in a MOVE-TAIL
+            // prefix, so the partition is written flat into a fresh version instead.
+            final boolean hasTsLoTie = hasPlannedTsLoTie(ctx.bounds, plan, sortedTimestampsAddr);
+            final int moveTailCut = isCompositeSource && !hasTsLoTie ? tableWriter.moveTailCut(partitionIndex, ctx.bounds, plan) : 0;
             if (moveTailCut > 0 && geometry.hasGenerationForNextPublish(partitionIndex, moveTailCut)) {
                 // The fresh sibling copies every live row past the cut
                 long tailRows = 0;
@@ -534,7 +537,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
                 return;
             }
-            if (shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
+            if (hasTsLoTie || shouldAssembleFreshPartitionVersion(geometry, txReader, tableWriter, partitionIndex, plan, isPendingSquashSource)) {
                 // A fresh version copies every live row
                 tableWriter.addO3CopyStats(true, oldPartitionSize, oldPartitionSize);
                 assembleFreshPartitionVersion(
@@ -1967,8 +1970,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *                             it ends on - but the geometry orders them by tsLo and refuses two founded at one
      *                             timestamp. A pre-split gains nothing from carving off that tie tail: a batch at the
      *                             shared timestamp is spared by the lower piece and merges into the one above. A
-     *                             replace-range cut passes false: it has to carve the tail out to drop it, and the
-     *                             rows it carves never reach the geometry.
+     *                             replace-range cut passes false: it has to carve the tail out to drop it. When the
+     *                             carved half lies above the range it is kept instead, and the plan is written as a
+     *                             fresh version - see {@link #hasPlannedTsLoTie}.
      * @return true when the cut was applied
      */
     private static boolean applyCutResolved(
@@ -2188,7 +2192,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
-        long newParquetSize;
+        long newParquetSize = parquetFileSize;
         long newParquetMetaFileSize;
         boolean isRewrite = false;
         // Whether the merge opened its output, a new partition directory for a rewrite or the parquet
@@ -2987,13 +2991,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             if (isOutputOpen) {
-                path.of(pathToTable);
-                if (isRewrite) {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
-                } else {
-                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-                }
-                final long fileSize = Files.length(path.$());
                 Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                 Unsafe.putLong(partitionUpdateSinkAddr + Long.BYTES, o3TimestampMin);
                 Unsafe.putLong(partitionUpdateSinkAddr + 2 * Long.BYTES, newPartitionSize - duplicateCount);
@@ -3002,7 +2999,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // highInt = the covering index state: the seal sweep rebuilds the covered sidecars
                 Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, COVERING_INDEX_REBUILD));
                 Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
-                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+                Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, newParquetSize); // update parquet partition file size
             } else {
                 // No file of the partition changed, as the native merge does when dedup drops every
                 // O3 row: o3ConsumePartitionUpdateSink() leaves the partition as it is.
@@ -4988,6 +4985,35 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     return true;
                 }
             }
+        }
+        return false;
+    }
+
+    /**
+     * Whether two pieces the plan keeps would start on the same timestamp, which the geometry refuses. Only a
+     * replace-range edge cut makes this shape: when its upper half starts on the next piece's {@code tsLo} - the two
+     * pieces touched there - and lies above the range, that half is kept rather than dropped.
+     */
+    private static boolean hasPlannedTsLoTie(LongList bounds, O3CompositeMergeStrategy.Plan plan, long sortedTimestampsAddr) {
+        long prevTsLo = Numbers.LONG_NULL;
+        for (int i = 0, n = plan.actions.size(); i < n; i++) {
+            final O3CompositeMergeStrategy.Action action = plan.actions.getQuick(i);
+            final long tsLo = switch (action.type) {
+                case APPEND, KEEP -> O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex);
+                case NEW_PIECE -> getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo);
+                case MERGE -> Math.min(
+                        O3CompositeMergeStrategy.getTsLo(bounds, action.pieceIndex),
+                        getTimestampIndexValue(sortedTimestampsAddr, action.o3Lo)
+                );
+                case DROP -> Numbers.LONG_NULL;
+            };
+            if (tsLo == Numbers.LONG_NULL) {
+                continue;
+            }
+            if (tsLo == prevTsLo) {
+                return true;
+            }
+            prevTsLo = tsLo;
         }
         return false;
     }

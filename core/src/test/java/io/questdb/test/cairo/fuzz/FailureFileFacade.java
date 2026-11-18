@@ -311,6 +311,13 @@ public class FailureFileFacade implements FilesFacade {
         return ff.hardLinkDirRecursive(src, dst, dirMode);
     }
 
+    /**
+     * Whether a failure planted by {@link #setToFailAfter} has not fired yet.
+     */
+    public boolean isArmed() {
+        return osCallsCount.get() > 0;
+    }
+
     @Override
     public boolean isCrossDeviceCopyError(int errno) {
         return ff.isCrossDeviceCopyError(errno);

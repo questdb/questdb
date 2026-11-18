@@ -596,8 +596,9 @@ final class OrderedMapVarSizeRecord implements OrderedMapRecord {
         while (i < index) {
             final int columnType = keyTypes.getColumnType(i);
             final int size = ColumnType.sizeOf(columnType);
-            if (size > 0) {
-                // Fixed-size type.
+            if (size > 0 || columnType == ColumnType.NULL) {
+                // Fixed-size type. A NULL key column is zero bytes wide: the record sink
+                // writes nothing for it, as OrderedMap's own key-size rule expects.
                 addr += size;
             } else if (ColumnType.isArray(columnType)) {
                 addr += ArrayTypeDriver.getPlainValueSize(addr);

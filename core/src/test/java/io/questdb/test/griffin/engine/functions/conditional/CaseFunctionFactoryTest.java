@@ -551,6 +551,27 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCharAndSymbolBranchesInEitherOrder() throws Exception {
+        // CHAR and SYMBOL branches give a STRING result in both orders
+        assertQuery("""
+                SELECT k,
+                    CASE WHEN k < 1 THEN ch ELSE sym_ip END a,
+                    CASE WHEN k < 1 THEN sym_ip ELSE ch END b
+                FROM t""")
+                .ddl(
+                        "CREATE TABLE t (k INT, ch CHAR, sym_ip SYMBOL)",
+                        "INSERT INTO t VALUES (0, 'a', '9.9.9.9'), (1, 'b', null), (2, 'c', '8.8.8.8')"
+                )
+                .expectSize()
+                .returns("""
+                        k\ta\tb
+                        0\ta\t9.9.9.9
+                        1\t\tb
+                        2\t8.8.8.8\tc
+                        """);
+    }
+
+    @Test
     public void testCharOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -592,6 +613,52 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         -54\tJ
                         -393\tJ
                         """);
+    }
+
+    @Test
+    public void testCharOrSymbolBranchWithIPv4OrUuidResult() throws Exception {
+        // a STRING branch takes the result type of a CHAR or SYMBOL branch to IPv4 or UUID, which
+        // the CHAR or SYMBOL branch cannot be read as: the query fails to compile in any order,
+        // and an explicit cast of the CHAR or SYMBOL branch makes it work
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, ch CHAR, sym_ip SYMBOL, sym_uid SYMBOL, ip IPv4, uid UUID)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (0, 'a', '9.9.9.9', '11111111-1111-1111-1111-111111111111', '1.2.3.4', '22222222-2222-2222-2222-222222222222'),
+                        (1, 'b', null, null, null, null),
+                        (2, 'c', '8.8.8.8', '33333333-3333-3333-3333-333333333333', '4.3.2.1', '44444444-4444-4444-4444-444444444444')
+                    """);
+            assertQuery("SELECT CASE WHEN k < 1 THEN sym_ip WHEN k < 2 THEN '5.6.7.8' ELSE ip END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("SELECT CASE WHEN k < 1 THEN ch WHEN k < 2 THEN sym_ip ELSE ip END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: CHAR -> IPv4 [from=CHAR, to=IPv4]");
+            assertQuery("SELECT CASE WHEN k < 1 THEN sym_ip WHEN k < 2 THEN ch ELSE ip END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+            assertQuery("SELECT CASE WHEN k < 1 THEN ch WHEN k < 2 THEN '55555555-5555-5555-5555-555555555555' ELSE uid END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: CHAR -> UUID [from=CHAR, to=UUID]");
+            assertQuery("SELECT CASE WHEN k < 1 THEN sym_uid WHEN k < 2 THEN '55555555-5555-5555-5555-555555555555' ELSE uid END FROM t")
+                    .noLeakCheck()
+                    .fails(28, "inconvertible types: SYMBOL -> UUID [from=SYMBOL, to=UUID]");
+            assertQuery("""
+                    SELECT k,
+                        CASE WHEN k < 1 THEN sym_ip::IPv4 WHEN k < 2 THEN '5.6.7.8' ELSE ip END a,
+                        CASE WHEN k < 1 THEN ch::IPv4 WHEN k < 2 THEN '5.6.7.8' ELSE ip END b,
+                        CASE WHEN k < 1 THEN sym_uid::UUID WHEN k < 2 THEN '55555555-5555-5555-5555-555555555555' ELSE uid END c,
+                        CASE WHEN k < 1 THEN ch::UUID WHEN k < 2 THEN '55555555-5555-5555-5555-555555555555' ELSE uid END d
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\ta\tb\tc\td
+                            0\t9.9.9.9\t\t11111111-1111-1111-1111-111111111111\t
+                            1\t5.6.7.8\t5.6.7.8\t55555555-5555-5555-5555-555555555555\t55555555-5555-5555-5555-555555555555
+                            2\t4.3.2.1\t4.3.2.1\t44444444-4444-4444-4444-444444444444\t44444444-4444-4444-4444-444444444444
+                            """);
+        });
     }
 
     @Test

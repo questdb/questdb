@@ -85,7 +85,7 @@ stages:
   - stage: BuildRustLibrary
     displayName: "Build Rust library"
     dependsOn: []
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     jobs:
       - template: templates/rust-build-job.yml
         parameters:
@@ -201,6 +201,7 @@ stages:
         steps:
           - checkout: self
             fetchDepth: 1
+            fetchTags: false
             lfs: false
             submodules: false
             persistCredentials: true

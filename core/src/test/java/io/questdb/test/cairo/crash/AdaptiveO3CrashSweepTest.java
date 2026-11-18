@@ -32,6 +32,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -42,6 +43,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,6 +54,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * The ADAPTIVE out-of-order (O3) crash sweep: drives an adaptive WAL table through
@@ -78,6 +81,41 @@ import java.util.Set;
  */
 public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
+    // The phase of the DEDUP SKIP sweep: the switch to SKIP, then the writes of DEDUP_SKIP_WRITES.
+    private static final int DEDUP_SKIP_COMMITS = 3;
+    // The write after recovery: it resends the first stored row of the native day and adds a row on a new day.
+    private static final String[] DEDUP_SKIP_FOLLOW_UP = {
+            "2024-10-03T00:00:00.000000Z\t-1\tfollow\t-1",
+            "2024-10-09T00:00:00.000000Z\t999\tfollow\t999"
+    };
+    private static final String DEDUP_SKIP_TABLE = "sweep_dedup_skip";
+    /**
+     * The writes of the DEDUP SKIP sweep's phase, as {@code CursorPrinter} prints their rows. The first only resends
+     * stored keys, with other values: SKIP drops every row and writes no partition. The second resends a stored key
+     * on every day and adds new rows: on the Parquet day that the merge rewrites, after a row group whose merge
+     * writes nothing; on the Parquet day that the merge updates in place, after two such row groups; on the native
+     * day, among and past the stored rows.
+     */
+    private static final String[][] DEDUP_SKIP_WRITES = {
+            {
+                    "2024-10-01T01:00:00.000000Z\t1001\tdup\t1",
+                    "2024-10-01T09:00:00.000000Z\t1009\tdup\t9",
+                    "2024-10-02T05:00:00.000000Z\t1105\tdup\t5",
+                    "2024-10-02T10:00:00.000000Z\t1110\tdup\t10",
+                    "2024-10-03T04:00:00.000000Z\t1204\tdup\t4",
+                    "2024-10-03T16:00:00.000000Z\t1216\tdup\t16"
+            },
+            {
+                    "2024-10-01T02:00:00.000000Z\t2002\tdup\t2",
+                    "2024-10-01T06:30:00.000000Z\t2006\tnew\t6",
+                    "2024-10-02T03:00:00.000000Z\t2103\tdup\t3",
+                    "2024-10-02T05:00:00.000000Z\t2105\tdup\t5",
+                    "2024-10-02T10:30:00.000000Z\t2110\tnew\t10",
+                    "2024-10-03T08:00:00.000000Z\t2208\tdup\t8",
+                    "2024-10-03T10:00:00.000000Z\t2210\tnew\t10",
+                    "2024-10-03T22:00:00.000000Z\t2222\tnew\t22"
+            }
+    };
     private static final String FOLD_DAY = "2024-01-01";
     private static final long FOLD_DAY_MICROS = SavedLagWorkload.micros(FOLD_DAY + "T00:00:00.000000Z");
     private static final String FOLD_TABLE = "sweep_fold";
@@ -120,6 +158,35 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
     private static final int LAZY_GAP_APPLIED_ROWS = 1;
     // Set while the fold sweep runs: its check of the restored state goes between recovery and the WAL replay.
     private FoldUnderSavePointWorkload foldWorkload;
+
+    /**
+     * DEDUP SKIP under the power-loss sweep. The phase switches a DEDUP UPSERT table to SKIP on the same key, then
+     * resends stored keys with other values, see {@link #DEDUP_SKIP_WRITES}: first only resent keys, which SKIP
+     * drops without writing any partition, then resent keys together with new rows. Of the two Parquet days the
+     * merge rewrites the first, which lacks a column added after its conversion, and updates the second in place;
+     * the last day is native. The count pass proves that the first write leaves every partition as it is, and that
+     * the second rewrites the first Parquet day and updates the second one in place.
+     * <p>
+     * At every crash point recovery must apply every durable commit and land on the rows of that prefix of the
+     * phase, under the mode it set, and a write after recovery that resends a stored key must keep the row the mode
+     * picks: the stored one once the switch to SKIP is committed. At k=N every commit is recovered.
+     * <p>
+     * The native day merges into pieces, as the suite's default merge-append makes it; see
+     * {@link #testDedupSkipSweepWithoutMergeAppendRecoversCleanlyAtEveryCrashPoint} for the production default.
+     */
+    @Test
+    public void testDedupSkipSweepRecoversCleanlyAtEveryCrashPoint() throws Exception {
+        assertDedupSkipSweepRecoversCleanly(true);
+    }
+
+    /**
+     * {@link #testDedupSkipSweepRecoversCleanlyAtEveryCrashPoint} with merge-append off, the production default: the
+     * native day merges without pieces.
+     */
+    @Test
+    public void testDedupSkipSweepWithoutMergeAppendRecoversCleanlyAtEveryCrashPoint() throws Exception {
+        assertDedupSkipSweepRecoversCleanly(false);
+    }
 
     /**
      * Folds a day's split partitions into a composite target that only the durable-epoch pin holds, and crashes
@@ -250,7 +317,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         runWithCrashFacade(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
-            final SavedLagWorkload workload = SavedLagWorkload.inPlaceAppend(false);
+            final SavedLagWorkload workload = SavedLagWorkload.inPlaceAppend();
             workload.savePointsInCommitPhase = false;
             final Set<Long> nonCacheFdBaseline = new HashSet<>(crashFf.noCacheOpenFdsSnapshot());
             final TableToken[] tokens = workload.setup(1);
@@ -272,7 +339,12 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     @Test
     public void testSavedLagSurvivesEveryKillPointDedup() throws Exception {
-        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppend(true));
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppendDedup("upsert"));
+    }
+
+    @Test
+    public void testSavedLagSurvivesEveryKillPointDedupSkip() throws Exception {
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppendDedup("skip"));
     }
 
     @Test
@@ -282,7 +354,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
 
     @Test
     public void testSavedLagSurvivesEveryKillPointInPlaceAppend() throws Exception {
-        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppend(false));
+        assertSavedLagSurvivesEveryKillPoint(SavedLagWorkload.inPlaceAppend());
     }
 
     @Test
@@ -303,6 +375,26 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             engine.notifyWalTxnRepublisher(tt);
         }
         drainWalQueue();
+    }
+
+    private void assertDedupSkipSweepRecoversCleanly(boolean isMergeAppend) throws Exception {
+        withAdaptiveW0(() -> runWithCrashFacade(() -> {
+            crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
+            final SweepResult r = forEachAdaptiveCrashPoint(new DedupSkipWorkload(isMergeAppend));
+            LOG.info().$("[dedup skip sweep] mergeAppend=").$(isMergeAppend).$(", N=").$(r.n).$(", sweptPoints=").$(r.sweptPoints)
+                    .$(", recoveredByK=").$(Arrays.toString(r.recoveredByK())).$(", ops:\n").$(phaseDurabilityOps()).$();
+            Assert.assertFalse("the sweep must cover every crash point of the phase", r.truncated);
+            Assert.assertEquals(r.n, r.sweptPoints);
+            for (int k = 2; k <= r.sweptPoints; k++) {
+                Assert.assertTrue(
+                        "recovered commits must be non-decreasing at k=" + k + " ("
+                                + r.recoveredByK()[k - 1] + " -> " + r.recoveredByK()[k] + ")",
+                        r.recoveredByK()[k] >= r.recoveredByK()[k - 1]
+                );
+            }
+            Assert.assertEquals("the first crash point must lose the switch to SKIP", 0, r.recoveredByK()[1]);
+            Assert.assertEquals("k=N must recover every commit of the phase", DEDUP_SKIP_COMMITS, r.recoveredByK()[r.sweptPoints]);
+        }));
     }
 
     /**
@@ -483,6 +575,215 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             }
         }
         return true;
+    }
+
+    /**
+     * The DEDUP SKIP workload, see {@link #testDedupSkipSweepRecoversCleanlyAtEveryCrashPoint}. A Java model of the
+     * table gives the rows every recovered state must read: the rows setup writes, then the committed writes of the
+     * phase, under SKIP, which keeps the stored row of a resent key.
+     */
+    private final class DedupSkipWorkload implements AdaptiveCrashWorkload {
+        private final boolean isMergeAppend;
+        private long baseSeqTxn;
+        private int iteration;
+        private TableToken tt;
+
+        private DedupSkipWorkload(boolean isMergeAppend) {
+            this.isMergeAppend = isMergeAppend;
+        }
+
+        @Override
+        public void commit() throws Exception {
+            execute("alter table " + DEDUP_SKIP_TABLE + " dedup enable skip keys(ts)");
+            if (isApplyCrashed()) {
+                return;
+            }
+            final String partitionsBefore = iteration == 0 ? readTxnToString(tt, false, true, true, true) : null;
+            execute(insertSql(DEDUP_SKIP_WRITES[0]));
+            if (isApplyCrashed()) {
+                return;
+            }
+            long[][] versionsBefore = null;
+            if (iteration == 0) {
+                // the count pass, no crash armed: prove the writes take the paths the sweep is for
+                Assert.assertEquals("the write that only resends keys changed a partition", partitionsBefore,
+                        readTxnToString(tt, false, true, true, true));
+                versionsBefore = partitionVersions();
+            }
+            execute(insertSql(DEDUP_SKIP_WRITES[1]));
+            if (isApplyCrashed()) {
+                return;
+            }
+            if (iteration == 0) {
+                final long[][] versions = partitionVersions();
+                Assert.assertEquals("the write changed the partition count", versionsBefore.length, versions.length);
+                Assert.assertNotEquals("the merge did not rewrite the Parquet day that lacks a column",
+                        versionsBefore[0][0], versions[0][0]);
+                Assert.assertTrue("the rewrite left no Parquet file", versions[0][1] > -1);
+                Assert.assertEquals("the merge did not update the second Parquet day in place",
+                        versionsBefore[1][0], versions[1][0]);
+                Assert.assertTrue("the update in place did not grow the Parquet file", versions[1][1] > versionsBefore[1][1]);
+            }
+        }
+
+        @Override
+        public int oracle(int k, int n) throws Exception {
+            final String at = "k=" + k + " of " + n + " [op=" + phaseDurabilityOp(k) + "]";
+            Assert.assertNull(at + ": the table is suspended after recovery", firstSuspendReason(tt));
+            final long seqTxn;
+            final boolean isSkip;
+            try (TableReader reader = engine.getReader(tt)) {
+                seqTxn = reader.getSeqTxn();
+                final TableReaderMetadata metadata = reader.getMetadata();
+                Assert.assertTrue(at + ": the timestamp is no longer a dedup key", metadata.isDedupKey(metadata.getTimestampIndex()));
+                isSkip = metadata.getDedupMode() == TableUtils.DEDUP_MODE_SKIP;
+            }
+            // under W=0 every commit that returned is durable, and recovery applies every durable commit
+            Assert.assertEquals(at + ": recovery left a durable commit unapplied", engine.getTableSequencerAPI().lastTxn(tt), seqTxn);
+            final int committed = (int) (seqTxn - baseSeqTxn);
+            Assert.assertTrue(at + ": recovered " + committed + " commits of the phase", committed >= 0 && committed <= DEDUP_SKIP_COMMITS);
+            Assert.assertEquals(at + ": wrong dedup mode after " + committed + " commits of the phase [isSkip=" + isSkip + ']',
+                    committed > 0, isSkip);
+            final TreeMap<String, String> rows = seedRows();
+            for (int i = 1; i < committed; i++) {
+                putRows(rows, DEDUP_SKIP_WRITES[i - 1], true);
+            }
+            assertRows(at + " after recovery", rows);
+            // a resent key: the mode the recovered table runs decides which row stays
+            execute(insertSql(DEDUP_SKIP_FOLLOW_UP));
+            drainWalQueue();
+            Assert.assertNull(at + ": the write after recovery suspended the table", firstSuspendReason(tt));
+            putRows(rows, DEDUP_SKIP_FOLLOW_UP, committed > 0);
+            assertRows(at + " after a write", rows);
+            engine.releaseAllReaders();
+            return committed;
+        }
+
+        @Override
+        public TableToken[] setup(int iteration) throws Exception {
+            this.iteration = iteration;
+            execute("drop table if exists " + DEDUP_SKIP_TABLE);
+            drainWalQueue();
+            // three row groups of 4 rows on each Parquet day
+            setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, isMergeAppend ? "true" : "false");
+            execute("create table " + DEDUP_SKIP_TABLE + " (ts timestamp, v long, vc varchar) timestamp(ts) partition by day wal"
+                    + " dedup upsert keys(ts)");
+            // the rows of seedRows()
+            execute("insert into " + DEDUP_SKIP_TABLE + " (ts, v, vc) select '2024-10-01'::timestamp + (x - 1) * 3_600_000_000,"
+                    + " x, 'a' || x from long_sequence(12)");
+            execute("insert into " + DEDUP_SKIP_TABLE + " (ts, v, vc) select '2024-10-02'::timestamp + (x - 1) * 3_600_000_000,"
+                    + " 100 + x, 'b' || x from long_sequence(12)");
+            execute("insert into " + DEDUP_SKIP_TABLE + " (ts, v, vc) select '2024-10-03'::timestamp + (x - 1) * 14_400_000_000,"
+                    + " 200 + x, 'c' || x from long_sequence(6)");
+            execute("alter table " + DEDUP_SKIP_TABLE + " convert partition to parquet list '2024-10-01'");
+            // the first Parquet day lacks the column, so a merge that writes rows there rewrites its file
+            execute("alter table " + DEDUP_SKIP_TABLE + " add column w int");
+            execute("alter table " + DEDUP_SKIP_TABLE + " convert partition to parquet list '2024-10-02'");
+            drainWalQueue();
+            tt = engine.verifyTableName(DEDUP_SKIP_TABLE);
+            baseSeqTxn = engine.getTableSequencerAPI().lastTxn(tt);
+            if (iteration == 0) {
+                final long[][] versions = partitionVersions();
+                Assert.assertTrue("the fixture must hold two Parquet days and a native one",
+                        versions.length == 3 && versions[0][1] > -1 && versions[1][1] > -1 && versions[2][1] == -1);
+            }
+            return new TableToken[]{tt};
+        }
+
+        @Override
+        public void teardown() throws Exception {
+            try {
+                execute("drop table if exists " + DEDUP_SKIP_TABLE);
+                drainWalQueue();
+            } catch (Exception e) {
+                LOG.info().$("[dedup skip sweep] teardown drop skipped: ").$(e.getMessage()).$();
+            }
+        }
+
+        private static String insertSql(String[] rows) {
+            final StringBuilder sql = new StringBuilder("insert into ").append(DEDUP_SKIP_TABLE).append(" (ts, v, vc, w) values ");
+            for (int i = 0; i < rows.length; i++) {
+                final String[] cells = rows[i].split("\t");
+                sql.append(i > 0 ? ", ('" : "('").append(cells[0]).append("', ").append(cells[1]).append(", '")
+                        .append(cells[2]).append("', ").append(cells[3]).append(')');
+            }
+            return sql.toString();
+        }
+
+        // Writes rows to the model: SKIP keeps the stored row of a resent key, UPSERT replaces it.
+        private static void putRows(TreeMap<String, String> rows, String[] written, boolean isSkip) {
+            for (String row : written) {
+                final String ts = row.substring(0, row.indexOf('\t'));
+                if (isSkip) {
+                    rows.putIfAbsent(ts, row);
+                } else {
+                    rows.put(ts, row);
+                }
+            }
+        }
+
+        // The rows setup() writes, by timestamp. The column w comes after them, so it is NULL in all of them.
+        private static TreeMap<String, String> seedRows() {
+            final TreeMap<String, String> rows = new TreeMap<>();
+            for (int x = 1; x <= 12; x++) {
+                final String a = String.format("2024-10-01T%02d:00:00.000000Z", x - 1);
+                rows.put(a, a + "\t" + x + "\ta" + x + "\tnull");
+                final String b = String.format("2024-10-02T%02d:00:00.000000Z", x - 1);
+                rows.put(b, b + "\t" + (100 + x) + "\tb" + x + "\tnull");
+            }
+            for (int x = 1; x <= 6; x++) {
+                final String c = String.format("2024-10-03T%02d:00:00.000000Z", (x - 1) * 4);
+                rows.put(c, c + "\t" + (200 + x) + "\tc" + x + "\tnull");
+            }
+            return rows;
+        }
+
+        // Checks the rows, and the recovered table's cursor reset, size and random access, through the assertQuery()
+        // battery. The failure names the crash point.
+        private void assertRows(String at, TreeMap<String, String> rows) throws Exception {
+            final StringSink expected = new StringSink();
+            expected.put("ts\tv\tvc\tw\n");
+            for (String row : rows.values()) {
+                expected.put(row).put('\n');
+            }
+            try {
+                assertQuery("select ts, v, vc, w from " + DEDUP_SKIP_TABLE)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected);
+            } catch (AssertionError e) {
+                throw new AssertionError(at + ": " + e.getMessage(), e);
+            }
+        }
+
+        // Applies the WAL. True when an armed crash suspended the table, which ends the phase; the count pass has
+        // no crash armed, so a suspend there fails it.
+        private boolean isApplyCrashed() {
+            drainWalQueue();
+            if (iteration == 0) {
+                Assert.assertNull("the uncrashed phase suspended the table", firstSuspendReason(tt));
+            }
+            return anyTableSuspended(tt);
+        }
+
+        // The name txn of every partition and the size of its Parquet file, -1 for a native partition, from _txn.
+        private long[][] partitionVersions() {
+            try (TxReader txReader = new TxReader(engine.getConfiguration().getFilesFacade()); Path path = new Path()) {
+                path.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
+                txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                txReader.unsafeLoadAll();
+                final long[][] versions = new long[txReader.getPartitionCount()][];
+                for (int i = 0; i < versions.length; i++) {
+                    versions[i] = new long[]{
+                            txReader.getPartitionNameTxn(i),
+                            txReader.isPartitionParquet(i) ? txReader.getPartitionParquetFileSize(i) : -1
+                    };
+                }
+                return versions;
+            }
+        }
     }
 
     /**
@@ -803,15 +1104,18 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
      * The saved-lag workload. Setup: the table's committed rows, then two WAL transactions: the first
      * holds exactly the table's lag limit of rows ({@code maxUncommittedRows} times the lag multiplier),
      * the second one row out of order below them, written through a second WAL so that no later
-     * transaction shares the first one's WAL segment. One apply pass with a zero time quota applies the
+     * transaction shares the first one's WAL segment. On a DEDUP table the second transaction also
+     * resends the key of the first lag row with other values. One apply pass with a zero time quota applies the
      * first transaction on its own, keeps its rows in WAL lag (the second sorts below them), stops on the
      * quota and saves the lag in {@code _txn}; under ADAPTIVE a save point lands on it. Setup asserts
      * {@code _txn} holds that lag, so the test cannot pass on a workload that saved none, and
      * then runs the WAL purge, which must not take the lag's WAL segment. Commit phase: the drain that
-     * consumes the lag. Oracle: every row of the table and of both transactions, by value.
+     * consumes the lag. Oracle: every row of the table and of both transactions, by value; of the resent key,
+     * UPSERT keeps the row of the second transaction and SKIP the lag row.
      */
     private static final class SavedLagWorkload implements AdaptiveCrashWorkload {
-        private final boolean dedup;
+        // the mode of DEDUP ENABLE on the timestamp, "upsert" or "skip"; null when the table does not deduplicate
+        private final String dedupMode;
         private final List<String> expectedRows = new ArrayList<>();
         private final String[] initialInserts;
         private final int lagRows;
@@ -827,7 +1131,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         private SavedLagWorkload(
                 String name,
                 int maxUncommittedRows,
-                boolean dedup,
+                String dedupMode,
                 boolean splitLastPartition,
                 String[] initialInserts,
                 String[] lagInsert,
@@ -835,7 +1139,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         ) {
             this.name = name;
             this.maxUncommittedRows = maxUncommittedRows;
-            this.dedup = dedup;
+            this.dedupMode = dedupMode;
             this.splitLastPartition = splitLastPartition;
             this.initialInserts = initialInserts;
             this.lagInsert = lagInsert;
@@ -848,6 +1152,12 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             }
             addExpectedRows(lagInsert[0], lagRows, Long.parseLong(lagInsert[2]));
             expectedRows.add(row(micros(outOfOrderTs), -1, "neg", "neg"));
+            if ("upsert".equals(dedupMode)) {
+                // the second transaction wrote the resent key last; SKIP keeps the lag row the first one wrote
+                final long firstLagTs = micros(lagInsert[0]);
+                Assert.assertTrue(expectedRows.remove(generatedRow(firstLagTs, 1, Long.parseLong(lagInsert[2]))));
+                expectedRows.add(row(firstLagTs, -2, "dup", "dup"));
+            }
             expectedRows.sort(null);
         }
 
@@ -903,8 +1213,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             }
             execute("create table " + table + " (ts timestamp, v long, s symbol, vc varchar) timestamp(ts) partition by day wal"
                     + " with maxUncommittedRows=" + maxUncommittedRows);
-            if (dedup) {
-                execute("alter table " + table + " dedup enable upsert keys(ts)");
+            if (dedupMode != null) {
+                execute("alter table " + table + " dedup enable " + dedupMode + " keys(ts)");
             }
             tt = engine.verifyTableName(table);
             for (int i = 0; i < initialInserts.length; i += 3) {
@@ -915,7 +1225,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             execute(insertSql(lagInsert[0], lagInsert[1], lagInsert[2]));
             // hold the first WAL so the out-of-order row goes to a second one
             try (WalWriter ignore = engine.getWalWriter(tt)) {
-                execute("insert into " + table + " values ('" + outOfOrderTs + "', -1, 'neg', 'neg')");
+                execute("insert into " + table + " values ('" + outOfOrderTs + "', -1, 'neg', 'neg')"
+                        + (dedupMode != null ? ", ('" + lagInsert[0] + "', -2, 'dup', 'dup')" : ""));
             }
             tickWalQueue(1);
             Assert.assertEquals(name + ": _txn does not hold the saved WAL lag", lagRows, savedLagRows());
@@ -946,7 +1257,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
             // lag limit 2,000 rows: 600 lag rows on day 2, 1,400 on day 3; the out-of-order row lands on
             // day 1, the lag's day-2 rows append in place, and day 2 is trimmed when day 3 becomes last
             return new SavedLagWorkload(
-                    "acrossPartitionBoundary", 100, false, false,
+                    "acrossPartitionBoundary", 100, null, false,
                     new String[]{"2022-02-24T00:00:00.000000Z", "1", "1000000", "2022-02-25T00:00:00.000000Z", "1", "2000000"},
                     new String[]{"2022-02-25T23:50:00.000000Z", "2000", "0"},
                     "2022-02-24T12:00:00.000000Z"
@@ -956,32 +1267,46 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         static SavedLagWorkload emptyTable() {
             // no committed rows: the lag lives in an artificial partition the consuming commit removes
             return new SavedLagWorkload(
-                    "emptyTable", 50, false, false,
+                    "emptyTable", 50, null, false,
                     new String[0],
                     new String[]{"2022-02-25T01:00:00.000000Z", "1000", "0"},
                     "2022-02-25T00:30:00.000000Z"
             );
         }
 
-        static SavedLagWorkload inPlaceAppend(boolean dedup) {
-            // one committed row; the out-of-order row sorts between it and the lag, so the consuming commit
-            // appends the merged rows in place over the lag
-            return new SavedLagWorkload(
-                    dedup ? "inPlaceAppendDedup" : "inPlaceAppend", 50, dedup, false,
-                    new String[]{"2022-02-25T00:00:00.000000Z", "1", "1000000"},
-                    new String[]{"2022-02-25T01:00:00.000000Z", "1000", "0"},
-                    "2022-02-25T00:30:00.000000Z"
-            );
+        static SavedLagWorkload inPlaceAppend() {
+            return inPlaceAppend("inPlaceAppend", null);
+        }
+
+        static SavedLagWorkload inPlaceAppendDedup(String dedupMode) {
+            return inPlaceAppend("skip".equals(dedupMode) ? "inPlaceAppendDedupSkip" : "inPlaceAppendDedup", dedupMode);
         }
 
         static SavedLagWorkload splitLastPartition() {
             // the out-of-order row lands inside the committed tail; with a 1-byte split threshold the
             // consuming commit splits the last partition and cuts the old directory to its committed rows
             return new SavedLagWorkload(
-                    "splitLastPartition", 50, false, true,
+                    "splitLastPartition", 50, null, true,
                     new String[]{"2022-02-25T00:00:00.000000Z", "5000", "1000000"},
                     new String[]{"2022-02-25T02:00:00.000000Z", "1000", "0"},
                     "2022-02-25T01:23:00.500000Z"
+            );
+        }
+
+        private static String generatedRow(long fromTs, int x, long vBase) {
+            // row x of insertSql(), from 1
+            final long v = vBase + x;
+            return row(fromTs + (x - 1) * 1_000_000L, v, "k" + (x % 7), "r" + v);
+        }
+
+        private static SavedLagWorkload inPlaceAppend(String name, String dedupMode) {
+            // one committed row; the out-of-order row sorts between it and the lag, so the consuming commit
+            // appends the merged rows in place over the lag
+            return new SavedLagWorkload(
+                    name, 50, dedupMode, false,
+                    new String[]{"2022-02-25T00:00:00.000000Z", "1", "1000000"},
+                    new String[]{"2022-02-25T01:00:00.000000Z", "1000", "0"},
+                    "2022-02-25T00:30:00.000000Z"
             );
         }
 
@@ -1007,8 +1332,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         private void addExpectedRows(String fromTs, int rows, long vBase) {
             final long from = micros(fromTs);
             for (int x = 1; x <= rows; x++) {
-                final long v = vBase + x;
-                expectedRows.add(row(from + (x - 1) * 1_000_000L, v, "k" + (x % 7), "r" + v));
+                expectedRows.add(generatedRow(from, x, vBase));
             }
         }
 
