@@ -828,9 +828,21 @@ change reads as unverified, never as torn. A released binary ignores the new byt
   a record torn.
 - **`_cv` trailer.** 16 bytes after each `_cv` area: a 64-bit magic (`TableUtils.CV_CHECKSUM_MAGIC`), then a
   checksum of the whole area. `ColumnVersionWriter` writes it before the version bump, in every mode, and the
-  checkpoint copy writes one too. A file too short for it, or one without the magic there (every file a released
-  version wrote), reads unverified; a mismatch falls back to the other area (`read fell back to other _cv area
-  after checksum mismatch [...]`), and if both fail: `_cv checksum mismatch in both A and B areas [...]`.
+  checkpoint copy writes one too; with `cairo.commit.mode.adaptive.downgrade=true`
+  (`CairoConfiguration.isCommitModeAdaptiveDowngrade`) the writer clears the slot instead and the checkpoint copy
+  has none. A file too short for it, or one without the magic there (every file a released version wrote), reads
+  unverified; a mismatch falls back to the other area (`read fell back to other _cv area after checksum mismatch
+  [...]`), and if both fail: `_cv checksum mismatch in both A and B areas [...]`.
+  An older release rewrites an area in place and leaves the magic next to data it never checksummed, so a table
+  with trailers must not be written by one: every writer that stores trailers stamps
+  `ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION` (431; 432 together with the composite marker) into `_meta` at
+  open, which releases up to 10.1 refuse (`validateMetaVersion` accepts at most 430 there). A start with
+  `cairo.commit.mode.adaptive.downgrade=true` (`RecoveryCoordinator.unlockTablesForDowngrade`, after the
+  save-point exits) zeroes the magic of every trailer in the `_cv` of every locked table, those of the two named
+  areas and those earlier commits left elsewhere in the file, and restores the plain or composite version: the
+  documented way down (user guide 7.1). The server starts with the setting under `nosync` only (`PropServerConfiguration`):
+  an `adaptive` table keeps a save point an older release ignores.
+  `EngineMigration` treats the markers as `ColumnType.VERSION`, so migrations still run on marked tables.
 - **Version 2 sequencer log.** Each 60-byte record carries a checksum of its first 52 bytes in its 8 reserved
   bytes. A stored 0 reads unverified; a mismatch fails the read with `torn sequencer txnlog record [txn=...,
   ...]`. A new log's header also carries a capability marker at offset 24, which nothing reads yet.
@@ -912,10 +924,10 @@ new bytes):
 | File | Change |
 |---|---|
 | `_txn` | body checksum and stamp at offsets 116-127; the lag checksum reset writes 4 bytes instead of 8 (a fix) |
-| `_cv` | a 16-byte trailer after each area; areas are placed with room for it |
+| `_cv` | a 16-byte trailer after each area, unless `cairo.commit.mode.adaptive.downgrade=true`; areas are placed with room for it |
 | sequencer V2 part files and `_txnlog` | a checksum in the 8 reserved bytes of each record; in the header, the flushed-through field at offset 40 (negated by a `nosync`, `async` or `sync` open, positive again after the next `adaptive` open) and the slot holding `maxTxn` as this release last stored it at offset 48 (both written only once an `adaptive` append has touched the log) |
 | sequencer V1 `_txnlog` | the unsynced-from hint at header offset 40 (negated after a `nosync` or `async` open) |
-| `_meta` | none: the base layout (format minor version 2). A development build's enrolment field still loads. |
+| `_meta` | the storage version at offset 12 is 431 or 432 (downgrade lock) for every table this release writes, unless `cairo.commit.mode.adaptive.downgrade=true`; a released binary refuses it, as intended. Otherwise none: the base layout (format minor version 2). A development build's enrolment field still loads. |
 | `_convert` | none |
 
 Not added, though earlier development builds had them: `_snapshot`, `_meta.epoch`, `_cv.epoch`, `_txn.epoch` (and
@@ -942,9 +954,11 @@ field and body checksum. The save point removal deletes the first four when it f
    process's `syncfs` collected first, or any error on an older kernel, goes unseen. The save point's batched flush
    (for every file but the open partition's columns and the symbol maps, whose write-back its drain waits on and
    checks), the exit, the recovery header flush and the Enterprise uploader start flush rely on that report alike.
-8. Downgrade, write with an older binary, then re-upgrade is unsupported. V2's known-tail slot avoids cutting
-   records appended by a writer unaware of its hint; that defensive handling does not broaden the compatibility
-   contract. A plain upgrade and mode changes between restarts remain supported.
+8. Downgrade, write with an older binary, then re-upgrade is supported only through a start with
+   `cairo.commit.mode.adaptive.downgrade=true` first, which removes the `_cv` checksums and the downgrade lock
+   (user guide 7.1); a table still locked is refused by the older binary rather than damaged. V2's known-tail slot
+   avoids cutting records appended by a writer unaware of its hint. A plain upgrade and mode changes between
+   restarts remain supported.
 9. Deferred cost changes: Enterprise demote batching, reducing SYNC V2 part flushes, and splitting the macOS
    `F_FULLFSYNC` upgrade out of `fsyncAndClose`. Current barriers remain; the latter two need measurements first.
    Completion/open can also validate full manifests per pending partition; optional batching is deferred and no

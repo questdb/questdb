@@ -212,6 +212,8 @@ public class PropServerConfigurationTest {
         // exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
+        // Out of the box every table is locked against older releases; the way down is opt-in.
+        Assert.assertFalse(configuration.getCairoConfiguration().isCommitModeAdaptiveDowngrade());
         // RPO of the adaptive group commit out of the box.
         Assert.assertEquals(50_000L, configuration.getCairoConfiguration().getAdaptiveCommitGroupWindowUs());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
@@ -594,6 +596,54 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testCommitModeAdaptiveDowngrade() throws Exception {
+        // NOSYNC takes the downgrade setting: named, in upper case, or as the default mode.
+        for (String mode : new String[]{null, "nosync", "NOSYNC"}) {
+            final Properties properties = new Properties();
+            if (mode != null) {
+                properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), mode);
+            }
+            Assert.assertFalse(mode, newPropServerConfiguration(properties).getCairoConfiguration().isCommitModeAdaptiveDowngrade());
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath(), "false");
+            Assert.assertFalse(mode, newPropServerConfiguration(properties).getCairoConfiguration().isCommitModeAdaptiveDowngrade());
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath(), "true");
+            final CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertTrue(mode, configuration.isCommitModeAdaptiveDowngrade());
+            Assert.assertEquals(mode, CommitMode.NOSYNC, configuration.getCommitMode());
+        }
+
+        // The setting off, every other mode starts as before.
+        for (String mode : new String[]{"async", "sync", "adaptive"}) {
+            final Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), mode);
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath(), "false");
+            final CairoConfiguration configuration = newPropServerConfiguration(properties).getCairoConfiguration();
+            Assert.assertEquals(mode, CommitMode.fromString(mode), configuration.getCommitMode());
+            Assert.assertFalse(mode, configuration.isCommitModeAdaptiveDowngrade());
+        }
+    }
+
+    @Test
+    public void testCommitModeAdaptiveDowngradeRefusedOutsideNosync() throws Exception {
+        // The start that unlocks the tables for an older release runs NOSYNC only: the server must not start
+        // with the setting in any other mode.
+        for (String mode : new String[]{"async", "sync", "adaptive", "ADAPTIVE"}) {
+            final Properties properties = new Properties();
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), mode);
+            properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath(), "true");
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("the downgrade setting must not start under " + mode);
+            } catch (ServerConfigurationException expected) {
+                Assert.assertEquals(
+                        "cairo.commit.mode.adaptive.downgrade=true requires cairo.commit.mode=nosync [mode=" + mode.toLowerCase() + ']',
+                        expected.getMessage()
+                );
+            }
+        }
     }
 
     @Test
@@ -3692,6 +3742,7 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
+        Assert.assertFalse(configuration.isCommitModeAdaptiveDowngrade());
         // Adaptive settings, checked here so the CairoConfigurationWrapper arm proves the wrapper delegates
         // them: every one of these is a default method on CairoConfiguration, so a missed delegation compiles.
         Assert.assertEquals(12345, configuration.getAdaptiveEpochIntervalMs());
