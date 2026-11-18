@@ -182,21 +182,25 @@ public final class MatViewBacklog {
 
     /**
      * Brings the backlog of an invalid view up to the base table transaction {@code scanToTxn}: it checks the lost
-     * conditions, scans the base table's WAL from the cache position, merges what it finds into the view's cache and
-     * persists the cache with a view state event that keeps the view's invalid flag and reason. A base table with no
-     * new transaction writes nothing. Returns true when the backlog is tracked, and false when it is lost, in which
-     * case the view's state carries the cause. A view that never completed a refresh tracks no backlog, since its
-     * next refresh builds it from scratch, so callers never pass one.
+     * conditions, scans the base table's WAL from the cache position, merges what it finds into the view's cache and,
+     * unless the caller persists it, persists the cache with a view state event that keeps the view's invalid flag and
+     * reason. A base table with no new transaction writes nothing. Returns true when the backlog is tracked, and false
+     * when it is lost, in which case the view's state carries the cause. A view that never completed a refresh tracks
+     * no backlog, since its next refresh builds it from scratch, so callers never pass one.
      * <p>
      * The caller holds the view latch and handles a throwable: a failure to persist the cache, which the caller turns
      * into {@link #LOST_UPDATE_FAILED} unless the node turned read-only.
      *
-     * @param baseTableToken  the table under the base table's name now, or null when there is none
-     * @param scanToTxn       the base table transaction to scan up to, never beyond its applied transaction
-     * @param appliedTxn      the base table's latest applied transaction, or a later committed one, against which the
-     *                        cache position counts as ahead of the base table
-     * @param isLossPersisted whether a loss persists the marker with a view state event; REFRESH ... RESUME, whose
-     *                        refusal writes no view state, keeps it in memory, see {@link #markLost}
+     * @param baseTableToken   the table under the base table's name now, or null when there is none
+     * @param scanToTxn        the base table transaction to scan up to, never beyond its applied transaction
+     * @param appliedTxn       the base table's latest applied transaction, or a later committed one, against which the
+     *                         cache position counts as ahead of the base table
+     * @param isLossPersisted  whether a loss persists the marker with a view state event; REFRESH ... RESUME, whose
+     *                         refusal writes no view state, keeps it in memory, see {@link #markLost}
+     * @param isCachePersisted whether the cache the scan brings up to date is persisted here. A caller that persists the
+     *                         view's state right after, such as the task that adds a base range to the backlog, passes
+     *                         false: the view's state then takes the cache before it is persisted, and the caller turns a
+     *                         failure of its own write into a lost backlog
      */
     public static boolean update(
             @NotNull CairoEngine engine,
@@ -207,7 +211,8 @@ public final class MatViewBacklog {
             @Nullable TableToken baseTableToken,
             long scanToTxn,
             long appliedTxn,
-            boolean isLossPersisted
+            boolean isLossPersisted,
+            boolean isCachePersisted
     ) {
         assert viewState.isLocked();
         // The refresh job takes only a tracked backlog, and RESUME skips a view that never completed a refresh.
@@ -239,7 +244,8 @@ public final class MatViewBacklog {
             }
             if (cause == null) {
                 // The new cache goes into the intervals list; the view's state takes it once it is persisted, so a
-                // failed write leaves the view's state as it was.
+                // failed write leaves the view's state as it was. A caller that persists the state itself handles
+                // its own failed write.
                 if (txnRangeLoader.hasTruncate()) {
                     // The TRUNCATE cut: the base table no longer holds the rows of the cached intervals, and
                     // recomputing them would delete the view's rows there.
@@ -252,7 +258,9 @@ public final class MatViewBacklog {
                 } else {
                     unionCapped(engine.getConfiguration(), intervals, viewState.getRefreshIntervals());
                 }
-                persist(engine, walWriter, viewState, intervals, scanToTxn);
+                if (isCachePersisted) {
+                    persist(engine, walWriter, viewState, intervals, scanToTxn);
+                }
                 viewState.setRefreshIntervals(intervals);
                 viewState.setRefreshIntervalsBaseTxn(scanToTxn);
                 LOG.info().$("updated materialized view backlog [view=").$(viewToken)

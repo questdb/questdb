@@ -1085,6 +1085,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn(),
                 refreshTask.baseTableTxn
         );
+        // The scan leaves the cache it brings up to date to this task's view state event, so that the task writes
+        // one view WAL transaction.
+        final long scannedFromTxn = viewState.getRefreshIntervalsBaseTxn();
         if (isBacklog) {
             // The backlog update checks the base table's identity, and a mismatch loses the backlog instead of
             // invalidating the view again.
@@ -1097,7 +1100,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     baseTableToken,
                     lastBaseTxn,
                     engine.getTableSequencerAPI().lastTxn(baseTableToken),
-                    true
+                    true,
+                    false
             )) {
                 LOG.info().$("dropping base table range, materialized view backlog is lost [view=").$(viewToken)
                         .$(", from=").$ts(driver, refreshTask.rangeFrom)
@@ -1110,8 +1114,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // The view's refresh position belongs to another table than the one under the base's name now.
                 return false;
             }
-            updateRefreshIntervals0(lastBaseTxn, baseTableToken, viewDefinition, viewState, walWriter);
+            updateRefreshIntervals0(lastBaseTxn, baseTableToken, viewDefinition, viewState, walWriter, false);
         }
+        // Every scan that changes the cache moves its base txn.
+        final boolean isScanned = viewState.getRefreshIntervalsBaseTxn() != scannedFromTxn;
 
         // The WAL apply job records a TRUNCATE before it commits, so a truncate that the scan above could see is
         // recorded by now. One applied after the operation removed the rows of the range.
@@ -1124,6 +1130,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", from=").$ts(driver, refreshTask.rangeFrom)
                     .$(", to=").$ts(driver, refreshTask.rangeTo)
                     .I$();
+            if (isScanned) {
+                persistRefreshIntervals(walWriter, viewState, isBacklog);
+            }
             return false;
         }
 
@@ -1134,19 +1143,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (viewState.getRefreshIntervalsBaseTxn() < viewState.getLastRefreshBaseTxn()) {
             viewState.setRefreshIntervalsBaseTxn(viewState.getLastRefreshBaseTxn());
         }
-        // An invalid view's state event keeps its invalid flag and reason.
-        fencedResetMatViewState(
-                walWriter,
-                viewState.getLastRefreshBaseTxn(),
-                viewState.getLastRefreshFinishTimestampUs(),
-                isBacklog,
-                isBacklog ? viewState.getInvalidationReason() : null,
-                viewState.getLastPeriodHi(),
-                viewState.getRefreshIntervals(),
-                viewState.getRefreshIntervalsBaseTxn(),
-                viewState.getBaseTableId(),
-                viewState.getBacklogLostReason()
-        );
+        persistRefreshIntervals(walWriter, viewState, isBacklog);
         LOG.info().$("added base table range to materialized view refresh intervals [view=").$(viewToken)
                 .$(", baseTable=").$(baseTableToken)
                 .$(", operationTxn=").$(refreshTask.baseTableTxn)
@@ -1528,7 +1525,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // Let's find min/max timestamps in the new WAL transactions.
             if (lastRefreshTxn > -1) {
                 // It's a subsequent incremental refresh, so WalPurgeJob must be aware of us.
-                final LongList cachedIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
+                final LongList cachedIntervals = updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter, true);
                 if (cachedIntervals != null) {
                     if (cachedIntervals.size() > 0) {
                         // Merge cached intervals into cost-aware clusters so a single far-back
@@ -3493,6 +3490,23 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         MatViewBacklog.mergeIntoCachedIntervals(configuration, viewState, intervals);
     }
 
+    // Persists the view's cached refresh intervals with a view state event. An invalid view's event, the one of a view
+    // whose cache holds its backlog, keeps its invalid flag and reason.
+    private void persistRefreshIntervals(@NotNull WalWriter walWriter, @NotNull MatViewState viewState, boolean isBacklog) {
+        fencedResetMatViewState(
+                walWriter,
+                viewState.getLastRefreshBaseTxn(),
+                viewState.getLastRefreshFinishTimestampUs(),
+                isBacklog,
+                isBacklog ? viewState.getInvalidationReason() : null,
+                viewState.getLastPeriodHi(),
+                viewState.getRefreshIntervals(),
+                viewState.getRefreshIntervalsBaseTxn(),
+                viewState.getBaseTableId(),
+                viewState.getBacklogLostReason()
+        );
+    }
+
     private boolean processNotifications() {
         boolean refreshed = false;
         refreshQueueDeferred = false;
@@ -4601,7 +4615,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                 final SeqTxnTracker baseSeqTracker = engine.getTableSequencerAPI().getTxnTracker(baseTableToken);
                 final long lastTxn = baseSeqTracker.getWriterTxn();
-                updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter);
+                updateRefreshIntervals0(lastTxn, baseTableToken, viewDefinition, viewState, walWriter, true);
             } catch (Throwable th) {
                 if (isTableSuspendedError(th)) {
                     // The view was suspended between the isViewWriteSuspended gate and the getWalWriter
@@ -4677,7 +4691,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     scanToTxn = engine.getTableSequencerAPI().getTxnTracker(baseTableToken).getWriterTxn();
                     appliedTxn = engine.getTableSequencerAPI().lastTxn(baseTableToken);
                 }
-                MatViewBacklog.update(engine, txnRangeLoader, intervals, viewState, walWriter, baseTableToken, scanToTxn, appliedTxn, true);
+                MatViewBacklog.update(engine, txnRangeLoader, intervals, viewState, walWriter, baseTableToken, scanToTxn, appliedTxn, true, true);
             } catch (Throwable th) {
                 if (isTableSuspendedError(th)) {
                     throw th;
@@ -4709,12 +4723,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
+    // Brings the view's cached refresh intervals up to the base table transaction lastBaseTxn and, when isPersisted,
+    // persists them with a view state event. A caller that persists the view's state right after passes false, and
+    // handles the failure of its own write. Returns the cache, or null when the view has no cache position to scan
+    // from or the base table's WAL transactions cannot be read, which clears the cache: a refresh then recomputes the
+    // base table's whole range.
     private LongList updateRefreshIntervals0(
             long lastBaseTxn,
             @NotNull TableToken baseTableToken,
             @NotNull MatViewDefinition viewDefinition,
             @NotNull MatViewState viewState,
-            @NotNull WalWriter walWriter
+            @NotNull WalWriter walWriter,
+            boolean isPersisted
     ) {
         assert viewState.isLocked();
 
@@ -4749,20 +4769,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     mergeIntoCachedIntervals(viewState, intervals);
                 }
                 viewState.setRefreshIntervalsBaseTxn(lastBaseTxn);
-
-                fencedResetMatViewState(
-                        walWriter,
-                        viewState.getLastRefreshBaseTxn(),
-                        viewState.getLastRefreshFinishTimestampUs(),
-                        false,
-                        null,
-                        viewState.getLastPeriodHi(),
-                        viewState.getRefreshIntervals(),
-                        viewState.getRefreshIntervalsBaseTxn(),
-                        viewState.getBaseTableId(),
-                        viewState.getBacklogLostReason()
-                );
-
+                if (isPersisted) {
+                    persistRefreshIntervals(walWriter, viewState, false);
+                }
                 return viewState.getRefreshIntervals();
             } catch (CairoException ex) {
                 if (ex.isAuthorizationError()) {

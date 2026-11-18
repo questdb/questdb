@@ -536,7 +536,8 @@ public final class MatViewResume {
                         baseTableToken,
                         baseTableTxn,
                         baseTableTxn,
-                        false
+                        false,
+                        true
                 );
             } catch (CairoException e) {
                 if (e.isAuthorizationError()) {

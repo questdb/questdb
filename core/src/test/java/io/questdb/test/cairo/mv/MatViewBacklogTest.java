@@ -128,10 +128,14 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             assertViewRows(dayTwoRows);
             invalidate("test invalidation");
 
+            // The range task brings the backlog up to the ATTACH and adds its range in one view state event.
+            final long viewTxn = viewSeqTxn();
             execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
             drainWalAndMatViewQueues();
+            Assert.assertEquals(viewTxn + 1, viewSeqTxn());
             assertViewStatus("invalid", "test invalidation");
             assertCache(baseSeqTxn(), "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertPersistedCache(baseSeqTxn(), "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
             assertViewRows(dayTwoRows);
 
             assertResumeSucceeds(RESUME_SQL);
@@ -1979,16 +1983,55 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testUpdateWhileInvalidJoinsBacklog() throws Exception {
-        // The WAL scan does not see a base UPDATE, which commits as a SQL transaction; the WAL apply job queues the
-        // range of the partitions it rewrote, and an invalid view takes it into its backlog.
+    public void testUpdateDroppedByLaterTruncateWhileInvalidKeepsScannedBacklog() throws Exception {
+        // A TRUNCATE and a row apply after a base UPDATE and before the UPDATE's range task runs. The task brings the
+        // backlog up to the row, which the TRUNCATE cut leaves as the only interval, and drops the UPDATE's range,
+        // which the truncate emptied. It persists the backlog it scanned in one view state event, so a restart finds
+        // the same backlog, and RESUME recomputes only the row's bucket.
         assertMemoryLeak(() -> {
             createBaseWithRefreshedView("IMMEDIATE");
             invalidate("test invalidation");
+            final long viewTxn = viewSeqTxn();
             execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+            drainWalQueue();
+            execute("TRUNCATE TABLE base");
+            insert("c", 4.0, "2024-01-01T05:10:00.000000Z");
+            drainWalQueue();
             drainWalAndMatViewQueues();
+            Assert.assertEquals(viewTxn + 1, viewSeqTxn());
+            assertViewStatus("invalid", "test invalidation");
+            assertCache(baseSeqTxn(), "2024-01-01T05:10:00.000000Z", "2024-01-01T05:10:00.000000Z");
+            assertPersistedCache(baseSeqTxn(), "2024-01-01T05:10:00.000000Z", "2024-01-01T05:10:00.000000Z");
+
+            assertResumeSucceeds(RESUME_SQL);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    2024-01-01T05:00:00.000000Z\tc\t4.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testUpdateWhileInvalidJoinsBacklog() throws Exception {
+        // The WAL scan does not see a base UPDATE, which commits as a SQL transaction; the WAL apply job queues the
+        // range of the partitions it rewrote, and an invalid view takes it into its backlog.
+        // Each UPDATE's range task brings the backlog up to the UPDATE and adds its range in one view state event.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            invalidate("test invalidation");
+            for (String price : new String[]{"8.0", "9.0"}) {
+                final long viewTxn = viewSeqTxn();
+                execute("UPDATE base SET price = " + price + " WHERE sym = 'a'");
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(viewTxn + 1, viewSeqTxn());
+            }
             assertViewStatus("invalid", "test invalidation");
             assertCache(baseSeqTxn(), "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertPersistedCache(baseSeqTxn(), "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
 
             assertResumeSucceeds(RESUME_SQL);
             drainWalAndMatViewQueues();

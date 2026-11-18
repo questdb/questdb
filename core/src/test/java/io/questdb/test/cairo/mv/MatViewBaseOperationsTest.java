@@ -1778,6 +1778,46 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateRangeDroppedAfterLaterTruncateKeepsScannedCache() throws Exception {
+        // A TRUNCATE and a row apply after two base UPDATEs, each in a WAL apply run of its own, and before their range
+        // tasks run, for a MANUAL view. The first task brings the view's cache up to the row, which the TRUNCATE cut
+        // leaves as the only interval, drops its UPDATE's range and persists the cache it scanned in one view state
+        // event. The second task finds the cache up to date and drops its range without a view state event.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute(TRUNCATE_BASE_ROWS);
+            createView("price_1h", "MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+
+            final long viewTxn = viewSeqTxn();
+            execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-01'");
+            drainWalQueue();
+            execute("UPDATE base SET price = price + 1 WHERE ts IN '2024-01-02'");
+            drainWalQueue();
+            execute("TRUNCATE TABLE base");
+            execute("INSERT INTO base VALUES ('d', 4.0, '2024-01-01T05:10:00.000000Z')");
+            drainWalQueue();
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(viewTxn + 1, viewSeqTxn());
+            assertCache(5, "2024-01-01T05:10:00.000000Z", "2024-01-01T05:10:00.000000Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-01T05:00:00.000000Z\td\t4.0
+                    2024-01-01T10:00:00.000000Z\tb\t2.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
     public void testUpdateRangeGoesThroughIncrementalRefresh() throws Exception {
         // A base UPDATE keeps the view valid and queues the range of the partition it rewrote, which the view's
         // incremental refresh recomputes. The other partitions keep their rows.
@@ -1795,6 +1835,41 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
                     2024-01-01T00:00:00.000000Z\ta\t1.0
                     2024-01-02T00:00:00.000000Z\tb\t20.0
                     2024-01-02T10:00:00.000000Z\tx\t70.0
+                    2024-01-03T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertCacheEmpty("price_1h");
+            assertViewValidAndCaughtUp("price_1h");
+        });
+    }
+
+    @Test
+    public void testUpdateRangeWritesOneViewTxn() throws Exception {
+        // Each base UPDATE's range task brings a MANUAL view's cache up to the UPDATE and adds the UPDATE's range in one
+        // view state event, which REFRESH ... INCREMENTAL then recomputes.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute(UPDATE_BASE_ROWS);
+            createView("price_1h", "MANUAL");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows(UPDATE_VIEW_ROWS);
+
+            for (int i = 0; i < 2; i++) {
+                final long viewTxn = viewSeqTxn();
+                execute("UPDATE base SET price = price * 10 WHERE ts IN '2024-01-02'");
+                drainWalAndMatViewQueues();
+                Assert.assertEquals(viewTxn + 1, viewSeqTxn());
+            }
+            assertCache(3, "2024-01-02T00:00:00.000000Z", "2024-01-02T23:59:59.999999Z");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tb\t200.0
+                    2024-01-02T10:00:00.000000Z\tx\t700.0
                     2024-01-03T00:00:00.000000Z\tc\t3.0
                     """);
             assertCacheEmpty("price_1h");
@@ -1909,6 +1984,10 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
         }
         Assert.assertNotNull("range task expected", rangeTask);
         return rangeTask;
+    }
+
+    private static long viewSeqTxn() {
+        return engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("price_1h"));
     }
 
     // Builds an IMMEDIATE view over a base whose 2024-01-01 partition is detached, attaches the partition and runs
