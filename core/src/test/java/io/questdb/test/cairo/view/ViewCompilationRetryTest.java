@@ -82,11 +82,6 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
     }
 
     @Test
-    public void testAlterCursorRetryPreservesMetadataProbe() throws Exception {
-        assertReplacementRetry("ALTER VIEW", true, false);
-    }
-
-    @Test
     public void testAlterInvalidColumnAfterPlanRetry() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertMemoryLeak(() -> {
@@ -130,6 +125,11 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
     @Test
     public void testAlterPlanRetryEmpty() throws Exception {
         assertReplacementRetry("ALTER VIEW", false, true);
+    }
+
+    @Test
+    public void testAlterReadAuthorizationRetryPreservesMetadataProbe() throws Exception {
+        assertReplacementRetry("ALTER VIEW", true, false);
     }
 
     @Test
@@ -210,21 +210,21 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
                 .returns(isEmpty ? "v\tts2\tc\n" : EXPECTED_ROWS);
     }
 
-    private void assertReplacementRetry(String statement, boolean isCursorOpen, boolean isEmpty) throws Exception {
+    private void assertReplacementRetry(String statement, boolean isAtReadAuthorization, boolean isEmpty) throws Exception {
         assertMemoryLeak(() -> {
             createTables(isEmpty);
             if (!statement.equals("CREATE VIEW")) {
                 createView("v", OLD_VIEW_SQL);
             }
-            final RacingSecurityContext securityContext = new RacingSecurityContext(isCursorOpen, true, 1);
+            final RacingSecurityContext securityContext = new RacingSecurityContext(isAtReadAuthorization, true, 1);
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, null, null, -1, null)) {
                 // A nested metadata probe must survive both the failed attempt and its retry.
-                context.setMetadataProbe(isCursorOpen);
+                context.setMetadataProbe(isAtReadAuthorization);
                 final long queryErrors = queryErrorCount();
                 execute(statement + " v AS (" + VIEW_SQL + ")", context);
                 // the statement succeeds, and the attempt it compiles again is no query error
                 Assert.assertEquals(queryErrors, queryErrorCount());
-                Assert.assertEquals(isCursorOpen, context.isMetadataProbe());
+                Assert.assertEquals(isAtReadAuthorization, context.isMetadataProbe());
                 Assert.assertEquals(1, securityContext.changeCount);
                 Assert.assertEquals(2, securityContext.yVisits);
             }
@@ -328,23 +328,24 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
         }
     }
 
-    // Visibility checks pause optimisation after x's metadata; SELECT checks pause cursor opening.
+    // Visibility checks pause optimisation after x's metadata; SELECT checks pause a view statement as it
+    // authorizes the reads of the SELECT it optimised.
     private static final class RacingSecurityContext extends AllowAllSecurityContext {
-        private final boolean isCursorOpen;
+        private final boolean isAtReadAuthorization;
         private final boolean isReplacement;
         private int changeCount;
         private int changesRemaining;
         private int yVisits;
 
-        private RacingSecurityContext(boolean isCursorOpen, boolean isReplacement, int changesRemaining) {
-            this.isCursorOpen = isCursorOpen;
+        private RacingSecurityContext(boolean isAtReadAuthorization, boolean isReplacement, int changesRemaining) {
+            this.isAtReadAuthorization = isAtReadAuthorization;
             this.isReplacement = isReplacement;
             this.changesRemaining = changesRemaining;
         }
 
         @Override
         public void authorizeSelect(TableToken token, @NotNull ObjList<CharSequence> columns) {
-            if (isCursorOpen && token.getTableName().equals("x")) {
+            if (isAtReadAuthorization && token.getTableName().equals("x")) {
                 changeSchema();
             }
         }
@@ -353,7 +354,7 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
         public boolean isTableVisible(TableToken token) {
             if (token.getTableName().equals("y")) {
                 yVisits++;
-                if (!isCursorOpen) {
+                if (!isAtReadAuthorization) {
                     changeSchema();
                 }
             }

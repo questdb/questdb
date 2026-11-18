@@ -6206,8 +6206,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileMatViewQuery(executionContext, createMatViewOp);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             // Opened to validate the metadata, and closed with no row read. Flagged
-                            // like the probe in executeCreateView, so that an audited view in the
-                            // SELECT does not record a read that never happened.
+                            // as a metadata probe, so that an audited view in the SELECT does not
+                            // record a read that never happened.
                             final boolean wasMetadataProbe = executionContext.isMetadataProbe();
                             executionContext.setMetadataProbe(true);
                             try {
@@ -7541,9 +7541,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // Free the re-parsed model's table-name functions on every exit except a clean
                     // success: on retry (the policy version moved) or on any thrown error the model still
                     // owns them, and this nested pooled compiler has no outer catch to release them. On
-                    // success the probe cursor's try-with-resources has already closed the factory, which
-                    // took ownership of the functions and freed them. freeTableNameFunctions() nulls each
-                    // field, so it is a no-op wherever codegen already consumed them.
+                    // success the try-with-resources around the generated plan has already closed the
+                    // factory, which took ownership of the functions and freed them.
+                    // freeTableNameFunctions() nulls each field, so it is a no-op wherever codegen already
+                    // consumed them.
                     if (!isSuccess) {
                         freeTableNameFunctions(executionModel, failure);
                     }
@@ -8180,8 +8181,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Opening the cursor resolves column references and types that compilation leaves until a
                 // reader is held. Nothing advances it: a latest-by cursor computes its result in the first
                 // hasNext(), and asking for one row of a policy probe is a full backward scan of the view.
-                // Nobody is handed a row, so the open is flagged like the probe in executeCreateView: an
-                // audited view the probe reads must not record a read.
+                // Nobody is handed a row, so the open is flagged as a metadata probe: an audited view the
+                // probe reads must not record a read.
                 final boolean wasMetadataProbe = executionContext.isMetadataProbe();
                 executionContext.setMetadataProbe(true);
                 final RecordCursor cursor;

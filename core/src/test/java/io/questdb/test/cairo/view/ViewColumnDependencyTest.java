@@ -2331,9 +2331,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             execute("INSERT INTO x2 VALUES (1, 0, 'k1', 1, 2), (2, 3_600_000_000, 'k1', 3, 4)");
             drainWalQueue();
             // CREATE VIEW plans a read of ts, the timestamp of x the ASOF JOIN requires, and x2 takes the name
-            // of x before the plan opens it. The statement compiles the SELECT again, into a plan that reads
-            // ts2 instead, and the view lists no column only the first plan reads, so a reader that overrides
-            // @c does not read ts.
+            // of x as the statement authorizes that read. The statement compiles the SELECT again, into a plan
+            // that reads ts2 instead, and the view lists no column only the first plan reads, so a reader that
+            // overrides @c does not read ts.
             final String viewSql = "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v FROM x) t ASOF JOIN y u ON (k)";
             final TableReplacingSecurityContext securityContext = new TableReplacingSecurityContext();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
@@ -2691,9 +2691,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
             drainWalAndViewQueues();
             // The SAMPLE BY and the ASOF JOIN take ts, the designated timestamp of x, which v_cols lends to no read.
-            // The filter is false by default, so the plan of the SELECT scans nothing as the statement opens it, while
-            // a read that sets @f scans ts. The statement checks that the principal that records the view may read ts,
-            // which the view lends to its readers, also when the SELECT reads x itself.
+            // The filter is false by default, so the plan of the SELECT would scan nothing, while a read that sets @f
+            // scans ts. The statement opens no cursor of the plan, and checks that the principal that records the view
+            // may read ts, which the view lends to its readers, also when the SELECT reads x itself.
             final String[] viewSqls = {
                     "DECLARE OVERRIDABLE @f := false SELECT k, count() n FROM v_cols WHERE @f SAMPLE BY 1h",
                     "DECLARE OVERRIDABLE @f := false SELECT s.k, s.a, u.c FROM v_cols s ASOF JOIN y u WHERE @f",
@@ -2769,8 +2769,9 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
             drainWalAndViewQueues();
             // The scan of x counts its rows, and reads no column of it. The filter is false by default, so the plan of
-            // the SELECT scans nothing as the statement opens it, while a read that sets @f counts the rows of x. The
-            // statement checks that the principal that records the view may read x, as the open of the scan does.
+            // the SELECT would scan nothing, while a read that sets @f counts the rows of x. The statement opens no
+            // cursor of the plan, and checks that the principal that records the view may read x, as the open of the
+            // scan does.
             final String viewSql = "DECLARE OVERRIDABLE @f := false SELECT count() n FROM x WHERE @f";
             final String accessDenied = "permission denied [table=x]";
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(new TableDenyingSecurityContext("x"), bindVariableService, null, -1, null)) {
@@ -2804,9 +2805,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             createTables();
             execute("CREATE VIEW v_cols AS (SELECT k, a FROM x)");
             drainWalAndViewQueues();
-            // The filter is false by default, so the plan of the SELECT scans nothing as the statement opens it, while
-            // a read that sets @f reads x through v_cols, which lends the read its columns. The statement checks that
-            // the principal that records the view may read v_cols, as the open of a scan through v_cols does.
+            // The filter is false by default, so the plan of the SELECT would scan nothing, while a read that sets @f
+            // reads x through v_cols, which lends the read its columns. The statement opens no cursor of the plan, and
+            // checks that the principal that records the view may read v_cols, as the open of a scan through v_cols
+            // does.
             final String[] viewSqls = {
                     "DECLARE OVERRIDABLE @f := false SELECT k, a FROM v_cols WHERE @f",
                     "DECLARE OVERRIDABLE @f := false SELECT k, count() n FROM v_cols WHERE @f",
@@ -3756,8 +3758,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
 
     /**
      * Grants everything, and gives the name of x to x2 the first time a statement authorizes a read of x
-     * after {@link #replaceTableOnce()}. A statement authorizes the read as it opens the cursor of its plan,
-     * which then finds that x is no longer the table it planned to read.
+     * after {@link #replaceTableOnce()}. A view statement authorizes the read once it has optimised its SELECT,
+     * and the rest of the statement then finds that x is no longer the table it planned to read.
      */
     private static final class TableReplacingSecurityContext extends AllowAllSecurityContext {
         private boolean isReplacementPending;
