@@ -101,6 +101,16 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyDetachRenameAwayAndBackAttach() throws Exception {
+        assertRenameAwayAndBackRoundTrip(false);
+    }
+
+    @Test
+    public void testApplyDetachRenameAwayAndBackAttachWal() throws Exception {
+        assertRenameAwayAndBackRoundTrip(true);
+    }
+
+    @Test
     public void testApplyDetachTruncateAttach() throws Exception {
         assertRoundTrip(false, BETWEEN_TRUNCATE, 0, ROW_2 + ROW_2_WRITTEN);
     }
@@ -133,6 +143,28 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getMessage(), "a detached partition did not attach back [table=t, partition=2024-01-02]");
             }
             assertTable(HEADER + ROW_1 + ROW_3 + ROW_4);
+        });
+    }
+
+    @Test
+    public void testApplyRenamesBackColumnLeftRenamedAway() throws Exception {
+        // An attempt of the operation that failed between its two renames leaves 2024-01-02 detached and new_col_1
+        // renamed away. The run retries the operation, whose DETACH then fails.
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn(false);
+            execute("ALTER TABLE t DETACH PARTITION LIST '2024-01-02'");
+            execute("ALTER TABLE t RENAME COLUMN new_col_1 TO " + RENAMED_AWAY_PREFIX + "new_col_1");
+            final long metadataVersion = getMetadataVersion();
+            apply(false, new FuzzDetachAttachPartitionOperation(MicrosTimestampDriver.floor("2024-01-02"), BETWEEN_RENAME_AWAY_AND_BACK, 0));
+            // the rename back, then the two of the round trip
+            Assert.assertEquals(metadataVersion + 3, getMetadataVersion());
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    a\tts\tnew_col_1
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-02T00:00:00.000000Z\t20
+                    3\t2024-01-03T00:00:00.000000Z\t30
+                    4\t2024-01-04T00:00:00.000000Z\t40
+                    """);
         });
     }
 
@@ -223,7 +255,7 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                         maxWritten = Math.max(maxWritten, maxInserted);
                     }
                 }
-                Assert.assertEquals("[0, 1, 2]", betweens.toString());
+                Assert.assertEquals("[0, 1, 2, 3]", betweens.toString());
                 Assert.assertTrue(detachedDays.size() > 1);
                 Assert.assertTrue(dropAllCount > 0);
                 Assert.assertTrue(dropSomeCount > 0);
@@ -254,6 +286,15 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // a table whose days from 2024-01-02 on hold all of new_col_1, named as the fuzz names the columns it adds
+    private static void createTableWithAddedColumn(boolean isWal) throws Exception {
+        execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+        execute("INSERT INTO t VALUES (1, '2024-01-01')");
+        execute("ALTER TABLE t ADD COLUMN new_col_1 INT");
+        execute("INSERT INTO t VALUES (2, '2024-01-02', 20), (3, '2024-01-03', 30), (4, '2024-01-04', 40)");
+        drainWalQueue();
+    }
+
     private static ObjList<FuzzTransaction> generateSet(
             TableRecordMetadata sequencerMetadata,
             TableMetadata tableMetadata,
@@ -267,7 +308,8 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                 tableMetadata,
                 new Rnd(42, 4242),
                 minTimestamp,
-                minTimestamp + 10 * Micros.DAY_MICROS,
+                // a run detaches each day once, and each DETACH draws one of four kinds of statement between
+                minTimestamp + 20 * Micros.DAY_MICROS,
                 1_000,
                 500,
                 false,
@@ -307,6 +349,12 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
         );
     }
 
+    private static long getMetadataVersion() {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("t"))) {
+            return metadata.getMetadataVersion();
+        }
+    }
+
     private void apply(boolean isWal, FuzzTransactionOperation operation) {
         final TableToken token = engine.verifyTableName("t");
         if (isWal) {
@@ -322,6 +370,31 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                 writer.commit();
             }
         }
+    }
+
+    private void assertRenameAwayAndBackRoundTrip(boolean isWal) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn(isWal);
+            final long metadataVersion = getMetadataVersion();
+            final long day = MicrosTimestampDriver.floor("2024-01-02");
+            apply(isWal, new FuzzDetachAttachPartitionOperation(day, BETWEEN_RENAME_AWAY_AND_BACK, 0));
+            // new_col_1 renamed away and back on the non-WAL table, the WAL table left as it was
+            Assert.assertEquals(metadataVersion + (isWal ? 0 : 2), getMetadataVersion());
+            execute("INSERT INTO t VALUES (5, '2024-01-02T12:00:00.000000Z', 50)");
+            drainWalQueue();
+            final String expected = """
+                    a\tts\tnew_col_1
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-02T00:00:00.000000Z\t20
+                    5\t2024-01-02T12:00:00.000000Z\t50
+                    3\t2024-01-03T00:00:00.000000Z\t30
+                    4\t2024-01-04T00:00:00.000000Z\t40
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
     }
 
     private void assertRoundTrip(boolean isWal, int between, int dropFromDays, String expectedRows) throws Exception {

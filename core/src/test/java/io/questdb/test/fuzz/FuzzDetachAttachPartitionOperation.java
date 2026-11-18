@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
@@ -44,7 +45,8 @@ import io.questdb.test.tools.TestUtils;
  * Detaches a partition and attaches it back. Between the two, it can run a statement that moves the partition the
  * columns were added at, which tells whether a partition without a column-top record holds a column: TRUNCATE, or a
  * DROP PARTITION of every partition from a given day on. The attach must keep reading a column added after the
- * partition was written as NULL there.
+ * partition was written as NULL there. Or it renames a column away and back, which moves the column's file version
+ * on in the attached partitions only: the attach must keep reading the version the partition holds.
  * <p>
  * The test names the detached copy as ATTACH looks for it, see {@code cairo.attach.partition.suffix}, so a WAL table
  * applies the three statements in one go. A DETACH of a partition the table does not hold, or of its active
@@ -54,7 +56,10 @@ import io.questdb.test.tools.TestUtils;
 public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperation {
     public static final int BETWEEN_DROP_NEWEST = 2;
     public static final int BETWEEN_NOTHING = 0;
+    public static final int BETWEEN_RENAME_AWAY_AND_BACK = 3;
     public static final int BETWEEN_TRUNCATE = 1;
+    // the name a column takes while renamed away: this prefix and its name
+    public static final String RENAMED_AWAY_PREFIX = "away_";
     // what apply() reports for a statement
     private static final int APPLIED = 0;
     private static final int FAILED = 1;
@@ -92,6 +97,13 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
                             + FuzzTransactionOperation.partitionsFromFilter(metadata, dropFromTimestamp);
                     if (apply(compiler, context, wApi, dropSql) == TABLE_GONE) {
                         return true;
+                    }
+                }
+                case BETWEEN_RENAME_AWAY_AND_BACK -> {
+                    // The renames change no data, so the WAL table, which takes none, holds what the non-WAL table
+                    // must read after the attach
+                    if (!wApi.getTableToken().isWal()) {
+                        renameColumnAwayAndBack(rnd, compiler, context, wApi, tableName);
                     }
                 }
                 default -> {
@@ -140,6 +152,51 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
                 return FAILED;
             }
             throw e;
+        }
+    }
+
+    private static void rename(SqlCompiler compiler, SqlExecutionContextImpl context, TableWriterAPI wApi, String tableName, String from, String to) throws SqlException {
+        final String sql = "ALTER TABLE " + tableName + " RENAME COLUMN " + from + " TO " + to;
+        final AlterOperation alterOp = compiler.compile(sql, context).getAlterOperation();
+        alterOp.withSqlStatement(sql);
+        alterOp.withContext(context);
+        wApi.apply(alterOp, true);
+    }
+
+    /**
+     * Renames a column the run added, or renamed, named new_col_*, away and back: its files carry a column name txn,
+     * which the detached _cv names. A column that a failed attempt of this operation left renamed away, which the run
+     * retries, takes its name back first.
+     */
+    private static void renameColumnAwayAndBack(
+            Rnd rnd,
+            SqlCompiler compiler,
+            SqlExecutionContextImpl context,
+            TableWriterAPI wApi,
+            String tableName
+    ) throws SqlException {
+        final TableRecordMetadata metadata = wApi.getMetadata();
+        final ObjList<String> renamedAway = new ObjList<>();
+        final ObjList<String> candidates = new ObjList<>();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) > 0 && i != metadata.getTimestampIndex()) {
+                final String columnName = metadata.getColumnName(i);
+                if (columnName.startsWith(RENAMED_AWAY_PREFIX)) {
+                    renamedAway.add(columnName);
+                } else if (columnName.startsWith("new_col_")) {
+                    candidates.add(columnName);
+                }
+            }
+        }
+        for (int i = 0, n = renamedAway.size(); i < n; i++) {
+            final String columnName = renamedAway.getQuick(i).substring(RENAMED_AWAY_PREFIX.length());
+            rename(compiler, context, wApi, tableName, renamedAway.getQuick(i), columnName);
+            candidates.add(columnName);
+        }
+        if (candidates.size() > 0) {
+            final String columnName = candidates.getQuick(rnd.nextInt(candidates.size()));
+            rename(compiler, context, wApi, tableName, columnName, RENAMED_AWAY_PREFIX + columnName);
+            rename(compiler, context, wApi, tableName, RENAMED_AWAY_PREFIX + columnName, columnName);
         }
     }
 }

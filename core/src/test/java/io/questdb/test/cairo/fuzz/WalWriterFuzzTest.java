@@ -470,7 +470,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * Detaches partitions and attaches them back, with a TRUNCATE or a DROP of the newest partitions between the two at
      * times, and drops the newest partitions to write them again, among columns that come and go. Each of them moves
      * the partition a column was added at, which tells the readers and the writer whether a partition without a
-     * column-top record holds the column.
+     * column-top record holds the column. Between the two, the non-WAL table can also rename a column away and back,
+     * which moves the column's file version on in the attached partitions only.
      */
     @Test
     public void testDetachAttachPartitionFuzz() throws Exception {

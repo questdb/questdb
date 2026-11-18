@@ -1031,8 +1031,9 @@ public class FuzzRunner {
     }
 
     /**
-     * Makes the generator detach a partition and attach it back, with a TRUNCATE or a DROP of the newest partitions
-     * between the two at times, see {@link FuzzDetachAttachPartitionOperation}. The test names the detached copy as
+     * Makes the generator detach a partition and attach it back, with a TRUNCATE, a DROP of the newest partitions or,
+     * on the non-WAL table, a column renamed away and back between the two at times, see
+     * {@link FuzzDetachAttachPartitionOperation}. The test names the detached copy as
      * ATTACH looks for it, with {@code cairo.attach.partition.suffix} set to {@code .detached}, and takes no replace
      * commits. Every setFuzzProbabilities() call keeps it.
      */

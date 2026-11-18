@@ -66,6 +66,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
@@ -357,18 +358,33 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachRestoresDetachedDirWhenScanOfRenamedSymbolFails() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, false, true);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenScanOfRenamedSymbolFailsAfterWriterRecreation() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, true, true);
+    }
+
+    @Test
+    public void testAttachRestoresDetachedDirWhenScanOfRenamedSymbolFailsInCopyMode() throws Exception {
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false, true);
+    }
+
+    @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFails() throws Exception {
-        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, false);
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, false, false);
     }
 
     @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFailsAfterWriterRecreation() throws Exception {
-        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, true);
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(false, true, false);
     }
 
     @Test
     public void testAttachRestoresDetachedDirWhenSymbolScanFailsInCopyMode() throws Exception {
-        assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false);
+        assertAttachRestoresDetachedDirWhenSymbolScanFails(true, false, false);
     }
 
     @Test
@@ -585,6 +601,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testAttachParquetPartitionAfterColumnsRenamedAwayAndBack() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(false, true, null);
+    }
+
+    @Test
+    public void testAttachParquetPartitionAfterColumnsRenamedAwayAndBackWal() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(true, true, null);
+    }
+
+    @Test
     public void testAttachParquetPartitionAfterTruncateRestoresSymbolNullFlag() throws Exception {
         assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(true, true, true);
     }
@@ -698,6 +724,94 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     @Test
     public void testAttachParquetPartitionWithoutStatisticsAfterTruncateRestoresSymbolNullFlag() throws Exception {
         assertAttachPartitionAfterTruncateRestoresSymbolNullFlag(true, true, false);
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBack() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(false, false, null);
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackAndNewestDropped() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(false, false, "ALTER TABLE tab DROP PARTITION LIST '2024-01-03'");
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackAndNewestDroppedWal() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(true, false, "ALTER TABLE tab DROP PARTITION LIST '2024-01-03'");
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackAndTruncated() throws Exception {
+        // KEEP SYMBOL MAPS, as a WAL table truncates anyway: the attached rows read the symbols they were written with
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(false, false, "TRUNCATE TABLE tab KEEP SYMBOL MAPS");
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackAndTruncatedWal() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(true, false, "TRUNCATE TABLE tab KEEP SYMBOL MAPS");
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackMatchesTable() throws Exception {
+        // ref takes the same statements as tab, but keeps 2024-01-02 attached throughout
+        assertMemoryLeak(() -> {
+            createTableWithColumnsToRename("ref", false);
+            renameColumnsAwayAndBackAndDropIndex("ref", false);
+            insertIntoAttachedPartition("ref", false);
+
+            createTableWithColumnsToRename("tab", false);
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-02'");
+            renameColumnsAwayAndBackAndDropIndex("tab", false);
+            renameDetachedToAttachable("tab", "2024-01-02");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-02'");
+            insertIntoAttachedPartition("tab", false);
+            assertSqlCursors("ref", "tab");
+        });
+    }
+
+    @Test
+    public void testAttachPartitionAfterColumnsRenamedAwayAndBackWal() throws Exception {
+        assertAttachPartitionAfterColumnsRenamedAwayAndBack(true, false, null);
+    }
+
+    @Test
+    public void testAttachPartitionAfterSymbolsRenamedAwayAndBackAndTruncatedRestoresSymbolNullFlag() throws Exception {
+        // A plain TRUNCATE of a non-WAL table empties the symbol maps and unsets their null flags, so the attach reads
+        // the partition's symbols for NULLs. They hold only NULLs there, which the emptied maps read the same.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tab VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            final String[] symbols = {"s", "sb", "sp"};
+            // added after the first row, the symbols take column name txns above 0
+            execute("ALTER TABLE tab ADD COLUMN s SYMBOL");
+            execute("ALTER TABLE tab ADD COLUMN sb SYMBOL INDEX TYPE BITMAP");
+            execute("ALTER TABLE tab ADD COLUMN sp SYMBOL INDEX TYPE POSTING");
+            execute("""
+                    INSERT INTO tab VALUES
+                        ('2024-01-02T00:00:00.000000Z', 2, NULL, NULL, NULL),
+                        ('2024-01-02T01:00:00.000000Z', 3, NULL, NULL, NULL),
+                        ('2024-01-03T00:00:00.000000Z', 4, 'A', 'A', 'A')
+                    """);
+            execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-02'");
+            execute("TRUNCATE TABLE tab");
+            for (String symbol : symbols) {
+                execute("ALTER TABLE tab RENAME COLUMN " + symbol + " TO " + symbol + "_away");
+                execute("ALTER TABLE tab RENAME COLUMN " + symbol + "_away TO " + symbol);
+                Assert.assertFalse(containsSymbolNullValue("tab", symbol));
+            }
+            renameDetachedToAttachable("tab", "2024-01-02");
+            execute("ALTER TABLE tab ATTACH PARTITION LIST '2024-01-02'");
+            for (String symbol : symbols) {
+                Assert.assertTrue(symbol, containsSymbolNullValue("tab", symbol));
+                assertQuery("SELECT x FROM tab WHERE " + symbol + " IS NULL").noLeakCheck().returns("x\n2\n3\n");
+            }
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(replaceTimestampSuffix("""
+                    ts\tx\ts\tsb\tsp
+                    2024-01-02T00:00:00.000000Z\t2\t\t\t
+                    2024-01-02T01:00:00.000000Z\t3\t\t\t
+                    """));
+        });
     }
 
     @Test
@@ -4258,18 +4372,38 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
-    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isCopied, boolean isWriterRecreated) throws Exception {
+    /**
+     * @param isSymbolRenamedAwayAndBack whether sym is renamed away and back while the partition is detached: the
+     *                                   symbol scan then has to read the version of sym the partition holds
+     */
+    private void assertAttachRestoresDetachedDirWhenSymbolScanFails(boolean isCopied, boolean isWriterRecreated, boolean isSymbolRenamedAwayAndBack) throws Exception {
         final SymbolDataMapFailingFilesFacade ff = new SymbolDataMapFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
             setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_COPY, Boolean.toString(isCopied));
-            execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            if (isSymbolRenamedAwayAndBack) {
+                // sym joins the empty table after another column, so that its files carry a column name txn above 0,
+                // and its null flag stays unset while it takes no NULL
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("ALTER TABLE tab ADD COLUMN y INT");
+                execute("ALTER TABLE tab ADD COLUMN sym SYMBOL");
+            } else {
+                execute("CREATE TABLE tab (ts " + timestampType.getTypeName() + ", x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            }
             execute("""
-                    INSERT INTO tab VALUES
+                    INSERT INTO tab (ts, x, sym) VALUES
                         ('2024-01-01T00:00:00Z', 1, 'A'),
                         ('2024-01-01T01:00:00Z', 2, 'B'),
                         ('2024-01-02T00:00:00Z', 3, 'C')
                     """);
             execute("ALTER TABLE tab DETACH PARTITION LIST '2024-01-01'");
+            if (isSymbolRenamedAwayAndBack) {
+                final long symNameTxn = defaultColumnNameTxn("tab", "sym");
+                Assert.assertTrue(symNameTxn > 0);
+                // the version of sym the detached partition holds
+                ff.dataFileName = "sym.d." + symNameTxn;
+                execute("ALTER TABLE tab RENAME COLUMN sym TO sym_away");
+                execute("ALTER TABLE tab RENAME COLUMN sym_away TO sym");
+            }
             renameDetachedToAttachable("tab", "2024-01-01");
             ff.isFailing = true;
             try {
@@ -4278,6 +4412,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 ff.isFailing = false;
             }
             assertOnlyAttachableDir("tab", "2024-01-01");
+            // the failed attach leaves the table as it was
+            assertQuery("SELECT x, sym FROM tab")
+                    .noLeakCheck().expectSize().inferRandomAccess().returns("x\tsym\n3\tC\n");
             if (isWriterRecreated) {
                 engine.releaseAllWriters();
             }
@@ -4827,6 +4964,183 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    /**
+     * RENAME COLUMN moves the file version of a column on and links the files of the attached partitions only, so a
+     * partition detached meanwhile keeps the files of the version its detached _cv names. A column renamed away and
+     * back has its name again, and the attach must read the version the partition holds.
+     *
+     * @param ddlAfterDetach null, or the statement that runs between the DETACH and the renames: TRUNCATE TABLE or a
+     *                       DROP of the newest partition, 2024-01-03, either of which makes 2024-01-02 the newest
+     */
+    private void assertAttachPartitionAfterColumnsRenamedAwayAndBack(boolean isWal, boolean isParquet, String ddlAfterDetach) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithColumnsToRename("tab", isWal);
+            if (isParquet) {
+                ddl(isWal, "ALTER TABLE tab CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+            }
+            ddl(isWal, "ALTER TABLE tab DETACH PARTITION LIST '2024-01-02'");
+            final boolean isTruncated = ddlAfterDetach != null && ddlAfterDetach.startsWith("TRUNCATE");
+            final boolean isNewestDropped = ddlAfterDetach != null && !isTruncated;
+            if (ddlAfterDetach != null) {
+                ddl(isWal, ddlAfterDetach);
+            }
+            renameColumnsAwayAndBackAndDropIndex("tab", isWal);
+
+            final String header = "ts\tkeep\tc\tz\ti\tu\tst\tvc\tarr\ts\tsb\tsp\tsd\tlate\ttopped\tabsent\n";
+            final String older = isTruncated ? "" : "2024-01-01T00:00:00.000000Z\t1\t10\tA\tnull\t\t\t\tnull\t\t\t\t\tnull\tnull\tnull\n";
+            final String newer = isTruncated || isNewestDropped ? "" : """
+                    2024-01-03T00:00:00.000000Z\t5\t50\tC\t50\t11111111-1111-1111-1111-111111111111\tstring 50\tvarchar value 50\t[5.0,50.0]\tC\tC\tC\tC\tnull\tnull\tnull
+                    2024-01-03T01:00:00.000000Z\t7\tnull\t\tnull\t\t\t\tnull\t\t\t\t\t70\tnull\tnull
+                    """;
+            final String attached = replaceTimestampSuffix(header + older + rowsOfRenamedPartition(0, false) + newer);
+            try (RecordCursorFactory factory = select("SELECT * FROM tab")) {
+                renameDetachedToAttachable("tab", "2024-01-02");
+                ddl(isWal, "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-02'");
+                // a query compiled before the attach reads the attached partition
+                new QueryAssertion(engine, factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(attached);
+            }
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(attached);
+            assertQuery("SELECT keep FROM tab WHERE s IS NULL").noLeakCheck()
+                    .returns(isTruncated ? "keep\n4\n" : isNewestDropped ? "keep\n1\n4\n" : "keep\n1\n4\n7\n");
+            assertQuery("SELECT keep FROM tab WHERE z IS NULL").noLeakCheck()
+                    .returns(isTruncated || isNewestDropped ? "keep\n4\n" : "keep\n4\n7\n");
+            assertQuery("SELECT keep FROM tab WHERE i = 20").noLeakCheck().returns("keep\n2\n");
+            assertIndexedSymbolsRead("B", "keep\n3\n");
+            assertQuery("SELECT keep, sb FROM tab LATEST ON ts PARTITION BY sb")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns(isTruncated || isNewestDropped ? "keep\tsb\n3\tB\n4\t\n6\tA\n" : "keep\tsb\n3\tB\n6\tA\n5\tC\n7\t\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(attached);
+
+            insertIntoAttachedPartition("tab", isWal);
+            final String written = replaceTimestampSuffix(header + older + rowsOfRenamedPartition(0, true) + newer);
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(written);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(written);
+            assertIndexedSymbolsRead("D", "keep\n8\n");
+
+            final String updated;
+            if (isParquet) {
+                ddl(isWal, "ALTER TABLE tab CONVERT PARTITION TO NATIVE LIST '2024-01-02'");
+                updated = written;
+            } else {
+                ddl(isWal, "UPDATE tab SET i = i + 1 WHERE ts IN '2024-01-02'");
+                updated = replaceTimestampSuffix(header + older + rowsOfRenamedPartition(1, true) + newer);
+            }
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(updated);
+            engine.releaseAllReaders();
+            runPartitionPurgeJobs();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(updated);
+
+            // The partition leaves again with the versions the attach recorded for it, and takes them back. The row on
+            // 2024-01-05 keeps 2024-01-02 from being the newest partition, which DETACH refuses.
+            ddl(isWal, "INSERT INTO tab (ts, keep) VALUES ('2024-01-05T00:00:00.000000Z', 9)");
+            ddl(isWal, "ALTER TABLE tab DETACH PARTITION LIST '2024-01-02'");
+            renameColumnsAwayAndBack("tab", isWal, "i", "sb");
+            renameDetachedToAttachable("tab", "2024-01-02");
+            ddl(isWal, "ALTER TABLE tab ATTACH PARTITION LIST '2024-01-02'");
+            final String reattached = replaceTimestampSuffix(header + older + rowsOfRenamedPartition(isParquet ? 0 : 1, true) + newer
+                    + "2024-01-05T00:00:00.000000Z\t9\tnull\t\tnull\t\t\t\tnull\t\t\t\t\tnull\tnull\tnull\n");
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(reattached);
+            assertIndexedSymbolsRead("B", "keep\n3\n");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM tab").noLeakCheck().timestamp("ts").expectSize().returns(reattached);
+        });
+    }
+
+    // the indexes of z, sb and sp find the rows of expected for the symbol value
+    private void assertIndexedSymbolsRead(String value, String expected) throws Exception {
+        for (String symbol : new String[]{"z", "sb", "sp"}) {
+            assertQuery("SELECT keep FROM tab WHERE " + symbol + " = '" + value + "'")
+                    .noLeakCheck().inferRandomAccess()
+                    .withPlanContaining("Index forward scan on: " + symbol)
+                    .returns(expected);
+        }
+    }
+
+    /**
+     * Creates a table whose 2024-01-02 holds a column of every kind the attach resolves the file version of: z, the
+     * first column added to the empty table, with column name txn 0; i to sd, added after the first row, with name
+     * txns above 0; late and topped with an explicit column top; absent not at all, and with no record of it.
+     */
+    private void createTableWithColumnsToRename(String tableName, boolean isWal) throws Exception {
+        ddl(isWal, "CREATE TABLE " + tableName + " (ts " + timestampType.getTypeName() + ", keep INT, c INT) TIMESTAMP(ts) PARTITION BY DAY"
+                + (isWal ? " WAL" : " BYPASS WAL"));
+        ddl(isWal, "ALTER TABLE " + tableName + " ADD COLUMN z SYMBOL INDEX TYPE BITMAP");
+        Assert.assertEquals(0, defaultColumnNameTxn(tableName, "z"));
+        ddl(isWal, "INSERT INTO " + tableName + " (ts, keep, c, z) VALUES ('2024-01-01T00:00:00.000000Z', 1, 10, 'A')");
+        // one at a time: a WAL table does not take several columns in one ALTER
+        for (String column : new String[]{
+                "i INT", "u UUID", "st STRING", "vc VARCHAR", "arr DOUBLE[]", "s SYMBOL",
+                "sb SYMBOL INDEX TYPE BITMAP", "sp SYMBOL INDEX TYPE POSTING", "sd SYMBOL INDEX TYPE BITMAP"
+        }) {
+            ddl(isWal, "ALTER TABLE " + tableName + " ADD COLUMN " + column);
+        }
+        // u is NULL in every row of 2024-01-02
+        ddl(isWal, """
+                INSERT INTO %s VALUES
+                    ('2024-01-02T00:00:00.000000Z', 2, 20, 'A', 20, NULL, 'string 20', 'varchar value 20', ARRAY[2.0, 20.0], 'A', 'A', 'A', 'A'),
+                    ('2024-01-02T01:00:00.000000Z', 3, 30, 'B', 30, NULL, 'string 30', 'varchar value 30', ARRAY[3.0, 30.0], 'B', 'B', 'B', 'B'),
+                    ('2024-01-02T02:00:00.000000Z', 4, 40, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                    ('2024-01-03T00:00:00.000000Z', 5, 50, 'C', 50, '11111111-1111-1111-1111-111111111111', 'string 50', 'varchar value 50', ARRAY[5.0, 50.0], 'C', 'C', 'C', 'C')
+                """.formatted(tableName));
+        // added after 2024-01-02 was written
+        ddl(isWal, "ALTER TABLE " + tableName + " ADD COLUMN late INT");
+        ddl(isWal, "INSERT INTO " + tableName + " (ts, keep, late) VALUES ('2024-01-03T01:00:00.000000Z', 7, 70)");
+        ddl(isWal, "ALTER TABLE " + tableName + " ADD COLUMN topped INT");
+        // an out-of-order row, which gives 2024-01-02 explicit column tops of late and topped
+        ddl(isWal, "INSERT INTO " + tableName + " VALUES ('2024-01-02T03:00:00.000000Z', 6, 60, 'A', 60, NULL, 'string 60', 'varchar value 60',"
+                + " ARRAY[6.0, 60.0], 'A', 'A', 'A', 'A', 61, 62)");
+        // added after that row
+        ddl(isWal, "ALTER TABLE " + tableName + " ADD COLUMN absent INT");
+    }
+
+    // the column name txn of the column's default _cv record
+    private static long defaultColumnNameTxn(String tableName, String columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
+            return reader.getColumnVersionReader().getDefaultColumnNameTxn(writerIndex);
+        }
+    }
+
+    // A row into 2024-01-02: out of order while a newer partition exists, an append when 2024-01-02 is the newest
+    private void insertIntoAttachedPartition(String tableName, boolean isWal) throws Exception {
+        ddl(isWal, "INSERT INTO " + tableName + " VALUES ('2024-01-02T04:00:00.000000Z', 8, 80, 'D', 80, '22222222-2222-2222-2222-222222222222',"
+                + " 'string 80', 'varchar value 80', ARRAY[8.0, 80.0], 'D', 'D', 'D', 'D', 81, 82, 83)");
+    }
+
+    private void renameColumnsAwayAndBack(String tableName, boolean isWal, String... columns) throws Exception {
+        for (String column : columns) {
+            ddl(isWal, "ALTER TABLE " + tableName + " RENAME COLUMN " + column + " TO " + column + "_away");
+            ddl(isWal, "ALTER TABLE " + tableName + " RENAME COLUMN " + column + "_away TO " + column);
+        }
+    }
+
+    // The statements that run while 2024-01-02 of a table from createTableWithColumnsToRename() is detached
+    private void renameColumnsAwayAndBackAndDropIndex(String tableName, boolean isWal) throws Exception {
+        // every column the table gained by ADD COLUMN; keep and c, from CREATE TABLE, hold files without a column
+        // name txn, and keep their names
+        renameColumnsAwayAndBack(tableName, isWal, "z", "i", "u", "st", "vc", "arr", "s", "sb", "sp", "sd", "late", "topped", "absent");
+        // the attach removes the index files of sd from the partition; no column gains an index here
+        ddl(isWal, "ALTER TABLE " + tableName + " ALTER COLUMN sd DROP INDEX");
+    }
+
+    // The rows of 2024-01-02 that createTableWithColumnsToRename() writes, and insertIntoAttachedPartition() when
+    // isWritten, with i raised by iRaise
+    private static String rowsOfRenamedPartition(int iRaise, boolean isWritten) {
+        return "2024-01-02T00:00:00.000000Z\t2\t20\tA\t" + (20 + iRaise) + "\t\tstring 20\tvarchar value 20\t[2.0,20.0]\tA\tA\tA\tA\tnull\tnull\tnull\n"
+                + "2024-01-02T01:00:00.000000Z\t3\t30\tB\t" + (30 + iRaise) + "\t\tstring 30\tvarchar value 30\t[3.0,30.0]\tB\tB\tB\tB\tnull\tnull\tnull\n"
+                + "2024-01-02T02:00:00.000000Z\t4\t40\t\tnull\t\t\t\tnull\t\t\t\t\tnull\tnull\tnull\n"
+                + "2024-01-02T03:00:00.000000Z\t6\t60\tA\t" + (60 + iRaise) + "\t\tstring 60\tvarchar value 60\t[6.0,60.0]\tA\tA\tA\tA\t61\t62\tnull\n"
+                + (isWritten
+                ? "2024-01-02T04:00:00.000000Z\t8\t80\tD\t" + (80 + iRaise) + "\t22222222-2222-2222-2222-222222222222\tstring 80\tvarchar value 80\t[8.0,80.0]\tD\tD\tD\tD\t81\t82\t83\n"
+                : "");
+    }
+
     // Fails the step that names a committed DETACH .detached, whether it renames the temporary name or links it
     private static class DetachedNameFailingFacade extends TestFilesFacadeImpl {
         // What errno() reports after the fault, as the operating system would
@@ -4898,6 +5212,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     private static class SymbolDataMapFailingFilesFacade extends TestFilesFacadeImpl {
         private long dataFd = -1;
+        // the data file of sym whose mapping fails
+        private String dataFileName = "sym.d";
         private boolean isFailing;
 
         @Override
@@ -4919,7 +5235,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         @Override
         public long openRO(LPSZ name) {
             final long fd = super.openRO(name);
-            if (isFailing && Utf8s.endsWithAscii(name, "sym.d")) {
+            if (isFailing && Utf8s.endsWithAscii(name, dataFileName)) {
                 dataFd = fd;
             }
             return fd;

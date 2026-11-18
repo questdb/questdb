@@ -7035,10 +7035,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // the detached metadata names live columns only, so the column is live in both
                     assert tableColType > 0;
                     // overrideColumnVersions() copied only the partition's own records. A column without one
-                    // takes its presence from the partition the column was added at, and the table's own
-                    // "added at" partition can differ from the one the partition was detached with: TRUNCATE
-                    // and a DROP of the newest partition move it back. The detached _cv tells whether the
-                    // partition holds the column.
+                    // takes its presence from the partition the column was added at, and its file version from
+                    // the column's default record. The table's own "added at" partition can differ from the one
+                    // the partition was detached with: TRUNCATE and a DROP of the newest partition move it back.
+                    // RENAME COLUMN moves the default file version on while the partition is detached, and
+                    // relinks the files of the attached partitions only. The detached _cv tells whether the
+                    // partition holds the column, and which version of its files.
                     // A top of -1 means the column was added after the partition was written, and nothing wrote
                     // it there: the partition holds none of its rows, as with a top of partitionSize.
                     long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, detColIdx);
@@ -7049,7 +7051,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (columnTop < 0) {
                         columnTop = partitionSize;
                     }
-                    if (columnTop != detachedColumnTop) {
+                    // A record cannot name the unversioned files of a column from CREATE TABLE: readers take a
+                    // name txn of -1 for the column's default.
+                    final long detachedColumnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, detColIdx);
+                    if (detachedColumnNameTxn > -1 && detachedColumnNameTxn != columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)) {
+                        columnVersionWriter.upsert(partitionTimestamp, colIdx, detachedColumnNameTxn, detachedColumnTop);
+                    } else if (columnTop != detachedColumnTop) {
                         columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, detachedColumnTop);
                     }
                 }
