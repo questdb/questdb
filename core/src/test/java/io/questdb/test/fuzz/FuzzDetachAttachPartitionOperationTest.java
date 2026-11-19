@@ -25,6 +25,7 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -33,6 +34,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.std.Files;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -48,6 +50,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static io.questdb.test.fuzz.FuzzDetachAttachPartitionOperation.*;
 
@@ -105,65 +108,40 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
     public void testApplyDetachRenameAwayAndBackAttach() throws Exception {
         // 2024-01-02 holds every column the operation can rename, a and new_col_1: the ATTACH while either is renamed
         // away refuses the partition
-        assertRenameAwayAndBackRoundTrip(false, RENAMED_AWAY_ATTACH_REFUSED);
+        assertRenameRoundTrip(false, BETWEEN_RENAME_AWAY_AND_BACK, 2, RENAMED_AWAY_ATTACH_REFUSED);
     }
 
     @Test
     public void testApplyDetachRenameAwayAndBackAttachNoRows() throws Exception {
-        // a and new_col_1, the columns the operation can rename, join the table after 2024-01-02 was written: the ATTACH
-        // while either is renamed away attaches the partition, which reads both as NULL, and the operation attaches
-        // nothing more
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES ('2024-01-01'), ('2024-01-02'), ('2024-01-03')");
-            execute("ALTER TABLE t ADD COLUMN a INT");
-            execute("ALTER TABLE t ADD COLUMN new_col_1 INT");
-            execute("INSERT INTO t VALUES ('2024-01-04', 4, 40)");
-            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
-                    MicrosTimestampDriver.floor("2024-01-02"),
-                    BETWEEN_RENAME_AWAY_AND_BACK,
-                    0
-            );
-            apply(false, operation);
-            Assert.assertEquals(RENAMED_AWAY_ATTACH_ATTACHED, operation.getRenamedAwayAttachOutcome());
-            final String expected = """
-                    ts\ta\tnew_col_1
-                    2024-01-01T00:00:00.000000Z\tnull\tnull
-                    2024-01-02T00:00:00.000000Z\tnull\tnull
-                    2024-01-03T00:00:00.000000Z\tnull\tnull
-                    2024-01-04T00:00:00.000000Z\t4\t40
-                    """;
-            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
-        });
+        assertRenameRoundTripWithoutRows(BETWEEN_RENAME_AWAY_AND_BACK);
     }
 
     @Test
     public void testApplyDetachRenameAwayAndBackAttachParquet() throws Exception {
-        // a Parquet partition finds new_col_1 by its id: the operation tries no ATTACH while new_col_1 is renamed away
-        assertMemoryLeak(() -> {
-            createTableWithAddedColumn(false);
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
-            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
-                    MicrosTimestampDriver.floor("2024-01-02"),
-                    BETWEEN_RENAME_AWAY_AND_BACK,
-                    0
-            );
-            apply(false, operation);
-            Assert.assertEquals(RENAMED_AWAY_ATTACH_NOT_TRIED, operation.getRenamedAwayAttachOutcome());
-            try (TableReader reader = getReader("t")) {
-                Assert.assertTrue(reader.getTxFile().isPartitionParquet(1));
-            }
-            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns("""
-                    a\tts\tnew_col_1
-                    1\t2024-01-01T00:00:00.000000Z\tnull
-                    2\t2024-01-02T00:00:00.000000Z\t20
-                    3\t2024-01-03T00:00:00.000000Z\t30
-                    4\t2024-01-04T00:00:00.000000Z\t40
-                    """);
-        });
+        assertRenameRoundTripOfParquetPartition(BETWEEN_RENAME_AWAY_AND_BACK);
+    }
+
+    @Test
+    public void testApplyDetachRenameCaseOnlyAndBackAttach() throws Exception {
+        // 2024-01-02 holds every column the operation can rename, a and new_col_1: the ATTACH while either has its name
+        // in other letter case refuses the partition. Four renames: away, to the name in other letter case, away, back.
+        assertRenameRoundTrip(false, BETWEEN_RENAME_CASE_ONLY_AND_BACK, 4, RENAMED_AWAY_ATTACH_REFUSED);
+    }
+
+    @Test
+    public void testApplyDetachRenameCaseOnlyAndBackAttachNoRows() throws Exception {
+        assertRenameRoundTripWithoutRows(BETWEEN_RENAME_CASE_ONLY_AND_BACK);
+    }
+
+    @Test
+    public void testApplyDetachRenameCaseOnlyAndBackAttachParquet() throws Exception {
+        assertRenameRoundTripOfParquetPartition(BETWEEN_RENAME_CASE_ONLY_AND_BACK);
+    }
+
+    @Test
+    public void testApplyDetachRenameCaseOnlyAndBackAttachWal() throws Exception {
+        // the WAL table takes no renames
+        assertRenameRoundTrip(true, BETWEEN_RENAME_CASE_ONLY_AND_BACK, 0, RENAMED_AWAY_ATTACH_NOT_TRIED);
     }
 
     @Test
@@ -201,7 +179,7 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
     @Test
     public void testApplyDetachRenameAwayAndBackAttachWal() throws Exception {
         // the WAL table takes no renames
-        assertRenameAwayAndBackRoundTrip(true, RENAMED_AWAY_ATTACH_NOT_TRIED);
+        assertRenameRoundTrip(true, BETWEEN_RENAME_AWAY_AND_BACK, 0, RENAMED_AWAY_ATTACH_NOT_TRIED);
     }
 
     @Test
@@ -259,6 +237,57 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                     3\t2024-01-03T00:00:00.000000Z\t30
                     4\t2024-01-04T00:00:00.000000Z\t40
                     """);
+        });
+    }
+
+    @Test
+    public void testApplyRenamesBackColumnLeftRenamedInCaseOnly() throws Exception {
+        // An attempt of the operation fails at the ATTACH while a or new_col_1 has its name in other letter case, and
+        // leaves 2024-01-02 detached. The run retries the operation, whose DETACH then fails.
+        final AtomicBoolean isAttachFailing = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isAttachFailing.get() && Utf8s.endsWithAscii(name, "2024-01-02" + TableUtils.DETACHED_DIR_MARKER + Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                    isAttachFailing.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createTableWithAddedColumn(false);
+            final long metadataVersion = getMetadataVersion();
+            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
+                    MicrosTimestampDriver.floor("2024-01-02"),
+                    BETWEEN_RENAME_CASE_ONLY_AND_BACK,
+                    0
+            );
+            isAttachFailing.set(true);
+            try (TableWriter writer = getWriter("t")) {
+                operation.apply(new Rnd(), engine, writer, -1, null);
+                Assert.fail("the failed ATTACH must fail the attempt");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "2024-01-02" + TableUtils.DETACHED_DIR_MARKER + Files.SEPARATOR + TableUtils.META_FILE_NAME);
+            }
+            Assert.assertFalse(isAttachFailing.get());
+            // away, then to the name in other letter case
+            Assert.assertEquals(metadataVersion + 2, getMetadataVersion());
+
+            apply(false, operation);
+            // the two renames back, then the four of the round trip
+            Assert.assertEquals(metadataVersion + 8, getMetadataVersion());
+            final String expected = """
+                    a\tts\tnew_col_1
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-02T00:00:00.000000Z\t20
+                    3\t2024-01-03T00:00:00.000000Z\t30
+                    4\t2024-01-04T00:00:00.000000Z\t40
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
         });
     }
 
@@ -349,7 +378,7 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                         maxWritten = Math.max(maxWritten, maxInserted);
                     }
                 }
-                Assert.assertEquals("[0, 1, 2, 3]", betweens.toString());
+                Assert.assertEquals("[0, 1, 2, 3, 4]", betweens.toString());
                 Assert.assertTrue(detachedDays.size() > 1);
                 Assert.assertTrue(dropAllCount > 0);
                 Assert.assertTrue(dropSomeCount > 0);
@@ -402,8 +431,9 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                 tableMetadata,
                 new Rnd(42, 4242),
                 minTimestamp,
-                // a run detaches each day once, and each DETACH draws one of four kinds of statement between
-                minTimestamp + 20 * Micros.DAY_MICROS,
+                // a run detaches each day once, and each DETACH draws one of five kinds of statement between: 30 days
+                // give it room for all five
+                minTimestamp + 30 * Micros.DAY_MICROS,
                 1_000,
                 500,
                 false,
@@ -466,16 +496,21 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
         }
     }
 
-    private void assertRenameAwayAndBackRoundTrip(boolean isWal, int expectedRenamedAwayAttachOutcome) throws Exception {
+    /**
+     * The operation renames a or new_col_1 between the DETACH and the ATTACH, on the non-WAL table, and leaves the WAL
+     * table as it was.
+     *
+     * @param expectedRenameCount the renames on the table
+     */
+    private void assertRenameRoundTrip(boolean isWal, int between, int expectedRenameCount, int expectedRenamedAwayAttachOutcome) throws Exception {
         assertMemoryLeak(() -> {
             createTableWithAddedColumn(isWal);
             final long metadataVersion = getMetadataVersion();
             final long day = MicrosTimestampDriver.floor("2024-01-02");
-            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(day, BETWEEN_RENAME_AWAY_AND_BACK, 0);
+            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(day, between, 0);
             apply(isWal, operation);
             Assert.assertEquals(expectedRenamedAwayAttachOutcome, operation.getRenamedAwayAttachOutcome());
-            // a or new_col_1 renamed away and back on the non-WAL table, the WAL table left as it was
-            Assert.assertEquals(metadataVersion + (isWal ? 0 : 2), getMetadataVersion());
+            Assert.assertEquals(metadataVersion + expectedRenameCount, getMetadataVersion());
             execute("INSERT INTO t VALUES (5, '2024-01-02T12:00:00.000000Z', 50)");
             drainWalQueue();
             final String expected = """
@@ -485,6 +520,61 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                     5\t2024-01-02T12:00:00.000000Z\t50
                     3\t2024-01-03T00:00:00.000000Z\t30
                     4\t2024-01-04T00:00:00.000000Z\t40
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    // a Parquet partition finds new_col_1 by its id: the operation tries no ATTACH while new_col_1 is renamed
+    private void assertRenameRoundTripOfParquetPartition(int between) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithAddedColumn(false);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-02'");
+            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
+                    MicrosTimestampDriver.floor("2024-01-02"),
+                    between,
+                    0
+            );
+            apply(false, operation);
+            Assert.assertEquals(RENAMED_AWAY_ATTACH_NOT_TRIED, operation.getRenamedAwayAttachOutcome());
+            try (TableReader reader = getReader("t")) {
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(1));
+            }
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    a\tts\tnew_col_1
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-02T00:00:00.000000Z\t20
+                    3\t2024-01-03T00:00:00.000000Z\t30
+                    4\t2024-01-04T00:00:00.000000Z\t40
+                    """);
+        });
+    }
+
+    // a and new_col_1, the columns the operation can rename, join the table after 2024-01-02 was written: the ATTACH
+    // while either is renamed attaches the partition, which reads both as NULL, and the operation attaches nothing more
+    private void assertRenameRoundTripWithoutRows(int between) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01'), ('2024-01-02'), ('2024-01-03')");
+            execute("ALTER TABLE t ADD COLUMN a INT");
+            execute("ALTER TABLE t ADD COLUMN new_col_1 INT");
+            execute("INSERT INTO t VALUES ('2024-01-04', 4, 40)");
+            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
+                    MicrosTimestampDriver.floor("2024-01-02"),
+                    between,
+                    0
+            );
+            apply(false, operation);
+            Assert.assertEquals(RENAMED_AWAY_ATTACH_ATTACHED, operation.getRenamedAwayAttachOutcome());
+            final String expected = """
+                    ts\ta\tnew_col_1
+                    2024-01-01T00:00:00.000000Z\tnull\tnull
+                    2024-01-02T00:00:00.000000Z\tnull\tnull
+                    2024-01-03T00:00:00.000000Z\tnull\tnull
+                    2024-01-04T00:00:00.000000Z\t4\t40
                     """;
             assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
             engine.releaseAllReaders();

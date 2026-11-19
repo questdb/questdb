@@ -7704,22 +7704,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * The loop of {@link #attachPrepare} takes a live column whose name the detached metadata lacks for one added after
-     * the DETACH, and reads it as NULL in the partition. A column renamed while the partition was detached holds its
-     * rows there under its old name, so the attach refuses a partition that holds rows of such a column. The check runs
-     * before the loop changes the detached files, so a refused attach leaves them as they were.
+     * The loop of {@link #attachPrepare} reads a live column's files in the partition by the column's current name, and
+     * takes a column whose name the detached metadata lacks for one added after the DETACH, which reads NULL there. A
+     * column renamed while the partition was detached holds its rows there under the name it had at the DETACH. File
+     * names keep the letter case of that name, which name lookups ignore, and a rename through another name can change
+     * the case alone. So the attach refuses a partition that holds rows of a column whose name at the DETACH differs
+     * from its current one, in letter case too. The check runs before the loop changes the detached files, so a refused
+     * attach leaves them as they were.
      */
     private void attachValidateRenamedColumns(long partitionTimestamp, long partitionSize) {
         for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-            if (metadata.getColumnType(colIdx) > 0 && attachMetadata.getColumnIndexQuiet(metadata.getColumnName(colIdx)) < 0) {
+            if (metadata.getColumnType(colIdx) > 0) {
                 // ALTER COLUMN TYPE moves a column to a new writer index, and its replacing chain leads back to the
                 // index the column had at the DETACH
                 for (int i = colIdx; i > -1; i = metadata.getReplacingColumnIndex(i)) {
                     if (i < attachMetadata.getColumnCount() && attachMetadata.getColumnType(i) > 0) {
-                        // live at the DETACH under another name; a partition without its rows loses nothing
-                        final long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, i);
-                        if (detachedColumnTop > -1 && detachedColumnTop < partitionSize) {
-                            throw CairoException.detachedColumnMetadataMismatch(colIdx, metadata.getColumnName(colIdx), "name");
+                        if (!Chars.equals(attachMetadata.getColumnName(i), metadata.getColumnName(colIdx))) {
+                            // renamed while detached; a partition without the column's rows loses nothing
+                            final long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, i);
+                            if (detachedColumnTop > -1 && detachedColumnTop < partitionSize) {
+                                throw CairoException.detachedColumnMetadataMismatch(colIdx, metadata.getColumnName(colIdx), "name");
+                            }
                         }
                         break;
                     }

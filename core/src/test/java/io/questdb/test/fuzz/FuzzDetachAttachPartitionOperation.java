@@ -53,7 +53,8 @@ import org.jetbrains.annotations.Nullable;
  * partition was written as NULL there. Or it renames a column away and back, which moves the column's file version
  * on in the attached partitions only: the attach must keep reading the version the partition holds. While the column
  * is renamed away, it tries the ATTACH of a native partition, which must refuse the partition when it holds rows of the
- * column, and attach it otherwise.
+ * column, and attach it otherwise. Or it renames a column away, then to its name in other letter case, which name
+ * lookups take for its name, and back, with the same ATTACH while the column has the name in other letter case.
  * <p>
  * The test names the detached copy as ATTACH looks for it, see {@code cairo.attach.partition.suffix}, so a WAL table
  * applies the three statements in one go. A DETACH of a partition the table does not hold, or of its active
@@ -64,6 +65,7 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     public static final int BETWEEN_DROP_NEWEST = 2;
     public static final int BETWEEN_NOTHING = 0;
     public static final int BETWEEN_RENAME_AWAY_AND_BACK = 3;
+    public static final int BETWEEN_RENAME_CASE_ONLY_AND_BACK = 4;
     public static final int BETWEEN_TRUNCATE = 1;
     // the name a column takes while renamed away: this prefix and its name
     public static final String RENAMED_AWAY_PREFIX = "away_";
@@ -79,6 +81,10 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     // the first partition BETWEEN_DROP_NEWEST drops
     private final long dropFromTimestamp;
     private final long partitionTimestamp;
+    // the column BETWEEN_RENAME_CASE_ONLY_AND_BACK renamed: its name, and its name in other letter case, which a failed
+    // attempt of the operation can leave it with
+    private String caseOnlyRenamedFrom;
+    private String caseOnlyRenamedTo;
     private int renamedAwayAttachOutcome = RENAMED_AWAY_ATTACH_NOT_TRIED;
 
     public FuzzDetachAttachPartitionOperation(long partitionTimestamp, int between, long dropFromTimestamp) {
@@ -113,7 +119,7 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
                         return true;
                     }
                 }
-                case BETWEEN_RENAME_AWAY_AND_BACK -> {
+                case BETWEEN_RENAME_AWAY_AND_BACK, BETWEEN_RENAME_CASE_ONLY_AND_BACK -> {
                     // The renames change no data, so the WAL table, which takes none, holds what the non-WAL table
                     // must read after the attach
                     if (!wApi.getTableToken().isWal()) {
@@ -152,9 +158,9 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     }
 
     /**
-     * What the last ATTACH while a column was renamed away did: RENAMED_AWAY_ATTACH_REFUSED for a partition that holds
-     * rows of the column, RENAMED_AWAY_ATTACH_ATTACHED for one that holds none. RENAMED_AWAY_ATTACH_NOT_TRIED until the
-     * operation tries one.
+     * What the last ATTACH while a column was renamed away, or renamed in letter case only, did:
+     * RENAMED_AWAY_ATTACH_REFUSED for a partition that holds rows of the column, RENAMED_AWAY_ATTACH_ATTACHED for one
+     * that holds none. RENAMED_AWAY_ATTACH_NOT_TRIED until the operation tries one.
      */
     public int getRenamedAwayAttachOutcome() {
         return renamedAwayAttachOutcome;
@@ -180,6 +186,16 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
         }
     }
 
+    // the name with the letter case of each letter flipped, which name lookups take for the name itself
+    private static String flipCase(String name) {
+        final StringBuilder flipped = new StringBuilder(name.length());
+        for (int i = 0, n = name.length(); i < n; i++) {
+            final char c = name.charAt(i);
+            flipped.append(Character.isUpperCase(c) ? Character.toLowerCase(c) : Character.toUpperCase(c));
+        }
+        return flipped.toString();
+    }
+
     // whether the detached copy of the partition, named as ATTACH looks for it, is a Parquet one
     private static boolean hasDetachedParquetData(CairoEngine engine, TableWriterAPI wApi, CharSequence partitionName) {
         final CairoConfiguration configuration = engine.getConfiguration();
@@ -199,20 +215,21 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     }
 
     /**
-     * Attaches the partition while awayName is renamed away, and returns whether the partition attached. The partition
-     * holds the column under its name from before the rename: the ATTACH must refuse the partition when it holds rows
-     * of the column, and attach it otherwise, which reads the column as NULL there, as the WAL table without the renames
-     * does. Any other failure, such as an injected IO failure, goes to the run, which retries the operation.
+     * Attaches the partition while the column is renamed to renamedName, away or in letter case only, and returns
+     * whether the partition attached. The partition holds the column under its name from before the renames: the ATTACH
+     * must refuse the partition when it holds rows of the column, and attach it otherwise, which reads the column as NULL
+     * there, as the WAL table without the renames does. Any other failure, such as an injected IO failure, goes to the
+     * run, which retries the operation.
      */
     private boolean attachWhileRenamedAway(
             SqlCompiler compiler,
             SqlExecutionContextImpl context,
             TableWriterAPI wApi,
             String attachSql,
-            String awayName
+            String renamedName
     ) throws SqlException {
         final TableRecordMetadata metadata = wApi.getMetadata();
-        final String refusal = "Detached column [index=" + metadata.getWriterIndex(metadata.getColumnIndex(awayName)) + ", name=" + awayName
+        final String refusal = "Detached column [index=" + metadata.getWriterIndex(metadata.getColumnIndex(renamedName)) + ", name=" + renamedName
                 + ", attribute=name] does not match current table metadata";
         final AlterOperation alterOp = compiler.compile(attachSql, context).getAlterOperation();
         alterOp.withSqlStatement(attachSql);
@@ -232,10 +249,13 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
 
     /**
      * Renames a column other than the designated timestamp away and back. The detached _cv names the version of its
-     * files the partition holds: a column name txn, or none for a column from CREATE TABLE. A column that a failed
-     * attempt of this operation left renamed away, which the run retries, takes its name back first.
+     * files the partition holds: a column name txn, or none for a column from CREATE TABLE. BETWEEN_RENAME_CASE_ONLY_AND_BACK
+     * picks a column with a letter in its name, and renames it from away to its name in other letter case, which RENAME
+     * COLUMN refuses as a new name of the column itself, before the way back. A column that a failed attempt of this
+     * operation left renamed away, or in letter case only, which the run retries, takes its name back first. The
+     * designated timestamp keeps its name: an ATTACH after it was renamed fails on reading the partition's timestamps.
      *
-     * @param attachSql the ATTACH to run while the column is renamed away, or null for none
+     * @param attachSql the ATTACH to run while the column is renamed away, or in letter case only, or null for none
      * @return whether that ATTACH attached the partition
      */
     private boolean renameColumnAwayAndBack(
@@ -249,11 +269,14 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
         final TableRecordMetadata metadata = wApi.getMetadata();
         final ObjList<String> renamedAway = new ObjList<>();
         final ObjList<String> candidates = new ObjList<>();
+        boolean isLeftRenamedInCaseOnly = false;
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
             if (metadata.getColumnType(i) > 0 && i != metadata.getTimestampIndex()) {
                 final String columnName = metadata.getColumnName(i);
                 if (columnName.startsWith(RENAMED_AWAY_PREFIX)) {
                     renamedAway.add(columnName);
+                } else if (columnName.equals(caseOnlyRenamedTo)) {
+                    isLeftRenamedInCaseOnly = true;
                 } else {
                     candidates.add(columnName);
                 }
@@ -264,14 +287,38 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
             rename(compiler, context, wApi, tableName, renamedAway.getQuick(i), columnName);
             candidates.add(columnName);
         }
+        if (isLeftRenamedInCaseOnly) {
+            rename(compiler, context, wApi, tableName, caseOnlyRenamedTo, RENAMED_AWAY_PREFIX + caseOnlyRenamedFrom);
+            rename(compiler, context, wApi, tableName, RENAMED_AWAY_PREFIX + caseOnlyRenamedFrom, caseOnlyRenamedFrom);
+            candidates.add(caseOnlyRenamedFrom);
+        }
+        if (between == BETWEEN_RENAME_CASE_ONLY_AND_BACK) {
+            for (int i = candidates.size() - 1; i > -1; i--) {
+                final String columnName = candidates.getQuick(i);
+                final String flipped = flipCase(columnName);
+                if (flipped.equals(columnName) || !Chars.equalsIgnoreCase(flipped, columnName)) {
+                    // without a letter, or with one whose other case name lookups do not fold
+                    candidates.remove(i);
+                }
+            }
+        }
         boolean isAttached = false;
         if (candidates.size() > 0) {
             final String columnName = candidates.getQuick(rnd.nextInt(candidates.size()));
-            rename(compiler, context, wApi, tableName, columnName, RENAMED_AWAY_PREFIX + columnName);
-            if (attachSql != null) {
-                isAttached = attachWhileRenamedAway(compiler, context, wApi, attachSql, RENAMED_AWAY_PREFIX + columnName);
+            final String awayName = RENAMED_AWAY_PREFIX + columnName;
+            rename(compiler, context, wApi, tableName, columnName, awayName);
+            if (between == BETWEEN_RENAME_CASE_ONLY_AND_BACK) {
+                caseOnlyRenamedFrom = columnName;
+                caseOnlyRenamedTo = flipCase(columnName);
+                rename(compiler, context, wApi, tableName, awayName, caseOnlyRenamedTo);
+                if (attachSql != null) {
+                    isAttached = attachWhileRenamedAway(compiler, context, wApi, attachSql, caseOnlyRenamedTo);
+                }
+                rename(compiler, context, wApi, tableName, caseOnlyRenamedTo, awayName);
+            } else if (attachSql != null) {
+                isAttached = attachWhileRenamedAway(compiler, context, wApi, attachSql, awayName);
             }
-            rename(compiler, context, wApi, tableName, RENAMED_AWAY_PREFIX + columnName, columnName);
+            rename(compiler, context, wApi, tableName, awayName, columnName);
         }
         return isAttached;
     }

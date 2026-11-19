@@ -1130,8 +1130,9 @@ public class FuzzTransactionGenerator {
         if (!detachedDays.add(day)) {
             return Long.MIN_VALUE;
         }
-        // BETWEEN_NOTHING, BETWEEN_TRUNCATE, BETWEEN_DROP_NEWEST or BETWEEN_RENAME_AWAY_AND_BACK
-        final int between = rnd.nextInt(4);
+        // BETWEEN_NOTHING, BETWEEN_TRUNCATE, BETWEEN_DROP_NEWEST, BETWEEN_RENAME_AWAY_AND_BACK or
+        // BETWEEN_RENAME_CASE_ONLY_AND_BACK
+        final int between = rnd.nextInt(5);
         // from two days before the detached day, which drops it, older days and every newer one, to two days after
         final long dropFrom = day + (rnd.nextInt(5) - 2) * oneDay;
         FuzzTransaction transaction = new FuzzTransaction();
