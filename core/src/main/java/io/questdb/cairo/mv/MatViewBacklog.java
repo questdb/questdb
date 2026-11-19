@@ -62,9 +62,10 @@ import org.jetbrains.annotations.Nullable;
  *     <li>the base table's WAL from the cache position missing, {@link #LOST_BASE_TABLE_WAL_MISSING}.</li>
  * </ul>
  * A cache update that fails for any other reason loses the backlog too, {@link #LOST_UPDATE_FAILED}, and leaves the
- * view's invalidation reason as it is. The marker, the cause of the loss, is part of every view state event, and
- * REFRESH ... RESUME refuses a lost backlog with its cause until SKIP BACKLOG is given. RESUME SKIP BACKLOG and
- * REFRESH ... FULL clear it.
+ * view's invalidation reason as it is. So does a failed task that adds an UPDATE or ATTACH range to a valid view, which
+ * the failure invalidates, unless the range reached the view's cache after a scan that read the base table's WAL.
+ * The marker, the cause of the loss, is part of every view state event, and REFRESH ... RESUME refuses a lost backlog
+ * with its cause until SKIP BACKLOG is given. RESUME SKIP BACKLOG and REFRESH ... FULL clear it.
  */
 public final class MatViewBacklog {
     // Set by ALTER MATERIALIZED VIEW ... WITH BASE, which moves the view to another base table.

@@ -101,6 +101,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final int PREFLIGHT_CONFLICT = -1;
     private static final int PREFLIGHT_DEFERRED = 0;
     private static final int PREFLIGHT_READY = 1;
+    // What addRefreshRange0() did with a base table range: dropped it, merged it into a cache that its scan brought up
+    // to the operation, or merged it into a cache that its scan cleared because it could not read the base table's WAL.
+    private static final int RANGE_DROPPED = 0;
+    private static final int RANGE_MERGED = 1;
+    private static final int RANGE_MERGED_INTO_CLEARED_CACHE = 2;
     private static final String DEFERRED_INVALIDATION_NEEDS_REASON = "a deferred invalidation must carry a reason (null is the full-refresh marker)";
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
     // Elapsed-time budget for a single run(). See processNotifications().
@@ -964,6 +969,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * for an IMMEDIATE view, at the next REFRESH ... INCREMENTAL for a MANUAL view and at the next timer firing for a
      * TIMER view. An invalid view takes the range into its backlog while the backlog is tracked, see
      * {@link MatViewBacklog}, and recomputes it after REFRESH ... RESUME.
+     * <p>
+     * A failure invalidates a valid view, whose cache becomes its backlog: the backlog is lost, since only this task
+     * carries the range, unless the task's scan brought the cache up to the operation and merged the range into it, as
+     * when the view state event fails. A failure loses an invalid view's backlog.
      */
     private void addRefreshRange(@NotNull MatViewRefreshTask refreshTask) {
         final TableToken viewToken = refreshTask.matViewToken;
@@ -1000,11 +1009,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // The view's validity cannot change while the task holds the latch.
         final boolean isBacklog = viewState.isInvalid();
+        int rangeOutcome = RANGE_DROPPED;
         boolean isRangeAdded = false;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             try {
                 runHoldingLockSeamForTesting();
-                isRangeAdded = addRefreshRange0(refreshTask, viewDefinition, viewState, walWriter, isBacklog);
+                rangeOutcome = addRefreshRange0(refreshTask, viewDefinition, viewState, walWriter, isBacklog);
+                if (rangeOutcome != RANGE_DROPPED) {
+                    persistRefreshIntervals(walWriter, viewState, isBacklog);
+                    LOG.info().$("added base table range to materialized view refresh intervals [view=").$(viewToken)
+                            .$(", baseTable=").$(refreshTask.baseTableToken)
+                            .$(", operationTxn=").$(refreshTask.baseTableTxn)
+                            .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeFrom)
+                            .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeTo)
+                            .I$();
+                    isRangeAdded = true;
+                }
             } catch (Throwable th) {
                 if (!isBacklog || isTableSuspendedError(th)) {
                     throw th;
@@ -1035,6 +1055,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 MatViewBacklog.markLost(engine, null, viewState, MatViewBacklog.LOST_UPDATE_FAILED);
             } else {
                 refreshFailState(viewDefinition, viewState, null, th);
+                // The view goes invalid, and its cache becomes the backlog it starts with. The base table's WAL scan
+                // skips UPDATE and ATTACH, so only this task carries the range: the backlog stays tracked only when
+                // the range is in the cache, merged after a scan that read the base table's WAL up to the operation.
+                if (rangeOutcome != RANGE_MERGED && viewState.hasTrackedBacklog()) {
+                    MatViewBacklog.markLost(engine, null, viewState, MatViewBacklog.LOST_UPDATE_FAILED);
+                }
             }
         } finally {
             finalizeAndUnlock(viewToken, viewState, false);
@@ -1045,9 +1071,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
     }
 
-    // Runs under the view latch. Returns true when it added the range to the cache and persisted the cache. isBacklog
-    // tells an invalid view, whose cache holds its backlog, from a valid one.
-    private boolean addRefreshRange0(
+    // Runs under the view latch. Brings the view's cache up to the operation and merges the range into it in memory;
+    // the caller persists it. A range it drops it returns as RANGE_DROPPED, after persisting the cache its scan
+    // changed. isBacklog tells an invalid view, whose cache holds its backlog, from a valid one.
+    private int addRefreshRange0(
             @NotNull MatViewRefreshTask refreshTask,
             @NotNull MatViewDefinition viewDefinition,
             @NotNull MatViewState viewState,
@@ -1067,12 +1094,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     .$(", from=").$ts(driver, refreshTask.rangeFrom)
                     .$(", to=").$ts(driver, refreshTask.rangeTo)
                     .I$();
-            return false;
+            return RANGE_DROPPED;
         }
 
         if (viewState.getLastRefreshBaseTxn() == -1) {
             // The view never completed a refresh, and its first build recomputes the whole base.
-            return false;
+            return RANGE_DROPPED;
         }
 
         // Bring the cache up to the base's applied transaction, and at least up to the operation. The WAL apply job
@@ -1088,6 +1115,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // The scan leaves the cache it brings up to date to this task's view state event, so that the task writes
         // one view WAL transaction.
         final long scannedFromTxn = viewState.getRefreshIntervalsBaseTxn();
+        boolean isCacheCleared = false;
         if (isBacklog) {
             // The backlog update checks the base table's identity, and a mismatch loses the backlog instead of
             // invalidating the view again.
@@ -1107,14 +1135,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         .$(", from=").$ts(driver, refreshTask.rangeFrom)
                         .$(", to=").$ts(driver, refreshTask.rangeTo)
                         .I$();
-                return false;
+                return RANGE_DROPPED;
             }
         } else {
             if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, false)) {
                 // The view's refresh position belongs to another table than the one under the base's name now.
-                return false;
+                return RANGE_DROPPED;
             }
-            updateRefreshIntervals0(lastBaseTxn, baseTableToken, viewDefinition, viewState, walWriter, false);
+            // The view has completed a refresh, so the scan has a position to start from: null means only that it
+            // could not read the base table's WAL and cleared the cache.
+            isCacheCleared = updateRefreshIntervals0(lastBaseTxn, baseTableToken, viewDefinition, viewState, walWriter, false) == null;
         }
         // Every scan that changes the cache moves its base txn.
         final boolean isScanned = viewState.getRefreshIntervalsBaseTxn() != scannedFromTxn;
@@ -1133,7 +1163,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (isScanned) {
                 persistRefreshIntervals(walWriter, viewState, isBacklog);
             }
-            return false;
+            return RANGE_DROPPED;
         }
 
         intervals.clear();
@@ -1143,14 +1173,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         if (viewState.getRefreshIntervalsBaseTxn() < viewState.getLastRefreshBaseTxn()) {
             viewState.setRefreshIntervalsBaseTxn(viewState.getLastRefreshBaseTxn());
         }
-        persistRefreshIntervals(walWriter, viewState, isBacklog);
-        LOG.info().$("added base table range to materialized view refresh intervals [view=").$(viewToken)
-                .$(", baseTable=").$(baseTableToken)
-                .$(", operationTxn=").$(refreshTask.baseTableTxn)
-                .$(", from=").$ts(driver, refreshTask.rangeFrom)
-                .$(", to=").$ts(driver, refreshTask.rangeTo)
-                .I$();
-        return true;
+        return isCacheCleared ? RANGE_MERGED_INTO_CLEARED_CACHE : RANGE_MERGED;
     }
 
     private boolean checkIfBaseTableDropped(MatViewRefreshTask refreshTask) {

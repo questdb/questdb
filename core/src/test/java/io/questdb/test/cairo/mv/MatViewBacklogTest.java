@@ -34,8 +34,10 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewBacklog;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
@@ -46,6 +48,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -1573,18 +1576,347 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeTaskFailureInvalidatesValidView() throws Exception {
-        // A failure while a valid view takes an ATTACH range still invalidates the view, with the error, through
-        // refreshFailState(); the failed task has no view WAL writer to persist the invalidation with.
+    public void testRangeTaskEventFailureAfterFailedScanLosesBacklog() throws Exception {
+        // A valid view's ATTACH range task cannot read the base's WAL. With missing WAL files not fatal, as in
+        // production, the scan clears the cache, the task merges the range into it at the refresh position, below the
+        // ATTACH, and then the view state event fails. The view goes invalid in memory, and the backlog it starts with
+        // is lost: the scan cleared whatever the view had cached before. The clear itself is a known defect of its own,
+        // "a transient base WAL read failure drops the UPDATE/ATTACH ranges cached by a valid materialized view"; the
+        // test asserts only that the task's failure then loses the backlog.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isScanFailArmed = new AtomicBoolean();
+        final AtomicBoolean isEventFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newBaseWalReadAndSeqPartFailingFacade(isScanFailArmed, isEventFailArmed, failingPart), () -> {
+            createAttachableBaseWithView();
+            insert("c", 4.0, "2024-01-02T02:20:00.000000Z");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            armViewStateEventFailure(isEventFailArmed, failingPart);
+            isScanFailArmed.set(true);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse(isScanFailArmed.get());
+            Assert.assertFalse(isEventFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
+            assertCache(2, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertFailedRangeTaskLostThenRecovered("could not open read-write", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    2024-01-02T02:00:00.000000Z\tc\t4.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeTaskEventFailureAfterMergeKeepsBacklog() throws Exception {
+        // The view state event of a valid view's ATTACH range task fails after the task's scan brought the cache up to
+        // the ATTACH and merged the range into it. The view goes invalid in memory and keeps its backlog tracked, since
+        // the cache holds the range: RESUME catches up on it, right away, or after the next base commit's backlog
+        // update persisted the backlog and a restart.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newSeqPartFailingFacade(isFailArmed, failingPart), () -> {
+            for (boolean isBacklogUpdated : new boolean[]{false, true}) {
+                createAttachableBaseWithView();
+                execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                final long viewSeqTxn = viewSeqTxn();
+                armViewStateEventFailure(isFailArmed, failingPart);
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                Assert.assertFalse(isFailArmed.get());
+                Assert.assertFalse(viewState().isLocked());
+                Assert.assertTrue(viewState().isInvalid());
+                final String reason = viewState().getInvalidationReasonForReport();
+                TestUtils.assertContains(reason, "could not open read-write");
+                Assert.assertNull(viewState().getBacklogLostReason());
+                Assert.assertTrue(viewState().hasTrackedBacklog());
+                assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                String viewRows = """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-02T00:00:00.000000Z\tc\t3.0
+                        """;
+                if (isBacklogUpdated) {
+                    insert("c", 5.0, "2024-01-02T01:20:00.000000Z");
+                    drainWalAndMatViewQueues();
+                    updateBacklog();
+                    Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+                    assertViewStatus("invalid", reason);
+                    final String[] backlog = {
+                            "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z",
+                            "2024-01-02T01:20:00.000000Z", "2024-01-02T01:20:00.000000Z"
+                    };
+                    assertPersistedCache(4, backlog);
+                    restart();
+                    Assert.assertTrue(viewState().isInvalid());
+                    Assert.assertNull(viewState().getBacklogLostReason());
+                    assertCache(4, backlog);
+                    viewRows = """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-02T00:00:00.000000Z\tc\t3.0
+                            2024-01-02T01:00:00.000000Z\tc\t5.0
+                            """;
+                }
+
+                assertResumeSucceeds(RESUME_SQL);
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid", "");
+                assertViewRows(viewRows);
+                assertSqlCursors(VIEW_SQL, "price_1h");
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskEventFailureWithoutScanKeepsBacklog() throws Exception {
+        // The view's refresh runs before the ATTACH's range task, which the refresh job takes in either order: the
+        // task finds the cache up to the ATTACH and merges the range without a scan, and then the view state event
+        // fails. The view goes invalid in memory and keeps its backlog tracked, since the cache holds the range, and
+        // RESUME catches up on it.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newSeqPartFailingFacade(isFailArmed, failingPart), () -> {
+            for (String refreshType : new String[]{"MANUAL", "IMMEDIATE"}) {
+                createAttachableBaseWithView(refreshType);
+                execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                final MatViewRefreshTask rangeTask = takeRangeTask();
+                if ("MANUAL".equals(refreshType)) {
+                    execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                }
+                drainWalAndMatViewQueues();
+                // the refresh moved the refresh position to the ATTACH, which its WAL scan skips
+                assertRefreshBaseTxn(3);
+                assertCache(-1);
+                assertViewRows(ATTACHABLE_VIEW_ROWS);
+
+                final long viewSeqTxn = viewSeqTxn();
+                armViewStateEventFailure(isFailArmed, failingPart);
+                engine.getMatViewStateStore().reenqueueRefreshTask(rangeTask);
+                drainMatViewQueue(engine);
+                drainWalQueue();
+                Assert.assertFalse(isFailArmed.get());
+                Assert.assertFalse(viewState().isLocked());
+                Assert.assertTrue(viewState().isInvalid());
+                TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "could not open read-write");
+                Assert.assertNull(viewState().getBacklogLostReason());
+                assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                assertResumeSucceeds(RESUME_SQL);
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid", "");
+                assertViewRows("""
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-02T00:00:00.000000Z\tc\t3.0
+                        """);
+                assertSqlCursors(VIEW_SQL, "price_1h");
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskFailureInvalidatesValidViewAndLosesBacklog() throws Exception {
+        // A failure while a valid view takes an ATTACH range invalidates the view, with the error, through
+        // refreshFailState(); the failed task has no view WAL writer to persist the invalidation with. The view's
+        // cache becomes the backlog it starts with, and the cache lacks the range, which the base's WAL scan skips:
+        // the backlog is lost, so RESUME refuses instead of returning the view valid without the attached day.
         assertMemoryLeak(() -> {
             createAttachableBaseWithView();
             final long viewSeqTxn = viewSeqTxn();
             failRangeTask(CairoException.nonCritical().put("injected range task failure"));
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertCache(-1);
+            assertFailedRangeTaskLostThenRecovered("injected range task failure", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeTaskFailureKeepsBaseTableReplacedCause() throws Exception {
+        // The base table is replaced while the view is valid and the drop's invalidation is lost, as in a crash. The
+        // ATTACH range task of the new base finds another table id under the base's name, which loses the backlog,
+        // and fails to write the view's invalidation. The view goes invalid in memory and keeps the precise cause.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newSeqPartFailingFacade(isFailArmed, failingPart), () -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute("DROP TABLE base");
+            dropQueuedInvalidation();
+            createAttachableBase();
+            final long viewSeqTxn = viewSeqTxn();
+            armViewStateEventFailure(isFailArmed, failingPart);
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(isFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
             Assert.assertTrue(viewState().isInvalid());
-            TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "injected range task failure");
+            TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "could not open read-write");
+            Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_REPLACED, viewState().getBacklogLostReason());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+            assertResumeRefused(MatViewBacklog.LOST_BASE_TABLE_REPLACED);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertResumeSucceeds(RESUME_SKIP_SQL);
+            assertRefreshBaseTxn(3);
+            Assert.assertEquals(baseToken().getTableId(), viewState().getBaseTableId());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testRangeTaskFailureKeepsNoBaseTableIdCause() throws Exception {
+        // A valid view whose state was last written by a previous version, without a base table id, tracks no backlog.
+        // Its ATTACH range task fails to open the view's WAL writer: the view goes invalid in memory, and RESUME
+        // refuses with the cause the view's state gives, not with the task's failure.
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        assertMemoryLeak(newViewWalOpenFailingFacade(isFailArmed), () -> {
+            createAttachableBaseWithView();
+            try (WalWriter walWriter = engine.getWalWriter(viewToken())) {
+                // the view state event of a previous version: no base table id and no backlog-lost marker
+                walWriter.resetMatViewState(2, 0, false, null, Numbers.LONG_NULL, null, -1);
+            }
+            drainWalQueue();
+            restart();
+            Assert.assertEquals(MatViewState.BASE_TABLE_ID_UNKNOWN, viewState().getBaseTableId());
+            final long viewSeqTxn = viewSeqTxn();
+            engine.releaseInactive();
+            isFailArmed.set(true);
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(isFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "could not open read-write");
             Assert.assertNull(viewState().getBacklogLostReason());
             Assert.assertEquals(viewSeqTxn, viewSeqTxn());
-            Assert.assertEquals(0, viewState().getRefreshIntervals().size());
+
+            assertResumeRefused(MatViewBacklog.LOST_NO_BASE_TABLE_ID);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertResumeSucceeds(RESUME_SKIP_SQL);
+            Assert.assertEquals(baseToken().getTableId(), viewState().getBaseTableId());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-03'");
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskFailureOfNeverRefreshedViewTracksNoBacklog() throws Exception {
+        // A view that never completed a refresh tracks no backlog, and its first build covers the range: a failure of
+        // its ATTACH range task invalidates it in memory without a lost backlog, and RESUME succeeds.
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        assertMemoryLeak(newViewWalOpenFailingFacade(isFailArmed), () -> {
+            createAttachableBase();
+            createView("MANUAL DEFERRED");
+            drainWalAndMatViewQueues();
+            assertRefreshBaseTxn(-1);
+            final long viewSeqTxn = viewSeqTxn();
+            engine.releaseInactive();
+            isFailArmed.set(true);
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(isFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "could not open read-write");
+            Assert.assertNull(viewState().getBacklogLostReason());
+            Assert.assertFalse(viewState().hasTrackedBacklog());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+            assertResumeSucceeds(RESUME_SQL);
+            assertRefreshBaseTxn(-1);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskFailureReleasesFloorAndRestartRecomputes() throws Exception {
+        // A valid view's backlog that a failed ATTACH range task lost no longer holds back the base's WAL purging. A
+        // restart loads the view valid from its state file, and when the base's WAL from the view's refresh position
+        // was purged by then, the view's next refresh recomputes the base's whole range, attached day included.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        assertMemoryLeak(newViewWalOpenFailingFacade(isFailArmed), () -> {
+            createAttachableBaseWithView();
+            engine.releaseInactive();
+            isFailArmed.set(true);
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(isFailArmed.get());
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            for (int hour = 1; hour < 4; hour++) {
+                // each commit goes through a WAL writer of its own, whose segment the purge can remove
+                engine.releaseInactive();
+                insert("c", 4.0 + hour, "2024-01-02T0" + hour + ":20:00.000000Z");
+                drainWalAndMatViewQueues();
+            }
+            purgeBaseWal();
+            // the ATTACH is base txn 3, and the inserts 4 to 6
+            for (long baseTxn = 3; baseTxn < 7; baseTxn++) {
+                Assert.assertFalse(isBaseWalSegmentPresent(baseTxn));
+            }
+
+            restart();
+            assertViewStatus("valid", "");
+            Assert.assertNull(viewState().getBacklogLostReason());
+            assertRefreshBaseTxn(2);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    2024-01-02T02:00:00.000000Z\tc\t6.0
+                    2024-01-02T03:00:00.000000Z\tc\t7.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
         });
     }
 
@@ -1629,6 +1961,76 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeTaskFailsToOpenWalOfValidView() throws Exception {
+        // A valid view's ATTACH or UPDATE range task that cannot open the view's WAL writer invalidates the view in
+        // memory, and the backlog the view starts with lacks the range: the backlog is lost. An IMMEDIATE view's
+        // incremental refresh, which the operation's commit queues after the range task, skips the invalid view, and
+        // a later UPDATE adds nothing to the lost backlog.
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        assertMemoryLeak(newViewWalOpenFailingFacade(isFailArmed), () -> {
+            for (String refreshType : new String[]{"MANUAL", "IMMEDIATE"}) {
+                for (boolean isAttach : new boolean[]{true, false}) {
+                    createAttachableBaseWithView(refreshType);
+                    final long viewSeqTxn = viewSeqTxn();
+                    engine.releaseInactive();
+                    isFailArmed.set(true);
+                    execute(isAttach ? "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'" : "UPDATE base SET price = 30.0 WHERE sym = 'c'");
+                    drainWalAndMatViewQueues();
+                    Assert.assertFalse(isFailArmed.get());
+                    Assert.assertFalse(viewState().isLocked());
+                    Assert.assertTrue(viewState().isInvalid());
+                    Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    assertCache(-1);
+                    assertViewRows(ATTACHABLE_VIEW_ROWS);
+
+                    execute("UPDATE base SET price = 40.0 WHERE sym = 'c'");
+                    drainWalAndMatViewQueues();
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    assertCache(-1);
+
+                    assertFailedRangeTaskLostThenRecovered(
+                            "could not open read-write",
+                            "ts\tsym\tprice\n"
+                                    + (isAttach ? "2024-01-01T00:00:00.000000Z\ta\t1.0\n" : "")
+                                    + "2024-01-02T00:00:00.000000Z\tc\t40.0\n"
+                                    + "2024-01-02T01:00:00.000000Z\tc\t5.0\n"
+                    );
+                    execute("DROP MATERIALIZED VIEW price_1h");
+                    execute("DROP TABLE base");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskFindsBaseReplacedUnderValidView() throws Exception {
+        // The base table is replaced while the view is valid and the drop's invalidation is lost, as in a crash. The
+        // ATTACH range task of the new base finds another table id under the base's name: it invalidates the view with
+        // its backlog lost, which the invalidation persists, and drops the range.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute("DROP TABLE base");
+            dropQueuedInvalidation();
+            createAttachableBase();
+            final long viewSeqTxn = viewSeqTxn();
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(viewState().isLocked());
+            assertViewStatus("invalid", MatViewRefreshJob.BASE_TABLE_CHANGED_REASON);
+            Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_REPLACED, viewState().getBacklogLostReason());
+            // the invalidation is the only view state event
+            Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+            assertCache(-1);
+            restart();
+            Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_REPLACED, viewState().getBacklogLostReason());
+            assertLostThenSkipBacklogJumps(MatViewBacklog.LOST_BASE_TABLE_REPLACED, VIEW_ROWS);
+        });
+    }
+
+    @Test
     public void testRangeTaskFindsBacklogLost() throws Exception {
         // An invalid view takes an ATTACH range only into a backlog that the cache update before it keeps: with the
         // base's WAL from the cache position gone, the backlog is lost and the range dropped.
@@ -1663,6 +2065,35 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             Assert.assertNull(viewState().getBacklogLostReason());
             assertCache(-1);
             Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+        });
+    }
+
+    @Test
+    public void testRangeTaskScanFailureLosesBacklog() throws Exception {
+        // A valid view's ATTACH range task cannot read the base's WAL, and missing WAL files are fatal: the scan throws
+        // before the range reaches the cache, so the backlog that the view starts with as it goes invalid is lost.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "true");
+        final AtomicBoolean isScanFailArmed = new AtomicBoolean();
+        assertMemoryLeak(newBaseWalReadAndSeqPartFailingFacade(isScanFailArmed, new AtomicBoolean(), new StringSink()), () -> {
+            createAttachableBaseWithView();
+            insert("c", 4.0, "2024-01-02T02:20:00.000000Z");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            isScanFailArmed.set(true);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse(isScanFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
+            assertCache(-1);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertFailedRangeTaskLostThenRecovered("cannot read WAL event file", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    2024-01-02T02:00:00.000000Z\tc\t4.0
+                    """);
         });
     }
 
@@ -1712,6 +2143,47 @@ public class MatViewBacklogTest extends AbstractCairoTest {
                 execute("DROP TABLE base");
                 drainWalAndMatViewQueues();
             }
+        });
+    }
+
+    @Test
+    public void testRangeTaskTruncateDropFailureLosesBacklog() throws Exception {
+        // A base TRUNCATE applies after an ATTACH and before the ATTACH's range task runs. The task drops the range,
+        // whose rows the truncate removed, and fails to persist the cache it scanned up to the truncate. The range did
+        // not reach the cache, so the backlog that the view starts with as it goes invalid is lost.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+        final AtomicBoolean isFailArmed = new AtomicBoolean();
+        final StringSink failingPart = new StringSink();
+        assertMemoryLeak(newSeqPartFailingFacade(isFailArmed, failingPart), () -> {
+            createAttachableBaseWithView();
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            // a TRUNCATE in the ATTACH's apply batch would clear the batch's range, and no range task would run
+            execute("TRUNCATE TABLE base");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            armViewStateEventFailure(isFailArmed, failingPart);
+            drainMatViewQueue(engine);
+            drainWalQueue();
+            Assert.assertFalse(isFailArmed.get());
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            TestUtils.assertContains(viewState().getInvalidationReasonForReport(), "could not open read-write");
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            assertCache(4);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+            assertResumeRefused(MatViewBacklog.LOST_UPDATE_FAILED);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertResumeSucceeds(RESUME_SKIP_SQL);
+            assertRefreshBaseTxn(4);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            // a TRUNCATE keeps the view's rows
+            assertViewRows(ATTACHABLE_VIEW_ROWS);
+            restart();
+            assertViewStatus("valid", "");
+            Assert.assertNull(viewState().getBacklogLostReason());
         });
     }
 
@@ -2082,9 +2554,9 @@ public class MatViewBacklogTest extends AbstractCairoTest {
 
     // Drops the invalidation that the drop of the base table queued, as a crash would.
     private static void dropQueuedInvalidation() {
-        final io.questdb.cairo.mv.MatViewRefreshTask task = new io.questdb.cairo.mv.MatViewRefreshTask();
+        final MatViewRefreshTask task = new MatViewRefreshTask();
         Assert.assertTrue(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
-        Assert.assertEquals(io.questdb.cairo.mv.MatViewRefreshTask.INVALIDATE, task.operation);
+        Assert.assertEquals(MatViewRefreshTask.INVALIDATE, task.operation);
         Assert.assertFalse(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
     }
 
@@ -2094,6 +2566,36 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             other.of(configuration.getDbRoot()).concat(baseToken()).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
         }
+    }
+
+    // Fails, once armed each, the opening of an event file of the base's WAL, which a scan of the base's WAL reads,
+    // and the opening of the part of the view's sequencer that failingPart names.
+    private static TestFilesFacadeImpl newBaseWalReadAndSeqPartFailingFacade(
+            AtomicBoolean isScanFailArmed,
+            AtomicBoolean isEventFailArmed,
+            StringSink failingPart
+    ) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isScanFailArmed.get()
+                        && Utf8s.containsAscii(name, "base~")
+                        && Utf8s.endsWithAscii(name, Files.SEPARATOR + EVENT_FILE_NAME)) {
+                    isScanFailArmed.set(false);
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isEventFailArmed.get() && failingPart.length() > 0 && Utf8s.endsWithAscii(name, failingPart)) {
+                    isEventFailArmed.set(false);
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
     }
 
     // Fails, once armed, the opening of the part of the view's sequencer that failingPart names.
@@ -2158,6 +2660,30 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     private static void restart() {
         engine.getMatViewStateStore().clear();
         engine.hydrateMatViewStateStore();
+    }
+
+    // Takes the view's range task off the refresh queue and puts the other tasks back, so that they run before it.
+    private static MatViewRefreshTask takeRangeTask() {
+        final MatViewStateStore stateStore = engine.getMatViewStateStore();
+        final ObjList<MatViewRefreshTask> otherTasks = new ObjList<>();
+        MatViewRefreshTask rangeTask = null;
+        while (true) {
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            if (!stateStore.tryDequeueRefreshTask(task)) {
+                break;
+            }
+            if (task.operation == MatViewRefreshTask.ADD_REFRESH_RANGE) {
+                Assert.assertNull("one range task expected", rangeTask);
+                rangeTask = task;
+            } else {
+                otherTasks.add(task);
+            }
+        }
+        Assert.assertNotNull("range task expected", rangeTask);
+        for (int i = 0, n = otherTasks.size(); i < n; i++) {
+            stateStore.reenqueueRefreshTask(otherTasks.getQuick(i));
+        }
+        return rangeTask;
     }
 
     // Runs a backlog cache update, as the refresh intervals update timer enqueues it.
@@ -2236,6 +2762,42 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             expected.add(parseFloorPartialTimestamp(bound));
         }
         TestUtils.assertEquals(expected, viewState().getRefreshIntervals());
+    }
+
+    // A failed range task invalidated the valid view in memory and lost the backlog the view starts with. The lost
+    // backlog takes no cache update, REFRESH ... INCREMENTAL sends the user to RESUME, and RESUME refuses with the
+    // cause and writes no view state; RESUME SKIP BACKLOG and a REFRESH ... RANGE over the gap then bring the view to
+    // its SQL on the base. The base commit here adds the row 2024-01-02T01:20 c 5.0.
+    private void assertFailedRangeTaskLostThenRecovered(String reasonPart, String viewRows) throws Exception {
+        Assert.assertTrue(viewState().isInvalid());
+        final String reason = viewState().getInvalidationReasonForReport();
+        TestUtils.assertContains(reason, reasonPart);
+        Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+        final long viewSeqTxn = viewSeqTxn();
+        insert("c", 5.0, "2024-01-02T01:20:00.000000Z");
+        drainWalAndMatViewQueues();
+        updateBacklog();
+        Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+        assertExceptionNoLeakCheck(
+                "REFRESH MATERIALIZED VIEW price_1h INCREMENTAL",
+                VIEW_NAME_POSITION,
+                "materialized view is invalid, run REFRESH MATERIALIZED VIEW price_1h RESUME first [reason=" + reason + ']'
+        );
+        assertResumeRefused(MatViewBacklog.LOST_UPDATE_FAILED);
+        Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+        assertResumeSucceeds(RESUME_SKIP_SQL);
+        assertCache(-1);
+        assertRefreshBaseTxn(engine.getTableSequencerAPI().getTxnTracker(baseToken()).getWriterTxn());
+        drainWalAndMatViewQueues();
+        assertViewStatus("valid", "");
+        execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-03'");
+        drainWalAndMatViewQueues();
+        assertViewRows(viewRows);
+        assertSqlCursors(VIEW_SQL, "price_1h");
+        restart();
+        assertViewStatus("valid", "");
+        Assert.assertNull(viewState().getBacklogLostReason());
     }
 
     // RESUME refuses the lost backlog with its cause and writes no view state; RESUME SKIP BACKLOG then jumps to the
@@ -2347,8 +2909,9 @@ public class MatViewBacklogTest extends AbstractCairoTest {
                 .returns("view_status\tinvalidation_reason\n" + status + "\t" + reason + "\n");
     }
 
-    // A base whose first day is detached and attachable, and a refreshed MANUAL view over the second day.
-    private void createAttachableBaseWithView() throws Exception {
+    // A base whose first day, 2024-01-01 a 1.0, is detached and attachable, and whose second day holds
+    // 2024-01-02 c 3.0: base txns 1 (the rows) and 2 (the detach).
+    private void createAttachableBase() throws Exception {
         createBase();
         execute("""
                 INSERT INTO base VALUES
@@ -2359,12 +2922,23 @@ public class MatViewBacklogTest extends AbstractCairoTest {
         execute("ALTER TABLE base DETACH PARTITION LIST '2024-01-01'");
         drainWalQueue();
         makeAttachable("2024-01-01");
-        createView("MANUAL");
+    }
+
+    // An attachable base, see createAttachableBase(), and a MANUAL view over it refreshed at base txn 2.
+    private void createAttachableBaseWithView() throws Exception {
+        createAttachableBaseWithView("MANUAL");
+    }
+
+    // An attachable base, see createAttachableBase(), and a view of the refresh type over it refreshed at base txn 2.
+    private void createAttachableBaseWithView(String refreshType) throws Exception {
+        createAttachableBase();
+        createView(refreshType);
         drainWalQueue();
         execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
         drainWalAndMatViewQueues();
         assertViewRows(ATTACHABLE_VIEW_ROWS);
         assertViewStatus("valid", "");
+        assertRefreshBaseTxn(2);
     }
 
     private void createBase() throws SqlException {

@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.ForwardingMatViewStateStore;
+import io.questdb.cairo.mv.MatViewBacklog;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -220,7 +221,9 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             final MatViewState state = fixture.state();
 
             // A generic writer-acquire failure of the range task is a refresh failure: the view goes invalid with
-            // the error in memory, as for the refresh-intervals update.
+            // the error in memory, as for the refresh-intervals update. The view's cache, which becomes the backlog
+            // it starts with, lacks the UPDATE's range, which only the task carries: the backlog is lost, and RESUME
+            // refuses instead of catching up without the range.
             execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
             drainWalQueue();
             walGenericFailureToken.set(viewToken);
@@ -235,6 +238,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             } finally {
                 state.unlock();
             }
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, state.getBacklogLostReason());
+            assertExceptionNoLeakCheck(
+                    "REFRESH MATERIALIZED VIEW price_1h RESUME",
+                    "REFRESH MATERIALIZED VIEW ".length(),
+                    "materialized view backlog is lost [reason=backlog update failed]; RESUME cannot catch up on base"
+                            + " changes made while the view was invalid. Run REFRESH MATERIALIZED VIEW price_1h RESUME SKIP"
+                            + " BACKLOG, then REFRESH ... RANGE over the gap"
+            );
+            Assert.assertTrue(state.isInvalid());
             assertJpyPrice("103.21");
         });
     }
@@ -300,6 +312,70 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
             Assert.assertEquals(0, state.getRefreshIntervals().size());
             assertPriceViewValid();
             assertJpyPrice("9.9");
+        });
+    }
+
+    @Test
+    public void testAddRefreshRangeReadOnlyRefusalOfCacheWriteDefers() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean isInvalid : new boolean[]{false, true}) {
+                // A MANUAL view, whose UPDATE queues only its range task, refreshed at base txn 1, valid or invalid.
+                createBasePriceTable();
+                execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL AS (" +
+                        "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
+                        ") PARTITION BY DAY");
+                insertBasePriceRows();
+                drainWalQueue();
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                final MatViewFixture fixture = resolvePriceViewFixture();
+                final TableToken viewToken = fixture.viewToken();
+                final MatViewState state = fixture.state();
+                if (isInvalid) {
+                    engine.getMatViewStateStore().enqueueInvalidate(viewToken, "test invalidation");
+                    drainWalAndMatViewQueues();
+                    Assert.assertTrue(state.isInvalid());
+                }
+
+                // The node turns read-only while the UPDATE's range task holds the view lock, after it acquired the
+                // view's writer: the commit fence refuses the view state event that persists the cache with the range.
+                // The refusal is a deferral, not a failure: the task neither invalidates the view nor loses its
+                // backlog, and writes nothing, while the in-memory cache keeps the range.
+                execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
+                drainWalQueue();
+                final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                final AtomicBoolean hasFired = new AtomicBoolean();
+                try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                    job.setOnHoldingLockForTesting(() -> {
+                        if (hasFired.compareAndSet(false, true)) {
+                            isReadOnly.set(true);
+                        }
+                    });
+                    drainMatViewQueue(job);
+                } finally {
+                    isReadOnly.set(false);
+                }
+                drainWalQueue();
+                Assert.assertTrue("the seam must have fired during the hold", hasFired.get());
+                Assert.assertFalse(state.isLocked());
+                Assert.assertEquals(isInvalid, state.isInvalid());
+                Assert.assertEquals(isInvalid ? "test invalidation" : null, state.getInvalidationReasonForReport());
+                Assert.assertNull(state.getBacklogLostReason());
+                Assert.assertEquals("the refused task must write nothing", viewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                Assert.assertEquals(2, state.getRefreshIntervalsBaseTxn());
+                final LongList updatedDay = new LongList();
+                updatedDay.add(parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"));
+                updatedDay.add(parseFloorPartialTimestamp("2024-09-10T23:59:59.999999Z"));
+                TestUtils.assertEquals(updatedDay, state.getRefreshIntervals());
+                assertQuery("SELECT view_name, view_status FROM materialized_views()")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns("view_name\tview_status\nprice_1h\t" + (isInvalid ? "invalid" : "valid") + "\n");
+                assertJpyPrice("103.21");
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base_price");
+                drainWalAndMatViewQueues();
+            }
         });
     }
 
