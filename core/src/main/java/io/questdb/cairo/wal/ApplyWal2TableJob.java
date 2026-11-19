@@ -545,6 +545,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                         // refresh whose base reader sees the change compiles the switched reading.
                                         matViewBareNameGuard.beforeColumnChange(writer.getTableToken(), metadataChangeOp, seqTxn);
                                         metadataChangeOp.apply(writer, true);
+                                        // A view created, or given a new SQL, while the change applied missed the
+                                        // guard's check above, and its refreshes may have read the base without
+                                        // the change: the guard checks it now that the change is visible.
+                                        matViewBareNameGuard.afterColumnChange(writer.getTableToken(), seqTxn);
                                         // No column change invalidates a mat view here: its next refresh that
                                         // recomputes rows compiles its SQL and decides. Live views keep their
                                         // invalidation on a column they read.

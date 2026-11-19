@@ -76,6 +76,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int POSITIONAL_ALTER_MIN = 20;
     // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts, in RESTART_SHAPE_ROUNDS rounds
     private static final int PURGE_THEN_RESTART_MIN = 40;
+    // each shape of testBareNameRoundShapes() that a racer creating mv2, or altering the view to the bare count, draws
+    // while a raced base column change applies, in BARE_NAME_ROUNDS rounds
+    private static final int RACED_VIEW_SHAPE_MIN = 50;
     // the rounds of testRestartShapesOverViewWal(), half of them of a period view: each of its restart shapes needs a few
     // given operations between two view checks, so the generator draws it only a few times in a thousand rounds
     private static final int RESTART_SHAPE_ROUNDS = 10_000;
@@ -611,7 +614,10 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         // column, and one refused for a qualified column the base lacks; and the view's rows mixed by such an ALTER. A
         // raced switch of the bare count, with every racer and with a FULL among its racers, and a raced change under
         // count(), which switches nothing. A deferred view's first build racing the round's first switch, which leaves
-        // the view invalid with the switch standing.
+        // the view invalid with the switch standing. A second view created while a raced DROP applies, built before the
+        // change by a later racer and built after it, and its CREATE refused while a raced ADD applies; ALTER ... AS
+        // from count() to the bare count while a raced DROP applies, which switches the view's SQL, and refused while a
+        // raced ADD applies.
         final Rnd rnd = new Rnd(42, 42);
         final int[] kindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
         int resumeRefusedOnSwitchPlain = 0;
@@ -628,6 +634,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int racedSwitchesWithFull = 0;
         int racedChangesUnderCall = 0;
         int racedFirstBuilds = 0;
+        int racedViewsBuiltBeforeChange = 0;
+        int racedViewsBuiltAfterChange = 0;
+        int racedViewsRefused = 0;
+        int racedAltersFromCallToBare = 0;
+        int racedAltersRefused = 0;
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < BARE_NAME_ROUNDS; round++) {
             // MatViewFuzzTest#testBareNameSwitchResume() draws a deferred view in the same way
@@ -683,23 +694,69 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     case BASE_RACED_BARE_NAME_COLUMN_CHANGE -> {
                         Assert.assertEquals(op.isColumnAdded, generator.hasBaseCountColumn());
                         Assert.assertTrue(op.racers.size() > 0 && op.racers.size() < 4);
+                        int createRacerCount = 0;
                         for (int i = 0, n = op.racers.size(); i < n; i++) {
                             racerCounts[op.racers.getQuick(i)]++;
+                            if (op.racers.getQuick(i) == MatViewFuzzOpGenerator.RACER_CREATE_VIEW) {
+                                createRacerCount++;
+                            }
+                        }
+                        Assert.assertTrue("one CREATE of mv2 at most", createRacerCount < 2);
+                        final boolean isAltered = op.racers.contains(MatViewFuzzOpGenerator.RACER_ALTER_TO_BARE);
+                        if (isAltered && op.isColumnAdded) {
+                            // the explicit-name rule refuses the bare count while the base has no column count
+                            racedAltersRefused++;
                         }
                         if (sqlBefore == MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) {
                             // a FULL that raced the change rebuilt the view without it, so the switch still stands
                             Assert.assertTrue(generator.isBareNameSwitchStanding());
                             Assert.assertTrue(generator.isBareNameViewInvalid());
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE, generator.getBareNameSql());
                             racedSwitches++;
                             if (op.racers.contains(MatViewFuzzOpGenerator.RACER_FULL)) {
                                 racedSwitchesWithFull++;
                             }
                             alterRecoveryStep = wasInvalid ? 1 : 0;
                             isSwitchCovered = false;
+                        } else if (isAltered && !op.isColumnAdded) {
+                            // the racer's ALTER ... AS installed the bare count before the DROP was visible, and the
+                            // guard's check after the change switches it
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_CALL, sqlBefore);
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE, generator.getBareNameSql());
+                            Assert.assertTrue(generator.isBareNameSwitchStanding());
+                            Assert.assertTrue(generator.isBareNameViewInvalid());
+                            racedAltersFromCallToBare++;
+                            alterRecoveryStep = wasInvalid ? 1 : 0;
+                            isSwitchCovered = false;
                         } else {
                             // a SQL that reads the qualified column keeps it
                             Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_CALL, sqlBefore);
+                            Assert.assertEquals(MatViewFuzzOpGenerator.BARE_NAME_SQL_CALL, generator.getBareNameSql());
                             racedChangesUnderCall++;
+                        }
+                        final int createIndex = op.racers.indexOf(MatViewFuzzOpGenerator.RACER_CREATE_VIEW, 0, op.racers.size());
+                        switch (op.racedViewOutcome) {
+                            case MatViewFuzzOpGenerator.RACED_VIEW_NONE -> Assert.assertEquals(-1, createIndex);
+                            case MatViewFuzzOpGenerator.RACED_VIEW_REFUSED -> {
+                                Assert.assertTrue(createIndex > -1 && op.isColumnAdded);
+                                racedViewsRefused++;
+                            }
+                            case MatViewFuzzOpGenerator.RACED_VIEW_BUILT_BEFORE_CHANGE -> {
+                                Assert.assertTrue(createIndex > -1 && !op.isColumnAdded);
+                                final int buildIndex = Math.max(
+                                        op.racers.indexOf(MatViewFuzzOpGenerator.RACER_RUN_REFRESH_JOB, createIndex, op.racers.size()),
+                                        op.racers.indexOf(MatViewFuzzOpGenerator.RACER_FULL, createIndex, op.racers.size())
+                                );
+                                Assert.assertTrue("a racer that runs the refresh job after the CREATE", buildIndex > createIndex);
+                                racedViewsBuiltBeforeChange++;
+                            }
+                            default -> {
+                                Assert.assertEquals(MatViewFuzzOpGenerator.RACED_VIEW_BUILT_AFTER_CHANGE, op.racedViewOutcome);
+                                Assert.assertTrue(createIndex > -1 && !op.isColumnAdded);
+                                Assert.assertEquals(-1, op.racers.indexOf(MatViewFuzzOpGenerator.RACER_RUN_REFRESH_JOB, createIndex, op.racers.size()));
+                                Assert.assertEquals(-1, op.racers.indexOf(MatViewFuzzOpGenerator.RACER_FULL, createIndex, op.racers.size()));
+                                racedViewsBuiltAfterChange++;
+                            }
                         }
                     }
                     case VIEW_RESUME -> {
@@ -792,6 +849,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("a raced switch of the bare count with a FULL among its racers", racedSwitchesWithFull, 50);
         assertShare("a raced base column change under count()", racedChangesUnderCall, 50);
         assertShare("a deferred view's first build racing the round's first switch", racedFirstBuilds, 200);
+        assertShare("a second view created while a raced DROP applies and built before the change", racedViewsBuiltBeforeChange, RACED_VIEW_SHAPE_MIN);
+        assertShare("a second view created while a raced DROP applies and built after the change", racedViewsBuiltAfterChange, RACED_VIEW_SHAPE_MIN);
+        assertShare("a second view whose CREATE a raced ADD refuses", racedViewsRefused, RACED_VIEW_SHAPE_MIN);
+        assertShare("ALTER ... AS from count() to the bare count while a raced DROP applies", racedAltersFromCallToBare, RACED_VIEW_SHAPE_MIN);
+        assertShare("ALTER ... AS to the bare count that a raced ADD refuses", racedAltersRefused, RACED_VIEW_SHAPE_MIN);
         for (int racer = 0; racer < MatViewFuzzOpGenerator.RACER_COUNT; racer++) {
             assertShare("racer " + racer, racerCounts[racer], 100);
         }

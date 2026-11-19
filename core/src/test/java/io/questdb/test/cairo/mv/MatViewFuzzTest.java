@@ -296,7 +296,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // The budget: questdb.fuzz.matview.rounds independent rounds of questdb.fuzz.matview.steps operations.
         // A raced base column change runs other operations while its apply pauses, see raceBareNameColumnChange(). Half
         // of the rounds create the view REFRESH IMMEDIATE DEFERRED, and its first build races the round's first switch,
-        // see MatViewFuzzOpGenerator.isBareNameViewBuilt().
+        // see MatViewFuzzOpGenerator.isBareNameViewBuilt(). Two racers give a SQL that reads count bare to a view after
+        // the bare-name guard checked the base's views: the CREATE of a second view, which the test checks once the
+        // change applied, see checkRacedBareNameView(), and ALTER ... AS of the round's view.
         final int rounds = Integer.getInteger("questdb.fuzz.matview.rounds", 1);
         final int steps = Integer.getInteger("questdb.fuzz.matview.steps", -1);
         assertMemoryLeak(BARE_NAME_FF, () -> {
@@ -1219,6 +1221,59 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Checks the view mv2 that a racer of the raced base column change created, see
+    // MatViewFuzzOpGenerator.RACED_VIEW_*, and drops it. The bare-name guard's check after the change invalidates the
+    // view when a racer built it from the base without the change: its rows read count as the column, which no row
+    // writes. Otherwise its first build runs after the change, and every bucket calls count().
+    private static void checkRacedBareNameView(MatViewFuzzOpGenerator.Op op) throws Exception {
+        if (op.racedViewOutcome == MatViewFuzzOpGenerator.RACED_VIEW_NONE || op.racedViewOutcome == MatViewFuzzOpGenerator.RACED_VIEW_REFUSED) {
+            Assert.assertNull(engine.getTableTokenIfExists("mv2"));
+            return;
+        }
+        drainOperationsFuzzQueues();
+        final MatViewState state = opsViewState("mv2");
+        final int[] readings = new int[2];
+        if (op.racedViewOutcome == MatViewFuzzOpGenerator.RACED_VIEW_BUILT_BEFORE_CHANGE) {
+            Assert.assertTrue("the view built while the change applied is valid", state.isInvalid());
+            Assert.assertEquals(MatViewBareNameGuard.invalidationReason("count"), state.getInvalidationReasonForReport());
+            countBareNameReadings("mv2", "[racedView=built before the change]", readings);
+            Assert.assertEquals("buckets of the view built before the change that call count()", 0, readings[0]);
+            Assert.assertTrue("buckets of the view built before the change", readings[1] > 0);
+        } else {
+            execute("REFRESH MATERIALIZED VIEW mv2 INCREMENTAL");
+            drainOperationsFuzzQueues();
+            Assert.assertFalse("the view built after the change is invalid: " + state.getInvalidationReasonForReport(), state.isInvalid());
+            countBareNameReadings("mv2", "[racedView=built after the change]", readings);
+            Assert.assertTrue("buckets of the view built after the change", readings[0] > 0);
+            Assert.assertEquals("buckets of the view built after the change that read the column", 0, readings[1]);
+        }
+        execute("DROP MATERIALIZED VIEW mv2");
+        drainWalAndMatViewQueues();
+    }
+
+    // Counts the buckets of the view that call count(), which hold a positive count, in readings[0], and those that
+    // read the column count, which holds NULL since no row of a bare-name round writes it, in readings[1].
+    private static void countBareNameReadings(String viewName, String context, int[] readings) throws SqlException {
+        readings[0] = 0;
+        readings[1] = 0;
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile("SELECT count FROM " + viewName, sqlExecutionContext).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                final long count = record.getLong(0);
+                if (count == Numbers.LONG_NULL) {
+                    readings[1]++;
+                } else {
+                    Assert.assertTrue("a bucket counts its rows " + context, count > 0);
+                    readings[0]++;
+                }
+            }
+        }
+    }
+
     // A view check of testBareNameSwitchResume(): drains the queues, recovers an invalid view with RESUME or FULL, as
     // the generator decides, and asserts the readings of the view's rows.
     private static void checkBareNameView(MatViewFuzzOpGenerator generator, MatViewFuzzOpGenerator.Op op, int step) throws Exception {
@@ -1235,24 +1290,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainOperationsFuzzQueues();
         Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
 
-        int callRowCount = 0;
-        int columnRowCount = 0;
-        try (
-                SqlCompiler compiler = engine.getSqlCompiler();
-                RecordCursorFactory factory = compiler.compile("SELECT count FROM mv", sqlExecutionContext).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
-        ) {
-            final Record record = cursor.getRecord();
-            while (cursor.hasNext()) {
-                final long count = record.getLong(0);
-                if (count == Numbers.LONG_NULL) {
-                    columnRowCount++;
-                } else {
-                    Assert.assertTrue("a bucket counts its rows " + context, count > 0);
-                    callRowCount++;
-                }
-            }
-        }
+        final int[] readings = new int[2];
+        countBareNameReadings("mv", context, readings);
+        final int callRowCount = readings[0];
+        final int columnRowCount = readings[1];
         LOG.info().$("fuzz: view rows [callRows=").$(callRowCount).$(", columnRows=").$(columnRowCount)
                 .$(", mixedByAlter=").$(generator.isReadingMixedByAlter())
                 .I$();
@@ -1410,6 +1451,40 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     case MatViewFuzzOpGenerator.RACER_INVALIDATE ->
                             engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
                     case MatViewFuzzOpGenerator.RACER_RUN_REFRESH_JOB -> drainMatViewQueue(engine);
+                    case MatViewFuzzOpGenerator.RACER_CREATE_VIEW -> {
+                        // The CREATE compiles against the base without the change, and registers the view after the
+                        // bare-name guard checked the base's views, see checkRacedBareNameView().
+                        try {
+                            execute("CREATE MATERIALIZED VIEW mv2 REFRESH MANUAL AS ("
+                                    + MatViewFuzzOpGenerator.bareNameViewSql(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE) + ") PARTITION BY DAY");
+                            Assert.assertNotEquals("CREATE must refuse a bare count the base lacks", MatViewFuzzOpGenerator.RACED_VIEW_REFUSED, op.racedViewOutcome);
+                        } catch (SqlException e) {
+                            if (op.racedViewOutcome != MatViewFuzzOpGenerator.RACED_VIEW_REFUSED) {
+                                throw e;
+                            }
+                            TestUtils.assertContains(e.getFlyweightMessage(), "count is not a column; write count() to call the function");
+                            Assert.assertNull(engine.getTableTokenIfExists("mv2"));
+                        }
+                    }
+                    case MatViewFuzzOpGenerator.RACER_ALTER_TO_BARE -> {
+                        // The ALTER validates against the base without the change, and the view's WAL installs the SQL
+                        // before the change is visible, so the bare-name guard checks it after the change. Applying
+                        // the WAL at once steers clear of D8, see VIEW_ALTER_AS.
+                        final String viewSql = MatViewFuzzOpGenerator.bareNameViewSql(MatViewFuzzOpGenerator.BARE_NAME_SQL_BARE);
+                        final long viewSeqTxn = opsViewSeqTxn();
+                        try {
+                            execute("ALTER MATERIALIZED VIEW mv AS (" + viewSql + ')');
+                            Assert.assertFalse("ALTER ... AS must refuse a bare count the base lacks", op.isColumnAdded);
+                            drainWalQueue();
+                            Assert.assertEquals(viewSql, opsViewState("mv").getViewDefinition().getMatViewSql());
+                        } catch (SqlException e) {
+                            if (!op.isColumnAdded) {
+                                throw e;
+                            }
+                            TestUtils.assertContains(e.getFlyweightMessage(), "count is not a column; write count() to call the function");
+                            Assert.assertEquals("a refused ALTER ... AS wrote to the view's WAL", viewSeqTxn, opsViewSeqTxn());
+                        }
+                    }
                     default -> throw new AssertionError("unexpected racer: " + racer);
                 }
             }
@@ -1420,6 +1495,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             applier.join();
         }
         Assert.assertNull(applierError.get());
+        checkRacedBareNameView(op);
     }
 
     private static void runBareNameOperations(Rnd rnd, int steps) throws Exception {

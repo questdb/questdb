@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -66,14 +67,31 @@ import io.questdb.std.QuietCloseable;
  * outlives the invalidation, so a refresh that commits a refresh position below it publishes the guard's invalidation
  * again, whatever settled the first one, see {@code MatViewRefreshJob.publishBareNameSwitchAboveRefreshPosition()}.
  * <p>
+ * A view's SQL can also reach the base's dependent views while the change applies and is not visible yet: CREATE
+ * MATERIALIZED VIEW registers the view, the WAL apply of ALTER MATERIALIZED VIEW ... AS or ... WITH BASE installs a new
+ * SQL or moves the view from another base table, or the view's state appears after the guard skipped the view for
+ * having none. Such a view can refresh from the base before and after the change, so the WAL apply job calls
+ * {@link #afterColumnChange} once the change applied, and the guard checks each view whose table id and SQL text
+ * {@link #beforeColumnChange} did not check. It records the switch at the change's txn, as before the change, and
+ * publishes the invalidation only to a view with a refresh position, whose rows may come from a refresh that read the
+ * base before the change. A view without one keeps its queued first build, whose commit publishes the invalidation when
+ * the build read the base before the change. A view or SQL that reaches the dependent views after that check refreshes
+ * only from base snapshots that include the change. The check cannot tell a view that holds rows from before the
+ * change from one whose refresh position reached the change between the apply and the check, so the latter goes
+ * invalid too, and a FULL refresh recovers it.
+ * <p>
  * The guard runs only on the node that refreshes views; a replica's state store holds no view states. Its
  * notification and the switches it records live in memory, so a crash before the refresh job handles the
  * notification loses it, and the next refresh then reads the switched name, as the refresh did before the guard.
  */
 public class MatViewBareNameGuard implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(MatViewBareNameGuard.class);
+    // The SQL text of each view that beforeColumnChange() checked, by the view's table id, for afterColumnChange() of
+    // the same change. A view whose check failed is not in it.
+    private final IntObjHashMap<String> checkedViewSqls = new IntObjHashMap<>();
     private final ObjList<TableToken> dependentViews = new ObjList<>();
     private final CairoEngine engine;
+    // The names of the change's columns that are names of zero-argument functions, as the change writes them.
     private final ObjList<String> matchedNames = new ObjList<>();
     // Parses the views' SQL, allocated at the first column change under the name of a zero-argument function.
     private SqlExecutionContextImpl parseContext;
@@ -89,26 +107,86 @@ public class MatViewBareNameGuard implements QuietCloseable {
     }
 
     /**
+     * Checks the dependent materialized views of the base table that {@link #beforeColumnChange} did not check, after
+     * the change applied: a view registered while the change applied, or one whose SQL changed meanwhile. It records
+     * the switches of such a view, as {@link #beforeColumnChange} does, and invalidates the view only when it has a
+     * refresh position, see the class comment. The WAL apply job calls it right after it applied the change that it
+     * passed to {@link #beforeColumnChange}. Errors are logged and swallowed: the change has applied.
+     *
+     * @param baseTableToken the base table the change applied to
+     * @param seqTxn         the base table's sequencer txn of the change
+     */
+    public void afterColumnChange(TableToken baseTableToken, long seqTxn) {
+        try {
+            if (matchedNames.size() == 0) {
+                // the change has no column under the name of a zero-argument function
+                return;
+            }
+            dependentViews.clear();
+            engine.getDependentViewGraph().getDependentViews(baseTableToken, dependentViews);
+            final MatViewStateStore stateStore = engine.getMatViewStateStore();
+            for (int v = 0, n = dependentViews.size(); v < n; v++) {
+                final TableToken viewToken = dependentViews.getQuick(v);
+                if (!viewToken.isMatView()) {
+                    // a live view, which the guard does not cover
+                    continue;
+                }
+                final MatViewState viewState = stateStore.getViewState(viewToken);
+                if (viewState == null) {
+                    // the view is being dropped, or the node refreshes no views
+                    continue;
+                }
+                final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+                final String checkedViewSql = checkedViewSqls.get(viewToken.getTableId());
+                if (checkedViewSql != null && checkedViewSql.equals(viewDefinition.getMatViewSql())) {
+                    // beforeColumnChange() checked this SQL of the view
+                    continue;
+                }
+                final CharSequence firstBareName = recordBareNameSwitches(viewState, viewDefinition, baseTableToken, seqTxn);
+                // The refresh position is read after the switches are recorded, and a refresh commits its position
+                // before it reads the switches, so a first build that commits meanwhile publishes the invalidation
+                // itself when its base reader predates the change.
+                if (firstBareName != null && viewState.getLastRefreshBaseTxn() != -1) {
+                    publishInvalidation(stateStore, viewToken, viewState, invalidationReason(firstBareName), baseTableToken, seqTxn);
+                }
+            }
+        } catch (Throwable th) {
+            // A failed enqueue has already recorded its retry, and the view's marker is set, so the refresh job
+            // still delivers the invalidation.
+            LOG.error().$("could not check materialized views that reached the base table while a column change applied [table=")
+                    .$(baseTableToken)
+                    .$(", ex=").$(th)
+                    .I$();
+        } finally {
+            matchedNames.clear();
+            checkedViewSqls.clear();
+        }
+    }
+
+    /**
      * Invalidates each dependent materialized view of the base table whose own SQL text uses a column name that the
      * change adds, removes or renames as a bare select-list name, when that name is also the name of a
      * zero-argument function. The WAL apply job calls it before it applies the change, so that no refresh whose
      * base reader sees the change compiles the view's SQL before the view's marker is set. Comparisons ignore case.
      * Errors are logged and swallowed: a failed guard must not fail the base table's WAL apply. A failed parse of
      * a view's SQL leaves the view to its next refresh, whose compile fails on the same error. A view in the middle
-     * of DROP MATERIALIZED VIEW may still be published to; the state store drops the request.
+     * of DROP MATERIALIZED VIEW may still be published to; the state store drops the request. The guard remembers
+     * the SQL text of each view it checked for {@link #afterColumnChange}.
      *
      * @param baseTableToken the base table the change applies to
      * @param change         the column change
      * @param seqTxn         the base table's sequencer txn of the change
      */
     public void beforeColumnChange(TableToken baseTableToken, TableMetadataChange change, long seqTxn) {
+        // the state of the previous change, whose apply may have failed before afterColumnChange()
+        matchedNames.clear();
+        checkedViewSqls.clear();
         final int nameCount = change.getChangedColumnNameCount();
         if (nameCount == 0) {
             return;
         }
         try {
             final FunctionFactoryCache functionFactoryCache = engine.getFunctionFactoryCache();
-            matchedNames.clear();
             for (int i = 0; i < nameCount; i++) {
                 final CharSequence name = change.getChangedColumnName(i);
                 if (functionFactoryCache.isValidNoArgFunction(name)) {
@@ -132,26 +210,13 @@ public class MatViewBareNameGuard implements QuietCloseable {
                     // the view is being dropped, or the node refreshes no views
                     continue;
                 }
-                final LowerCaseCharSequenceHashSet bareNames = viewState.getViewDefinition().getBareSelectNames(engine, getParseContext());
-                if (bareNames == null) {
-                    continue;
-                }
-                CharSequence firstBareName = null;
-                for (int i = 0, m = matchedNames.size(); i < m; i++) {
-                    final int keyIndex = bareNames.keyIndex(matchedNames.getQuick(i));
-                    if (keyIndex < 0) {
-                        // the name as the view's SQL writes it
-                        final CharSequence bareName = bareNames.keyAt(keyIndex);
-                        viewState.recordBareNameSwitch(bareName, baseTableToken.getTableId(), seqTxn);
-                        if (firstBareName == null) {
-                            firstBareName = bareName;
-                        }
-                    }
-                }
+                final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+                final String viewSql = viewDefinition.getMatViewSql();
+                final CharSequence firstBareName = recordBareNameSwitches(viewState, viewDefinition, baseTableToken, seqTxn);
                 if (firstBareName != null) {
-                    viewState.runBareNameSwitchRecordedSeamForTesting();
                     publishInvalidation(stateStore, viewToken, viewState, invalidationReason(firstBareName), baseTableToken, seqTxn);
                 }
+                checkedViewSqls.put(viewToken.getTableId(), viewSql);
             }
         } catch (Throwable th) {
             // A failed enqueue has already recorded its retry, and the view's marker is set, so the refresh job
@@ -206,5 +271,35 @@ public class MatViewBareNameGuard implements QuietCloseable {
             );
         }
         return parseContext;
+    }
+
+    // Records the switch of each matched name that the view's SQL uses bare, and returns the first such name as the SQL
+    // writes it, or null when the SQL uses none of them or does not parse. Runs the test seam after it recorded one.
+    private CharSequence recordBareNameSwitches(
+            MatViewState viewState,
+            MatViewDefinition viewDefinition,
+            TableToken baseTableToken,
+            long seqTxn
+    ) {
+        final LowerCaseCharSequenceHashSet bareNames = viewDefinition.getBareSelectNames(engine, getParseContext());
+        if (bareNames == null) {
+            return null;
+        }
+        CharSequence firstBareName = null;
+        for (int i = 0, m = matchedNames.size(); i < m; i++) {
+            final int keyIndex = bareNames.keyIndex(matchedNames.getQuick(i));
+            if (keyIndex < 0) {
+                // the name as the view's SQL writes it
+                final CharSequence bareName = bareNames.keyAt(keyIndex);
+                viewState.recordBareNameSwitch(bareName, baseTableToken.getTableId(), seqTxn);
+                if (firstBareName == null) {
+                    firstBareName = bareName;
+                }
+            }
+        }
+        if (firstBareName != null) {
+            viewState.runBareNameSwitchRecordedSeamForTesting();
+        }
+        return firstBareName;
     }
 }

@@ -1828,8 +1828,9 @@ public class MatViewState implements QuietCloseable {
 
     /**
      * Test seam: runs once in the bare-name guard, after it recorded the bare-name switches of a base column change on
-     * the view and before it reads the view's resuming and invalid flags, see {@link MatViewBareNameGuard}. Tests use
-     * it to run RESUME in that window. One-shot: the seam clears itself before firing.
+     * the view, see {@link MatViewBareNameGuard}: in its check before the change applies, before it reads the view's
+     * resuming and invalid flags; in its check after the change, before it reads the view's refresh position. Tests use
+     * it to run RESUME or a refresh in that window. One-shot: the seam clears itself before firing.
      */
     @TestOnly
     public void setOnBareNameSwitchRecordedForTesting(Runnable onBareNameSwitchRecordedForTesting) {
