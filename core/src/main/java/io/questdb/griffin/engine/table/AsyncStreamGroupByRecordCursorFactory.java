@@ -147,12 +147,12 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
 
     @TestOnly
     public int getDispatchedFrameCount() {
-        return frameSequence.getDispatchedFrameCount();
+        return frameSequence.getDispatchedTaskCount();
     }
 
     @TestOnly
     public int getReducedFrameCount() {
-        return frameSequence.getReducedFrameCount();
+        return frameSequence.getReducedTaskCount();
     }
 
     @Override
@@ -379,7 +379,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 if (filterContext == null) {
                     task.releaseFrameMemory();
                 } else {
-                    filterContext.getMemoryPool(slot).releaseParquetBuffers();
+                    filterContext.getMemoryPool(slot).releaseDecodedFrameBuffers();
                 }
             } finally {
                 atom.release(slot);

@@ -280,7 +280,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             atom.maybeEnableSharding(fragment);
         } finally {
             try {
-                frameMemoryPool.releaseParquetBuffers();
+                frameMemoryPool.releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }
@@ -474,7 +474,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             atom.maybeEnableSharding(fragment);
         } finally {
             try {
-                filterCtx.getMemoryPool(slotId).releaseParquetBuffers();
+                filterCtx.getMemoryPool(slotId).releaseDecodedFrameBuffers();
             } finally {
                 atom.release(slotId);
             }
