@@ -83,7 +83,7 @@ case $QDB_OS in
 esac
 
 function usage {
-    echo "Usage: $0 start|status|stop [-f] [-n] [-p] [-d path] [-t tag] [-- agent-params]"
+    echo "Usage: $0 start|status|stop [-f] [-n] [-c] [-p] [-d path] [-t tag] [-- agent-params]"
     echo "       $0 profile [-t tag] -- [profiler-args]"
     echo ""
     echo "Commands:"
@@ -94,6 +94,7 @@ function usage {
     echo ""
     echo "Options:"
     echo "  -f    Force overwrite public directory"
+    echo "  -c    Container mode: run in the foreground, logging to stdout"
     echo "  -n    Disable HUP handler"
     echo "  -p    Enable async profiler at startup - continuous profiling"
     echo "  -d    Set QuestDB root directory"
@@ -121,10 +122,10 @@ function export_java {
 
     # check if this is our runtime
     if [ -f "$BASE/java" ]; then
-        export QDB_PACKAGE=withjre
+        export QDB_PACKAGE=${QDB_PACKAGE:-withjre}
         export JAVA="$BASE/java"
     else
-      export QDB_PACKAGE=withoutjre
+      export QDB_PACKAGE=${QDB_PACKAGE:-withoutjre}
       if [ "$JAVA_HOME" = "" -a -e /usr/libexec/java_home ]; then
           JAVA_HOME=$(/usr/libexec/java_home -v 11)
       fi
@@ -395,7 +396,9 @@ function start {
     fi
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
-        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        # Container mode logs to stdout; leave it to the supervisor (Docker, systemd)
+        # rather than an unrotated file, and exec so the JVM gets its signals directly.
+        exec ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC}
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
         ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
         $BASE/print-hello.sh ${HELLO_FILE}
