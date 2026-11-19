@@ -397,6 +397,18 @@ jobs:
           set -euo pipefail
           runtime_archive="$(find core/target -maxdepth 1 -type f -name 'questdb-*-rt-linux-x86-64.tar.gz' | head -1)"
           ci/smoke_test_runtime_archive.sh "${runtime_archive}"
+      - name: QWP client/server binary compatibility
+        id: qwp-compat
+        timeout-minutes: 5
+        run: ./compat/src/test/qwp/run-qwp-schema-compat.sh
+      - name: Upload QWP compatibility logs
+        if: failure() && steps.qwp-compat.outcome == 'failure'
+        uses: actions/upload-artifact@v6
+        with:
+          name: qwp-schema-compatibility-logs
+          path: compat/target/qwp-schema-compat
+          if-no-files-found: ignore
+          retention-days: 5
       - id: upload-evidence
         uses: actions/upload-artifact@v6
         with:

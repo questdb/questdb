@@ -52,9 +52,11 @@ import io.questdb.network.PeerIsSlowToWriteException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.network.Socket;
 import io.questdb.std.CharSequenceLongHashMap;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
@@ -536,6 +538,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // a legacy "true" grant echoes "enabled", the token released clients
         // expect. Omit the header when nothing is granted.
         Utf8Sequence durableAckConfirmToken = DurabilityTier.responseToken(grantedTiers);
+        Utf8Sequence schemaHeader = requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_SCHEMA);
+        boolean schemaEnabled = schemaHeader != null
+                && Utf8s.equalsIgnoreCaseAscii(schemaHeader, QwpIngressHttpProcessor.HEADER_VALUE_SCHEMA_ENABLED);
         // Echo the subprotocol whenever it was offered, enabled or not. The
         // token confirms the browser negotiation dialect, NOT the capability:
         // a browser fails the whole connection when it offered a subprotocol
@@ -560,7 +565,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, schemaEnabled);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -586,12 +591,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setDurableAckEnabled(durableAckEnabled);
         state.setDurableAckTiers(grantedTiers);
+        state.setSchemaEnabled(schemaEnabled);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, schemaEnabled);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -982,6 +988,16 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.onResumePongComplete();
                 LOG.debug().$("Resumed pong frame sent [fd=").$(context.getFd()).I$();
             }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_SCHEMA -> {
+                context.resumeResponseSend();
+                state.onResumeSchemaComplete();
+                if (state.hasPendingAck()) {
+                    trySendAck(context, state);
+                }
+                if (state.isDurableAckEnabled()) {
+                    trySendDurableAck(context, state);
+                }
+            }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -1063,6 +1079,52 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // pre-built 400 response for known errors, null for arbitrary text. The
     // returned byte[] is shared and read-only -- copy bytes into the response
     // buffer, do not mutate.
+
+    /**
+     * Whether a complete binary frame's payload is a QWP schema control message:
+     * it carries the QWP magic and the control flag. Reads through
+     * {@code maskKey} (0 for an unmasked payload), so the receive loop can
+     * classify a frame before unmasking it.
+     * <p>
+     * The magic check keeps non-QWP payloads on the data path: an ILP line such
+     * as "cpu,host=..." has 'o' (0x6f) at the flags offset, which sets the
+     * control bit. The data path answers it with a parse NACK instead of closing
+     * the connection. The check does not demand a whole header, so a control
+     * frame truncated to its first six bytes still reaches handleSchemaControl(),
+     * which rejects it as malformed instead of the data path acking it.
+     */
+    private static boolean isSchemaControlFrame(long payload, int length, int maskKey) {
+        if (length < Integer.BYTES) {
+            return false;
+        }
+        final int magic = (unmaskedByte(payload, 0, maskKey) & 0xFF)
+                | (unmaskedByte(payload, 1, maskKey) & 0xFF) << 8
+                | (unmaskedByte(payload, 2, maskKey) & 0xFF) << 16
+                | (unmaskedByte(payload, 3, maskKey) & 0xFF) << 24;
+        return magic == QwpConstants.MAGIC_MESSAGE
+                && length > QwpConstants.HEADER_OFFSET_FLAGS
+                && (unmaskedByte(payload, QwpConstants.HEADER_OFFSET_FLAGS, maskKey) & QwpConstants.FLAG_CONTROL) != 0;
+    }
+
+    // The mask key is big-endian: its most significant byte masks payload byte 0.
+    private static byte unmaskedByte(long payload, int index, int maskKey) {
+        return (byte) (Unsafe.getByte(payload + index) ^ (maskKey >>> ((3 - (index & 3)) << 3)));
+    }
+
+    /**
+     * Largest payload a response frame may carry in a send buffer of the given
+     * size, leaving room for the frame header that payload size implies.
+     */
+    private static int maxWebSocketPayload(int bufferSize) {
+        if (bufferSize >= 0x10000 + WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE) {
+            return Math.min(QwpSchemaControl.MAX_MESSAGE_SIZE, bufferSize - WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE);
+        }
+        if (bufferSize >= 126 + 4) {
+            return Math.min(0xffff, bufferSize - 4);
+        }
+        return Math.min(125, Math.max(0, bufferSize - 2));
+    }
+
     private static byte[] precomputedBadRequestResponse(String validationError) {
         if (validationError == null) {
             return null;
@@ -1335,6 +1397,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 context.resumeResponseSend();
                 state.onResumePongComplete();
             }
+            case QwpIngressProcessorState.SEND_STATE_RESUME_SCHEMA -> {
+                context.resumeResponseSend();
+                state.onResumeSchemaComplete();
+            }
             default -> {
                 LOG.critical().$("Invalid WebSocket send state during close [fd=").$(context.getFd())
                         .$(", state=").$(state.getSendState()).I$();
@@ -1576,6 +1642,56 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
         socket.shutdown(Net.SHUT_WR);
         state.onCloseEchoHalfClosed();
+    }
+
+    private void handleSchemaControl(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
+            throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
+        if (!state.isSchemaEnabled()) {
+            sendFatalClose(context, state, WebSocketCloseCode.PROTOCOL_ERROR, "schema control was not negotiated");
+            return;
+        }
+        HttpRawSocket rawSocket = context.getRawResponseSocket();
+        long bufferAddr = rawSocket.getBufferAddress();
+        int bufferSize = rawSocket.getBufferSize();
+        // The reply length is unknown until it is encoded, so reserve the
+        // largest frame header and move the reply down if a shorter one fits.
+        int responseLimit = Math.min(QwpSchemaControl.MAX_MESSAGE_SIZE, bufferSize - WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE);
+        if (responseLimit < QwpConstants.HEADER_SIZE + QwpSchemaControl.RESULT_PAYLOAD_SIZE) {
+            LOG.critical().$("Buffer too small for schema response [fd=").$(context.getFd())
+                    .$(", bufferSize=").$(bufferSize).I$();
+            throw PeerDisconnectedException.INSTANCE;
+        }
+        long responseAddr = bufferAddr + WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE;
+        int responseLen = QwpSchemaControl.describe(
+                engine,
+                context.getSecurityContext(),
+                payload,
+                length,
+                state.getSchemaControlTableName(),
+                responseAddr,
+                responseLimit
+        );
+        if (responseLen < 0) {
+            sendFatalClose(context, state, WebSocketCloseCode.PROTOCOL_ERROR, "malformed schema control message");
+            return;
+        }
+        int headerSize = WebSocketFrameWriter.headerSize(responseLen, false);
+        if (headerSize < WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE) {
+            Vect.memmove(bufferAddr + headerSize, responseAddr, responseLen);
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, responseLen);
+        try {
+            rawSocket.send(headerSize + responseLen);
+        } catch (PeerIsSlowToReadException e) {
+            state.onSchemaBlocked();
+            throw e;
+        }
+        if (state.hasPendingAck()) {
+            trySendAck(context, state);
+        }
+        if (state.isDurableAckEnabled()) {
+            trySendDurableAck(context, state);
+        }
     }
 
     private void handleBinaryMessage(HttpConnectionContext context, QwpIngressProcessorState state, long payload, int length)
@@ -1845,6 +1961,13 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 state.abandonCommitBatch();
             }
         } finally {
+            // A batched frame's rows are not committed yet: like a deferred frame's,
+            // its schema feedback waits for the commit, see commitBatch().
+            state.finishMessageSchemaFeedback(
+                    responseStatus == STATUS_OK && state.isOk(),
+                    responseStatus == STATUS_OK && state.isOk() && !isBatched
+                            && (!deferCommit || deferredFrameFullyCommitted)
+            );
             if ((deferCommit || isBatched) && state.isOk()) {
                 // Preserve WAL state for the next message in the deferred group or
                 // the commit batch.
@@ -2383,7 +2506,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     rejectFragmentedFrame(context, state, opcode);
                     return;
                 }
-                handleBinaryMessage(context, state, payload, length);
+                if (isSchemaControlFrame(payload, length, 0)) {
+                    // The receive loop committed any pending commit batch before
+                    // this frame, so the reply send may block.
+                    assert !state.isCommitBatchPending();
+                    handleSchemaControl(context, state, payload, length);
+                } else {
+                    handleBinaryMessage(context, state, payload, length);
+                }
             }
             case WebSocketOpcode.CONTINUATION ->
                 // Continuation frames are part of a fragmented message we never started
@@ -2532,10 +2662,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
                 // Frame parsed successfully
                 int opcode = frameParser.getOpcode();
-                if ((opcode != WebSocketOpcode.BINARY || !frameParser.isFin()) && state.isCommitBatchPending()) {
+                if (state.isCommitBatchPending()
+                        && (opcode != WebSocketOpcode.BINARY || !frameParser.isFin()
+                        || isSchemaControlFrame(pos + frameParser.getHeaderSize(),
+                        (int) frameParser.getPayloadLength(),
+                        frameParser.isMasked() ? frameParser.getMaskKey() : 0))) {
                     // Anything but a complete data frame -- a control frame (a CLOSE's
-                    // final acks precede the echo), or a fragment refused with a fatal
-                    // CLOSE that flushes acks -- sees every earlier data frame
+                    // final acks precede the echo), a fragment refused with a fatal
+                    // CLOSE that flushes acks, or a schema control frame whose reply
+                    // send can block like an ack -- sees every earlier data frame
                     // committed. Commit BEFORE unmasking the frame and advancing past
                     // it: if the commit fails and its error send blocks, the frame
                     // stays buffered, still masked, and the resume pass parses and
@@ -2764,31 +2899,28 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // Calculate payload size (UTF-8 byte count, capped at 1024 bytes)
             int msgLen = errorMessage != null ? Utf8s.utf8Bytes(errorMessage, 1024) : 0;
             int payloadLen = 9 + 2 + msgLen; // status + seq + len + msg
-
             int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
 
             if (frameSize <= bufferSize) {
-                int offset = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-
-                // Write status
-                Unsafe.putByte(bufferAddr + offset, status);
-                offset += 1;
+                // The status byte is written by writeFeedbackFrame together with the feedback mode.
+                long offset = bufferAddr + WebSocketFrameWriter.headerSize(payloadLen, false) + 1;
 
                 // Write sequence (little-endian)
-                Unsafe.putLong(bufferAddr + offset, sequence);
+                Unsafe.putLong(offset, sequence);
                 offset += 8;
 
                 // Write message length (little-endian)
-                Unsafe.putShort(bufferAddr + offset, (short) msgLen);
+                Unsafe.putShort(offset, (short) msgLen);
                 offset += 2;
 
                 // Write message (UTF-16 to UTF-8 directly to native memory, no byte[] allocation)
                 if (msgLen > 0) {
-                    Utf8s.strCpyUtf8(errorMessage, bufferAddr + offset, msgLen);
+                    Utf8s.strCpyUtf8(errorMessage, offset, msgLen);
                 }
-                offset += msgLen;
 
-                rawSocket.send(offset);
+                frameSize = writeFeedbackFrame(
+                        state, state.getPendingErrorSchemaFeedback(), bufferAddr, bufferSize, payloadLen, status);
+                rawSocket.send(frameSize);
                 state.onErrorSent();
                 LOG.debug().$("Sent error response [fd=").$(context.getFd())
                         .$(", seq=").$(sequence)
@@ -2937,14 +3069,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         long sequence = state.getHighestProcessedSequence();
-        int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
-        long writeAddr = bufferAddr + headerLen;
-        Unsafe.putByte(writeAddr, STATUS_OK);
+        // The status byte is written by writeFeedbackFrame together with the feedback mode.
+        long writeAddr = bufferAddr + WebSocketFrameWriter.headerSize(payloadLen, false);
         Unsafe.putLong(writeAddr + 1, sequence);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 9, state.getPendingAckSeqTxns());
+        frameSize = writeFeedbackFrame(
+                state, state.getPendingAckSchemaFeedback(), bufferAddr, bufferSize, payloadLen, STATUS_OK);
 
         try {
-            rawSocket.send(headerLen + payloadLen);
+            rawSocket.send(frameSize);
             state.onAckSent(sequence);
             LOG.debug().$("Sent cumulative ACK [fd=").$(context.getFd()).$(", upTo=").$(sequence).I$();
         } catch (PeerIsSlowToReadException e) {
@@ -3039,6 +3172,55 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         state.collectDurableProgress(engine.getDurableAckRegistry());
         trySendCollectedDurableAck(context, state);
+    }
+
+    /**
+     * Completes an ACK/NACK frame whose base payload the caller has already
+     * written at {@code bufferAddr + headerSize(basePayloadLen)}, with the
+     * status byte left unset. Appends schema feedback when negotiated, moves
+     * the payload if the larger payload needs a longer frame header, then
+     * writes the frame header and the status byte with the feedback mode.
+     *
+     * @return the complete frame size in bytes
+     */
+    private int writeFeedbackFrame(
+            QwpIngressProcessorState state,
+            LowerCaseCharSequenceObjHashMap<String> tableNames,
+            long bufferAddr,
+            int bufferSize,
+            int basePayloadLen,
+            byte status
+    ) {
+        int headerLen = WebSocketFrameWriter.headerSize(basePayloadLen, false);
+        long payloadAddr = bufferAddr + headerLen;
+        int payloadLen = basePayloadLen;
+        byte mode = 0;
+        if (state.isSchemaEnabled()) {
+            int suffixLen = QwpSchemaControl.encodeFeedback(
+                    engine,
+                    state.getSecurityContext(),
+                    tableNames,
+                    payloadAddr + basePayloadLen,
+                    maxWebSocketPayload(bufferSize) - basePayloadLen,
+                    Math.min(QwpSchemaControl.MAX_MESSAGE_SIZE, bufferSize - WebSocketFrameWriter.MAX_UNMASKED_HEADER_SIZE)
+                            - QwpConstants.HEADER_SIZE
+            );
+            if (suffixLen < 0) {
+                mode = SCHEMA_FEEDBACK_MODE_INVALIDATE_ALL;
+            } else if (suffixLen > 0) {
+                mode = SCHEMA_FEEDBACK_MODE_UPDATES;
+                payloadLen += suffixLen;
+            }
+        }
+        int finalHeaderLen = WebSocketFrameWriter.headerSize(payloadLen, false);
+        if (finalHeaderLen != headerLen) {
+            Vect.memmove(bufferAddr + finalHeaderLen, payloadAddr, payloadLen);
+            payloadAddr = bufferAddr + finalHeaderLen;
+            headerLen = finalHeaderLen;
+        }
+        WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
+        Unsafe.putByte(payloadAddr, (byte) (status | mode));
+        return headerLen + payloadLen;
     }
 
     // Per-connection holder for the byte count of a 4xx upgrade rejection

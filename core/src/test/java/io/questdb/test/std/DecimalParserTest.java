@@ -117,6 +117,15 @@ public class DecimalParserTest {
     }
 
     @Test
+    public void testNanAndInfinityMatchByPrefix() throws NumericException {
+        // The QWP client's DecimalParser mirrors this: a special value is a prefix
+        // match, so trailing characters still parse as NULL rather than failing.
+        assertNullParsed("NaNjunk", 38, 4);
+        assertNullParsed("NaN ", 38, 4);
+        assertNullParsed("Infinitygarbage", 76, 8);
+    }
+
+    @Test
     public void testPrecisionIsAtLeastOne() throws NumericException {
         // trailing zeroes are stripped, leaving no digit at all
         assertParsed("0", 1, 0, "0", -1, -1, false, false);

@@ -150,6 +150,34 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testBorrowedSenderCloseWithUnfinishedRowStoresCompleteRows() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain server = startFragmented()) {
+                server.execute("CREATE TABLE unfinished(i LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                server.awaitTable("unfinished");
+
+                String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";";
+                try (QuestDB db = QuestDB.connect(config)) {
+                    Sender s = db.borrowSender();
+                    s.table("unfinished").longColumn("i", 1).at(1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                    s.table("unfinished").longColumn("i", 2).at(2L * 1_000_000L, java.time.temporal.ChronoUnit.MICROS);
+                    // The caller starts a row and never finishes it.
+                    s.table("unfinished").longColumn("i", 3);
+                    try {
+                        s.close();
+                        Assert.fail("close() must report the unfinished row");
+                    } catch (LineSenderException e) {
+                        TestUtils.assertContains(e.getMessage(), "Cannot flush while row is in progress");
+                    }
+                    // The pool retires the sender, and closing it sends the complete rows.
+                    server.awaitTxn("unfinished", 1);
+                    server.assertSql("SELECT i FROM unfinished", "i\n1\n2\n");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCancelInterruptsLongRunningQuery() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain server = startFragmented()) {
