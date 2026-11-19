@@ -2674,6 +2674,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // so it reaches the caller unchanged: a failed flush keeps its data-sync classification and carries
         // no position in the view SQL.
         boolean isWritingDefinition = false;
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             int remainingRetries = maxRecompileAttempts;
             for (; ; ) {
@@ -2780,6 +2782,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewCompile(wasViewCompile);
         }
     }
 
@@ -2867,15 +2871,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
-    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) {
+    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
         final CharSequence tableName = unquote(model.getTableName());
-        final TableToken tt = engine.verifyTableName(tableName);
-        if (tt != null) {
+        for (int retries = 0; ; retries++) {
+            final TableToken tt = engine.verifyTableName(tableName);
             // a table the principal may not see fails exactly like a missing one does in verifyTableName()
             if (!executionContext.getSecurityContext().isTableVisible(tt)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }
-            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
+            // COPY <table> TO exports every column, so every column must be readable
+            try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                executionContext.getSecurityContext().authorizeSelect(tt, columnNames);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= maxRecompileAttempts) {
+                    throw SqlException.position(model.getTableNameExpr().position)
+                            .put("table schema changed too many times [table=").put(tableName).put(']');
+                }
+                // DROP/CREATE can replace the token before metadata opens. Resolve the name and
+                // check visibility again rather than authorize the replacement with the old token.
+            }
         }
     }
 
@@ -6353,6 +6372,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try {
             final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -6460,6 +6481,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
             throw th;
         } finally {
+            executionContext.setViewCompile(wasViewCompile);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }
@@ -7399,9 +7421,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         default -> isDeltaActive
                                 ? "cannot convert parquet partition to native, partition is delta-active [table="
                                 : txFile.isPartitionRemote(i)
-                                ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
-                                + " query it in place, or copy its rows into another table [table="
-                                : "cannot convert parquet partition to native, partition is read-only [table=";
+                                  ? "cannot convert parquet partition to native, partition is in cold storage and read-only;"
+                                    + " query it in place, or copy its rows into another table [table="
+                                  : "cannot convert parquet partition to native, partition is read-only [table=";
                     })
                     .put(tableToken.getTableName())
                     .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
@@ -8860,7 +8882,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
-    /** Parses a partition predicate against the designated timestamp column. The caller closes the function. */
+    /**
+     * Parses a partition predicate against the designated timestamp column. The caller closes the function.
+     */
     protected Function parsePartitionFilter(TableRecordMetadata tableMetadata, SqlExecutionContext executionContext) throws SqlException {
         ExpressionNode expr = parser.expr(lexer, (IQueryModel) null, this);
         int timestampIndex = tableMetadata.getTimestampIndex();

@@ -50,22 +50,30 @@ public final class PartitionFrameSource implements Mutable {
         partitionNameTxn = -1;
     }
 
-    /** Native column-version identity, or -1 for Parquet. */
+    /**
+     * Native column-version identity, or -1 for Parquet.
+     */
     public long getColumnVersion() {
         return columnVersion;
     }
 
-    /** NATIVE, PARQUET or REMOTE_PARQUET; zero after clear or a failed source query. */
+    /**
+     * NATIVE, PARQUET or REMOTE_PARQUET; zero after clear or a failed source query.
+     */
     public int getKind() {
         return kind;
     }
 
-    /** Exact committed prefix of the selected Parquet metadata file; zero for native. */
+    /**
+     * Exact committed prefix of the selected Parquet metadata file; zero for native.
+     */
     public long getMetadataCommittedBytes() {
         return metadataCommittedBytes;
     }
 
-    /** Parquet metadata slot: 0 for _pm, 1 for _pm.b; -1 for native. */
+    /**
+     * Parquet metadata slot: 0 for _pm, 1 for _pm.b; -1 for native.
+     */
     public int getMetadataSlot() {
         return metadataSlot;
     }

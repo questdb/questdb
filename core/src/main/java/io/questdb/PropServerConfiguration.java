@@ -240,6 +240,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    private final boolean commitModeAdaptiveDowngrade;
     private final long adaptiveEpochIntervalMs;
     private final long adaptiveEpochMaxRows;
     private final long adaptiveCommitGroupWindowUs;
@@ -1793,6 +1794,17 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // Enterprise overrides this default when replication is configured, but an explicit cairo.commit.mode wins over both.
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
+            this.commitModeAdaptiveDowngrade = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, false);
+            if (commitModeAdaptiveDowngrade && commitMode != CommitMode.NOSYNC) {
+                // The downgrade start unlocks every table for an older release, so it runs NOSYNC only, the
+                // mode that leaves nothing else behind: an adaptive table keeps a save point that release
+                // ignores, and only a start under another mode takes the table out of adaptive.
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath() + "=true requires "
+                                + PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=nosync [mode="
+                                + CommitMode.toString(commitMode) + ']'
+                );
+            }
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
             // 0 fdatasyncs every commit before it returns. A negative value clamps to 0, so a
@@ -6217,6 +6229,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public boolean isCommitModeAdaptiveDowngrade() {
+            return commitModeAdaptiveDowngrade;
         }
 
         @Override

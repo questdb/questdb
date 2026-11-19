@@ -32,7 +32,9 @@ import io.questdb.std.str.Path;
 
 public interface PartitionDeltaWriter extends QuietCloseable {
 
-    /** Stops background work on a removed partition version while old readers finish. */
+    /**
+     * Stops background work on a removed partition version while old readers finish.
+     */
     default void cancel(Path partitionDir) {
     }
 

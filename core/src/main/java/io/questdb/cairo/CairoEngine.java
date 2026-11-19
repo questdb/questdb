@@ -1476,6 +1476,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public void completeInit() {
         initDataID();
+        saveLastRunVersion();
         settingsStore = new SettingsStore(configuration);
         tableIdGenerator.open();
         checkpointRecover();
@@ -5546,6 +5547,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // Records the release that starts on the database directory, before it changes anything there: see
+    // LastRunVersion. A read-only instance writes nothing to the directory.
+    private void saveLastRunVersion() {
+        if (!configuration.isReadOnlyInstance()) {
+            LastRunVersion.save(configuration, getOssVersion(), getEnterpriseVersion());
+        }
+    }
+
     private boolean tryLockWalPurgeJob0(long timeout, TimeUnit timeUnit) {
         if (timeout == 0) {
             return walPurgeJobLock.tryLock();
@@ -5675,8 +5684,27 @@ public class CairoEngine implements Closeable, WriterSource {
         isSqlExecutionCooperativePollingEnabled = true;
     }
 
+    /**
+     * The QuestDB Enterprise version this engine runs as, for {@link LastRunVersion}: {@code null} in OSS,
+     * which has none. {@link #completeInit()} may call it from the constructor, so an override must not read
+     * the fields of its own class.
+     */
+    protected @Nullable CharSequence getEnterpriseVersion() {
+        return null;
+    }
+
     protected Iterable<FunctionFactory> getFunctionFactories() {
         return new FunctionFactoryCacheBuilder().scan(LOG).build();
+    }
+
+    /**
+     * The QuestDB (OSS) version this engine runs as, for {@link LastRunVersion}. In OSS it is the version of
+     * the build; Enterprise, whose build information names the Enterprise release, overrides it.
+     * {@link #completeInit()} may call it from the constructor, so an override must not read the fields of
+     * its own class.
+     */
+    protected CharSequence getOssVersion() {
+        return configuration.getBuildInformation().getSwVersion();
     }
 
     protected void initDataID() {
