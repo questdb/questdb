@@ -79,7 +79,7 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
                  IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
                 frames.open(factory, ORDER_ASC, sqlExecutionContext);
                 frames.loadFrames();
-                Assert.assertTrue(frames.hasParquetFrames());
+                Assert.assertTrue(frames.hasDecodedFrames());
                 final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, record -> label(record.getInt(0)), 2,
                         null, sqlExecutionContext);
                 // Every key t can hold, of one row, of many rows and NULL; key 1_091 is NULL in t, so it
@@ -165,7 +165,7 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
                  MapHashJoinBuild build = new MapHashJoinBuild(configuration, new ArrayColumnTypes().add(ColumnType.VARCHAR), true, 4, 1024, 16)) {
                 frames.open(factory, ORDER_ASC, sqlExecutionContext);
                 frames.loadFrames();
-                Assert.assertTrue(frames.hasParquetFrames());
+                Assert.assertTrue(frames.hasDecodedFrames());
                 final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, record -> label(record.getVarcharA(1)), 2,
                         null, sqlExecutionContext);
                 // The build stages t's s, column 1, and the probes p's s, column 0.

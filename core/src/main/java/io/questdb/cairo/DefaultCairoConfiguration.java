@@ -1912,6 +1912,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isCommitModeAdaptiveDowngrade() {
+        return false;
+    }
+
+    @Override
     public boolean isCopierChunkedEnabled() {
         return true;
     }

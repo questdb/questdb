@@ -135,6 +135,13 @@ public final class FuzzTableFactory {
     }
 
     /**
+     * Reuses the schema generator with a caller-owned storage fixture.
+     */
+    public FuzzTable create(Rnd rnd, String primaryName, TableSetup setup) throws Exception {
+        return setup.create(primaryName, buildColumnList(rnd));
+    }
+
+    /**
      * Creates the run's next table, which holds {@link FuzzConfig#getTableRows(int)} rows for its
      * index among the tables this factory created, and its shadow.
      */
@@ -647,6 +654,11 @@ public final class FuzzTableFactory {
     @FunctionalInterface
     public interface SqlExecutor {
         void execute(String sql) throws SqlException;
+    }
+
+    @FunctionalInterface
+    public interface TableSetup {
+        FuzzTable create(String name, ObjList<FuzzColumn> columns) throws Exception;
     }
 
     public enum ParquetMode {NONE, ALL, PARTIAL}

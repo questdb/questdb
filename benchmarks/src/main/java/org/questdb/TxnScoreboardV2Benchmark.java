@@ -69,7 +69,7 @@ public class TxnScoreboardV2Benchmark {
         scoreboard = new TxnScoreboardV2(entryCount);
         for (int i = 0; i < entryCount; i++) {
             if (i % 10 == 0) {
-                scoreboard.acquireTxn(i, i);
+                scoreboard.acquireTxn(i, i, i);
             }
         }
     }
@@ -86,7 +86,7 @@ public class TxnScoreboardV2Benchmark {
         int id = ThreadLocalRandom.current().nextInt(entryCount);
         long txn = System.nanoTime();
 
-        if (scoreboard.acquireTxn(id, txn)) {
+        if (scoreboard.acquireTxn(id, txn, txn)) {
             bh.consume(scoreboard.releaseTxn(id, txn));
         }
     }

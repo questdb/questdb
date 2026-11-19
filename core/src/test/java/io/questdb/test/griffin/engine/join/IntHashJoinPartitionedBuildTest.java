@@ -324,7 +324,7 @@ public class IntHashJoinPartitionedBuildTest extends AbstractCairoTest {
                         frames.open(factory, order, sqlExecutionContext);
                         frames.loadFrames();
                         Assert.assertTrue(frames.getFrameCount() > 20);
-                        Assert.assertTrue(frames.hasParquetFrames());
+                        Assert.assertTrue(frames.hasDecodedFrames());
                         final StaticSymbolTable buildDictionary = (StaticSymbolTable) frames.getSymbolTableSource().getSymbolTable(2);
                         final LongPredicate everyValue = v -> true;
                         final LongPredicate twoRowsInThree = v -> v % 3 != 1;

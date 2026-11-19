@@ -179,7 +179,7 @@ public class HashJoinChainLengthIndexTest extends AbstractCairoTest {
                  HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, HashJoinChainHeadTest.ints(2), factory.getMetadata())) {
                 frames.open(factory, ORDER_ASC, sqlExecutionContext);
                 frames.loadFrames();
-                Assert.assertTrue(frames.hasParquetFrames());
+                Assert.assertTrue(frames.hasDecodedFrames());
                 final Map<String, List<Long>> expected = FrameBuilds.longChains(serialFactory, record -> HashJoinChainHeadTest.label(record.getInt(0)), 2,
                         null, sqlExecutionContext);
                 final KeyWalk walk = intKeyWalk();

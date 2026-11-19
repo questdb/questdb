@@ -1115,7 +1115,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                             frames.open(factory, order, sqlExecutionContext);
                             frames.loadFrames();
                             Assert.assertTrue(label, frames.getFrameCount() > 20);
-                            Assert.assertTrue(label, frames.hasParquetFrames());
+                            Assert.assertTrue(label, frames.hasDecodedFrames());
                             final LongPredicate keep = keepValue != null ? FrameBuilds.keepByValue(configuration, frames, 1, keepValue) : null;
                             FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntSerial(configuration, build, frames, 0, keep, order, tracker, NOOP);
                             FrameBuilds.assertIntChains(frozen, intChains, -1, 9);

@@ -348,7 +348,7 @@ public class MapHashJoinPartitionedBuildTest extends AbstractCairoTest {
                         frames.open(factory, order, sqlExecutionContext);
                         frames.loadFrames();
                         Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 16);
-                        Assert.assertTrue(frames.hasParquetFrames());
+                        Assert.assertTrue(frames.hasDecodedFrames());
                         final RecordSink sink = layout.newSink(factory.getMetadata());
                         // Unfiltered frames place their rows in the heap when the key fits; every other
                         // build sorts them into chunks.

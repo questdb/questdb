@@ -55,9 +55,10 @@ import org.jetbrains.annotations.TestOnly;
  * cap, the larger of those rows and {@code cairo.sql.parallel.hash.join.task.output.max.rows}. The
  * task of frame {@code f} writes entry {@code f % R}, or, with a dynamic window, see below, {@code f}
  * modulo the entry count. That is safe because {@link PageFrameSequence#next(int, boolean)} and
- * {@link PageFrameSequence#dispatchAhead(int)} keep the frames dispatched and not collected by the
- * owner, the frame the owner reads included, to a contiguous window of at most the dispatch limit
- * they receive, and next() reduces a frame locally only when that window is empty. The owner
+ * {@link PageFrameSequence#dispatchAhead(int)} keep the tasks dispatched and not collected by the
+ * owner, the one the owner reads included, to a contiguous window of at most the dispatch limit
+ * they receive, and next() reduces a task locally only when that window is empty. The join's
+ * sequence makes every frame a task of its own, so the window bounds the frames too. The owner
  * therefore passes {@code R}, or less, to every {@code next()} and {@code dispatchAhead()} that
  * dispatches tuple-producing tasks. Count-only tasks never touch the ring,
  * neither its tuples nor its per-entry state, because a count-only {@code next()} may pass a wider

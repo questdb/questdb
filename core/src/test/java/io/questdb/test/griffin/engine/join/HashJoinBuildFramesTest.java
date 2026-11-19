@@ -383,7 +383,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 final FrozenHashJoinBuild.IntKeyed fromFactory = FrameBuilds.buildInt(configuration, factoryBuild, byFactory, factory, 0, sqlExecutionContext);
                 byCursor.open(cursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC), cursorFactory.getMetadata(), sqlExecutionContext);
                 final FrozenHashJoinBuild.IntKeyed fromCursor = FrameBuilds.buildIntOverOpenFrames(configuration, cursorBuild, byCursor, 0, sqlExecutionContext);
-                Assert.assertTrue(byCursor.hasParquetFrames());
+                Assert.assertTrue(byCursor.hasDecodedFrames());
                 Assert.assertTrue("frames: " + byCursor.getFrameCount(), byCursor.getFrameCount() > 50);
                 Assert.assertEquals(600, byCursor.getRowCount());
                 // Both overloads walk the same frames, with the same rows.
@@ -415,7 +415,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 byBackwardCursor.open(backwardFactory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC), backwardFactory.getMetadata(), sqlExecutionContext);
                 byBackwardCursor.loadFrames();
                 Assert.assertEquals(600, byBackwardCursor.getRowCount());
-                Assert.assertTrue(byBackwardCursor.hasParquetFrames());
+                Assert.assertTrue(byBackwardCursor.hasDecodedFrames());
                 TestUtils.assertEquals(printFrames(byFactory, false, false), printFrames(byBackwardCursor, true, false));
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
@@ -503,7 +503,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                      IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
                     Assert.assertEquals(0, frames.getCopyRowSize());
                     final FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
-                    Assert.assertTrue(frames.hasParquetFrames());
+                    Assert.assertTrue(frames.hasDecodedFrames());
                     // More frames than partitions, so that frames switch inside partitions too.
                     Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 6);
                     try (FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
@@ -633,7 +633,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                         final String label = (frames == fixedSize ? "fixed-size" : "var-size") + (isPartitioned ? ", partitioned" : ", serial");
                         frames.open(factory, ORDER_ASC, sqlExecutionContext);
                         frames.loadFrames();
-                        Assert.assertTrue(label, frames.hasParquetFrames());
+                        Assert.assertTrue(label, frames.hasDecodedFrames());
                         final FrozenHashJoinBuild.IntKeyed frozen = isPartitioned
                                 ? FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, 64, -1, null, tracker, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER)
                                 : FrameBuilds.buildIntSerial(configuration, build, frames, 0, null, ORDER_ASC, tracker, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
@@ -693,7 +693,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 Assert.assertNotNull(frames.getSymbolTableSource().getSymbolTable(2));
                 frames.loadFrames();
                 Assert.assertEquals(600, frames.getRowCount());
-                Assert.assertTrue(frames.hasParquetFrames());
+                Assert.assertTrue(frames.hasDecodedFrames());
                 Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 20);
                 // The backward scan hands the frames of the forward one over, the last first.
                 TestUtils.assertEquals(printFrames(forwardFrames, true, false), printFrames(frames, false, false));
@@ -1248,7 +1248,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 try (HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, mapping, metadata);
                      IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
                     final FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildInt(configuration, build, frames, factory, 0, sqlExecutionContext);
-                    Assert.assertEquals(hasParquet, frames.hasParquetFrames());
+                    Assert.assertEquals(hasParquet, frames.hasDecodedFrames());
                     Assert.assertTrue("frames: " + frames.getFrameCount(), frames.getFrameCount() > 6);
                     try (FrozenHashJoinBuild.IntProbe a = frozen.newProbe();
                          FrozenHashJoinBuild.IntProbe b = frozen.newProbe()) {

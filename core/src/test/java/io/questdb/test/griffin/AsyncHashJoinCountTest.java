@@ -198,11 +198,11 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
         assertMemoryLeak(() -> {
             createTables();
-            sqlExecutionContext.changePageFrameSizes(4, 4);
+            sqlExecutionContext.changePageFrameSizes(6, 6);
             // From the top, the count indexes d1's chain lengths, the count-only tasks of t's frames read
             // each key's chain length off the index, and the consumer checks the breaker after each frame
             // it collects: a cancellation there, after the pass, stops the count. Each of t's ten hourly
-            // partitions of six rows makes one frame, a frame of four rows taking in the short tail.
+            // partitions of six rows makes one frame.
             final String sql = "SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k";
             // The rows of t's first frame.
             final long firstFrameRows = ordinaryRowCount(sql + " WHERE t.v <= 6", sqlExecutionContext);
@@ -236,7 +236,7 @@ public class AsyncHashJoinCountTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 3);
         assertMemoryLeak(() -> {
             createTables();
-            sqlExecutionContext.changePageFrameSizes(4, 4);
+            sqlExecutionContext.changePageFrameSizes(6, 6);
             // The count indexes m's and d2's chain lengths, reads the length of each chain that the
             // current tuple and the tuples of the frames it collects carry off the index, and checks the
             // breaker after each frame it collects: a cancellation there, after the pass, stops the

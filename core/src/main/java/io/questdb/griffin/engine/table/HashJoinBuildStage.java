@@ -1120,7 +1120,7 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     stage.intBuild.partitionFrame(frameIndex, record, stage.buildKeyColumn, rowCount, stage.buildOrder);
                 }
             } finally {
-                pool.releaseParquetBuffers();
+                pool.releaseDecodedFrameBuffers();
             }
         } finally {
             host.release(slotId);
@@ -1243,10 +1243,11 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
         frozen = isKeyStaged ? mapBuild.freezePartitioned(buildFrames) : intBuild.freezePartitioned(buildFrames);
         isBuiltInRounds = true;
         isBuildPartitioned = partitionCount > 1;
-        if (buildFrames.hasParquetFrames()) {
+        if (buildFrames.hasDecodedFrames()) {
             // A frame's kept rows are its segments, one per partition.
             for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
-                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {
+                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE
+                        || buildFrames.getAddressCache().getPartitionFrameState(frameIndex) != 0) {
                     long keptRows = 0;
                     for (int partition = 0, n = getPartitionCount(); partition < n; partition++) {
                         keptRows += getSegmentRowCount(frameIndex, partition);
@@ -1295,12 +1296,13 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                     intBuild.appendFrame(buildRecord, buildKeyColumn, rowCount, buildOrder);
                 }
                 // The address cache gives the frame format that the payload readers go by.
-                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE) {
+                if (buildFrames.getAddressCache().getFrameFormat(frameIndex) != PartitionFormat.NATIVE
+                        || buildFrames.getAddressCache().getPartitionFrameState(frameIndex) != 0) {
                     countParquetFrame(frameIndex, isFiltered ? rows.size() : rowCount);
                 }
             } finally {
                 // Each frame is read once, so a decoded Parquet frame has no later use.
-                pool.releaseParquetBuffers();
+                pool.releaseDecodedFrameBuffers();
             }
         }
         // A build without payload columns stores no row ids and never asks the frames for one.

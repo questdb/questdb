@@ -242,6 +242,14 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     default ->
                                             throw CairoException.nonCritical().put("unsupported parquet export mode: ").put(state.parquetExportMode.name());
                                 }
+                                // Custom (Delta) frames have no raw page addresses, and the streaming
+                                // writer keeps input pointers until a row group flushes. Check the
+                                // snapshot the export reads and stream such a query row by row.
+                                if (state.pageFrameCursor != null && state.pageFrameCursor.hasCustomFrames()) {
+                                    state.pageFrameCursor = Misc.free(state.pageFrameCursor);
+                                    state.parquetExportMode = ParquetExportMode.CURSOR_BASED;
+                                    state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                                }
                             } else {
                                 // A CSV export without a row count reads the cursor's first rows
                                 // alone, up to its limit and one more; the cursor may then prepare

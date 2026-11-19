@@ -522,7 +522,7 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
                             frames.open(factory, order, sqlExecutionContext);
                             frames.loadFrames();
                             Assert.assertTrue(frames.getFrameCount() > 20);
-                            Assert.assertTrue(frames.hasParquetFrames());
+                            Assert.assertTrue(frames.hasDecodedFrames());
                             final ListColumnFilter keyFilter = new ListColumnFilter();
                             for (int column : columns) {
                                 keyFilter.add(column + 1);

@@ -455,8 +455,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      * frame. Each probe reader decodes the Parquet row groups that its matches land on into its own
      * share of the decode cache, while a payload copy decodes each row group once.
      */
-    public boolean hasParquetFrames() {
-        return addressCache.hasParquetFrames();
+    public boolean hasDecodedFrames() {
+        return addressCache.hasDecodedFrames();
     }
 
     /**
@@ -499,7 +499,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         final DirectLongList pageSizes = addressCache.getPageSizes();
         final DirectLongList auxPageSizes = addressCache.getAuxPageSizes();
         for (int f = 0; f < frameIndex; f++) {
-            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE;
+            final boolean isNative = addressCache.getFrameFormat(f) == PartitionFormat.NATIVE
+                    && addressCache.getPartitionFrameState(f) == 0;
             final int columnOffset = addressCache.toColumnOffset(f);
             for (int c = 0, n = payloadColumns.length; c < n; c++) {
                 final long index = columnOffset + payloadColumns[c];
@@ -558,7 +559,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      * Releases what a copy reader decoded, once its thread has copied a frame's rows.
      */
     public void releaseCopyBuffers(int reader) {
-        copyReaders.getQuick(reader).pool.releaseParquetBuffers();
+        copyReaders.getQuick(reader).pool.releaseDecodedFrameBuffers();
     }
 
     /**
@@ -697,7 +698,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         assert this.frameCursor == null : "clear() the frames before opening them again";
         this.frameCursor = frameCursor;
         this.memoryTracker = memoryTracker;
-        addressCache.of(buildMetadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+        addressCache.of(buildMetadata, frameCursor);
     }
 
     private static final class BuildRecord extends PageFrameMemoryRecord {
@@ -1298,7 +1299,8 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             if (frameIndex != this.frameIndex) {
                 this.frameIndex = frameIndex;
                 addressBase = frameIndex * payloadColumns.length;
-                isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
+                isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
+                        && addressCache.getPartitionFrameState(frameIndex) == 0;
             }
             row = Rows.toLocalRowID(rowId);
             locator = rowId;

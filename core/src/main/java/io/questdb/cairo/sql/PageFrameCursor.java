@@ -116,6 +116,16 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * Returns true when a frame of this cursor can be custom: a frame with a non-zero
+     * {@link PageFrame#getPartitionFrameState()}. Such a frame has no readable raw page
+     * addresses; only {@link PageFrameMemoryPool} can materialize it. Zero-copy consumers,
+     * such as the parquet exporters, must read these cursors row by row.
+     */
+    default boolean hasCustomFrames() {
+        return false;
+    }
+
+    /**
      * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
      */
     boolean isExternal();
@@ -169,7 +179,9 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * Caps the rows of the native page frames that the cursor cuts from the partitions it enters
      * from now on, below the {@code cairo.sql.page.frame.max.rows} that it took from the execution
      * context when it opened; a cap at or above that limit changes nothing. A frame of a Parquet
-     * partition is one of its row groups, which the cap does not cut. Call it before the cursor
+     * partition is one of its row groups, and a custom frame, one that only
+     * {@link PageFrameMemoryPool} materializes, is cut by its partition's sub-frame size; the cap
+     * cuts neither. Call it before the cursor
      * yields its first frame, or after {@link #toTop()}, so that every frame follows it; the cap
      * holds until the cursor opens again.
      * <p>

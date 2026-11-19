@@ -138,7 +138,9 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
         PageFrameSequence<AsyncHashJoinAtom> frameSequence = null;
         UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds = null;
         try {
-            // The sequences take their atoms on entry, also on constructor failure.
+            // The sequences take their atoms on entry, also on constructor failure. Every probe
+            // frame is a task of its own, so that the dispatch limit keeps the frames in flight
+            // within the tuple ring's entries; see HashJoinTupleRing.
             frameSequence = new PageFrameSequence<>(
                     engine,
                     configuration,
@@ -147,7 +149,8 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
                     REDUCER,
                     reduceTaskFactory,
                     workerCount,
-                    PageFrameReduceTask.TYPE_HASH_JOIN
+                    PageFrameReduceTask.TYPE_HASH_JOIN,
+                    true
             );
             // A sequence that runs the builds' rounds alone binds no frames and runs no frame task.
             buildRounds = new UnorderedPageFrameSequence<>(
