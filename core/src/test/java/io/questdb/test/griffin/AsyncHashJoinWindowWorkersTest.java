@@ -113,19 +113,23 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
     @Test
     public void testFanOutAtServerDefaultsFitsAQueryMemoryLimitOnThreadWorkers() throws Exception {
         // The server's defaults on eight workers: a dispatch limit of eight, a reduce queue of 32,
-        // page frames of 100_000 to 1_000_000 rows, and a task cap of a page frame's 1_000_000 rows.
-        // b holds 1_000 rows of each of a's eight keys, every pair of which the residual keeps: a's
-        // 32_000 rows make 32 frames of 1_000_000 / 1_000 rows, whose tasks each write the cap, which
-        // grows their entries to 16_384_000 bytes. A query memory limit of 64 MiB leaves the ring a
-        // quarter, 16 MiB, which holds one such entry: the first window holds one frame, where the
-        // frames' rows would let eight in, 131 MB.
+        // page frames of 100_000 to 1_000_000 rows, probe frames of at most 100_000 rows, and a task
+        // cap of a probe frame's 100_000 rows. b holds 1_000 rows of each of a's eight keys, every
+        // pair of which the residual keeps: a's 32_000 rows make 320 frames of 100_000 / 1_000 =
+        // 100 rows, the floor, whose tasks each write the cap, which grows their entries, doubling
+        // from the frame's 200 longs, to 204_800 longs, 1_638_400 bytes. A query memory limit of
+        // 64 MiB leaves the ring a quarter, 16 MiB, which holds ten such tasks' tuples: the first
+        // window holds the dispatch limit's eight frames. A limit of 4 MiB leaves 1 MiB, less than
+        // one task's tuples: the first window holds one frame, whose entry, with the build, fits
+        // the limit.
         final int workerCount = 8;
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, workerCount);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 32);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertMemoryLeak(() -> executeOnWorkers(WorkerPoolMode.LEGACY, workerCount, null, configuration, LOG, (db, context) -> {
-            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinPageFrameMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
             db.execute("CREATE TABLE b AS (SELECT (x % 8)::INT k, 1_000_000_000L + x w FROM long_sequence(8_000))", context);
             db.execute("""
                     CREATE TABLE a AS (
@@ -134,32 +138,60 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """, context);
             context.setParallelHashJoinEnabled(true);
-            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024);
-            try (RecordCursorFactory factory = db.select("SELECT a.v, b.w FROM a JOIN b ON a.k = b.k AND b.w > a.v", context)) {
-                final AsyncHashJoinRecordCursorFactory join = find(factory);
-                Assert.assertNotNull(join);
-                long rows = 0;
-                long vSum = 0;
-                long wSum = 0;
-                try (RecordCursor cursor = factory.getCursor(context)) {
-                    final Record record = cursor.getRecord();
-                    Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(32, join.getProbeFrameCount());
-                    Assert.assertEquals(1, join.getAtom().getRing().getDispatchLimit());
-                    Assert.assertEquals(1, join.getDispatchedFrameCount());
-                    do {
-                        rows++;
-                        vSum += record.getLong(0);
-                        wSum += record.getLong(1);
-                    } while (cursor.hasNext());
+            final String sql = "SELECT a.v, b.w FROM a JOIN b ON a.k = b.k AND b.w > a.v";
+            try {
+                for (long[] limitAndWindow : new long[][]{{64 * 1024 * 1024, 8}, {4 * 1024 * 1024, 1}}) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limitAndWindow[0]);
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        long rows = 0;
+                        long vSum = 0;
+                        long wSum = 0;
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            final Record record = cursor.getRecord();
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(320, join.getProbeFrameCount());
+                            Assert.assertEquals(100, join.getProbeFrameRowCount(0));
+                            Assert.assertEquals(limitAndWindow[1], join.getAtom().getRing().getDispatchLimit());
+                            Assert.assertEquals(limitAndWindow[1], join.getDispatchedFrameCount());
+                            do {
+                                rows++;
+                                vSum += record.getLong(0);
+                                wSum += record.getLong(1);
+                            } while (cursor.hasNext());
+                            // No task wrote more than its cap, so no frame continued.
+                            Assert.assertEquals(0, join.getAtom().getContinuationCount());
+                        }
+                        // Each of a's rows, v from 1 to 32_000, meets b's 1_000 rows of its key, so the
+                        // 4_000 rows of a of each key meet b's rows of that key, and between them all
+                        // of b's rows, w from 1_000_000_001 to 1_000_008_000, each 4_000 times.
+                        Assert.assertEquals(32_000_000L, rows);
+                        Assert.assertEquals(1_000L * (32_000L * 32_001 / 2), vSum);
+                        Assert.assertEquals(4_000L * (8_000L * 1_000_000_000L + 8_000L * 8_001 / 2), wSum);
+                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    }
                 }
-                // Each of a's rows, v from 1 to 32_000, meets b's 1_000 rows of its key, so the 4_000
-                // rows of a of each key meet b's rows of that key, and between them all of b's rows,
-                // w from 1_000_000_001 to 1_000_008_000, each 4_000 times.
-                Assert.assertEquals(32_000_000L, rows);
-                Assert.assertEquals(1_000L * (32_000L * 32_001 / 2), vSum);
-                Assert.assertEquals(4_000L * (8_000L * 1_000_000_000L + 8_000L * 8_001 / 2), wSum);
-                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                // With probe frames and a task cap of a page frame's 1_000_000 rows, the frames hold
+                // 1_000_000 / 1_000 = 1_000 rows, whose tasks each write 1_000_000 tuples, an entry
+                // of 16_384_000 bytes, which the 4 MiB limit does not hold.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, 1_000_000);
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final AsyncHashJoinRecordCursorFactory join = find(factory);
+                    Assert.assertNotNull(join);
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        try {
+                            //noinspection StatementWithEmptyBody
+                            while (cursor.hasNext()) {
+                            }
+                            Assert.fail("expected the query memory limit to fail the query");
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        }
+                    }
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
             } finally {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
             }

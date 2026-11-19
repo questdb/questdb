@@ -336,14 +336,18 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
         Assert.assertEquals(0.125, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
-        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // A probe frame's rows: the smaller of the page frame maximum, 1,000,000, and the join's own,
+        // 100,000.
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
         // The query worker count, and with it the dispatch limit and the queue capacity, depends on
-        // the host's CPUs: min(dispatch limit, queue capacity) frames of 1,000,000 rows at 48 bytes.
+        // the host's CPUs: min(dispatch limit, queue capacity) probe frames of 100,000 rows at 48
+        // bytes.
         Assert.assertEquals(
                 Math.min(
                         configuration.getCairoConfiguration().getSqlParallelFilterDispatchLimit(),
                         configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity()
-                ) * 48_000_000L,
+                ) * 4_800_000L,
                 configuration.getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize()
         );
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
@@ -2643,9 +2647,53 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testParallelHashJoinPageFrameMaxRows() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // The value stands whatever cairo.sql.page.frame.max.rows, which the join's frames also
+        // respect.
+        properties.setProperty("cairo.sql.page.frame.max.rows", "4096");
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "1");
+        Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // The largest page frame the server accepts, 2^24 rows.
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "16777216");
+        Assert.assertEquals(16_777_216, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS", "250_000");
+        Assert.assertEquals(250_000, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+
+        properties.clear();
+        for (String value : new String[]{"0", "-1", "-2147483648", "16777217", "2147483647"}) {
+            properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", value);
+            assertConfigurationError(properties, "cairo.sql.parallel.hash.join.page.frame.max.rows must be between 1 and 16777216");
+        }
+        for (String value : new String[]{"2147483648", "lots", ""}) {
+            properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", value);
+            assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.page.frame.max.rows, value=" + value + "]");
+        }
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS", "0");
+        try {
+            newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("cairo.sql.parallel.hash.join.page.frame.max.rows must be between 1 and 16777216", e.getMessage());
+        }
+    }
+
+    @Test
     public void testParallelHashJoinTaskOutputMaxRows() throws Exception {
         Properties properties = new Properties();
-        // The default follows cairo.sql.page.frame.max.rows.
+        // The default is a probe frame's rows: the smaller of cairo.sql.page.frame.max.rows and
+        // cairo.sql.parallel.hash.join.page.frame.max.rows, 1,000,000 and 100,000 by default.
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "250000");
+        Assert.assertEquals(250_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "2000000");
+        Assert.assertEquals(1_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.remove("cairo.sql.parallel.hash.join.page.frame.max.rows");
         properties.setProperty("cairo.sql.page.frame.max.rows", "4096");
         Assert.assertEquals(4096, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
         properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "1");
@@ -2684,18 +2732,26 @@ public class PropServerConfigurationTest {
     public void testParallelHashJoinTupleRingMaxSize() throws Exception {
         Properties properties = new Properties();
         // 32 query workers: dispatch limit min(32, 32) = 32, queue capacity min(4 * 32, 256) = 128,
-        // so 32 frames of 1,000,000 rows at 48 bytes per row, the tuples of a five-join stack.
+        // so 32 probe frames of 100,000 rows, the smaller of cairo.sql.page.frame.max.rows and
+        // cairo.sql.parallel.hash.join.page.frame.max.rows, at 48 bytes per row, the tuples of a
+        // five-join stack.
         properties.setProperty("shared.query.worker.count", "32");
-        Assert.assertEquals(1_536_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(153_600_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // 4 query workers: dispatch limit 4, queue capacity 16.
         properties.setProperty("shared.query.worker.count", "4");
-        Assert.assertEquals(192_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(19_200_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // A dispatch limit above the queue capacity: the queue's 16 frames bound the ring.
         properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "100");
-        Assert.assertEquals(768_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(76_800_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // A queue capacity below the dispatch limit of 4.
         properties.remove("cairo.sql.parallel.filter.dispatch.limit");
         properties.setProperty("cairo.page.frame.reduce.queue.capacity", "2");
+        Assert.assertEquals(9_600_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // Larger probe frames: 2 frames of 250,000 rows, and, past the page frame maximum, of its
+        // 1,000,000 rows.
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "250000");
+        Assert.assertEquals(24_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "2000000");
         Assert.assertEquals(96_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
         // Smaller page frames: 2 frames of 1,000 rows.
         properties.setProperty("cairo.sql.page.frame.max.rows", "1000");
@@ -2703,6 +2759,7 @@ public class PropServerConfigurationTest {
         // The largest page frames the server accepts, 2^24 rows, with the largest dispatch limit and
         // a queue capacity of 2^30, do not overflow.
         properties.setProperty("cairo.sql.page.frame.max.rows", "16777216");
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "16777216");
         properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "2147483647");
         properties.setProperty("cairo.page.frame.reduce.queue.capacity", "1073741824");
         Assert.assertEquals(

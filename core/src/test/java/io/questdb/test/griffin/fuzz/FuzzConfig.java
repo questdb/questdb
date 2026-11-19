@@ -53,6 +53,7 @@ public final class FuzzConfig {
     public static final String PARALLEL_JOIN_CAP_PROP = "questdb.fuzz.parallel.join.cap";
     public static final String PARALLEL_JOIN_DISPATCH_PROP = "questdb.fuzz.parallel.join.dispatch";
     public static final String PARALLEL_JOIN_FRAMES_PROP = "questdb.fuzz.parallel.join.frames";
+    public static final String PARALLEL_JOIN_PROBE_FRAMES_PROP = "questdb.fuzz.parallel.join.probe.frames";
     public static final String PARALLEL_JOIN_RING_PROP = "questdb.fuzz.parallel.join.ring";
     public static final String PARQUET_ROW_GROUP_PROP = "questdb.fuzz.parquet.row.group";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
@@ -119,6 +120,8 @@ public final class FuzzConfig {
     private final int parallelJoinDispatchLimit;
     // The most rows of a page frame that the equi-join queries run with, or 0 to leave the default.
     private final int parallelJoinFrameMaxRows;
+    // The parallel hash join's most rows of a native probe frame, or 0 to leave it at its default.
+    private final int parallelJoinProbeFrameMaxRows;
     // The parallel hash join's tuple ring budget, in bytes, or 0 to leave it at its default.
     private final long parallelJoinRingMaxSize;
     // The rows of a Parquet row group of the run's tables, or 0 to leave the default.
@@ -240,7 +243,10 @@ public final class FuzzConfig {
         //   below one frame's tuples, leaves one entry, and 192 bytes, four frames of two rows of a
         //   single join, leaves a window that a frame of duplicate matches narrows;
         // - a dispatch limit of 0 to 2, -Dquestdb.fuzz.parallel.join.dispatch=N, -1 for the default,
-        //   which the run's equi-join queries compile with.
+        //   which the run's equi-join queries compile with;
+        // - probe frames of 1 to 8 rows, -Dquestdb.fuzz.parallel.join.probe.frames=N, 0 for the
+        //   default, cairo.sql.parallel.hash.join.page.frame.max.rows, which cuts the probe's frames
+        //   and leaves the build scans' frames as the context cuts them.
         // Every axis compares runs under the same knobs, so the in-order oracle holds. A Parquet row
         // group of a few rows, -Dquestdb.fuzz.parquet.row.group=N, makes the Parquet partitions of the
         // run's tables hold many row groups. It applies to every shape, and the seed does not pick it:
@@ -255,6 +261,10 @@ public final class FuzzConfig {
         final int ringPick = (int) ((seedBits >>> 6) & 3);
         this.parallelJoinRingMaxSize = Long.getLong(PARALLEL_JOIN_RING_PROP, ringPick == 1 ? 1 : ringPick == 2 ? 192 : 0);
         this.parallelJoinDispatchLimit = Integer.getInteger(PARALLEL_JOIN_DISPATCH_PROP, (int) ((seedBits >>> 8) & 3) - 1);
+        this.parallelJoinProbeFrameMaxRows = Integer.getInteger(
+                PARALLEL_JOIN_PROBE_FRAMES_PROP,
+                ((seedBits >>> 10) & 1) == 0 ? 0 : 1 + (int) ((seedBits >>> 11) & 7)
+        );
         this.parquetRowGroupSize = Integer.getInteger(PARQUET_ROW_GROUP_PROP, 0);
         // The run's primary tables take storage shapes that their shadows do not: non-WAL and
         // non-partitioned tables, column tops and a dropped column (see FuzzTableFactory). On by
@@ -325,6 +335,14 @@ public final class FuzzConfig {
      */
     public int getParallelJoinFrameMaxRows() {
         return parallelJoinFrameMaxRows;
+    }
+
+    /**
+     * The parallel hash join's most rows of a native probe frame for the run,
+     * {@code cairo.sql.parallel.hash.join.page.frame.max.rows}, or 0 to leave the default.
+     */
+    public int getParallelJoinProbeFrameMaxRows() {
+        return parallelJoinProbeFrameMaxRows;
     }
 
     /**

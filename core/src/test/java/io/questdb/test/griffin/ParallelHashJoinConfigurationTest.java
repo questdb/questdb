@@ -113,20 +113,23 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
         assertDefaults(defaultConfiguration);
         assertDefaults(new CairoConfigurationWrapper(defaultConfiguration));
 
-        // The defaults follow the page frame size, the dispatch limit and the queue capacity of a
-        // configuration that overrides them.
-        Assert.assertEquals(4_096, new LimitedConfiguration(4_096, 4, 16).getSqlParallelHashJoinTaskOutputMaxRows());
+        // The defaults follow the probe frame's rows, the smaller of the page frame size and the
+        // join's own maximum, the dispatch limit and the queue capacity of a configuration that
+        // overrides them.
+        Assert.assertEquals(4_096, new LimitedConfiguration(4_096, 100_000, 4, 16).getSqlParallelHashJoinTaskOutputMaxRows());
+        Assert.assertEquals(4_096, new LimitedConfiguration(1_000_000, 4_096, 4, 16).getSqlParallelHashJoinTaskOutputMaxRows());
         // 4 frames of 4,096 rows at 48 bytes per row.
-        Assert.assertEquals(786_432, new LimitedConfiguration(4_096, 4, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(786_432, new LimitedConfiguration(4_096, 100_000, 4, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(786_432, new LimitedConfiguration(1_000_000, 4_096, 4, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // The queue's 16 frames bound a larger dispatch limit.
-        Assert.assertEquals(3_145_728, new LimitedConfiguration(4_096, 64, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(3_145_728, new LimitedConfiguration(4_096, 100_000, 64, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // A dispatch limit of 0 or below leaves no frame to size the budget from.
-        Assert.assertEquals(0, new LimitedConfiguration(4_096, 0, 16).getSqlParallelHashJoinTupleRingMaxSize());
-        Assert.assertEquals(0, new LimitedConfiguration(4_096, -1, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(0, new LimitedConfiguration(4_096, 100_000, 0, 16).getSqlParallelHashJoinTupleRingMaxSize());
+        Assert.assertEquals(0, new LimitedConfiguration(4_096, 100_000, -1, 16).getSqlParallelHashJoinTupleRingMaxSize());
         // 2^30 frames of 2^24 rows, the largest frames the server accepts, fit a long.
         Assert.assertEquals(
                 864_691_128_455_135_232L,
-                new LimitedConfiguration(16_777_216, Integer.MAX_VALUE, 1_073_741_824).getSqlParallelHashJoinTupleRingMaxSize()
+                new LimitedConfiguration(16_777_216, 16_777_216, Integer.MAX_VALUE, 1_073_741_824).getSqlParallelHashJoinTupleRingMaxSize()
         );
     }
 
@@ -184,10 +187,13 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
 
     private static void assertDefaults(CairoConfiguration configuration) {
         Assert.assertTrue(configuration.isSqlParallelHashJoinEnabled());
-        Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+        Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinPageFrameMaxRows());
+        // A probe frame's rows: the smaller of the page frame maximum, 1,000,000, and the join's
+        // own, 100,000.
+        Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
         // The dispatch limit is Integer.MAX_VALUE, so the queue capacity of 32 frames bounds the
-        // ring: 32 frames of 1,000,000 rows at 48 bytes per row.
-        Assert.assertEquals(1_536_000_000, configuration.getSqlParallelHashJoinTupleRingMaxSize());
+        // ring: 32 probe frames of 100,000 rows at 48 bytes per row.
+        Assert.assertEquals(153_600_000, configuration.getSqlParallelHashJoinTupleRingMaxSize());
     }
 
     // Creates a view over a base table with one row and refreshes the view with a refresh job that
@@ -258,12 +264,14 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
 
     private static class LimitedConfiguration extends DefaultCairoConfiguration {
         private final int dispatchLimit;
+        private final int hashJoinPageFrameMaxRows;
         private final int pageFrameMaxRows;
         private final int queueCapacity;
 
-        private LimitedConfiguration(int pageFrameMaxRows, int dispatchLimit, int queueCapacity) {
+        private LimitedConfiguration(int pageFrameMaxRows, int hashJoinPageFrameMaxRows, int dispatchLimit, int queueCapacity) {
             super(root);
             this.pageFrameMaxRows = pageFrameMaxRows;
+            this.hashJoinPageFrameMaxRows = hashJoinPageFrameMaxRows;
             this.dispatchLimit = dispatchLimit;
             this.queueCapacity = queueCapacity;
         }
@@ -281,6 +289,11 @@ public class ParallelHashJoinConfigurationTest extends AbstractCairoTest {
         @Override
         public int getSqlParallelFilterDispatchLimit() {
             return dispatchLimit;
+        }
+
+        @Override
+        public int getSqlParallelHashJoinPageFrameMaxRows() {
+            return hashJoinPageFrameMaxRows;
         }
     }
 }

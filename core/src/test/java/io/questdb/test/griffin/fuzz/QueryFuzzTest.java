@@ -191,6 +191,10 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  *         probe has more frames than the ring has entries and the ring's window
  *         moves (default: the seed picks each, see FuzzConfig). A query's every
  *         axis runs under the same knobs.</li>
+ *     <li>{@code -Dquestdb.fuzz.parallel.join.probe.frames=N} &mdash; the
+ *         parallel hash join's most rows of a native probe frame, which leaves
+ *         the build scans' frames as they are (default: the seed picks 1 to 8
+ *         rows, or the operator's own default).</li>
  *     <li>{@code -Dquestdb.fuzz.parquet.row.group=N} &mdash; the rows of a
  *         Parquet row group of the run's tables (default: the engine's).</li>
  *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
@@ -957,7 +961,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
     }
 
     // Pins the first window of the parallel hash join's executions whose builds fan out, at the
-    // default cap of a million tuples per task. Frames of two rows and a ring budget of 192 bytes
+    // default cap of a probe frame's 100,000 tuples per task. Frames of two rows and a ring budget of 192 bytes
     // give a stack of up to five joins a first window of two frames or more, up to the ring's
     // entries, which follow the host's query workers under the default dispatch limit; an execution
     // whose workers walk duplicate matches instead counts each task's tuples as the cap, and starts
@@ -971,6 +975,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s0", "107"},
                         {"questdb.fuzz.s1", "109"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
                         {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
                         {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
@@ -1002,6 +1007,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s0", "48514"},
                         {"questdb.fuzz.s1", "630374"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "192"},
                         {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
                         {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "1"},
@@ -1042,6 +1048,35 @@ public class QueryFuzzTest extends AbstractCairoTest {
         );
     }
 
+    // Pins the probe frames of the parallel hash join under its own cap of a probe frame's rows, two
+    // rows, while the build scans keep the context's frames: a pinned seed's probes have more frames
+    // than the ring has entries, which the frames in flight then share, and the cursor-verify axis
+    // reads them in part.
+    @Test
+    public void testParallelJoinProbeFramesAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "300"},
+                        {"questdb.fuzz.s0", "48514"},
+                        {"questdb.fuzz.s1", "630374"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_RING_PROP, "0"},
+                        {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
+                        {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "1"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> {
+                    final String counts = "aliased " + runner.getParallelJoinAliasedRuns()
+                            + ", partial reads " + runner.getParallelJoinPartialReadChecks()
+                            + " (continued " + runner.getParallelJoinPartialReadContinued() + ")";
+                    Assert.assertTrue(counts, runner.getParallelJoinAliasedRuns() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadChecks() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
+                })
+        );
+    }
+
     // Pins the forms without a LIMIT of the generated equi-join queries, see EquiJoinClause: the joins
     // under an ASOF or LT join of which they are the master, under a UNION ALL and under a WHERE
     // that holds no column, which the rows that a client reads first reach through the operator,
@@ -1058,6 +1093,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s0", "17"},
                         {"questdb.fuzz.s1", "27"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
                 },
                 () -> runQueryFuzz(runner -> Assert.assertTrue(
@@ -1080,6 +1116,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s0", "99"},
                         {"questdb.fuzz.s1", "100"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
                 },
                 () -> runQueryFuzz(runner -> Assert.assertTrue(
@@ -1104,6 +1141,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         {"questdb.fuzz.s0", "31337"},
                         {"questdb.fuzz.s1", "27182"},
                         {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "3"},
+                        {FuzzConfig.PARALLEL_JOIN_PROBE_FRAMES_PROP, "0"},
                         {FuzzConfig.PARALLEL_JOIN_RING_PROP, "1"},
                         {FuzzConfig.PARALLEL_JOIN_DISPATCH_PROP, "-1"},
                         {FuzzConfig.PARALLEL_JOIN_CAP_PROP, "0"},
@@ -1486,6 +1524,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
                 .$(", parallelJoinCap=").$(config.getParallelJoinTaskOutputMaxRows())
                 .$(", parallelJoinFrames=").$(config.getParallelJoinFrameMaxRows())
+                .$(", parallelJoinProbeFrames=").$(config.getParallelJoinProbeFrameMaxRows())
                 .$(", parallelJoinRing=").$(config.getParallelJoinRingMaxSize())
                 .$(", parallelJoinDispatch=").$(config.getParallelJoinDispatchLimit())
                 .$(", parquetRowGroup=").$(config.getParquetRowGroupSize())
@@ -1500,6 +1539,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         if (config.getParallelJoinRingMaxSize() > 0) {
             node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, config.getParallelJoinRingMaxSize());
+        }
+        if (config.getParallelJoinProbeFrameMaxRows() > 0) {
+            node1.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, config.getParallelJoinProbeFrameMaxRows());
         }
         if (config.getParquetRowGroupSize() > 0) {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, config.getParquetRowGroupSize());

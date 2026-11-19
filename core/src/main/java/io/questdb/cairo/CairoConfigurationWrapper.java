@@ -1515,6 +1515,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelHashJoinPageFrameMaxRows() {
+        return getDelegate().getSqlParallelHashJoinPageFrameMaxRows();
+    }
+
+    @Override
     public int getSqlParallelHashJoinTaskOutputMaxRows() {
         return getDelegate().getSqlParallelHashJoinTaskOutputMaxRows();
     }

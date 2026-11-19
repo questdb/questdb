@@ -144,8 +144,10 @@ import java.util.concurrent.locks.LockSupport;
  *       same rows with a dimension of one row for each of the fact table's thousand keys and
  *       2,000,000 rows of a key that no fact row has: the builds lead the join to expect about 2,000
  *       matches per probe row, where each meets one, which cuts the probe's frames to their
- *       smallest. Run them with {@code pageFrameMinRows} and {@code pageFrameMaxRows} at the
- *       server's defaults, 100,000 and 1,000,000.
+ *       smallest. {@code FANOUT_1000_RESIDUAL_ALL} joins the fact table's first {@code probeRows}
+ *       rows, an interval scan, with a dimension of a thousand keys of 1,000 rows each under the
+ *       same cheap residual. Run them with {@code pageFrameMinRows} and {@code pageFrameMaxRows} at
+ *       the server's defaults, 100,000 and 1,000,000.
  *       {@code SYMBOL_10M_*} join on a SYMBOL key a table whose SYMBOL column holds 10,000,000 texts,
  *       one per row over January and February 2024, and 3,000 more rows in the first hour of March,
  *       with dimensions of 1,000 and 50,000 of its texts: {@code SYMBOL_10M_INTERVAL_D1K} and
@@ -166,14 +168,18 @@ import java.util.concurrent.locks.LockSupport;
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
+ *   <li>{@code factPartitionBy}: the partitioning of the fact table and its Parquet copies,
+ *       {@code HOUR} by default; {@code DAY} keeps the fact table's 10,000,000 rows in one
+ *       partition, whose page frames reach {@code pageFrameMaxRows} at any worker count.</li>
  *   <li>{@code pageFrameMinRows}: {@code cairo.sql.page.frame.min.rows}; the default of 1,000 is
  *       the default configuration's, and a server's is 100,000.</li>
- *   <li>{@code pageFrameMaxRows}: {@code cairo.sql.page.frame.max.rows}, which also sets the
- *       join's task output cap, as on a server. The table scan splits each partition into about
- *       one frame per worker, of at most this many rows: 250,000-row frames up to 4 workers,
- *       125,000 at 8 and 62,500 at 16. With the default of 250,000 the shapes whose surviving
- *       fan-out exceeds two, {@code FANOUT_RESIDUAL} and {@code FANOUT_POST_FILTER}, overflow the
- *       cap at 8 workers and finish part of each frame on the consumer.</li>
+ *   <li>{@code pageFrameMaxRows}: {@code cairo.sql.page.frame.max.rows}. The table scan splits
+ *       each partition into about one frame per worker, of at most this many rows: 250,000-row
+ *       frames up to 4 workers, 125,000 at 8 and 62,500 at 16.</li>
+ *   <li>{@code probeFrameMaxRows}: {@code cairo.sql.parallel.hash.join.page.frame.max.rows}, which
+ *       caps the join's native probe frames below {@code pageFrameMaxRows}, and, as on a server,
+ *       sets the join's task output cap and the default ring budget with it; -1 keeps the
+ *       default.</li>
  *   <li>{@code ringBudgetFactor}: multiplies the default of
  *       {@code cairo.sql.parallel.hash.join.tuple.ring.max.size}.</li>
  *   <li>{@code payloadCopyMaxSize}: {@code cairo.sql.parallel.hash.join.groupby.payload.copy.max.size}
@@ -241,6 +247,9 @@ public class ParallelHashJoinBenchmark {
     private static final long SYMBOL_10M_START_MICROS = 1_704_067_200_000_000L;
     private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k"};
 
+    @Param({"HOUR"})
+    public String factPartitionBy;
+
     @Param({"10000000"})
     public long factRows;
 
@@ -267,6 +276,9 @@ public class ParallelHashJoinBenchmark {
 
     @Param({"ORDINARY", "OPERATOR"})
     public String plan;
+
+    @Param({"-1"})
+    public int probeFrameMaxRows;
 
     @Param({"50000"})
     public long probeRows;
@@ -301,6 +313,7 @@ public class ParallelHashJoinBenchmark {
             "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY",
             "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
             "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE",
+            "FANOUT_1000_RESIDUAL_ALL",
             "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10",
             "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL",
             "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K"
@@ -470,7 +483,7 @@ public class ParallelHashJoinBenchmark {
                 "(x * 2_654_435_761 % 100_000)::INT k2, (x * 2_654_435_761 % " + (largeDimRows * 6 / 5) + ")::INT k3, " +
                 "(x * 31 % 100)::INT sel, (x * 17 % 1_000) / 1000.0 v, ('s' || (x % 64))::SYMBOL sym, " +
                 "('note' || (x % 1_000))::VARCHAR note, timestamp_sequence(0, 3_600) ts " +
-                "FROM long_sequence(" + factRows + ")) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
+                "FROM long_sequence(" + factRows + ")) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
         createDimension("d1", 1_000);
         createDimension("d2", 100_000);
         createDimension("d3", largeDimRows);
@@ -492,10 +505,10 @@ public class ParallelHashJoinBenchmark {
                 "FROM long_sequence(2_001_000))", ctx);
         // The active partition cannot convert, so each Parquet table gets one more row, in a later
         // partition, whose keys match no dimension.
-        engine.execute("CREATE TABLE fact_pq AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
+        engine.execute("CREATE TABLE fact_pq AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
         engine.execute("INSERT INTO fact_pq VALUES (-1, -1, -1, -1, -1, 0.0, 's0', 'note', '2100-01-01')", ctx);
         engine.execute("ALTER TABLE fact_pq CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01'", ctx);
-        engine.execute("CREATE TABLE fact_mixed AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY HOUR", ctx);
+        engine.execute("CREATE TABLE fact_mixed AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
         engine.execute("INSERT INTO fact_mixed VALUES (-1, -1, -1, -1, -1, 0.0, 's0', 'note', '2100-01-01')", ctx);
         // Every other partition converts.
         engine.execute("ALTER TABLE fact_mixed CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01' AND hour(ts) % 2 = 0", ctx);
@@ -598,6 +611,7 @@ public class ParallelHashJoinBenchmark {
         final Path root = Paths.get(System.getProperty("questdb.bench.root", Paths.get(
                 System.getProperty("java.io.tmpdir"),
                 "questdb-parallel-hash-join-bench-" + DATA_VERSION + "-f" + factRows + "-d" + largeDimRows
+                        + ("HOUR".equals(factPartitionBy) ? "" : "-p" + factPartitionBy)
         ).toString()));
         Files.createDirectories(root);
         final int queueCapacity = Numbers.ceilPow2(Math.min(4 * workers, 256));
@@ -625,6 +639,11 @@ public class ParallelHashJoinBenchmark {
             @Override
             public int getSqlParallelFilterDispatchLimit() {
                 return Math.min(workers, 32);
+            }
+
+            @Override
+            public int getSqlParallelHashJoinPageFrameMaxRows() {
+                return probeFrameMaxRows < 0 ? super.getSqlParallelHashJoinPageFrameMaxRows() : probeFrameMaxRows;
             }
 
             @Override
@@ -681,6 +700,7 @@ public class ParallelHashJoinBenchmark {
             throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + planText);
         }
         if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_") || shape.startsWith("COUNT_TINY_PROBE")
+                || "FANOUT_1000_RESIDUAL_ALL".equals(shape)
                 || !symbol10mPredicate(shape).isEmpty()) && !planText.contains("Interval forward scan")) {
             throw new IllegalStateException("the probe is not an interval scan: shape=" + shape + '\n' + planText);
         }
@@ -716,6 +736,9 @@ public class ParallelHashJoinBenchmark {
                 .append(" largeDimRows=").append(largeDimRows)
                 .append(" pageFrameMinRows=").append(pageFrameMinRows)
                 .append(" pageFrameMaxRows=").append(pageFrameMaxRows)
+                .append(" probeFrameMaxRows=").append(engine.getConfiguration().getSqlParallelHashJoinPageFrameMaxRows())
+                .append(" taskOutputMaxRows=").append(engine.getConfiguration().getSqlParallelHashJoinTaskOutputMaxRows())
+                .append(" factPartitionBy=").append(factPartitionBy)
                 .append(" ringBudgetFactor=").append(ringBudgetFactor)
                 .append(" payloadCopyMaxSize=").append(payloadCopyMaxSize)
                 .append(" isFreshCompile=").append(isFreshCompile)
@@ -931,6 +954,11 @@ public class ParallelHashJoinBenchmark {
             case "FANOUT_20_RESIDUAL_ALL" -> fanOutResidualSql("dup20", "x.w + f.v >= 0");
             case "FANOUT_50_RESIDUAL_ALL" -> fanOutResidualSql("dup50", "x.w + f.v >= 0");
             case "FANOUT_50_RESIDUAL_SELECTIVE" -> fanOutResidualSql("dup50", "x.w - f.v > 0.8");
+            // The fact table's first probeRows rows meet 1,000 rows of their key, all of which the
+            // condition keeps.
+            case "FANOUT_1000_RESIDUAL_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup1000 x ON f.k1 = x.k AND x.w + f.v >= 0 WHERE f.ts < "
+                            + smallProbeBound();
             case "FANOUT_50_POST_FILTER_ALL" ->
                     "SELECT f.id, f.v, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k WHERE x.w + f.v >= 0 AND f.ts < "
                             + probeBound(FAN_OUT_PROBE_ROWS);

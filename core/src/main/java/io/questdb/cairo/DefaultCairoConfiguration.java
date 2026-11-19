@@ -1466,8 +1466,14 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlParallelHashJoinPageFrameMaxRows() {
+        return 100_000;
+    }
+
+    @Override
     public int getSqlParallelHashJoinTaskOutputMaxRows() {
-        return getSqlPageFrameMaxRows();
+        // A probe frame's rows.
+        return Math.min(getSqlPageFrameMaxRows(), getSqlParallelHashJoinPageFrameMaxRows());
     }
 
     @Override
@@ -1478,7 +1484,8 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
         // the dispatch limit and the queue capacity frames in flight; this class's dispatch limit is
         // Integer.MAX_VALUE.
         final long frames = Math.max(0, Math.min(getSqlParallelFilterDispatchLimit(), getPageFrameReduceQueueCapacity()));
-        return frames * getSqlPageFrameMaxRows() * 6 * Long.BYTES;
+        final long frameRows = Math.min(getSqlPageFrameMaxRows(), getSqlParallelHashJoinPageFrameMaxRows());
+        return frames * frameRows * 6 * Long.BYTES;
     }
 
     @Override

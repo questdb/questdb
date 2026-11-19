@@ -267,11 +267,14 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                 assertParallelHashJoin(sql, sqlExecutionContext);
                 Assert.assertEquals(sql, 0, continuations(sql));
             }
-            // At its default, the cap is a page frame's rows, which no frame of these tables reaches
+            // At its default, the cap is a probe frame's most rows, the smaller of the page frame
+            // maximum, 1,000,000, and the join's own, 100,000, which no frame of these tables reaches
             // with its tuples.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, null);
             sqlExecutionContext.restoreToDefaultPageFrameSizes();
-            Assert.assertEquals(configuration.getSqlPageFrameMaxRows(), configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            Assert.assertEquals(1_000_000, configuration.getSqlPageFrameMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinPageFrameMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
             for (String sql : QUERIES) {
                 assertParallelHashJoin(sql, sqlExecutionContext);
                 Assert.assertEquals(sql, 0, continuations(sql));

@@ -642,6 +642,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long sqlParallelHashJoinGroupByPayloadCopyMaxSize;
     private final double sqlParallelHashJoinGroupByPayloadCopyMinProbeRatio;
     private final double sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
+    private final int sqlParallelHashJoinPageFrameMaxRows;
     private final int sqlParallelHashJoinTaskOutputMaxRows;
     private final long sqlParallelHashJoinTupleRingMaxSize;
     private final boolean sqlParallelHorizonJoinEnabled;
@@ -2687,7 +2688,11 @@ public class PropServerConfiguration implements ServerConfiguration {
                 throw new ServerConfigurationException("Configuration value for " + PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO.getPropertyPath() + " has to be a non-negative real number.");
             }
             this.sqlParallelHashJoinEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED, defaultParallelSqlEnabled);
-            this.sqlParallelHashJoinTaskOutputMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, sqlPageFrameMaxRows);
+            this.sqlParallelHashJoinPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, 100_000);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, sqlParallelHashJoinPageFrameMaxRows);
+            // The most rows of a native probe frame of a parallel hash join.
+            final int parallelHashJoinFrameMaxRows = Math.min(sqlPageFrameMaxRows, sqlParallelHashJoinPageFrameMaxRows);
+            this.sqlParallelHashJoinTaskOutputMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, parallelHashJoinFrameMaxRows);
             if (sqlParallelHashJoinTaskOutputMaxRows < 1) {
                 throw ServerConfigurationException.forInvalidKey(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS.getPropertyPath(),
                         Integer.toString(sqlParallelHashJoinTaskOutputMaxRows));
@@ -2700,7 +2705,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE,
-                    parallelHashJoinRingFrames * sqlPageFrameMaxRows * 6 * Long.BYTES,
+                    parallelHashJoinRingFrames * parallelHashJoinFrameMaxRows * 6 * Long.BYTES,
                     0
             );
             this.sqlParallelReadParquetEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED, defaultParallelSqlEnabled);
@@ -5799,6 +5804,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio() {
             return sqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio;
+        }
+
+        @Override
+        public int getSqlParallelHashJoinPageFrameMaxRows() {
+            return sqlParallelHashJoinPageFrameMaxRows;
         }
 
         @Override

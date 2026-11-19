@@ -302,6 +302,14 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * The rows of the execution's probe frame, as the probe scan cut it; see {@link #getProbeFrameCount()}.
+     */
+    @TestOnly
+    public long getProbeFrameRowCount(int frameIndex) {
+        return frameSequence.getFrameRowCount(frameIndex);
+    }
+
+    /**
      * The probe frames whose tasks finished since the last execution's cursor opened or went back to
      * the top, on a worker, stolen by the owner or reduced locally.
      */

@@ -57,7 +57,7 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * that the builds lead one to expect, the product of the rows per key of every build whose matches
  * the workers walk, under an ON residual that the pairs run or a post-join filter. Such a frame
  * needs no continuation, where a frame of the configured rows leaves its rest to the consumer. The
- * frames never get fewer rows than 1,000, or {@code cairo.sql.page.frame.min.rows} when that is
+ * frames never get fewer rows than 100, or {@code cairo.sql.page.frame.min.rows} when that is
  * fewer; a stage that hands its chains to the consumer, a LEFT join's among them whose build ran its
  * whole ON residual, a build of one row per key and an empty one lower nothing; a Parquet partition
  * keeps its row groups; and each execution of a cached factory sizes its frames from its own
@@ -154,19 +154,19 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     @Test
     public void testContinuedFramesFirstWindowHoldsTheTaskCap() throws Exception {
         // t holds 8_000 probe rows over a hundred keys, and d ten rows of each key: frames of the
-        // 1_000-row floor, whose tasks stop at the cap of 5_000 tuples and leave the rest of their
-        // frames to continuations. A ring budget of 160_000 bytes holds two such tasks' tuples of two
-        // longs, 80_000 bytes each, where the frames' rows, 16_000 bytes, would let the dispatch
+        // 100-row floor, whose tasks stop at the cap of 500 tuples and leave the rest of their
+        // frames to continuations. A ring budget of 16_000 bytes holds two such tasks' tuples of two
+        // longs, 8_000 bytes each, where the frames' rows, 1_600 bytes, would let the dispatch
         // limit's eight frames in.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 160_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 500);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 16_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT (x % 100)::INT k, 100_000 + x w FROM long_sequence(1_000))");
             sqlExecutionContext.changePageFrameSizes(2_000, 8_000);
             for (String sql : ENUMERATED) {
-                assertFrames(sql, 8, -1);
+                assertFrames(sql, 80, -1);
                 assertFirstWindow(sql, 2, 2, false);
             }
         });
@@ -199,15 +199,15 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     public void testFanOutFramesBelowTheConfiguredMinimum() throws Exception {
         assertMemoryLeak(() -> {
             // t holds 8_000 probe rows over a hundred keys, which frames of at least 2_000 rows would
-            // cut into four. The frames of a walking stage keep at least 1_000 rows instead, and a
-            // cap of 5_000 tuples at f rows of d per key caps them at 5_000 / f rows: 1_250 rows at
-            // f = 4, six frames and one of the 500 rows left, whose 5_000 tuples fit the cap; 1_000
-            // rows at f = 5, eight frames whose 5_000 tuples fill the cap exactly, which ends the
-            // frame with its last row, so that no frame continues; and 1_000 rows, the floor, at
-            // f = 10, eight frames whose 10_000 tuples pass the cap and continue.
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
+            // cut into four. The frames of a walking stage keep at least 100 rows instead, and a cap
+            // of 500 tuples at f rows of d per key caps them at 500 / f rows: 166 rows at f = 3,
+            // 48 frames and one of the 32 rows left, whose 498 tuples fit the cap; 100 rows at f = 5,
+            // eighty frames whose 500 tuples fill the cap exactly, which ends the frame with its last
+            // row, so that no frame continues; and 100 rows, the floor, at f = 10, eighty frames
+            // whose 1_000 tuples pass the cap and continue.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 500);
             sqlExecutionContext.changePageFrameSizes(2_000, 8_000);
-            final int[][] fanOutsFramesAndContinuations = {{4, 7, 0}, {5, 8, 0}, {10, 8, -1}};
+            final int[][] fanOutsFramesAndContinuations = {{3, 49, 0}, {5, 80, 0}, {10, 80, -1}};
             // A partitioned probe, one partition, and a probe without partitions cut the same frames.
             for (String partitionBy : new String[]{" PARTITION BY DAY", ""}) {
                 execute("DROP TABLE IF EXISTS t");
@@ -223,9 +223,10 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 }
             }
             // A column that t gained once its partition held 8_000 rows starts there, and so does the
-            // frame of the probe scan that reads it, in the middle of a frame of 1_250 rows at f = 4:
-            // six frames of 1_250 rows, one of the 500 rows up to the column's top, and one of the
-            // 1_000 rows after it.
+            // frame of the probe scan that reads it, in the middle of a frame of 1_250 rows, at a cap
+            // of 5_000 tuples and f = 4: six frames of 1_250 rows, one of the 500 rows up to the
+            // column's top, and one of the 1_000 rows after it.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
             execute("DROP TABLE t");
             execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("ALTER TABLE t ADD COLUMN v2 LONG");
@@ -380,15 +381,16 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             // dh holds one row of each of the probe's thousand keys and 50_000 rows of a key, -1,
             // that no probe row has: 51_000 rows over 1_001 keys lead the join to expect 50.95
             // matches per probe row, where each probe row meets one. At the server's default frame
-            // sizes and task cap, the frames of 200_001 probe rows shrink to 1_000_000 / 50.95 =
-            // 19_627 rows, ten of them and one of the 3_731 rows left, where the 100_000-row
-            // minimum would cut three: the misleading estimate costs eleven frames, and no frame
-            // continues.
+            // sizes and task cap, a probe frame's 100_000 rows, the frames of 200_001 probe rows
+            // shrink to 100_000 / 50.95 = 1_962 rows, 101 of them and one of the 1_839 rows left,
+            // where the join's 100_000-row maximum would cut three: the misleading estimate costs
+            // 102 frames, and no frame continues.
             execute("CREATE TABLE tl AS (SELECT (x % 1_000)::INT k, x v, timestamp_sequence('2024-01-01', 100_000) ts FROM long_sequence(200_001)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE dh AS (SELECT CASE WHEN x <= 1_000 THEN (x - 1)::INT ELSE -1 END k, x w FROM long_sequence(51_000))");
             sqlExecutionContext.changePageFrameSizes(100_000, 1_000_000);
-            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
-            Assert.assertEquals(11, assertDefaultFrames("SELECT tl.v, dh.w FROM tl JOIN dh ON tl.k = dh.k WHERE dh.w + tl.v > 0"));
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinPageFrameMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            Assert.assertEquals(102, assertDefaultFrames("SELECT tl.v, dh.w FROM tl JOIN dh ON tl.k = dh.k WHERE dh.w + tl.v > 0"));
         });
     }
 
@@ -576,16 +578,16 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // One partition of 200_001 probe rows, and a build of eleven rows of each of the probe's
             // thousand keys, every pair of which the residual and the post-join filter keep. At the
-            // server's default frame sizes and task cap, a page frame's 1_000_000 rows, a walking
-            // stage caps the frames at 1_000_000 / 11 = 90_909 rows, below the 100_000-row minimum,
-            // whose frames would hold 1_100_000 tuples each and continue: two frames of 90_909 rows,
-            // whose 999_999 tuples fit the cap, and one of the 18_183 rows left.
+            // server's default frame sizes and task cap, a probe frame's 100_000 rows, a walking
+            // stage caps the frames at 100_000 / 11 = 9_090 rows, below the 100_000-row minimum,
+            // whose frames would hold 1_100_000 tuples each and continue: 22 frames of 9_090 rows,
+            // whose 99_990 tuples fit the cap, and one of the 21 rows left.
             execute("CREATE TABLE tl AS (SELECT (x % 1_000)::INT k, x v, timestamp_sequence('2024-01-01', 100_000) ts FROM long_sequence(200_001)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE dl AS (SELECT (x % 1_000)::INT k, x w FROM long_sequence(11_000))");
             sqlExecutionContext.changePageFrameSizes(100_000, 1_000_000);
-            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
-            Assert.assertEquals(3, assertDefaultFrames("SELECT tl.v, dl.w FROM tl LEFT JOIN dl ON tl.k = dl.k AND dl.w + tl.v > 0"));
-            Assert.assertEquals(3, assertDefaultFrames("SELECT tl.v, dl.w FROM tl JOIN dl ON tl.k = dl.k WHERE dl.w + tl.v > 0"));
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            Assert.assertEquals(23, assertDefaultFrames("SELECT tl.v, dl.w FROM tl LEFT JOIN dl ON tl.k = dl.k AND dl.w + tl.v > 0"));
+            Assert.assertEquals(23, assertDefaultFrames("SELECT tl.v, dl.w FROM tl JOIN dl ON tl.k = dl.k WHERE dl.w + tl.v > 0"));
         });
     }
 
@@ -594,17 +596,18 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // One partition of 200_001 probe rows, and a build of eleven rows of each of the probe's
             // thousand keys, every one of which the ON residual keeps. At the server's default frame
-            // sizes, a stage that walked its matches would cut frames of the 100_000-row floor, whose
-            // 1_100_000 tuples pass the default cap of a page frame's rows and leave their rest to
-            // continuations. A stage whose build ran its whole residual cuts the frames of the join
-            // without the residual: one frame of the partition's rows, which needs no continuation.
+            // sizes, a stage that walked its matches would cut frames of 100_000 / 11 = 9_090 rows,
+            // see testWalkingStageAtServerDefaultFrames. A stage whose build ran its whole residual
+            // cuts the frames of the join without the residual: those of the join's 100_000-row
+            // maximum, two of them and one of the row left, which no frame grows past the maximum to
+            // absorb, and which need no continuation.
             execute("CREATE TABLE tl AS (SELECT (x % 1_000)::INT k, x v, timestamp_sequence('2024-01-01', 100_000) ts FROM long_sequence(200_001)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE dl AS (SELECT (x % 1_000)::INT k, x w FROM long_sequence(11_000))");
             sqlExecutionContext.changePageFrameSizes(100_000, 1_000_000);
-            Assert.assertEquals(1_000_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+            Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
             final String plain = "SELECT tl.v, dl.w FROM tl LEFT JOIN dl ON tl.k = dl.k";
-            Assert.assertEquals(1, assertDefaultFrames(plain));
-            Assert.assertEquals(1, assertDefaultFrames(plain + " AND dl.w > 0"));
+            Assert.assertEquals(3, assertDefaultFrames(plain));
+            Assert.assertEquals(3, assertDefaultFrames(plain + " AND dl.w > 0"));
         });
     }
 

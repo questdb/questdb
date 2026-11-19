@@ -77,7 +77,9 @@ import io.questdb.std.Os;
  * the probe's native frames at what a task's cap of tuples holds at the fan-out that the builds of
  * the stages whose matches the workers walk lead one to expect, see
  * {@link AsyncHashJoinAtom#getProbeFrameRowCap()}, so that duplicate matches rarely leave the rest of
- * a frame to a serial continuation.
+ * a frame to a serial continuation, and at {@code cairo.sql.parallel.hash.join.page.frame.max.rows}
+ * whatever the fan-out, see {@link AsyncHashJoinAtom#getProbeFrameMaxRows()}: the consumer waits for
+ * a frame's whole task before it reads the frame's first row, and the window holds whole frames.
  * <p>
  * Under a LIMIT that bounds the rows that the cursor's reader reads, which the join takes from its
  * own query or from one over it, see {@link AsyncHashJoinRecordCursorFactory#ofLimit}, the
@@ -353,9 +355,10 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             // An INNER join whose build has no row returns none, so the execution dispatches no probe
             // task: with no frame to read, the cursor ends at once.
             if (atom.build(circuitBreaker, buildRounds)) {
-                // The builds tell how many matches a probe row meets, which the frames' rows follow.
-                final long probeFrameRowCap = atom.getProbeFrameRowCap();
-                frameSequence.setPageFrameMaxRows(probeFrameRowCap);
+                // The builds tell how many matches a probe row meets, which the frames' rows follow,
+                // within the join's own maximum of a probe frame's rows.
+                final long fanOutFrameRowCap = atom.getProbeFrameRowCap();
+                frameSequence.setPageFrameMaxRows(Math.min(fanOutFrameRowCap, atom.getProbeFrameMaxRows()));
                 frameSequence.prepareForDispatch();
                 frameLimit = frameSequence.getFrameCount() - 1;
                 long probeRows = 0;
@@ -369,7 +372,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 final HashJoinTupleRing ring = atom.getRing();
                 // Where the builds cap the frames' rows, a probe row may yield several tuples, and a
                 // task may write its cap of them.
-                ring.of(frameSequence, true, probeFrameRowCap != Long.MAX_VALUE);
+                ring.of(frameSequence, true, fanOutFrameRowCap != Long.MAX_VALUE);
                 firstWindow(ring.getDispatchLimit());
                 tupleStride = ring.getTupleStride();
                 for (int k = 0; k < stageCount; k++) {
