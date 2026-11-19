@@ -376,7 +376,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * cancels the sequence here unless the execution is uninterruptible, or before, by another task,
      * the consumer or a failure. The reduce jobs check the breaker before each frame; a stage that
      * walks its matches checks it every so many pairs too, since a frame's pairs are not bounded by
-     * its rows, and the consumer checks it before each chunk of a frame's continuation.
+     * its rows, and the consumer checks it before each chunk of a frame's continuation. Between
+     * those checks, a loop over a frame's rows reads whether the sequence was cancelled, see
+     * {@link Slot#isCancelled()}, so that its task stops soon after a cancellation that another
+     * thread made.
      */
     static boolean isInterrupted(SqlExecutionCircuitBreaker circuitBreaker, PageFrameSequence<?> frameSequence) {
         if (!frameSequence.isUninterruptible()) {
@@ -1505,6 +1508,17 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // the stages' own, hidden copies, or the shared template's instances.
         void countStepperRun(int kind, boolean isCopy) {
             stepperRunCounts[kind * 2 + (isCopy ? 1 : 0)]++;
+        }
+
+        /**
+         * True when the execution's frame sequence was cancelled: by the cursor's close(), by a check
+         * of the circuit breaker on another thread or by another task's failure. It reads the
+         * sequence's state alone and asks the breaker nothing, unlike {@link #isInterrupted()}, so a
+         * loop over a frame's rows reads it every {@code CANCEL_CHECK_ROW_MASK + 1} rows, see
+         * {@link HashJoinStageStepper}.
+         */
+        boolean isCancelled() {
+            return !frameSequence.isActive();
         }
 
         /**

@@ -362,6 +362,16 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
+     * False once the cursor's execution was cancelled: by its close(), by a check of the circuit
+     * breaker or by a task's failure; true while it runs. It stays false after the close(), the
+     * tasks that workers ran included, until the next execution or toTop() starts.
+     */
+    @TestOnly
+    public boolean isExecutionActive() {
+        return frameSequence.isActive();
+    }
+
+    /**
      * True once the planner marked the join as the source of the query's rows, see
      * {@link #markClientRowSource()}.
      */

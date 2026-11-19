@@ -41,6 +41,9 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     long countRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, boolean isDescending) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         for (long i = from; i < rowCount; i++) {
+            if ((i & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
+                return CANCELLED;
+            }
             final long row = isDescending ? rowCount - 1 - i : i;
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
@@ -56,6 +59,9 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         final long n = rows.size();
         for (long p = from; p < n; p++) {
+            if ((p & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
+                return CANCELLED;
+            }
             final long row = rows.get(isDescending ? n - 1 - p : p);
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
@@ -71,6 +77,9 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
         final DirectLongList tuples = slot.tuples;
         for (long i = from; i < to; i++) {
+            if ((i & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
+                return CANCELLED;
+            }
             final long row = isDescending ? rowCount - 1 - i : i;
             probeRecord.setRowIndex(row);
             slot.probeRow = row;
@@ -90,6 +99,9 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
         final DirectLongList tuples = slot.tuples;
         final long n = rows.size();
         for (long p = from; p < to; p++) {
+            if ((p & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
+                return CANCELLED;
+            }
             final long row = rows.get(isDescending ? n - 1 - p : p);
             probeRecord.setRowIndex(row);
             slot.probeRow = row;

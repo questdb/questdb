@@ -94,6 +94,12 @@ abstract class HashJoinStageStepper {
     static final int KEY_SYMBOL = 1;
     // What a loop over a frame's rows returns when the execution was cancelled.
     static final long CANCELLED = -1;
+    // A loop over a frame's rows reads whether the execution was cancelled at every row whose index in
+    // the loop is a multiple of 4,096: a task of an execution that its cursor's close(), a tripped
+    // circuit breaker or another task's failure cancelled stops within that many rows, rather than
+    // at the end of a frame of up to a million. The read is one volatile load, see
+    // AsyncHashJoinAtom.Slot.isCancelled(), which a full read does not measurably pay for.
+    static final long CANCEL_CHECK_ROW_MASK = 4_096 - 1;
     // What an enumerated stage makes of a pair: it fails the ON residual, it passes it, or the
     // execution was cancelled while the later stages joined it.
     static final int PAIR_CANCELLED = -1;

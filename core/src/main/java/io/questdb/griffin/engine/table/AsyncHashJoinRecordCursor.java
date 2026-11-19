@@ -237,9 +237,10 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     collectCursor(true);
                 } finally {
                     // The rows the consumer did not read are not needed: the frames in flight that no
-                    // worker started are dropped rather than joined. The frames that workers run are
-                    // awaited even when the collection fails, as defining the stepper copies may,
-                    // since the reset frees what they read.
+                    // worker started are dropped rather than joined, and the tasks that workers run
+                    // stop within a few thousand rows, see HashJoinStageStepper.CANCEL_CHECK_ROW_MASK.
+                    // They are awaited even when the collection fails, as defining the stepper copies
+                    // may, since the reset frees what they read.
                     if (frameLimit > -1) {
                         frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         frameSequence.await();
