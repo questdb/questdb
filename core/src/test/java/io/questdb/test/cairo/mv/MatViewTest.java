@@ -59,6 +59,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -3286,6 +3287,12 @@ public class MatViewTest extends AbstractCairoTest {
 
             // copy
             assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
+            // the import resolves a single-quoted target to the view too
+            assertExceptionNoLeakCheck(
+                    "copy 'price_1h' from 'test-numeric-headers.csv' with header true",
+                    5,
+                    "cannot modify materialized view [view=price_1h]"
+            );
             // rename table
             assertCannotModifyMatView("rename table price_1h to price_1h_bak");
             // update
@@ -9809,46 +9816,61 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testMatViewBackfillCopyAcceptedWithRefreshLimit() throws Exception {
-        // With REFRESH LIMIT set, the SQL-compile entry-point gate
-        // (checkViewModificationForInsertOrCopy) accepts COPY into the mat view.
-        // Verified by attempting COPY from a CSV whose schema does not match the view:
-        // the compile gate must not fire, so the failure (if any) must come from a
-        // downstream column mismatch -- never from "cannot modify materialized view".
-        // COPY runs on a background import job that this test does not drain, so the
-        // storage-side CairoTextWriter gate is not exercised here; it applies the same
-        // engine.isBackfillableMatView predicate covered by the INSERT path and the
-        // QWP gate test (QwpIngressProcessorStateTest).
-        //
-        // The companion strict-gate test below shares this setup and confirms
-        // ALTER/RENAME/UPDATE/TRUNCATE remain rejected even with REFRESH LIMIT set.
+    public void testMatViewBackfillCopyRejectedWithRefreshLimit() throws Exception {
+        // SQL COPY imports into an existing view through the parallel importer, which attaches partitions
+        // through the view's TableWriter, outside the view's WAL where MatViewBackfillValidator checks
+        // backfill at commit. So the compile-time gate refuses COPY into a materialized view even when its
+        // REFRESH LIMIT lets INSERT backfill the frozen zone: for every spelling of the name, whatever the
+        // COPY options, FROM stdin too, and whether the view is still empty (the bootstrap case) or not.
+        // A refused COPY publishes no import task.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "  sym symbol, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
+            execute("insert into base_price values ('a', 8.0, '2024-09-10T10:10'), ('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
             execute(
                     "create materialized view price_1h refresh manual deferred as " +
                             "select sym, last(price) as price, ts from base_price sample by 1h;"
             );
             execute("alter materialized view price_1h set refresh limit 1 hour;");
             drainQueues();
+            assertQueryNoLeakCheck("count\n0\n", "select count() from price_1h", null, false, true);
 
-            try {
-                execute("copy price_1h from 'test-numeric-headers.csv' with header true");
-                // If COPY succeeds outright (schema happens to match), that also
-                // means the gate let it through -- acceptable for this test.
-            } catch (Throwable t) {
-                final String msg = t.getMessage();
-                Assert.assertNotNull(msg);
-                Assert.assertFalse(
-                        "COPY entry-point gate must not fire when REFRESH LIMIT is set; got: " + msg,
-                        msg.contains("cannot modify materialized view")
-                );
-            }
+            final String gateMessage = "cannot modify materialized view [view=price_1h]";
+            assertExceptionNoLeakCheck("copy price_1h from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy \"price_1h\" from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy 'price_1h' from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy PRICE_1H from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck(
+                    "copy price_1h from 'x.csv' with header true timestamp 'ts' partition by DAY on error abort",
+                    5,
+                    gateMessage
+            );
+            assertExceptionNoLeakCheck("copy price_1h from stdin", 5, gateMessage);
+            Assert.assertEquals(CopyImportContext.INACTIVE_COPY_ID, engine.getCopyImportContext().getActiveImportID());
 
-            // Strict gate remains closed for non-INSERT/COPY mutations.
+            // Wall clock 12:30: anchor = min(12:00, 12:30) = 12:00; boundary = 11:00, so the
+            // refresh builds the 12:00 bucket only.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            assertExceptionNoLeakCheck("copy price_1h from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            Assert.assertEquals(CopyImportContext.INACTIVE_COPY_ID, engine.getCopyImportContext().getActiveImportID());
+
+            // ALTER, RENAME, UPDATE and TRUNCATE stay refused too
             assertCannotModifyMatView("alter table price_1h add column x int");
             assertCannotModifyMatView("rename table price_1h to price_1h_bak");
             assertCannotModifyMatView("update price_1h set price = 1.1");

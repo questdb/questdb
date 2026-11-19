@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.pgwire;
 
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.ServerErrorMessage;
@@ -42,6 +43,7 @@ import java.sql.Statement;
  * statement compiles, and the commit-time check covers what a statement compiled before ALTER MATERIALIZED VIEW ...
  * SET REFRESH LIMIT 0 writes after it: a statement pg-wire keeps prepared or serves from its insert cache, and rows an
  * open transaction holds. Either refusal carries the gate's message; the commit-time one has no position in the SQL.
+ * SQL COPY takes no backfill: its import writes outside the view's WAL, where the commit-time check runs.
  */
 public class PGMatViewBackfillTest extends BasePGTest {
     private static final String GATE_MESSAGE = "cannot modify materialized view [view=price_1h]";
@@ -51,6 +53,12 @@ public class PGMatViewBackfillTest extends BasePGTest {
             a,8.0,2024-09-10 10:00:00.0
             a,9.0,2024-09-10 12:00:00.0
             """;
+
+    @BeforeClass
+    public static void setUpCopyRoot() {
+        // COPY FROM is disabled while cairo.sql.copy.root is blank
+        inputRoot = TestUtils.getCsvRoot();
+    }
 
     @Test
     public void testCommitRejectedAfterRefreshLimitRemoved() throws Exception {
@@ -75,6 +83,40 @@ public class PGMatViewBackfillTest extends BasePGTest {
             connection.setAutoCommit(true);
             drainWalAndMatViewQueues();
             assertViewRows(connection, REFRESHED_VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testPreparedCopyRejected() throws Exception {
+        // A prepared COPY into a view with REFRESH LIMIT fails at each execution with the gate's message at the
+        // view's name, and the connection still backfills the frozen zone with INSERT.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createRefreshedView();
+            final String copySql = "COPY price_1h FROM 'test-numeric-headers.csv' WITH HEADER true";
+            try (PreparedStatement copy = connection.prepareStatement(copySql)) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        copy.execute();
+                        Assert.fail("COPY into a materialized view must be refused");
+                    } catch (PSQLException e) {
+                        assertGateMessage(e);
+                        // the position the server reports counts from 1
+                        Assert.assertEquals(copySql.indexOf("price_1h") + 1, e.getServerErrorMessage().getPosition());
+                    }
+                }
+            }
+            assertViewRows(connection, REFRESHED_VIEW_ROWS);
+
+            try (PreparedStatement insert = connection.prepareStatement(INSERT_SQL)) {
+                Assert.assertEquals(1, executeInsert(insert, 1.0, "2024-09-10T09:00:00.000000Z"));
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows(connection, """
+                    sym[VARCHAR],price[DOUBLE],ts[TIMESTAMP]
+                    a,1.0,2024-09-10 09:00:00.0
+                    a,8.0,2024-09-10 10:00:00.0
+                    a,9.0,2024-09-10 12:00:00.0
+                    """);
         });
     }
 

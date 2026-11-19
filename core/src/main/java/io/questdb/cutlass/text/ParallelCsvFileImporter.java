@@ -1585,6 +1585,13 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     partitionBy = writer.getPartitionBy();
                     break;
                 case TableUtils.TABLE_EXISTS:
+                    // The import attaches partitions through the target's TableWriter, outside the target's WAL,
+                    // so it never writes into a view. COPY into a view fails to compile; this refuses a view that
+                    // took the target's name after the COPY compiled, before the import asks for its writer.
+                    if (tableToken.getType() != TableToken.Type.TABLE) {
+                        throw TextException.$("cannot modify ").put(tableToken.getType().keyword())
+                                .put(" [view=").put(tableToken.getTableName()).put(']');
+                    }
                     initWriterAndOverrideImportMetadata(names, types, typeManager, securityContext);
 
                     if (writer.getRowCount() > 0) {

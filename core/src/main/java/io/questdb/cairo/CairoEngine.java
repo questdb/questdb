@@ -3238,7 +3238,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * Shared backfill gate for mat views: returns {@code true} when {@code matViewToken}
      * is a materialized view that has a non-zero {@code REFRESH LIMIT} set and the
      * frozen-zone feature is enabled (i.e. the wall-clock escape-hatch config is off).
-     * In that case direct user INSERT/COPY/ILP/QWP into it is allowed in principle.
+     * In that case direct user INSERT, ILP, QWP and HTTP /imp into it are allowed in principle.
      * Returns {@code false} for non-mat-views (caller's existing path applies), for
      * mat views without {@code REFRESH LIMIT} (caller rejects with its existing
      * "cannot modify materialized view" error), and whenever the escape-hatch is on

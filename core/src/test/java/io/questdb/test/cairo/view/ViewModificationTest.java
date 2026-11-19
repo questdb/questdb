@@ -65,6 +65,12 @@ public class ViewModificationTest extends AbstractViewTest {
 
             // copy
             assertCannotModifyView("copy price_1h from 'test-numeric-headers.csv' with header true");
+            // the import resolves a single-quoted target to the view too
+            assertExceptionNoLeakCheck(
+                    "copy 'price_1h' from 'test-numeric-headers.csv' with header true",
+                    5,
+                    "cannot modify view [view=price_1h]"
+            );
             // rename table
             assertCannotModifyView("rename table price_1h to price_1h_bak");
             // update

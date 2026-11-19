@@ -1604,7 +1604,7 @@ public interface CairoConfiguration {
      * <p>
      * When true, the boundary reverts to the pre-frozen-zone formula
      * {@code wallClock - LIMIT}. The frozen-zone feature (FULL preserving
-     * older rows, backfill via direct INSERT/COPY/ILP) then reverts to
+     * older rows, backfill via direct INSERT, ILP, QWP and HTTP /imp) then reverts to
      * pre-feature behaviour as well; the flag is a "revert to pre-feature
      * behaviour" escape hatch, not a "use a different formula" switch.
      *

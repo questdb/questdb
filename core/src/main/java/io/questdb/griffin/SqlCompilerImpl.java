@@ -3322,10 +3322,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // COPY FROM creates the table when it is missing, so its target collides with any existing object,
-    // visible or not, the way CREATE TABLE does.
+    // visible or not, the way CREATE TABLE does. The check resolves the name the import resolves: the parser
+    // leaves a single-quoted target quoted, and the import unquotes it. Unlike INSERT, COPY FROM refuses a
+    // materialized view even with REFRESH LIMIT: the import attaches partitions through the view's
+    // TableWriter, outside the view's WAL, where MatViewBackfillValidator checks backfill at commit.
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
-        final CharSequence name = executionModel.getTableName();
-        final TableToken tableToken = engine.getTableTokenIfExists(name);
+        final TableToken tableToken = engine.getTableTokenIfExists(unquote(executionModel.getTableName()));
         checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
@@ -3340,21 +3342,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
     }
 
-    /**
-     * INSERT/COPY-only variant of {@link #checkViewModification(ExecutionModel)} that also
-     * accepts a materialized view carrying a {@code REFRESH LIMIT}, letting the rows be
-     * backfilled into the frozen zone. ALTER/RENAME/UPDATE/TRUNCATE/VACUUM still go through
-     * the strict {@link #checkViewModification} variants, and every other view kind is
-     * rejected here exactly as it is there.
-     */
-    private void checkViewModificationForInsertOrCopy(ExecutionModel executionModel) throws SqlException {
-        final TableToken tableToken = engine.getTableTokenIfExists(executionModel.getTableName());
-        if (tableToken != null && engine.isBackfillableMatView(tableToken)) {
-            return;
-        }
-        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
-    }
-
     // For statements that modify an existing table: an object the principal may not see is not disclosed
     // as a view here, and the statement goes on to fail like it does for a missing table.
     private void checkVisibleViewModification(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
@@ -3363,10 +3350,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * INSERT variant of {@link #checkViewModificationForInsertOrCopy(ExecutionModel)}: like
-     * {@link #checkVisibleViewModification}, it does not disclose an object the principal may not
-     * see as a view, and it still lets rows be backfilled into the frozen zone of a materialized
-     * view that carries a {@code REFRESH LIMIT}.
+     * INSERT variant of {@link #checkVisibleViewModification}: it does not disclose an object the
+     * principal may not see as a view either, and it lets rows be backfilled into the frozen zone
+     * of a materialized view that carries a {@code REFRESH LIMIT}, which MatViewBackfillValidator
+     * checks when the view's WAL commits. COPY FROM keeps the strict
+     * {@link #checkViewModification(ExecutionModel)}: its import writes outside the view's WAL.
      */
     private void checkVisibleViewModificationForInsert(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
         final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
@@ -6025,7 +6013,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (executionModel.getTableName() != null) {
                         assert executionModel.getModelType() == ExecutionModel.COPY;
                         if (((ExportModel) executionModel).getType() == COPY_TYPE_FROM) {
-                            checkViewModificationForInsertOrCopy(executionModel);
+                            checkViewModification(executionModel);
                         }
                     }
                     copy(executionContext, (ExportModel) executionModel);

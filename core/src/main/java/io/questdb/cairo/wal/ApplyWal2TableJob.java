@@ -1546,7 +1546,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * Advances the in-memory backfill frontier of {@code viewToken} from the user-backfill txns in
      * {@code [fromSeqTxn, toSeqTxn]} just applied. Gated identically to
      * {@link MatViewBackfillValidator#validate} -- only generic {@link WalTxnType#DATA} with the
-     * default dedup mode (user INSERT/COPY/ILP/QWP) is considered; refresh writes (MAT_VIEW_DATA, or
+     * default dedup mode (user INSERT, ILP, QWP and HTTP /imp) is considered; refresh writes (MAT_VIEW_DATA, or
      * DATA + REPLACE_RANGE) are skipped. No-op when the view has no {@code REFRESH LIMIT} or the
      * wall-clock escape-hatch is on. This is the single advance point for the frontier (the
      * commit-time validator does not advance it -- see {@link MatViewBackfillValidator#validate}),

@@ -63,7 +63,7 @@ import org.jetbrains.annotations.Nullable;
  * Refresh-job writes carry {@link WalTxnType#MAT_VIEW_DATA} or
  * {@link WalTxnType#DATA} with {@link WalUtils#WAL_DEDUP_MODE_REPLACE_RANGE} and
  * are passed through untouched; only generic {@link WalTxnType#DATA} with the
- * default dedup mode -- user INSERT/COPY/ILP/QWP -- is checked.
+ * default dedup mode -- user INSERT, ILP, QWP and HTTP /imp -- is checked.
  * <p>
  * Without {@code REFRESH LIMIT}, or with the wall-clock escape hatch on, no
  * frozen zone exists and the view accepts no user write: the validator refuses
