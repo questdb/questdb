@@ -65,6 +65,8 @@ import java.util.TreeSet;
  * differ, the rule before master's NULL CHAR ordering fix was merged, the other on the typed arguments first and on the
  * untyped NULL arguments after them, the current rule. The copy of the current rule must agree with production on
  * every call, which proves the copies faithful, and the calls on which the two rules disagree are pinned.
+ * {@code testComparisonAliasesBindMirrorOverload} walks every pair of those arguments, untyped NULL included, through
+ * every comparison and requires each negating or argument-swapping alias to bind the overload its base binds.
  * <p>
  * Only a call with an untyped NULL argument before a typed one can tell the rules apart: when every NULL argument
  * follows every typed one, the first difference among all the arguments is the first typed difference, or else the
@@ -98,6 +100,66 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
     private FunctionResolver resolver;
 
     @Test
+    public void testComparisonAliasesBindMirrorOverload() throws Exception {
+        // a != b and a <> b must bind the negation of the overload a = b binds, and a >= b, b > a and b <= a the
+        // overload a < b binds, with every argument converted to the same type. Otherwise the alias compares the
+        // values at another type than its base and can return another result: STRING >= BYTE compared as LONG while
+        // STRING < BYTE compared as INT, and IPv4 != VARCHAR parsed the VARCHAR as IPv4 while IPv4 = VARCHAR compared
+        // the text.
+        assertMemoryLeak(() -> {
+            resolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache());
+            final ArrayConstant emptyArray = ArrayConstant.emptyUntyped(1);
+            final TreeSet<String> aliasDifferences = new TreeSet<>();
+            final TreeSet<String> commutedDifferences = new TreeSet<>();
+            try {
+                buildArgs(emptyArray);
+                final ObjList<Arg> options = new ObjList<>();
+                options.add(new Arg("NULL", NullConstant.NULL, ColumnType.NULL, true));
+                options.addAll(typedArgs);
+                for (int i = 0, n = options.size(); i < n; i++) {
+                    for (int j = 0; j < n; j++) {
+                        final Arg a = options.getQuick(i);
+                        final Arg b = options.getQuick(j);
+                        checkMirror(aliasDifferences, "=", a, b, "!=", false);
+                        checkMirror(aliasDifferences, "=", a, b, "<>", false);
+                        checkMirror(aliasDifferences, "<", a, b, ">=", false);
+                        checkMirror(aliasDifferences, "<", a, b, ">", true);
+                        checkMirror(aliasDifferences, "<", a, b, "<=", true);
+                        checkMirror(aliasDifferences, ">", a, b, "<=", false);
+                        checkMirror(aliasDifferences, ">", a, b, "<", true);
+                        checkMirror(aliasDifferences, ">", a, b, ">=", true);
+                        if (j > i) {
+                            checkMirror(commutedDifferences, "=", a, b, "=", true);
+                        }
+                        compared++;
+                    }
+                }
+            } finally {
+                Misc.free(emptyArray);
+            }
+            Assert.assertTrue("compared too few calls: " + compared, compared > 4_000);
+            Assert.assertEquals("", join(aliasDifferences));
+            // b = a binds the overload a = b binds, with the arguments swapped, except for an untyped NULL beside an
+            // argument that one overload takes exactly and another converts. A NULL that comes first makes every
+            // overload a partial match and leaves the choice to the score and the function list, a NULL that comes
+            // after an exactly matched argument keeps that overload partial while the converting one stays fuzzy.
+            // NULL = DATE and DATE = NULL, and NULL = INTERVAL and INTERVAL = NULL, return the same result through
+            // either overload. NULL = $1 and $1 = NULL do not when $1 has no type yet: the second binds the cursor
+            // overload and fails to compile.
+            Assert.assertEquals(
+                    """
+                            =($1, NULL) binds EqNullCursorFunctionFactory(CURSOR, NULL constant), =(NULL, $1) binds EqDoubleFunctionFactory(DOUBLE, DOUBLE)
+                            =(DATE, NULL) binds EqDateFunctionFactory(DATE, DATE), =(NULL, DATE) binds EqSymTimestampFunctionFactory(SYMBOL, TIMESTAMP)
+                            =(INTERVAL, NULL) binds EqIntervalFunctionFactory(INTERVAL, INTERVAL), =(NULL, INTERVAL) binds EqStrFunctionFactory(STRING, STRING)
+                            =(NULL::DATE, NULL) binds EqDateFunctionFactory(DATE, DATE), =(NULL, NULL::DATE) binds EqSymTimestampFunctionFactory(SYMBOL, TIMESTAMP)
+                            =(NULL::INTERVAL, NULL) binds EqIntervalFunctionFactory(INTERVAL, INTERVAL), =(NULL, NULL::INTERVAL) binds EqStrFunctionFactory(STRING, STRING)
+                            """,
+                    join(commutedDifferences)
+            );
+        });
+    }
+
+    @Test
     public void testNullArgumentTieBreak() throws Exception {
         assertMemoryLeak(() -> {
             resolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache());
@@ -127,31 +189,11 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
             for (String difference : ruleDifferences) {
                 differences.append(difference).append('\n');
             }
-            // An untyped NULL takes the type of the other operand, as PostgreSQL resolves an unknown-type literal
-            // against an operator, so NULL op x binds the overload x op' NULL binds.
-            Assert.assertEquals(
-                    """
-                            !=(NULL, DATE): before !=(KN) EqSymTimestampFunctionFactory, now !=(MM) EqDateFunctionFactory
-                            !=(NULL, INTERVAL): before !=(SS) EqStrFunctionFactory, now !=(ΔΔ) EqIntervalFunctionFactory
-                            !=(NULL, NULL::DATE): before !=(KN) EqSymTimestampFunctionFactory, now !=(MM) EqDateFunctionFactory
-                            !=(NULL, NULL::INTERVAL): before !=(SS) EqStrFunctionFactory, now !=(ΔΔ) EqIntervalFunctionFactory
-                            !=(NULL, NULL::SHORT): before !=(sI) EqIntStrCFunctionFactory, now !=(EE) EqShortFunctionFactory
-                            !=(NULL, SHORT): before !=(sI) EqIntStrCFunctionFactory, now !=(EE) EqShortFunctionFactory
-                            <=(NULL, CHAR): before <=(SS) LtStrFunctionFactory, now <=(AA) LtCharFunctionFactory
-                            <=(NULL, NULL::CHAR): before <=(SS) LtStrFunctionFactory, now <=(AA) LtCharFunctionFactory
-                            <>(NULL, DATE): before <>(KN) EqSymTimestampFunctionFactory, now <>(MM) EqDateFunctionFactory
-                            <>(NULL, INTERVAL): before <>(SS) EqStrFunctionFactory, now <>(ΔΔ) EqIntervalFunctionFactory
-                            <>(NULL, NULL::DATE): before <>(KN) EqSymTimestampFunctionFactory, now <>(MM) EqDateFunctionFactory
-                            <>(NULL, NULL::INTERVAL): before <>(SS) EqStrFunctionFactory, now <>(ΔΔ) EqIntervalFunctionFactory
-                            <>(NULL, NULL::SHORT): before <>(sI) EqIntStrCFunctionFactory, now <>(EE) EqShortFunctionFactory
-                            <>(NULL, SHORT): before <>(sI) EqIntStrCFunctionFactory, now <>(EE) EqShortFunctionFactory
-                            >(NULL, CHAR): before >(SS) LtStrFunctionFactory, now >(AA) LtCharFunctionFactory
-                            >(NULL, NULL::CHAR): before >(SS) LtStrFunctionFactory, now >(AA) LtCharFunctionFactory
-                            >=(NULL, CHAR): before >=(SS) LtStrFunctionFactory, now >=(AA) LtCharFunctionFactory
-                            >=(NULL, NULL::CHAR): before >=(SS) LtStrFunctionFactory, now >=(AA) LtCharFunctionFactory
-                            """,
-                    differences.toString()
-            );
+            // No production call depends on the rule. The comparisons that did, != and <> against DATE, INTERVAL and
+            // SHORT and <=, > and >= against CHAR, are negating or argument-swapping aliases of = and <, which now
+            // keep the list order of the overload they derive from, as testComparisonAliasesBindMirrorOverload
+            // requires, so both rules bind every alias to the mirror of the overload its base binds.
+            Assert.assertEquals("", differences.toString());
         });
     }
 
@@ -229,18 +271,24 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
         if (descriptor == null) {
             return "none";
         }
-        FunctionFactory factory = descriptor.getFactory();
-        final String signature = factory.getSignature();
-        while (true) {
-            if (factory instanceof NegatingFunctionFactory negating) {
-                factory = negating.getDelegate();
-            } else if (factory instanceof ArgSwappingFunctionFactory swapping) {
-                factory = swapping.getDelegate();
-            } else {
-                break;
-            }
+        return descriptor.getFactory().getSignature() + ' ' + unwrap(descriptor.getFactory()).getClass().getSimpleName();
+    }
+
+    // The factory that computes the call and the parameter type each argument converts to, in the order of the call
+    // or, with isSwapped, in the reverse order. A negating or swapping alias computes with the factory it wraps.
+    private static String describeBinding(FunctionFactoryDescriptor descriptor, boolean isSwapped) {
+        if (descriptor == null) {
+            return "none";
         }
-        return signature + ' ' + factory.getClass().getSimpleName();
+        final String first = describeParameter(descriptor.getArgTypeWithFlags(isSwapped ? 1 : 0));
+        final String second = describeParameter(descriptor.getArgTypeWithFlags(isSwapped ? 0 : 1));
+        return unwrap(descriptor.getFactory()).getClass().getSimpleName() + '(' + first + ", " + second + ')';
+    }
+
+    private static String describeParameter(int sigTypeWithFlags) {
+        return ColumnType.nameOf(FunctionFactoryDescriptor.toTypeTag(sigTypeWithFlags))
+                + (FunctionFactoryDescriptor.isArray(sigTypeWithFlags) ? "[]" : "")
+                + (FunctionFactoryDescriptor.isConstant(sigTypeWithFlags) ? " constant" : "");
     }
 
     private static int firstDistanceDifference(IntList distances, IntList candidateDistances, IntList argTypes, int n, boolean isNull) {
@@ -317,6 +365,14 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
         final int sigArgCount = descriptor.getSigArgCount();
         return sigArgCount > 0
                 && FunctionFactoryDescriptor.toTypeTag(descriptor.getArgTypeWithFlags(sigArgCount - 1)) == ColumnType.VAR_ARG;
+    }
+
+    private static String join(TreeSet<String> lines) {
+        final StringBuilder sb = new StringBuilder();
+        for (String line : lines) {
+            sb.append(line).append('\n');
+        }
+        return sb.toString();
     }
 
     private static int mergeWithExactMatch(int match) {
@@ -525,6 +581,18 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
         return candidate;
     }
 
+    private static FunctionFactory unwrap(FunctionFactory factory) {
+        while (true) {
+            if (factory instanceof NegatingFunctionFactory negating) {
+                factory = negating.getDelegate();
+            } else if (factory instanceof ArgSwappingFunctionFactory swapping) {
+                factory = swapping.getDelegate();
+            } else {
+                return factory;
+            }
+        }
+    }
+
     // Keeps one argument of each kind the resolver tells apart: type, constness and trait.
     private void addArg(ObjList<Arg> target, HashSet<String> keys, String label, Function function) {
         final int type = function.getType();
@@ -633,6 +701,19 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
         }
         if (before != now) {
             ruleDifferences.add(render(name, call, isWindowContext) + ": before " + describe(before) + ", now " + describe(now));
+        }
+    }
+
+    // Records the alias call when it binds another overload than base(a, b), or converts an argument to another type.
+    // With isSwapped the alias takes the arguments in the reverse order.
+    private void checkMirror(TreeSet<String> differences, String base, Arg a, Arg b, String alias, boolean isSwapped) {
+        final FunctionFactoryDescriptor baseOverload = select(base, a, b);
+        final Arg x = isSwapped ? b : a;
+        final Arg y = isSwapped ? a : b;
+        final FunctionFactoryDescriptor aliasOverload = select(alias, x, y);
+        if (!describeBinding(aliasOverload, isSwapped).equals(describeBinding(baseOverload, false))) {
+            differences.add(alias + '(' + x.label + ", " + y.label + ") binds " + describeBinding(aliasOverload, false)
+                    + ", " + base + '(' + a.label + ", " + b.label + ") binds " + describeBinding(baseOverload, false));
         }
     }
 
@@ -769,6 +850,21 @@ public class OverloadNullTieBreakTest extends AbstractCairoTest {
             }
         }
         return options;
+    }
+
+    // The overload the production resolver binds name(x, y) to, or null when none accepts the arguments.
+    private FunctionFactoryDescriptor select(String name, Arg x, Arg y) {
+        args.clear();
+        args.add(x.function);
+        args.add(y.function);
+        argPositions.clear();
+        argPositions.add(0);
+        argPositions.add(0);
+        try {
+            return resolver.selectOverload(name, 0, args, argPositions, sqlExecutionContext);
+        } catch (SqlException e) {
+            return null;
+        }
     }
 
     private record Arg(String label, Function function, int type, boolean isConstant) {

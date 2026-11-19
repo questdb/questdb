@@ -92,31 +92,6 @@ final class ColumnReads implements Mutable {
         }
     };
 
-    /**
-     * A count reads the columns of an input that would otherwise compute them anyway: a set operation compares them,
-     * and a computing projection evaluates them.
-     */
-    private static boolean isCountInputMaterialized(LogicalPlan input) {
-        while (true) {
-            switch (input) {
-                case SetOperationPlan _ -> {
-                    return true;
-                }
-                case ProjectPlan project -> {
-                    if (!LogicalPlans.isColumnProjection(project)) {
-                        return true;
-                    }
-                }
-                case LimitPlan _, SortPlan _, FilterPlan _ -> {
-                }
-                default -> {
-                    return false;
-                }
-            }
-            input = input.inputAt(0);
-        }
-    }
-
     private static boolean isUnionAllChain(SetOperationPlan plan) {
         while (true) {
             if (plan.getRight() instanceof SetOperationPlan right
@@ -158,9 +133,7 @@ final class ColumnReads implements Mutable {
             }
             case SampleByPlan sample -> sample.visitReads(planReads);
             case AggregatePlan aggregate -> {
-                if (isRowCount(aggregate) && isCountInputMaterialized(aggregate.getChild())) {
-                    readAllColumns(aggregate.getChild().getOutput());
-                }
+                // A count reads no column: the rows it counts are those of its input, whatever the input computes.
                 for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
                     aggregate.getGroupingExpressions().getQuick(i).walk(expressionReads);
                 }
@@ -308,13 +281,6 @@ final class ColumnReads implements Mutable {
             }
         }
         return count != null && LogicalPlans.isCountCall(count);
-    }
-
-    /**
-     * True when the aggregate counts its input rows without reading any of the input's columns.
-     */
-    boolean isUnreadCountInput(AggregatePlan aggregate) {
-        return isRowCount(aggregate) && !isCountInputMaterialized(aggregate.getChild());
     }
 
     /**

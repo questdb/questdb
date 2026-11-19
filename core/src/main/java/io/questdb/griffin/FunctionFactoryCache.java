@@ -71,7 +71,7 @@ public class FunctionFactoryCache {
                                 addFactoryToList(factories, createNegatingFactory("<>", factory), descriptor);
                                 if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
-                                    FunctionFactoryDescriptor swapped = new FunctionFactoryDescriptor(swappingFactory, descriptor.isRelocatableScalar());
+                                    FunctionFactoryDescriptor swapped = new FunctionFactoryDescriptor(swappingFactory, descriptor);
                                     descriptor.setCommutedEquality(swapped);
                                     swapped.setCommutedEquality(descriptor);
                                     addFactoryToList(factories, swapped);
@@ -191,7 +191,7 @@ public class FunctionFactoryCache {
             FunctionFactory factory,
             FunctionFactoryDescriptor source
     ) throws SqlException {
-        addFactoryToList(list, new FunctionFactoryDescriptor(factory, source.isRelocatableScalar()));
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory, source));
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {

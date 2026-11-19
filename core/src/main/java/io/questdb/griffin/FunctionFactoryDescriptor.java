@@ -67,11 +67,21 @@ public class FunctionFactoryDescriptor {
     private final int sigArgCount;
 
     public FunctionFactoryDescriptor(FunctionFactory factory) throws SqlException {
-        this(factory, RelocatableScalarFactories.contains(factory));
+        this(factory, RelocatableScalarFactories.contains(factory), FunctionFactoryScanner.isListed(factory));
     }
 
-    // Only the cache's audited argument-swapping/negating aliases inherit this contract.
-    FunctionFactoryDescriptor(FunctionFactory factory, boolean isRelocatableScalar) throws SqlException {
+    /**
+     * Describes an argument-swapping or negating alias the cache derives from the source overload. The alias inherits
+     * the source's audited relocatable-scalar contract and its place in the function list, so that
+     * {@link OverloadResolver} breaks a tie between two aliases exactly as it breaks the tie between their sources:
+     * {@code a != b} binds the negation of the overload {@code a = b} binds, and {@code b > a}, {@code a >= b} and
+     * {@code b <= a} bind the overload {@code a < b} binds.
+     */
+    FunctionFactoryDescriptor(FunctionFactory alias, FunctionFactoryDescriptor source) throws SqlException {
+        this(alias, source.isRelocatableScalar, source.isListed);
+    }
+
+    private FunctionFactoryDescriptor(FunctionFactory factory, boolean isRelocatableScalar, boolean isListed) throws SqlException {
         this.factory = factory;
         final Class<?> factoryClass = factory.getClass();
         this.isAnd = factoryClass == AndFunctionFactory.class;
@@ -83,7 +93,7 @@ public class FunctionFactoryDescriptor {
                 || factoryClass == DoubleArrayElemMinFunctionFactory.class
                 || factoryClass == DoubleArrayElemSumFunctionFactory.class;
         this.isCase = factoryClass == CaseFunctionFactory.class;
-        this.isListed = FunctionFactoryScanner.isListed(factory);
+        this.isListed = isListed;
         this.isNot = factoryClass == NotFunctionFactory.class;
         this.isOr = factoryClass == OrFunctionFactory.class;
         this.isRelocatableScalar = isRelocatableScalar;
@@ -350,8 +360,8 @@ public class FunctionFactoryDescriptor {
     }
 
     /**
-     * Whether a function list file orders this factory, so that {@link OverloadResolver} keeps the list order on a
-     * tie with it instead of comparing the arguments.
+     * Whether a function list file orders this factory, or the factory a negating or argument-swapping alias derives
+     * from, so that {@link OverloadResolver} keeps the list order on a tie with it instead of comparing the arguments.
      */
     public boolean isListed() {
         return isListed;

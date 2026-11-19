@@ -363,11 +363,16 @@ final class ColumnPruning implements OptimiserPass {
                     aggregateInputOrder.removeInputOrder(aggregate);
                 }
                 removeOrderedAggregateInputProjection(aggregate);
-                if (columnReads.isUnreadCountInput(aggregate)) {
+                final boolean isRowCount = columnReads.isRowCount(aggregate);
+                if (isRowCount) {
                     removeCountInputProjections(aggregate);
                 }
                 columnReads.collectInputReads(aggregate);
                 pruneColumns(aggregate.getChild());
+                if (isRowCount) {
+                    // Pruning left a computing projection beneath the count selecting no column; the count reads its input.
+                    removeCountInputProjections(aggregate);
+                }
                 return;
             }
             case WindowPlan window -> {

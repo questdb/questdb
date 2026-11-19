@@ -482,6 +482,61 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotClausesDoNotSeeDeclaredVariables() throws Exception {
+        // SqlParser.parsePivot() parses the FOR expressions, the IN lists and sub-queries and the
+        // aggregates without the declarations in scope, and GROUP BY with those of the pivot model,
+        // which holds none, so a declared variable inside the PIVOT clause stays an unknown column.
+        // The pre-migration planner shares this: the parser is the only place that substitutes
+        // declared variables.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat SYMBOL, val LONG)");
+            execute("INSERT INTO data VALUES ('a', 1), ('b', 2), ('c', 3)");
+            execute("CREATE TABLE cats (cat SYMBOL, n LONG)");
+            execute("INSERT INTO cats VALUES ('a', 1), ('b', 2), ('c', 1)");
+
+            final String[] queries = {
+                    "DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = @y))",
+                    "DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE cat IN (SELECT cat FROM cats WHERE n = @y)))",
+                    "DECLARE @y := 'a' SELECT * FROM data PIVOT (SUM(val) FOR cat IN (@y, 'b'))",
+                    "DECLARE @y := 'a' SELECT * FROM data PIVOT (SUM(val) FOR cat IN (@y AS x, 'b'))",
+                    "DECLARE @y := 10 SELECT * FROM data PIVOT (SUM(val * @y) FOR cat IN ('a', 'b'))",
+                    "DECLARE @y := '!' SELECT * FROM data PIVOT (SUM(val) FOR concat(cat, @y) IN ('a!', 'b!'))",
+                    "DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('a', 'b') GROUP BY val + @y)",
+                    "SELECT * FROM (DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = @y)))",
+                    "WITH p AS (DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = @y))) SELECT * FROM p",
+                    "CREATE VIEW pv AS (DECLARE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = @y)))",
+                    "CREATE VIEW pv AS (DECLARE OVERRIDABLE @y := 1 SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = @y)))"
+            };
+            for (String sql : queries) {
+                assertExceptionNoLeakCheck(sql, sql.lastIndexOf("@y"), "Invalid column: @y");
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("pv"));
+            // the parser substitutes a declared variable in the pivot's source, WHERE included
+            final String reference = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE n = 1))";
+            final String throughCte = "DECLARE @y := 1 WITH c AS (SELECT cat FROM cats WHERE n = @y) SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM c))";
+            assertSqlCursors(reference, throughCte);
+            assertQuery(throughCte)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tc
+                            1\t3
+                            """);
+            final String throughWhere = "DECLARE @y := 'b' SELECT * FROM data WHERE cat <> @y PIVOT (SUM(val) FOR cat IN ('a', 'b', 'c'))";
+            assertSqlCursors("SELECT * FROM data WHERE cat <> 'b' PIVOT (SUM(val) FOR cat IN ('a', 'b', 'c'))", throughWhere);
+            assertQuery(throughWhere)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            1\tnull\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotConstantArgumentAggregate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (grp SYMBOL, cat STRING)");
@@ -683,6 +738,42 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotForUuidColumn() throws Exception {
+        // The pre-migration planner rewrote PIVOT into a CASE switch, which rejected a UUID FOR
+        // column with "type UUID is not supported in 'switch' type of 'case' statement".
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (u UUID, val LONG)");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('11111111-1111-1111-1111-111111111111', 1),
+                        ('22222222-2222-2222-2222-222222222222', 2),
+                        ('11111111-1111-1111-1111-111111111111', 5),
+                        (NULL, 4)
+                    """);
+            execute("CREATE TABLE ids (u UUID)");
+            execute("INSERT INTO ids VALUES ('11111111-1111-1111-1111-111111111111'), ('33333333-3333-3333-3333-333333333333')");
+
+            final String literal = "SELECT * FROM data PIVOT (SUM(val) FOR u IN ('11111111-1111-1111-1111-111111111111', '33333333-3333-3333-3333-333333333333'))";
+            final String subquery = "SELECT * FROM data PIVOT (SUM(val) FOR u IN (SELECT u FROM ids))";
+            final String expected = """
+                    11111111-1111-1111-1111-111111111111\t33333333-3333-3333-3333-333333333333
+                    6\tnull
+                    """;
+            assertSqlCursors(literal, subquery);
+            assertQuery(literal)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(subquery)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testPivotImplicitGroupBy() throws Exception {
         assertQuery("""
                 SELECT *
@@ -820,6 +911,83 @@ public class PivotTest extends AbstractSqlParserTest {
                         2000\t2010\t2020
                         9584\t9848\t10668
                         """);
+    }
+
+    @Test
+    public void testPivotInSubqueryFilteredBySymbolInSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat SYMBOL, val LONG)");
+            execute("INSERT INTO data VALUES ('a', 1), ('b', 2), ('c', 3), (NULL, 4)");
+            execute("CREATE TABLE cats (cat SYMBOL)");
+            execute("INSERT INTO cats VALUES ('a'), ('b'), ('c')");
+            execute("CREATE TABLE picks (cat SYMBOL)");
+            execute("INSERT INTO picks VALUES ('c'), ('a'), ('z')");
+
+            final String in = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE cat IN (SELECT cat FROM picks)))";
+            assertSqlCursors("SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('a', 'c'))", in);
+            assertQuery(in)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tc
+                            1\t3
+                            """);
+            final String notIn = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE cat NOT IN (SELECT cat FROM picks)))";
+            assertSqlCursors("SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('b'))", notIn);
+            assertQuery(notIn)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            2
+                            """);
+
+            execute("CREATE VIEW pv AS (" + in + ")");
+            assertQuery("SELECT * FROM pv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a\tc
+                            1\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotInSubqueryRejectsVarcharInSubquery() throws Exception {
+        // Only a SYMBOL key compares with a sub-query (in(KC)); the STRING and VARCHAR overloads
+        // take a constant list, as before the migration (InVarcharTest#testNonConstExpression).
+        // A cast of the key to SYMBOL compares with the sub-query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val LONG)");
+            execute("INSERT INTO data VALUES ('a', 1), ('b', 2), ('c', 3)");
+            execute("CREATE TABLE cats (cat VARCHAR, s STRING)");
+            execute("INSERT INTO cats VALUES ('a', 'a'), ('b', 'b'), ('c', 'c')");
+            execute("CREATE TABLE picks (cat VARCHAR, s STRING)");
+            execute("INSERT INTO picks VALUES ('c', 'c'), ('a', 'a'), ('z', 'z')");
+
+            for (String key : new String[]{"cat", "s"}) {
+                final String query = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE " + key + " IN (SELECT " + key + " FROM picks)))";
+                assertExceptionNoLeakCheck(query, query.lastIndexOf("SELECT"), "constant expected");
+                final String view = "CREATE VIEW pv AS (" + query + ")";
+                assertExceptionNoLeakCheck(view, view.lastIndexOf("SELECT"), "constant expected");
+                Assert.assertNull(engine.getTableTokenIfExists("pv"));
+
+                final String cast = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM cats WHERE " + key + "::SYMBOL IN (SELECT " + key + " FROM picks)))";
+                assertSqlCursors("SELECT * FROM data PIVOT (SUM(val) FOR cat IN ('a', 'c'))", cast);
+                assertQuery(cast)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                a\tc
+                                1\t3
+                                """);
+            }
+        });
     }
 
     @Test
@@ -2405,6 +2573,71 @@ public class PivotTest extends AbstractSqlParserTest {
                 """
                         SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
                             SELECT cat FROM data WHERE val > (SELECT max(x) FROM (SELECT 1 x, admin_scalar() y FROM long_sequence(1)) WHERE y = 'a')
+                        ))""",
+                null
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedCount() throws Exception {
+        // a count reads no column of its input, so the nested sub-query computes y only where its filter reads it
+        assertViewPivotRejectsOnlyKeptAdministrativeScalar(
+                null,
+                null,
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (SELECT count() FROM (SELECT 1 x, admin_scalar() y FROM long_sequence(1)))
+                        ))""",
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (SELECT count() FROM (SELECT 1 x, admin_scalar() y FROM long_sequence(1)) WHERE y = 'a')
+                        ))""",
+                null
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedCountOverLateral() throws Exception {
+        // the count reads no column of the decorrelated join, whose master computes only the column a the body reads
+        assertViewPivotRejectsOnlyKeptAdministrativeScalar(
+                null,
+                null,
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (
+                                SELECT count() FROM (SELECT x, x + 1 a, admin_scalar() y FROM long_sequence(2)) m
+                                CROSS JOIN LATERAL (SELECT count() c FROM long_sequence(3) WHERE x > m.a) l
+                            )
+                        ))""",
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (
+                                SELECT count() FROM (SELECT x, x + 1 a, admin_scalar() y FROM long_sequence(2)) m
+                                CROSS JOIN LATERAL (SELECT count() c FROM long_sequence(3) WHERE x > m.a) l
+                                WHERE m.y = 'a'
+                            )
+                        ))""",
+                null
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedCountOverTopK() throws Exception {
+        // the sort with a LIMIT under the count reads x only
+        assertViewPivotRejectsOnlyKeptAdministrativeScalar(
+                null,
+                null,
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (
+                                SELECT count() FROM (SELECT x, admin_scalar() y FROM long_sequence(2) ORDER BY x DESC LIMIT 1)
+                            )
+                        ))""",
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (
+                                SELECT count() FROM (SELECT x, admin_scalar() y FROM long_sequence(2) ORDER BY x DESC LIMIT 1) WHERE y = 'a'
+                            )
                         ))""",
                 null
         );

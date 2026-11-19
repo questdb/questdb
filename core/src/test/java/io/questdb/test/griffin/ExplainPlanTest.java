@@ -9795,11 +9795,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         Count
                             Limit value: 1 skip-rows: 0 take-rows: 0
-                                VirtualRecord
-                                  functions: [1]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
@@ -9948,15 +9946,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s symbol index)")
                 .assertsPlan("""
                         Count
-                            UnionSymbolCast
-                              functions: [i,s::symbol]
-                                Union All
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: a
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
                         """);
     }
 
