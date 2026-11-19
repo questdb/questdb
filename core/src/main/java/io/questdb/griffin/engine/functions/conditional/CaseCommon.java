@@ -62,6 +62,10 @@ public class CaseCommon {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int argType = arg.getType();
+        if (argType == toType) {
+            // a decimal cast to its own type would still wrap the value, and is not thread-safe
+            return arg;
+        }
         if (isNull(argType)) {
             return Constants.getNullConstant(toType);
         }

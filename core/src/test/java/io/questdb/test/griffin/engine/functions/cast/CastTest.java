@@ -4578,6 +4578,40 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullConstantToText() throws Exception {
+        // A NULL constant casts to a NULL string, as a NULL column does, rather than to the text
+        // of its sentinel. Infinity reads as NULL, and so does a CASE that folds to NULL.
+        for (String target : new String[]{"VARCHAR", "STRING", "SYMBOL"}) {
+            assertQuery(String.format("""
+                    SELECT
+                        (null::INT)::%1$s IS NULL i,
+                        (null::LONG)::%1$s IS NULL l,
+                        (null::FLOAT4)::%1$s IS NULL f,
+                        (null::DOUBLE)::%1$s IS NULL d,
+                        ('Infinity'::DOUBLE)::%1$s IS NULL inf,
+                        (null::DATE)::%1$s IS NULL dt,
+                        (null::TIMESTAMP)::%1$s IS NULL ts,
+                        (null::IPv4)::%1$s IS NULL ip,
+                        (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::%1$s IS NULL c
+                    FROM long_sequence(1)
+                    """, target))
+                    .expectSize()
+                    .returns("""
+                            i\tl\tf\td\tinf\tdt\tts\tip\tc
+                            true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
+        }
+        assertQuery("SELECT count() FROM t WHERE s < (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::SYMBOL")
+                .ddl("CREATE TABLE t AS (SELECT 'a' s FROM long_sequence(3))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        0
+                        """);
+    }
+
+    @Test
     public void testNullToBinary() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a binary)")

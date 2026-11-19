@@ -763,10 +763,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0d then c
                         when -616.0d then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
-                        when -0.0 then 5
                     end k
                 from tanc""")
                 .ddl("create table tanc as (" +
@@ -808,7 +805,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t936627841\t326010667\t-667031149\t1
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
-                        -0.0\t-1533414895\t-1787109293\t-66297136\t5
+                        -0.0\t-1533414895\t-1787109293\t-66297136\t4
                         """);
     }
 
@@ -838,6 +835,43 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleDuplicateBranchUnderEquals() throws Exception {
+        // a key that '=' finds equal to an earlier one could never match: -0.0 equals 0.0,
+        // Infinity reads as NULL, and keys within 1e-10 of each other are equal
+        assertQuery("SELECT CASE x::DOUBLE WHEN 0.0 THEN 1 WHEN -0.0 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN null THEN 1 WHEN 'Infinity' THEN 2 END FROM long_sequence(1)")
+                .fails(44, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN 0.3 THEN 1 WHEN 0.30000000000000004 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+    }
+
+    @Test
+    public void testDoubleMatchesAsEquals() throws Exception {
+        // A DOUBLE key matches as '=' does, in both forms of CASE: -0.0 equals 0, as in
+        // PostgreSQL, values within 1e-10 of each other are equal, and NULL equals NULL.
+        assertQuery("""
+                SELECT
+                    d,
+                    d = 0 eq_zero,
+                    d = 0.3 eq_point_three,
+                    CASE d WHEN 0 THEN 'zero' WHEN 0.3 THEN 'point three' WHEN null THEN 'null' ELSE 'other' END simple,
+                    CASE WHEN d = 0 THEN 'zero' WHEN d = 0.3 THEN 'point three' WHEN d = null THEN 'null' ELSE 'other' END searched
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 0.0 WHEN 2 THEN -0.0 WHEN 3 THEN 0.1 + 0.2 WHEN 4 THEN 0.3 + 1e-9 END d FROM long_sequence(5))")
+                .expectSize()
+                .returns("""
+                        d\teq_zero\teq_point_three\tsimple\tsearched
+                        0.0\ttrue\tfalse\tzero\tzero
+                        -0.0\ttrue\tfalse\tzero\tzero
+                        0.30000000000000004\tfalse\ttrue\tpoint three\tpoint three
+                        0.300000001\tfalse\tfalse\tother\tother
+                        null\tfalse\tfalse\tnull\tnull
+                        """);
+    }
+
+    @Test
     public void testDoubleOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -850,10 +884,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0 then c
                         when -616.0 then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
-                        when -0.0 then 5
                         else b
                     end k
                 from tanc""")
@@ -896,7 +927,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t936627841\t326010667\t-667031149\t1
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
-                        -0.0\t-1533414895\t-1787109293\t-66297136\t5
+                        -0.0\t-1533414895\t-1787109293\t-66297136\t4
                         """);
     }
 
@@ -939,7 +970,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when 685.0f then 350
                         when cast(null as float) then 1
                         when cast(0.0 as float) then 4
-                        when cast(-0.0 as float) then 5
                     end k
                 from tanc""")
                 .ddl("create table tanc as (" +
@@ -981,7 +1011,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1272693194\t68265578\t1036510002\t1
                         null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
-                        -0.0\t-1418341054\t-1162267908\t2031014705\t5
+                        -0.0\t-1418341054\t-1162267908\t2031014705\t4
                         """);
     }
 
@@ -999,6 +1029,36 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFloatDuplicateBranchUnderEquals() throws Exception {
+        assertQuery("SELECT CASE x::FLOAT4 WHEN 0.0 THEN 1 WHEN -0.0 THEN 2 END FROM long_sequence(1)")
+                .fails(43, "duplicate branch");
+    }
+
+    @Test
+    public void testFloatMatchesAsEquals() throws Exception {
+        // A FLOAT operand compares at DOUBLE width, as '=' and PostgreSQL compare it, so FLOAT
+        // 0.1 is not the DOUBLE key 0.1 but is the FLOAT key 0.1::FLOAT4. -0.0 equals 0.
+        assertQuery("""
+                SELECT
+                    f,
+                    f = 0.1 eq_point_one,
+                    CASE f WHEN 0 THEN 'zero' WHEN 0.1 THEN 'point one' WHEN null THEN 'null' ELSE 'other' END simple,
+                    CASE WHEN f = 0 THEN 'zero' WHEN f = 0.1 THEN 'point one' WHEN f = null THEN 'null' ELSE 'other' END searched,
+                    CASE f WHEN 0.1::FLOAT4 THEN 'float point one' ELSE 'other' END float_key
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT CASE x WHEN 1 THEN 0.0::FLOAT4 WHEN 2 THEN (-0.0)::FLOAT4 WHEN 3 THEN 0.1::FLOAT4 END f FROM long_sequence(4))")
+                .expectSize()
+                .returns("""
+                        f\teq_point_one\tsimple\tsearched\tfloat_key
+                        0.0\tfalse\tzero\tzero\tother
+                        -0.0\tfalse\tzero\tzero\tother
+                        0.1\tfalse\tother\tother\tfloat point one
+                        null\tfalse\tnull\tnull\tother
+                        """);
+    }
+
+    @Test
     public void testFloatOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -1012,7 +1072,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when 685.0f then 350
                         when cast(null as float) then 1
                         when cast(0.0 as float) then 4
-                        when cast(-0.0 as float) then 5
                         else b \
                     end k
                 from tanc""")
@@ -1055,7 +1114,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1272693194\t68265578\t1036510002\t1
                         null\t-2002373666\t44173540\t458818940\t1
                         0.0\t410717394\t-2144581835\t1978144263\t4
-                        -0.0\t-1418341054\t-1162267908\t2031014705\t5
+                        -0.0\t-1418341054\t-1162267908\t2031014705\t4
                         """);
     }
 

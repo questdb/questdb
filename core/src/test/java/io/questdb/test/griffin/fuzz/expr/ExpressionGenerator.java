@@ -211,14 +211,14 @@ public final class ExpressionGenerator {
     /**
      * A CASE whose values are of the {@code target} kind, with one or two WHEN branches and an
      * optional ELSE. Half of them take the simple form over an operand from
-     * {@link #generateIntegerOperand}; the rest take the searched form with {@code lhs > rhs}
+     * {@link #generateCaseOperand}; the rest take the searched form with {@code lhs > rhs}
      * conditions. The keys of the simple form are distinct
      * INT literals around -1, the default empty-slot key of the hash maps behind {@code switch()}.
      * They never become bind variables: {@code switch()} accepts only constant keys, so a bound
      * key would fail the bind form alone.
      */
     private FuzzExpr generateCase(ColumnKind target, int depth) {
-        final FuzzExpr operand = rnd.nextBoolean() ? generateIntegerOperand(depth) : null;
+        final FuzzExpr operand = rnd.nextBoolean() ? generateCaseOperand(depth) : null;
         final ObjList<FuzzExpr> whens = new ObjList<>();
         final ObjList<FuzzExpr> thens = new ObjList<>();
         int key = rnd.nextInt(4) - 2;
@@ -240,13 +240,12 @@ public final class ExpressionGenerator {
 
     /**
      * The operand of a simple CASE: a function call, a cast, a column or a constant, which can
-     * be negative or NULL. It is always an integer, because {@code switch()} matches a FLOAT or
-     * DOUBLE key by its bits, while {@code =} in the plain spelling allows a tolerance and takes
-     * -0.0 for 0.0.
+     * be negative or NULL. {@code round(x) * -1.0} gives a DOUBLE that the integer keys can
+     * match, -0.0 among them.
      */
-    private FuzzExpr generateIntegerOperand(int depth) {
+    private FuzzExpr generateCaseOperand(int depth) {
         if (depth < maxDepth) {
-            switch (rnd.nextInt(5)) {
+            switch (rnd.nextInt(6)) {
                 case 0 -> {
                     return new ExtractExpr(EXTRACT_PARTS[rnd.nextInt(EXTRACT_PARTS.length)], generateOfKind(ColumnKind.TEMPORAL, depth + 1));
                 }
@@ -254,26 +253,37 @@ public final class ExpressionGenerator {
                     return new FunctionCallExpr("length", ColumnKind.NUMERIC, generateOfKind(ColumnKind.STRING_LIKE, depth + 1));
                 }
                 case 2 -> {
-                    return new FunctionCallExpr("abs", ColumnKind.NUMERIC, generateIntegerOperand(depth + 1));
+                    return new FunctionCallExpr("abs", ColumnKind.NUMERIC, generateCaseOperand(depth + 1));
                 }
                 case 3 -> {
                     return new CastExpr(generateOfKind(ColumnKind.NUMERIC, depth + 1), LongType.INSTANCE, rnd.nextBoolean());
                 }
+                case 4 -> {
+                    return new ArithmeticExpr(
+                            new FunctionCallExpr("round", ColumnKind.NUMERIC, generateOfKind(ColumnKind.NUMERIC, depth + 1)),
+                            "*",
+                            new ConstantExpr(ColumnKind.NUMERIC, "-1.0")
+                    );
+                }
                 default -> {
                 }
             }
         }
-        final ObjList<FuzzColumn> integers = new ObjList<>();
+        if (rnd.nextInt(8) == 0) {
+            // switch() picks a NULL operand's branch at compile time, apart from the others
+            return new ConstantExpr(ColumnKind.NUMERIC, "null");
+        }
+        final ObjList<FuzzColumn> numbers = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final FuzzColumn column = columns.getQuick(i);
             switch (column.getType().getDdl()) {
-                case "BYTE", "SHORT", "INT", "LONG" -> integers.add(column);
+                case "BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE" -> numbers.add(column);
                 default -> {
                 }
             }
         }
-        if (integers.size() > 0 && rnd.nextBoolean()) {
-            return new ColumnRefExpr(rnd, integers.getQuick(rnd.nextInt(integers.size())), qualifier);
+        if (numbers.size() > 0 && rnd.nextBoolean()) {
+            return new ColumnRefExpr(rnd, numbers.getQuick(rnd.nextInt(numbers.size())), qualifier);
         }
         return new ConstantExpr(ColumnKind.NUMERIC, IntType.INSTANCE.generateConstant(rnd));
     }

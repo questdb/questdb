@@ -64,6 +64,8 @@ public class CaseShapeCoverageTest extends AbstractCairoTest {
             Pattern.compile("CASE (abs|length|extract|cast)\\("),
             Pattern.compile("CASE -[0-9]+ WHEN "),
             Pattern.compile("CASE null WHEN "),
+            Pattern.compile("CASE \\(round\\(.*\\) \\* -1\\.0\\) WHEN "),
+            Pattern.compile("CASE \\S*c_double WHEN "),
             Pattern.compile("CASE .*cast\\(.* AS DOUBLE PRECISION\\)"),
             Pattern.compile("CASE .*cast\\(.* AS TIMESTAMP WITH TIME ZONE\\)"),
     };

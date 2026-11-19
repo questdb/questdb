@@ -1183,9 +1183,27 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testDecimalValueCastIsReportedNotThreadSafe() throws Exception {
-        // CASE casts each DECIMAL value to the common type, and a decimal cast keeps a scratch
-        // value. A CASE that claims to be thread-safe over such a cast is shared between the
-        // workers of a parallel GROUP BY, which race on the scratch value and lose groups.
+        // CASE casts a DECIMAL value of another type to the common type, and a decimal cast keeps
+        // a scratch value. A CASE that claims to be thread-safe over such a cast is shared between
+        // the workers of a parallel GROUP BY, which race on the scratch value and lose groups.
+        final ObjList<Function> args = new ObjList<>();
+        args.add(BooleanConstant.TRUE);
+        args.add(DecimalColumn.newInstance(0, ColumnType.getDecimalType(30, 2)));
+        args.add(DecimalColumn.newInstance(1, ColumnType.getDecimalType(30, 4)));
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        argPositions.add(0);
+        try (Function caseFunction = new CaseFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(args.getQuick(1).isThreadSafe());
+            Assert.assertTrue(args.getQuick(2).isThreadSafe());
+            Assert.assertFalse(caseFunction.isThreadSafe());
+        }
+    }
+
+    @Test
+    public void testDecimalValueOfCommonTypeIsNotCast() throws Exception {
+        // a value that already has the common type needs no cast, so the CASE stays thread-safe
         final ObjList<Function> args = new ObjList<>();
         args.add(BooleanConstant.TRUE);
         args.add(DecimalColumn.newInstance(0, ColumnType.getDecimalType(30, 2)));
@@ -1193,8 +1211,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         argPositions.add(0);
         argPositions.add(0);
         try (Function caseFunction = new CaseFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
-            Assert.assertTrue(args.getQuick(1).isThreadSafe());
-            Assert.assertFalse(caseFunction.isThreadSafe());
+            Assert.assertTrue(caseFunction.isThreadSafe());
         }
     }
 

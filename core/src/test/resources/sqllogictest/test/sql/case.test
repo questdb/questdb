@@ -34,6 +34,18 @@ NULL
 minus one
 NULL
 
+# -0.0 equals 0, in the simple and the searched form
+statement ok
+create table z (d double);
+
+statement ok
+insert into z values (-0.0);
+
+query TT
+select case d when 0 then 'zero' else 'other' end, case when d = 0 then 'zero' else 'other' end from z;
+----
+zero	zero
+
 # A NULL operand takes the ELSE branch. QuestDB differs from PostgreSQL and DuckDB in one
 # case: its 'null = null' is true, so a NULL operand matches a NULL key, where they take ELSE.
 query TT
