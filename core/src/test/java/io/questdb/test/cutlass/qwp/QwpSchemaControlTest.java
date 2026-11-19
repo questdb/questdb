@@ -25,7 +25,6 @@
 package io.questdb.test.cutlass.qwp;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
@@ -34,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaProtocol;
 import io.questdb.client.cutlass.qwp.protocol.QwpSchemaResponse;
+import io.questdb.cutlass.qwp.server.QwpSchemaControl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTag;
@@ -47,7 +47,6 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -55,8 +54,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 @RunWith(Parameterized.class)
 public class QwpSchemaControlTest extends AbstractCairoTest {
     private static final int BUFFER_SIZE = 1024;
-    private static final Method DESCRIBE;
-    private static final Method ENCODE_FEEDBACK;
     private final boolean isWal;
 
     public QwpSchemaControlTest(boolean isWal) {
@@ -274,14 +271,14 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             try {
                 AtomicInteger authorizations = new AtomicInteger();
                 // Both ACK and NACK callers turn -1 into nameless invalidation.
-                Assert.assertEquals(-1, (int) ENCODE_FEEDBACK.invoke(
-                        null, engine, replacingContext(isRename, authorizations), tableNames, address, BUFFER_SIZE, BUFFER_SIZE
+                Assert.assertEquals(-1, QwpSchemaControl.encodeFeedback(
+                        engine, replacingContext(isRename, authorizations), tableNames, address, BUFFER_SIZE, BUFFER_SIZE
                 ));
                 Assert.assertEquals(1, authorizations.get());
                 TableToken after = engine.verifyTableName("schema_race");
                 Assert.assertNotEquals(before.getTableId(), after.getTableId());
-                Assert.assertTrue((int) ENCODE_FEEDBACK.invoke(
-                        null, engine, AllowAllSecurityContext.INSTANCE, tableNames, address, BUFFER_SIZE, BUFFER_SIZE
+                Assert.assertTrue(QwpSchemaControl.encodeFeedback(
+                        engine, AllowAllSecurityContext.INSTANCE, tableNames, address, BUFFER_SIZE, BUFFER_SIZE
                 ) > 0);
             } finally {
                 Unsafe.free(address, BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -307,8 +304,8 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
         try {
             Unsafe.putLong(allocation, 0x123456789abcdef0L);
             Unsafe.putLong(address + limit, 0x123456789abcdef0L);
-            int length = (int) ENCODE_FEEDBACK.invoke(
-                    null, engine, securityContext, tableNames, address, limit, schemaLimit
+            int length = QwpSchemaControl.encodeFeedback(
+                    engine, securityContext, tableNames, address, limit, schemaLimit
             );
             Assert.assertEquals("limit=" + limit + ", schemaLimit=" + schemaLimit, expectedLength, length);
             Assert.assertEquals(0x123456789abcdef0L, Unsafe.getLong(allocation));
@@ -346,8 +343,8 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             for (int limit = 0; limit <= allKnown + 1; limit++) {
                 Unsafe.putLong(allocation, 0x123456789abcdef0L);
                 Unsafe.putLong(address + limit, 0x123456789abcdef0L);
-                int length = (int) ENCODE_FEEDBACK.invoke(
-                        null, engine, AllowAllSecurityContext.INSTANCE, tableNames, address, limit, BUFFER_SIZE
+                int length = QwpSchemaControl.encodeFeedback(
+                        engine, AllowAllSecurityContext.INSTANCE, tableNames, address, limit, BUFFER_SIZE
                 );
                 int knownCount = limit >= minimum ? Math.min(3, (limit - minimum) / (45 - 10)) : 0;
                 Assert.assertEquals("limit=" + limit + ", minimum=" + minimum,
@@ -416,8 +413,8 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             for (int i = 0; i < request.length; i++) {
                 Unsafe.putByte(requestAddress + i, request[i]);
             }
-            int length = (int) DESCRIBE.invoke(
-                    null, engine, securityContext, requestAddress, request.length,
+            int length = QwpSchemaControl.describe(
+                    engine, securityContext, requestAddress, request.length,
                     new StringSink(), responseAddress, responseLimit
             );
             QwpSchemaResponse response = QwpSchemaProtocol.decodeResponse(responseAddress, length);
@@ -457,23 +454,4 @@ public class QwpSchemaControlTest extends AbstractCairoTest {
             }
         };
     }
-
-    static {
-        try {
-            Class<?> schemaControl = Class.forName("io.questdb.cutlass.qwp.server.QwpSchemaControl");
-            DESCRIBE = schemaControl.getDeclaredMethod(
-                    "describe", CairoEngine.class, SecurityContext.class, long.class, int.class,
-                    StringSink.class, long.class, int.class
-            );
-            DESCRIBE.setAccessible(true);
-            ENCODE_FEEDBACK = schemaControl.getDeclaredMethod(
-                    "encodeFeedback", CairoEngine.class, SecurityContext.class,
-                    LowerCaseCharSequenceObjHashMap.class, long.class, int.class, int.class
-            );
-            ENCODE_FEEDBACK.setAccessible(true);
-        } catch (ReflectiveOperationException e) {
-            throw new ExceptionInInitializerError(e);
-        }
-    }
-
 }

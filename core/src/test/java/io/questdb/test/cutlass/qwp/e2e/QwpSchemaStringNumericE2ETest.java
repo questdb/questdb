@@ -124,7 +124,10 @@ public class QwpSchemaStringNumericE2ETest extends AbstractQwpWebSocketTest {
     @Test
     public void testLegacyLongParserWrapCharacterization() throws Exception {
         String[] inputs = {"21000000000000000000", "-21000000000000000000", "25000000000000000000", "42000000000000000000", "63000000000000000000"};
-        long[] expected = {2553255926290448384L, -2553255926290448384L, 6553255926290448384L, 5106511852580896768L, 7659767778871345152L};
+        long[] expected = {
+                2_553_255_926_290_448_384L, -2_553_255_926_290_448_384L, 6_553_255_926_290_448_384L,
+                5_106_511_852_580_896_768L, 7_659_767_778_871_345_152L
+        };
         runInContext(port -> {
             for (int i = 0; i < inputs.length; i++) {
                 String tableName = "legacy_long_wrap_" + i;

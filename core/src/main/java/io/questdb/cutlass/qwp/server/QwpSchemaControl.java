@@ -51,7 +51,7 @@ import io.questdb.std.str.Utf8s;
  * metadataVersion:i64, timestampIndex:i16, columnCount:u16} and per column
  * {@code nameLength:u16, name (UTF-8), columnType:i32, params:u16}.
  */
-final class QwpSchemaControl {
+public final class QwpSchemaControl {
     static final int KIND_DESCRIBE = 1;
     static final int KIND_SCHEMA = 2;
     static final int MAX_MESSAGE_SIZE = 1024 * 1024;
@@ -92,7 +92,7 @@ final class QwpSchemaControl {
      *                      {@link QwpConstants#HEADER_SIZE} plus {@link #RESULT_PAYLOAD_SIZE}
      * @return reply frame length, or -1 when the request is malformed
      */
-    static int describe(
+    public static int describe(
             CairoEngine engine,
             SecurityContext securityContext,
             long request,
@@ -154,7 +154,7 @@ final class QwpSchemaControl {
      * nothing to report; -1 when the caller must send
      * {@link QwpConstants#SCHEMA_FEEDBACK_MODE_INVALIDATE_ALL} instead
      */
-    static int encodeFeedback(
+    public static int encodeFeedback(
             CairoEngine engine,
             SecurityContext securityContext,
             LowerCaseCharSequenceObjHashMap<String> tableNames,

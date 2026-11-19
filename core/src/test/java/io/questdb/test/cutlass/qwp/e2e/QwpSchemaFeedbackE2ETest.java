@@ -38,7 +38,6 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 
 import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.connectSchemaClient;
 import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.describeKnown;
@@ -83,7 +82,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                     Assert.assertEquals(0, fsn);
                     Assert.assertTrue(sender.awaitAckedFsn(fsn, 10_000));
                     QwpWebSocketSender ws = (QwpWebSocketSender) sender;
-                    CursorWebSocketSendLoop loop = senderLoop(ws);
+                    CursorWebSocketSendLoop loop = ws.cursorSendLoopForTest();
                     QwpSchemaResponse retained = loop.peekSchema("feedback_retained");
                     Assert.assertNotNull(retained);
                     Assert.assertEquals(QwpSchemaProtocol.RESULT_KNOWN, retained.getResult());
@@ -146,7 +145,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                     QwpWebSocketSender ws = (QwpWebSocketSender) sender;
                     Assert.assertNotNull(ws.getTableBuffer(first).getSchemaBinding());
                     Assert.assertNotNull(ws.getTableBuffer(second).getSchemaBinding());
-                    CursorWebSocketSendLoop loop = senderLoop(ws);
+                    CursorWebSocketSendLoop loop = ws.cursorSendLoopForTest();
                     Assert.assertTrue(loop.peekSchema(first).getRequestId() > 0);
                     Assert.assertTrue(loop.peekSchema(second).getRequestId() > 0);
                     long fsn = sender.flushAndGetSequence();
@@ -431,15 +430,7 @@ public class QwpSchemaFeedbackE2ETest extends AbstractQwpWebSocketTest {
                 Assert.assertEquals("n", response.getSchemaUpdate(0).getColumnName(0));
             }
         }, 65_536, Integer.MAX_VALUE, 1);
-        assertQuery("select count() from feedback_non_wal").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
-    }
-
-    private static CursorWebSocketSendLoop senderLoop(QwpWebSocketSender sender) throws Exception {
-        // The sender has no public cache surface; use its real loop's stable
-        // cache-only API rather than inspecting the coordinator's map.
-        Field field = QwpWebSocketSender.class.getDeclaredField("cursorSendLoop");
-        field.setAccessible(true);
-        return (CursorWebSocketSendLoop) field.get(sender);
+        assertQuery("select count() from feedback_non_wal").expectSize().noRandomAccess().returns("count\n0\n");
     }
 
     private void assertSharedAckCapacity(int fragmentSize) throws Exception {
