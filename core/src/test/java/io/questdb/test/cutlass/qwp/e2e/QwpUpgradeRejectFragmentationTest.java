@@ -155,6 +155,27 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test400MalformedOwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        runWithFragmentedSend(port -> assertFullRejectDelivered(
+                port,
+                ownedByUpgradeRequest(port, "/write/v4", "team%zz"),
+                textReject("Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
+        ));
+    }
+
+    @Test
+    public void test400OwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        // Without access control an owner cannot be honored, so the upgrade fails instead of the
+        // first table the client auto-creates, and the server says why.
+        final byte[] expected = textReject("owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
+        runWithFragmentedSend(port -> {
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4", "caf%C3%A9"), expected);
+            // the browser carrier, a URL parameter
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4?qwp_owned_by=caf%C3%A9", null), expected);
+        });
+    }
+
+    @Test
     public void test421ReplicaRoleRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new ReplicaRoleProvider());
         runWithFragmentedSend(port -> {
@@ -351,6 +372,22 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         byte[] out = new byte[total];
         System.arraycopy(buf, 0, out, 0, total);
         return out;
+    }
+
+    private static String ownedByUpgradeRequest(int port, String path, String ownedByHeaderValue) {
+        return "GET " + path + " HTTP/1.1\r\n"
+                + "Host: localhost:" + port + "\r\n"
+                + "Upgrade: websocket\r\n"
+                + "Connection: Upgrade\r\n"
+                + "Sec-WebSocket-Key: AQIDBAUGBwgJCgsMDQ4PEA==\r\n"
+                + "Sec-WebSocket-Version: 13\r\n"
+                + (ownedByHeaderValue != null ? "X-QWP-Owned-By: " + ownedByHeaderValue + "\r\n" : "")
+                + "\r\n";
+    }
+
+    private static byte[] textReject(String reason) {
+        return ("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: "
+                + reason.length() + "\r\n\r\n" + reason).getBytes(StandardCharsets.US_ASCII);
     }
 
     private void runWithFragmentedSend(PortTest test) throws Exception {

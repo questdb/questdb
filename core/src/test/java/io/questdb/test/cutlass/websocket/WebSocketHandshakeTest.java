@@ -31,6 +31,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressHttpProcessor;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -425,6 +426,47 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testResponseWithOwnedByEcho() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            Utf8String ownedBy = new Utf8String("caf%C3%A9%20team");
+            int expectedSize = QwpIngressHttpProcessor.responseSize(
+                    acceptKey, 1, null, null, null, null, null, false, false, ownedBy);
+
+            long buf = allocateBuffer(512);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, null, null, null, null, false, false, ownedBy);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected X-QWP-Owned-By echo, got: " + response,
+                        response.contains("\r\nX-QWP-Owned-By: caf%C3%A9%20team\r\n"));
+                Assert.assertTrue(response.endsWith("\r\n\r\n"));
+
+                // the overload without the echo writes the same response minus the header
+                int writtenWithout = QwpIngressHttpProcessor.writeResponse(
+                        buf, acceptKey, 1, null, null, null, null, null, false, false);
+                Assert.assertEquals(expectedSize - "\r\nX-QWP-Owned-By: caf%C3%A9%20team".length(), writtenWithout);
+                Assert.assertFalse(new String(readBytes(buf, writtenWithout), StandardCharsets.US_ASCII).contains("X-QWP-Owned-By"));
+            } finally {
+                freeBuffer(buf, 512);
+            }
+        });
+    }
+
+    @Test
+    public void testEncodeOwnedBy() {
+        Utf8StringSink sink = new Utf8StringSink();
+        // RFC 3986 unreserved characters stay as they are
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("Team-A_1.x~"), sink);
+        Assert.assertEquals("Team-A_1.x~", sink.toString());
+        // everything else is percent-encoded UTF-8 with upper-case hex digits, '%' and '+' included
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("a b+c%d/é表"), sink);
+        Assert.assertEquals("a%20b%2Bc%25d%2F%C3%A9%E8%A1%A8", sink.toString());
     }
 
     @Test

@@ -1090,6 +1090,8 @@ public class QwpTudCache implements QuietCloseable {
                     return null;
                 }
             }
+            // Checked ahead of createTable(), whose DDL listener grants the new table to this owner.
+            securityContext.authorizeAutoCreateOwner();
             tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
         }
         if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {

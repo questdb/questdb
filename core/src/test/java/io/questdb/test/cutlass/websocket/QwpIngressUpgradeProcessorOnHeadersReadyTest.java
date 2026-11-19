@@ -25,7 +25,10 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -44,6 +47,7 @@ import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PlainSocketFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -53,6 +57,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -552,6 +557,94 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyOmitsOwnedByWhenNotRequested() throws Exception {
+        assertMemoryLeak(() -> {
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            String response = ownedByHandshake(securityContext, null, null, true);
+            Assert.assertFalse("did not expect X-QWP-Owned-By, got: " + response, response.contains("X-QWP-Owned-By"));
+            Assert.assertNull(securityContext.owner);
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyRefusedOwnedByAnswers403() throws Exception {
+        // An owner the principal may not name is an authorization decision: 403, with the reason in the body.
+        assertMemoryLeak(() -> {
+            String response = ownedByHandshake(new OwnerRecordingSecurityContext("bob is not part of group team"), "team", null, false);
+            assertTextReject(response, "403 Forbidden", "owned_by refused: bob is not part of group team");
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyRejectsMalformedOwnedBy() throws Exception {
+        assertMemoryLeak(() -> {
+            // a bad or truncated percent escape, a lone UTF-8 lead byte, an empty name
+            for (String value : new String[]{"%zz", "team%4", "%", "%C3", ""}) {
+                OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+                String response = ownedByHandshake(securityContext, value, null, false);
+                assertTextReject(response, "400 Bad Request",
+                        "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
+                Assert.assertNull("malformed owner must not reach the security context: " + value, securityContext.owner);
+            }
+            // the browser carrier arrives decoded, so only an empty name is malformed there
+            String response = ownedByHandshake(new OwnerRecordingSecurityContext(null), null, "", false);
+            assertTextReject(response, "400 Bad Request",
+                    "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadySetsAndEchoesOwnedBy() throws Exception {
+        assertMemoryLeak(() -> {
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            String response = ownedByHandshake(securityContext, "caf%C3%A9%20Team_1", null, true);
+            Assert.assertEquals("café Team_1", securityContext.owner);
+            Assert.assertTrue("expected the canonical echo, got: " + response,
+                    response.contains("\r\nX-QWP-Owned-By: caf%C3%A9%20Team_1\r\n"));
+
+            // a non-canonical encoding is echoed canonically: lower-case hex, an escaped unreserved character
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(securityContext, "caf%c3%a9%5F1", null, true);
+            Assert.assertEquals("café_1", securityContext.owner);
+            Assert.assertTrue("expected the canonical echo, got: " + response,
+                    response.contains("\r\nX-QWP-Owned-By: caf%C3%A9_1\r\n"));
+
+            // '+' is not a space in a header
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(securityContext, "a+b", null, true);
+            Assert.assertEquals("a+b", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: a%2Bb\r\n"));
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadySetsOwnedByFromUrlParam() throws Exception {
+        assertMemoryLeak(() -> {
+            // The HTTP parser decodes URL parameters, so the mock hands the decoded value over.
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            String response = ownedByHandshake(securityContext, null, "café team", true);
+            Assert.assertEquals("café team", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: caf%C3%A9%20team\r\n"));
+
+            // the header wins over the URL parameter
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(securityContext, "header_owner", "param_owner", true);
+            Assert.assertEquals("header_owner", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: header_owner\r\n"));
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyUnsupportedOwnedByAnswers400() throws Exception {
+        // OSS has no access control, so the default SecurityContext refuses an owner: a bad request, not a 403.
+        assertMemoryLeak(() -> {
+            String response = ownedByHandshake(AllowAllSecurityContext.INSTANCE, "team", null, false);
+            assertTextReject(response, "400 Bad Request",
+                    "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyRejectsPrimaryCatchupRole() throws Exception {
         assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP, "PRIMARY_CATCHUP"));
     }
@@ -875,6 +968,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    private static void assertTextReject(String response, String status, String reason) {
+        Assert.assertEquals(
+                "HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
+                        + reason.getBytes(StandardCharsets.UTF_8).length + "\r\n\r\n" + reason,
+                response
+        );
+    }
+
     private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -1051,6 +1152,62 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             processor.onHeadersReady(context);
             processor.onRequestComplete(context);
             return context.getMockRawSocket().sentSize;
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Drives one handshake that names an owner in the {@code X-QWP-Owned-By} header and/or the
+     * {@code qwp_owned_by} URL parameter (null omits either) with the given security context, and returns
+     * the response the client receives, the 101 or the reject.
+     */
+    private static String ownedByHandshake(
+            SecurityContext securityContext,
+            @Nullable String headerValue,
+            @Nullable String urlParamValue,
+            boolean expectAccepted
+    ) throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            context.securityContext = securityContext;
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            if (headerValue != null) {
+                header.setHeader("X-QWP-Owned-By", headerValue);
+            }
+            if (urlParamValue != null) {
+                header.setUrlParam("qwp_owned_by", urlParamValue);
+            }
+
+            processor.onHeadersReady(context);
+            if (expectAccepted) {
+                processor.onRequestComplete(context);
+                Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+                Assert.assertNotNull("state must be populated after successful handshake", lv.get(context));
+            } else {
+                Assert.assertNull("rejected handshake must not allocate processor state", lv.get(context));
+                try {
+                    processor.onRequestComplete(context);
+                    Assert.fail("onRequestComplete must throw HttpException to disconnect after reject");
+                } catch (HttpException ignored) {
+                }
+                Assert.assertFalse("rejected handshake must not switch protocol", context.isSwitchProtocolCalled());
+            }
+            byte[] bytes = new byte[context.getMockRawSocket().sentSize];
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = Unsafe.getByte(bufferAddr + i);
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
@@ -1319,9 +1476,27 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    private static final class OwnerRecordingSecurityContext extends AllowAllSecurityContext {
+        private final String refusal;
+        private String owner;
+
+        private OwnerRecordingSecurityContext(@Nullable String refusal) {
+            this.refusal = refusal;
+        }
+
+        @Override
+        public void setAutoCreateOwner(@NotNull CharSequence ownerName) {
+            if (refusal != null) {
+                throw CairoException.authorization().put(refusal);
+            }
+            owner = Chars.toString(ownerName);
+        }
+    }
+
     private static class TestableContext extends HttpConnectionContext {
         private final MockRawSocket rawSocket;
         private final MockHttpRequestHeader requestHeader;
+        private SecurityContext securityContext;
         private boolean switchProtocolCalled;
 
         private TestableContext(
@@ -1342,6 +1517,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         @Override
         public HttpRequestHeader getRequestHeader() {
             return requestHeader;
+        }
+
+        @Override
+        public SecurityContext getSecurityContext() {
+            return securityContext != null ? securityContext : super.getSecurityContext();
         }
 
         @Override
