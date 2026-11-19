@@ -276,15 +276,23 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
-    private void checkNoDeltaTable(TableToken tableToken) {
-        TableToken current = engine.getUpdatedTableToken(tableToken);
-        if (current == null || engine.isTableDropped(current)) {
+    /**
+     * Refuses a Delta table, or a WAL table with a pending Delta switch, when the Delta adapter cannot
+     * capture it, as in OSS. Enterprise checkpoints and backups include both.
+     */
+    private void checkDeltaTableSupported(TableToken tableToken, boolean isDeltaReader) {
+        if (deltaCheckpoint.supportsDeltaTables()) {
             return;
         }
-        final boolean pending = current.isWal() && engine.getTableSequencerAPI().getPendingDeltaTableSwitch(current) > 0;
-        // Completing the switch replaces the token before clearing the pending marker.
-        current = engine.getUpdatedTableToken(current);
-        if (pending || current != null && current.isDelta()) {
+        boolean isDelta = isDeltaReader;
+        TableToken current = engine.getUpdatedTableToken(tableToken);
+        if (!isDelta && current != null && !engine.isTableDropped(current)) {
+            final boolean pending = current.isWal() && engine.getTableSequencerAPI().getPendingDeltaTableSwitch(current) > 0;
+            // Completing the switch replaces the token before clearing the pending marker.
+            current = engine.getUpdatedTableToken(current);
+            isDelta = pending || current != null && current.isDelta();
+        }
+        if (isDelta) {
             throw CairoException.nonCritical().put("checkpoint and backup are not supported for Delta tables [table=").put(tableToken).put(']');
         }
     }
@@ -360,7 +368,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 continue;
                             }
 
-                            checkNoDeltaTable(tableToken);
+                            checkDeltaTableSupported(tableToken, false);
                             boolean isWalTable = engine.isWalTable(tableToken);
                             path.of(checkpointRoot).concat(configuration.getDbDirectory());
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
@@ -648,9 +656,31 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             continue;
                                         }
 
-                                        checkNoDeltaTable(tableToken);
-                                        if (reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
-                                            throw CairoException.nonCritical().put("checkpoint and backup are not supported for Delta tables [table=").put(tableToken).put(']');
+                                        final boolean isDeltaTable = reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS;
+                                        checkDeltaTableSupported(tableToken, isDeltaTable);
+                                        long lastTxn = -1;
+                                        if (isWalTable) {
+                                            // Fetch the sequencer metadata and its last txn before any checkpoint side
+                                            // effect, so a table that changed after this reader is captured again.
+                                            metadata.clear();
+                                            lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                            checkDeltaTableSupported(tableToken, isDeltaTable);
+                                            final TableToken current = engine.getUpdatedTableToken(tableToken);
+                                            if (current != null && current.isDelta() != tableToken.isDelta()) {
+                                                // The registry copy records the Delta flag: follow a completed conversion.
+                                                tableToken = current;
+                                            }
+                                            // A Delta capture also needs the sequencer at the reader's schema.
+                                            if (tableToken.isDelta() != isDeltaTable
+                                                    || isDeltaTable && metadata.getMetadataVersion() != reader.getMetadata().getMetadataVersion()) {
+                                                LOG.info().$("retrying, table changed during capture [table=").$(tableToken).I$();
+                                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                                continue;
+                                            }
+                                            if (isDeltaTable) {
+                                                // The captured catalogs hold no Runs for transactions accepted after this reader.
+                                                lastTxn = reader.getSeqTxn();
+                                            }
                                         }
                                         // restore the path
                                         path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
@@ -665,11 +695,16 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // _txn this image ships rather than trusting the bytes dumpTo() copied - a pooled
                                         // reader copy keeps a private _meta snapshot that TableWriter's in-place storage
                                         // version write never reaches, so those bytes can lag their own _txn.
-                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS
+                                        mem.putInt(TableUtils.META_OFFSET_VERSION, isDeltaTable
                                                 ? TableUtils.META_FORMAT_VERSION_DELTA
                                                 : reader.getTxFile().hasCompositePartitions()
                                                 ? ColumnType.MAX_STORAGE_VERSION
                                                 : ColumnType.VERSION);
+                                        if (isDeltaTable) {
+                                            // A conversion keeps the metadata version, so a pooled reader from before
+                                            // it can still copy the WAL _meta; its Delta token sets the mode.
+                                            mem.putInt(TableUtils.META_OFFSET_WRITE_MODE, TableWriteMode.DELTA_RUNS);
+                                        }
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TXN_FILE_NAME);
@@ -718,12 +753,8 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                                 seqPartLock.lock(tableToken, seqTxn);
                                             }
 
-                                            // Fetch sequencer metadata and the last committed sequencer txn.
-                                            // The metadata will be dumped to the checkpoint, and lastTxn is stored
-                                            // separately to know which sequencer txn the metadata corresponds to.
-                                            metadata.clear();
-                                            long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
-                                            checkNoDeltaTable(tableToken);
+                                            // Dump the sequencer metadata fetched above. lastTxn is stored separately:
+                                            // restore lowers the sequencer to it.
                                             path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                             metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                             metadata.close(true, Vm.TRUNCATE_TO_POINTER);
@@ -1023,7 +1054,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         final ObjHashSet<TableToken> tables = new ObjHashSet<>();
         engine.getTableTokens(tables, false);
         for (int i = 0, n = tables.size(); i < n; i++) {
-            checkNoDeltaTable(tables.get(i));
+            checkDeltaTableSupported(tables.get(i), false);
         }
 
         if (!lock.tryLock()) {

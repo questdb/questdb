@@ -244,10 +244,12 @@ public class TxReader implements Closeable, Mutable {
             } else if (i % LONGS_PER_TX_ATTACHED_PARTITION == PARTITION_VERSION_OFFSET) {
                 // A native offset-3 word without the VALID bit is untrusted (a released binary
                 // stored a parquet file size there): scrub it to the cleared sentinel so a backup
-                // never carries the ambiguous word. The whole word goes, including bit 63 -- a
-                // native slot cannot legitimately be REMOTE without a valid stamp. Parquet words
-                // hold the file size and are valid without the bit; leave them. The cleared 0L/-1L
-                // sentinels scrub to the canonical 0L, a no-op in meaning.
+                // never carries the ambiguous word. The word goes, including bit 63 -- a native
+                // slot cannot legitimately be REMOTE without a valid stamp -- except the Delta mode
+                // flags: a Delta partition has no native stamp, and has_delta selects its captured
+                // catalog. No file size reaches those bits. Parquet words hold the file size and
+                // are valid without the bit; leave them. The cleared 0L/-1L sentinels scrub to the
+                // canonical 0L, a no-op in meaning.
                 final int partitionIndex = i / LONGS_PER_TX_ATTACHED_PARTITION;
                 // A COMPOSITE word legitimately lacks the VALID bit - it spends the value field on
                 // its geometry pointer, not on a stamp - and scrubbing it would strand the partition's
@@ -255,7 +257,7 @@ public class TxReader implements Closeable, Mutable {
                 if (!isPartitionParquet(partitionIndex)
                         && !isPartitionCompositeByRawIndex(i - PARTITION_VERSION_OFFSET)
                         && (isPartitionOffset3Cleared(value) || (value & PARTITION_SEQ_TXN_VALID_BIT) == 0)) {
-                    value = 0L;
+                    value = value == -1L ? 0L : value & (PARTITION_DELTA_WRITE_BIT | PARTITION_HAS_DELTA_BIT);
                 }
             }
             long offset = TableUtils.getPartitionTableIndexOffset(partitionTableOffset, i);

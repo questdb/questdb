@@ -997,6 +997,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Stores the last partition's row count, which usually only transientRowCount holds, in its size slot.
+     * Unlike {@link #beginPartitionSizeUpdate()}, this finds the partition by index: a Delta transaction
+     * attaches partitions before it moves maxTimestamp.
+     */
+    public void updateLastPartitionSize() {
+        final int indexRaw = attachedPartitions.size() - LONGS_PER_TX_ATTACHED_PARTITION;
+        if (indexRaw > -1 && getPartitionSizeByRawIndex(indexRaw) != transientRowCount) {
+            updatePartitionSizeByRawIndex(indexRaw, transientRowCount);
+        }
+    }
+
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
         maxTimestamp = timestamp;

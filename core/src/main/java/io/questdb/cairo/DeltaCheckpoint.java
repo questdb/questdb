@@ -76,4 +76,11 @@ public interface DeltaCheckpoint extends QuietCloseable {
      */
     default void startRestore() {
     }
+
+    /**
+     * Whether a checkpoint may include Delta tables and WAL tables with a pending Delta switch.
+     */
+    default boolean supportsDeltaTables() {
+        return false;
+    }
 }

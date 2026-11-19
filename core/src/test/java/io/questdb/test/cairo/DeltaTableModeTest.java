@@ -95,8 +95,14 @@ public class DeltaTableModeTest extends AbstractCairoTest {
             TableToken token = createDelta();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
             assertMeta(token, TableUtils.META_FORMAT_VERSION_DELTA, TableWriteMode.DELTA_RUNS);
+            final java.nio.file.Path sentinel = java.nio.file.Path.of(
+                    configuration.getCheckpointRoot().toString(), configuration.getDbDirectory().toString(), "existing-checkpoint");
+            Files.createDirectories(sentinel.getParent());
+            Files.writeString(sentinel, "keep");
             final CairoException error = Assert.assertThrows(CairoException.class, () -> execute("CHECKPOINT CREATE"));
             TestUtils.assertContains(error.getFlyweightMessage(), "checkpoint and backup are not supported for Delta tables");
+            // Refused before an existing checkpoint is replaced.
+            Assert.assertEquals("keep", Files.readString(sentinel));
             Assert.assertFalse(engine.getCheckpointStatus().isInProgress());
             assertMeta(token, TableUtils.META_FORMAT_VERSION_DELTA, TableWriteMode.DELTA_RUNS);
         });

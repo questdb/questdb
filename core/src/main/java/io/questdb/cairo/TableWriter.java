@@ -2086,6 +2086,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 denseSymbolMapWriters.getQuick(i).sync(commitMode == CommitMode.ASYNC);
             }
         }
+        // Delta Runs leave base row counts unchanged, but the last partition's size slot may be stale.
+        txWriter.updateLastPartitionSize();
         txWriter.finishPartitionSizeUpdate(Math.min(txWriter.getMinTimestamp(), minTimestamp), Math.max(txWriter.getMaxTimestamp(), maxTimestamp));
         txWriter.bumpPartitionTableVersion();
         txWriter.setSeqTxn(seqTxn);
