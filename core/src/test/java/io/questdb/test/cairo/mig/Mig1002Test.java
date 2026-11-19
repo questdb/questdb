@@ -112,6 +112,33 @@ public class Mig1002Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testEngineMigrationRunsOnCompositeTable() throws Exception {
+        assertEngineMigrationOnStorageVersion(ColumnType.COMPOSITE_STORAGE_VERSION, true);
+    }
+
+    @Test
+    public void testEngineMigrationRunsOnDowngradeLockedCompositeTable() throws Exception {
+        assertEngineMigrationOnStorageVersion(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, true);
+    }
+
+    @Test
+    public void testEngineMigrationRunsOnDowngradeLockedTable() throws Exception {
+        // As every writer leaves a table, in every commit mode.
+        assertEngineMigrationOnStorageVersion(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, true);
+    }
+
+    @Test
+    public void testEngineMigrationRunsOnUnlockedTable() throws Exception {
+        // As a start with cairo.commit.mode.adaptive.downgrade=true leaves a table, and as older releases wrote it.
+        assertEngineMigrationOnStorageVersion(ColumnType.VERSION, true);
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableOfNewerRelease() throws Exception {
+        assertEngineMigrationOnStorageVersion(ColumnType.MAX_STORAGE_VERSION + 1, false);
+    }
+
+    @Test
     public void testFailedNullFlagWriteKeepsMigrationVersionUntilRetry() throws Exception {
         final NullFlagWriteFailingFilesFacade ff = new NullFlagWriteFailingFilesFacade();
         assertMemoryLeak(ff, () -> {
@@ -578,6 +605,22 @@ public class Mig1002Test extends AbstractCairoTest {
         }
     }
 
+    private static int readStorageVersion() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("t")).concat(TableUtils.META_FILE_NAME)) {
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                return TableUtils.readIntOrFail(ff, fd, TableUtils.META_OFFSET_VERSION, mem, path);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static void runMig1002(String tableName) {
         final TableToken token = engine.verifyTableName(tableName);
         final FilesFacade ff = configuration.getFilesFacade();
@@ -614,6 +657,42 @@ public class Mig1002Test extends AbstractCairoTest {
         } finally {
             Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void writeStorageVersion(int storageVersion) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long mem = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        try (Path path = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("t")).concat(TableUtils.META_FILE_NAME)) {
+            final long fd = ff.openRW(path.$(), configuration.getWriterFileOpenOpts());
+            Assert.assertTrue(fd > -1);
+            try {
+                TableUtils.writeIntOrFail(ff, fd, TableUtils.META_OFFSET_VERSION, storageVersion, mem, path);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            Unsafe.free(mem, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * The migration repairs plain partitions of tables with supported storage markers and preserves the markers.
+     */
+    private void assertEngineMigrationOnStorageVersion(int storageVersion, boolean isMigrated) throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithStaleNullFlag();
+            engine.clear();
+            Assert.assertEquals("every writer locks its table", ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, readStorageVersion());
+            writeStorageVersion(storageVersion);
+            writeMigrationVersion(MIG1002_VERSION - 1);
+
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
+            Assert.assertEquals(storageVersion, readStorageVersion());
+            // Back to a version this release opens, to read the flag.
+            writeStorageVersion(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION);
+            Assert.assertEquals(isMigrated, containsSymbolNullValue("t", "s"));
+        });
     }
 
     private void assertNativeTopZeroAndFullScan(String expected) throws Exception {

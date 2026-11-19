@@ -73,7 +73,9 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi, long firstRow) {
-        cursor.of(pageFrame, keyLo, keyHi, firstRow);
+        final IndexReader.SourceRowResolver sourceRows = pageFrameMemory == null
+                ? IndexReader.SourceRowResolver.NONE : pageFrameMemory.getSourceRowResolver();
+        cursor.of(pageFrame, keyLo, keyHi, firstRow, sourceRows);
         return cursor;
     }
 
@@ -106,7 +108,8 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
 
     @Override
     public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
-        if (!(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+        if (pageFrame.getPartitionFrameState() != 0
+                || !(pageFrame.getIndexReader(columnIndex, IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
         final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
@@ -156,10 +159,12 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
         private int indexLo;
         private PageFrame pageFrame;
         private long shift;
+        private IndexReader.SourceRowResolver sourceRows;
 
         @Override
         public void close() {
             current = Misc.free(current);
+            sourceRows = IndexReader.SourceRowResolver.NONE;
         }
 
         @Override
@@ -189,7 +194,7 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
                 final long indexShift = pageFrame.getIndexRowLo() - partitionLo;
                 current = pageFrame
                         .getIndexReader(columnIndex, indexDirection)
-                        .getCursor(getIndexKey(index++), rowLo + indexShift, rowHi + indexShift);
+                        .getCursor(getIndexKey(index++), rowLo + indexShift, rowHi + indexShift, null, sourceRows);
 
                 if (current.hasNext()) {
                     return true;
@@ -198,12 +203,13 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
             return false;
         }
 
-        private void of(PageFrame pageFrame, int indexLo, int indexHi, long firstRow) {
+        private void of(PageFrame pageFrame, int indexLo, int indexHi, long firstRow, IndexReader.SourceRowResolver sourceRows) {
             this.pageFrame = pageFrame;
             this.index = indexLo;
             this.indexLo = indexLo;
             this.indexHi = indexHi;
             this.firstRow = firstRow;
+            this.sourceRows = sourceRows;
             Misc.free(current);
             this.current = EmptyRowCursor.INSTANCE;
         }

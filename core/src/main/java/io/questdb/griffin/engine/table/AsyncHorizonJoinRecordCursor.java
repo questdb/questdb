@@ -230,7 +230,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     slaveFrameCursor,
                     slaveFactory.getMetadata(),
                     slaveFrameCursor.getColumnMapping(),
-                    slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
                     executionContext.getSharedQueryWorkerCount(),

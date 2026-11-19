@@ -90,7 +90,8 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
      * index cannot count them.
      */
     default long getIndexRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
-        if (!(pageFrame.getIndexReader(getColumnIndex(), IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
+        if (pageFrame.getPartitionFrameState() != 0
+                || !(pageFrame.getIndexReader(getColumnIndex(), IndexReader.DIR_FORWARD) instanceof BitmapIndexFwdReader reader)) {
             return -1;
         }
         final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();

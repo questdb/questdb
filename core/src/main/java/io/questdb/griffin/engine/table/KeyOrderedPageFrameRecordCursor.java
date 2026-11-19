@@ -410,7 +410,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
                 final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
-                PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET && keyCount > 1
+                PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET && keyCount > 1 && frame.getPartitionFrameState() == 0
                         ? null : frameMemoryPool.navigateTo(frameIndex, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = keyCount > 1 ? keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi)
@@ -490,7 +490,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         } catch (Throwable th) {
             recordA.clear();
             recordB.clear();
-            frameMemoryPool.releaseParquetBuffers();
+            frameMemoryPool.releaseDecodedFrameBuffers();
             closeReadLists();
             throw th;
         }
@@ -1324,7 +1324,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 }
             }
             PageFrameMemory frameMemory = null;
-            if (!isByIndex) {
+            if (!isByIndex || frame.getPartitionFrameState() != 0) {
                 // a filtered read decodes the page frame to filter its rows, unless the index finds no row of the keys of
                 // a window that takes part of the read there, where asking it costs less than the decode
                 if (isPartOfRead && keyHi - keyLo <= getDecodeCost(frameRowCount)
@@ -1679,7 +1679,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Whether no one index shift describes the rows of the partition of the page frame: a composite partition shifts each
      * of its pieces, and an in-place update moves row groups to other index rows. A read counts and seeks the rows of such
-     * a partition frame by frame, since a frame of the whole partition has no shift to read the index with.
+     * a partition frame by frame. Delta partitions can also need a source-row resolver to read the index.
      */
     private boolean hasVaryingIndexShift(PageFrame frame) {
         if (!(frameCursor instanceof TablePageFrameCursor tableCursor)) {
@@ -1687,7 +1687,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
         final TableReader reader = tableCursor.getTableReader();
         final int partitionIndex = frame.getPartitionIndex();
-        return reader.getTxFile().isPartitionComposite(partitionIndex)
+        return reader.getTxFile().getPartitionHasDelta(partitionIndex)
+                || reader.getTxFile().isPartitionComposite(partitionIndex)
                 || frame.getFormat() == PartitionFormat.PARQUET
                 && reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata().hasIndexRowMap();
     }
@@ -2414,7 +2415,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      */
     private void readFrameRows(PageFrame frame, Counter rowCount) {
         final int frameIndex = addFrame(frame);
-        final PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET ? null : frameMemoryPool.navigateTo(frameIndex);
+        final PageFrameMemory frameMemory = frame.getFormat() == PartitionFormat.PARQUET && frame.getPartitionFrameState() == 0
+                ? null : frameMemoryPool.navigateTo(frameIndex);
         rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, keyLo, keyHi);
         countWalk(testReadFrames);
         skipRowCursorRows(rowCount);

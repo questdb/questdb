@@ -122,7 +122,7 @@ public class Mig1011Test extends AbstractCairoTest {
             writeMigrationVersion(MIG1011_VERSION - 1);
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion("x"));
             Assert.assertTrue(isComposite("x", "2024-01-02"));
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
@@ -134,7 +134,7 @@ public class Mig1011Test extends AbstractCairoTest {
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
             Assert.assertEquals(markedSize, Files.size(Paths.get(parquetMetaPath)));
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion("x"));
         });
     }
 
@@ -154,7 +154,7 @@ public class Mig1011Test extends AbstractCairoTest {
     }
 
     @Test
-    public void testEngineMigrationRunsNoOtherMigrationOnCompositeTable() throws Exception {
+    public void testEngineMigrationSkipsParquetMetadataRegenerationOnCompositeTable() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
             createCompositeTableWithConvertedPartition();
@@ -162,22 +162,21 @@ public class Mig1011Test extends AbstractCairoTest {
             final String compositeParquetMetaPath = parquetMetaPath("x");
             final String plainParquetMetaPath = parquetMetaPath("y");
             clearWrittenByQuestDB(compositeParquetMetaPath);
-            clearWrittenByQuestDB(plainParquetMetaPath);
             engine.clear();
+            Files.delete(Paths.get(plainParquetMetaPath));
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
-            // Mig941 regenerates a _pm as a single snapshot; Mig1011 appends one to the committed chain.
+            // Mig941 generates the missing _pm; Mig1011 appends to the composite table's committed chain.
             Assert.assertEquals(0, previousSnapshotSize(plainParquetMetaPath));
             Assert.assertNotEquals(0, previousSnapshotSize(compositeParquetMetaPath));
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion("x"));
             Assert.assertTrue(isComposite("x", "2024-01-02"));
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
-            final String skipped = "skipping storage version dependent migration on table with composite partitions \\[path=\\S*"
+            final String skipped = "skipping storage version dependent migration on table with composite or Delta partitions \\[path=\\S*"
                     + engine.verifyTableName("x").getDirName() + "/?, toVersion=";
             capture.drain();
             capture.assertOnlyOnce(skipped + "429\\]");
-            capture.assertOnlyOnce(skipped + "430\\]");
         });
     }
 
@@ -707,7 +706,7 @@ public class Mig1011Test extends AbstractCairoTest {
         execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
         drainWalQueue();
         Assert.assertTrue("fixture produced no composite partition", isComposite("x", "2024-01-02"));
-        Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion("x"));
+        Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion("x"));
     }
 
     private static void createConvertedTable(String tableName) throws Exception {

@@ -342,7 +342,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     atom.getShardingContext().maybeEnableSharding(fragment, 0);
                 }
             } finally {
-                pool.releaseParquetBuffers();
+                pool.releaseDecodedFrameBuffers();
             }
         } finally {
             atom.release(slotId);
@@ -1994,7 +1994,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                     atom.getShardingContext().maybeEnableSharding(fragment, 0);
                 }
             } finally {
-                pool.releaseParquetBuffers();
+                pool.releaseDecodedFrameBuffers();
             }
         } finally {
             atom.release(slotId);

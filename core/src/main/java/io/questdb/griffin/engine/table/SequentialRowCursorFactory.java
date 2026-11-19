@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -34,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Returns rows from current page frame in order of cursors list:
@@ -70,28 +72,34 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
      * exclusive, one cursor after another.
      */
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
-        Misc.freeObjListAndClear(cursors);
-        for (int i = cursorLo; i < cursorHi; i++) {
-            cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
-        }
-        this.cursorLo = cursorLo;
-        cursor.init();
-        return cursor;
+        return getCursor(null, pageFrame, pageFrameMemory, cursorLo, cursorHi);
     }
 
     /**
-     * The cursor over the rows in the page frame of {@code firstCursor}, then of the cursors at {@code cursorLo + 1},
-     * inclusive, to {@code cursorHi}, exclusive, one cursor after another.
+     * Opens the requested range of cursors, taking ownership of {@code firstCursor} when supplied.
      */
-    protected RowCursor getCursor(RowCursor firstCursor, PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
-        Misc.freeObjListAndClear(cursors);
-        cursors.add(firstCursor);
-        for (int i = cursorLo + 1; i < cursorHi; i++) {
-            cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+    protected RowCursor getCursor(@Nullable RowCursor firstCursor, PageFrame pageFrame, PageFrameMemory pageFrameMemory, int cursorLo, int cursorHi) {
+        try {
+            cursor.close();
+            cursors.setPos(cursorHi - cursorLo);
+            int i = cursorLo;
+            if (firstCursor != null) {
+                cursors.setQuick(0, firstCursor);
+                firstCursor = null;
+                i++;
+            }
+            for (; i < cursorHi; i++) {
+                cursors.setQuick(i - cursorLo, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+            }
+            this.cursorLo = cursorLo;
+            cursor.init();
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(firstCursor, th);
+            Misc.freeObjList(cursors, th);
+            cursors.clear();
+            throw th;
         }
-        this.cursorLo = cursorLo;
-        cursor.init();
-        return cursor;
     }
 
     /**
@@ -134,8 +142,10 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
         @Override
         public void close() {
-            Misc.freeObjListAndClear(cursors);
+            final Throwable failure = Misc.freeObjListBestEffort(null, cursors);
+            cursors.clear();
             currentCursor = null;
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override

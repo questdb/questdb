@@ -164,6 +164,33 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestWithinAcrossFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            configOverrideUseWithinLatestByOptimisation();
+            execute("CREATE TABLE trips (ts TIMESTAMP, geo GEOHASH(3c)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO trips VALUES
+                        ('2009-01-01T00:00:00.000000Z', #dr5),
+                        ('2009-01-02T00:00:00.000000Z', #000)
+                    """);
+            execute("ALTER TABLE trips ADD COLUMN sym SYMBOL");
+            execute("ALTER TABLE trips ALTER COLUMN sym ADD INDEX");
+
+            // The symbol column tops force cursor fallback. A rejected latest row must
+            // also resolve its symbol, so an older frame cannot supply a matching row.
+            assertQuery("trips WHERE geo WITHIN (#dr5) LATEST ON ts PARTITION BY sym")
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .mutateWith("INSERT INTO trips (ts, geo) VALUES ('2009-01-03T00:00:00.000000Z', #dr5)")
+                    .returns("ts\tgeo\tsym\n", """
+                            ts\tgeo\tsym
+                            2009-01-03T00:00:00.000000Z\tdr5\t
+                            """);
+        });
+    }
+
+    @Test
     public void testNoArgs() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrips);

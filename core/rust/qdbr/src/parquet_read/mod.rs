@@ -5,6 +5,7 @@ pub mod column_sink;
 pub mod decode;
 pub mod decode_column;
 pub mod decoders;
+#[cfg(feature = "jni-exports")]
 pub mod jni;
 pub mod meta;
 pub mod page;
@@ -14,7 +15,7 @@ pub mod slicer;
 #[cfg(test)]
 mod top_rows_tests;
 
-pub use row_groups::{ParquetDecoder, RowGroupBuffers};
+pub use row_groups::{ExternalColumnView, ParquetDecoder, RowGroupBuffers};
 
 #[repr(C)]
 pub struct DecodeContext {

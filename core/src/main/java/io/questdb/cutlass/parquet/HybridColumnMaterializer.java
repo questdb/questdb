@@ -226,6 +226,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
      * @return number of rows in this frame
      */
     public long buildColumnDataFromPageFrame(PageFrameCursor cursor, PageFrame frame, DirectLongList columnData) {
+        CopyExportRequestTask.checkRawPageFrame(frame);
         final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
         final boolean isParquet = frame.getFormat() == PartitionFormat.PARQUET;
         if (isParquet) {
@@ -590,7 +591,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 allocateBuffer(adjustedMetadata.getColumnType(i));
             }
         }
-        parquetFrameAddressCache.of(virtualFactory.getBaseFactory().getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+        parquetFrameAddressCache.of(virtualFactory.getBaseFactory().getMetadata(), cursor);
         parquetFrameAddressCache.add(0, frame);
         parquetFrameMemoryPool.of(parquetFrameAddressCache);
         parquetFrameMemoryPool.navigateTo(0, pageFrameRecord);
@@ -725,8 +726,6 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 dataBuf.putLong(iv.getHi());
             }
             case ColumnType.ARRAY -> ArrayTypeDriver.appendValue(auxBuf, dataBuf, record.getArray(col, columnType));
-            // Only a pass-through column copied from a Parquet frame reaches this arm:
-            // determineExportMode() routes every other BINARY column to TEMP_TABLE mode.
             case ColumnType.BINARY -> auxBuf.putLong(dataBuf.putBin(record.getBin(col)));
             default ->
                     throw new UnsupportedOperationException("unsupported column type: " + ColumnType.nameOf(columnType));

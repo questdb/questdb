@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
@@ -40,6 +41,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -50,6 +52,7 @@ import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.FiberLocal;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -62,6 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
+    private static final long HELD_NONE = -1;
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final long LOCAL_TASK_CURSOR = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
@@ -73,21 +77,33 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
+    // Run table: runFirstFrames.get(t) is the first global frame index of task (row-group run) t; the run
+    // spans up to the next run's first frame (or frameCount for the last). Built in buildAddressCache.
+    private final IntList runFirstFrames = new IntList();
     private final byte taskType; // PageFrameReduceTask.TYPE_*
     private final WorkStealingStrategy workStealingStrategy;
     public volatile boolean done;
     private T atom;
+    // Sub-frame within the held task currently being collected; the collector reads the run's sub-frames
+    // one at a time (each looks like a standalone frame) while the task slot stays held.
+    private int collectSubFrame;
     private SCSequence collectSubSeq;
-    private int collectedFrameOrdinal = -1;
-    // The frames the sequence dispatches until the next toTop(): the frame of ordinal k is
-    // firstDispatchFrameIndex + k * dispatchFrameIndexStep, for k below dispatchFrameCount.
-    private int dispatchFrameCount;
-    private int dispatchFrameIndexStep = 1;
-    private int dispatchStartFrameOrdinal;
-    private int firstDispatchFrameIndex;
+    // Protocol indices are in task (row-group run) units; the address cache / frameRowCounts stay
+    // frame-indexed. When no row group is split, taskCount == frameCount and these track frames 1:1.
+    private int collectedTaskIndex = -1;
+    // The dispatch range can cut through the first and last runs on a rewind.
+    private int dispatchFrameHi;
+    private int dispatchFrameLo;
+    private int dispatchFrameStep = 1;
+    private int dispatchStartTaskIndex;
+    private int firstDispatchRun;
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
+    // The collect-queue cursor (or LOCAL_TASK_CURSOR) of the task being collected sub-frame by sub-frame,
+    // or HELD_NONE between tasks. Held across the run so its slot frees only after the last sub-frame.
+    private long heldCollectCursor = HELD_NONE;
+    private int heldSubFrameCount;
     private long id;
     private boolean isClosing;
     private PageFrameMemoryRecord localRecord;
@@ -104,6 +120,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private int shard;
     private SqlExecutionContext sqlExecutionContext;
     private long startTime;
+    // Number of tasks (row-group runs) to dispatch; the unit of the dispatch/collect protocol.
+    private int taskCount;
     private boolean uninterruptible;
     // Must be initialized from the original SQL context's circuit breaker before use.
     private SqlExecutionCircuitBreakerWrapper workStealCircuitBreaker;
@@ -157,6 +175,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 .$(", frameCount=").$(frameCount)
                 .I$();
 
+        // A scan abandoned mid-run (close/cancel) can leave a task held with its slot un-freed; release it
+        // so the drain below accounts it and the collect-queue slot frees.
+        if (heldCollectCursor != HELD_NONE) {
+            finalizeHeldTask(heldCollectCursor, true);
+        }
+
         final MCSequence pageFrameReduceSubSeq = messageBus.getPageFrameReduceSubSeq(shard);
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean isFiberSuspendable = isFiberSuspendable();
@@ -167,12 +191,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             final long observedProgress = canPark ? getProgressVersion() : 0;
             final long observedShardProgress = canPark ? dispatcher.getRingProgressVersion(shard) : 0;
             // First check the local task: maybe we were reducing locally and got interrupted by an exception?
-            if (localTask != null && localTask.getFrameSequence() == this && dispatchStartFrameOrdinal == localTask.getFrameOrdinal() + 1) {
-                collectedFrameOrdinal = localTask.getFrameOrdinal();
+            if (localTask != null && localTask.getFrameSequence() == this && dispatchStartTaskIndex == localTask.getTaskIndex() + 1) {
+                collectedTaskIndex = localTask.getTaskIndex();
                 localTask.collected(true);
             }
 
-            if (dispatchStartFrameOrdinal == collectedFrameOrdinal + 1) {
+            if (dispatchStartTaskIndex == collectedTaskIndex + 1) {
                 // We know that all frames were collected. We're almost done.
                 if (!done) {
                     // Looks like not all the frames were dispatched, so no one reached the very last frame and
@@ -208,7 +232,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     final PageFrameSequence<?> taskFrameSequence = task.getFrameSequence();
                     if (taskFrameSequence == this) {
                         assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
-                        collectedFrameOrdinal = task.getFrameOrdinal();
+                        collectedTaskIndex = task.getTaskIndex();
                         task.collected(true);
                     }
                     collectSubSeq.done(cursor);
@@ -220,7 +244,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             }
         }
 
-        // It could be the case that one of the workers reduced a page frame, then marked the task as done,
+        // It could be the case that one of the workers reduced a task, then marked the sequence as done,
         // but haven't incremented reduce counter yet. In this case, we wait for the desired counter value.
         awaitReduced(dispatcher, isFiberSuspendable);
 
@@ -259,21 +283,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public void collect(long cursor, boolean forceCollect) {
         assert cursor > -1;
-        if (cursor == LOCAL_TASK_CURSOR) {
-            collectedFrameOrdinal = localTask.getFrameOrdinal();
-            localTask.collected();
-            if (done) {
-                suspendCollectSubSeq();
-            }
+        // Defer finalising the task until the run's last sub-frame; until then keep the slot held so the
+        // next next() can present the remaining sub-frames. forceCollect (close/abandon) finalises now.
+        if (!forceCollect && collectSubFrame + 1 < heldSubFrameCount) {
             return;
         }
-        PageFrameReduceTask task = reduceQueue.get(cursor);
-        collectedFrameOrdinal = task.getFrameOrdinal();
-        task.collected(forceCollect);
-        collectSubSeq.done(cursor);
-        if (done) {
-            suspendCollectSubSeq();
-        }
+        finalizeHeldTask(cursor, forceCollect);
     }
 
     public T getAtom() {
@@ -284,20 +299,6 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     @Override
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return sqlExecutionContext.getCircuitBreaker();
-    }
-
-    /**
-     * The number of frames the sequence dispatches until the next {@link #toTop()}.
-     */
-    public int getDispatchFrameCount() {
-        return dispatchFrameCount;
-    }
-
-    /**
-     * The frame the sequence dispatches at position {@code frameOrdinal} of its dispatch order.
-     */
-    public int getDispatchFrameIndex(int frameOrdinal) {
-        return firstDispatchFrameIndex + frameOrdinal * dispatchFrameIndexStep;
     }
 
     public int getFrameCount() {
@@ -350,11 +351,32 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public PageFrameReduceTask getTask(long cursor) {
         assert cursor > -1;
+        final PageFrameReduceTask task;
         if (cursor == LOCAL_TASK_CURSOR) {
             assert localTask != null && localTask.getFrameSequence() != null;
-            return localTask;
+            task = localTask;
+        } else {
+            task = reduceQueue.get(cursor);
         }
-        return reduceQueue.get(cursor);
+        // Present the current sub-frame of the run as a standalone frame to the unchanged collector.
+        task.positionAtSubFrame(collectSubFrame);
+        return task;
+    }
+
+    public int getTaskCount() {
+        return taskCount;
+    }
+
+    public int getTaskFirstFrame(int taskIndex) {
+        final int run = firstDispatchRun + taskIndex * dispatchFrameStep;
+        return dispatchFrameStep > 0
+                ? Math.max(runFirstFrames.getQuick(run), dispatchFrameLo)
+                : Math.min(getRunFrameHi(run), dispatchFrameHi) - 1;
+    }
+
+    public int getTaskFrameCount(int taskIndex) {
+        final int run = firstDispatchRun + taskIndex * dispatchFrameStep;
+        return Math.min(getRunFrameHi(run), dispatchFrameHi) - Math.max(runFirstFrames.getQuick(run), dispatchFrameLo);
     }
 
     public byte getTaskType() {
@@ -390,11 +412,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
      * should retry, or -2 if there are no frames to dispatch
      */
     public long next(int dispatchLimit, boolean countOnly) {
-        if (dispatchFrameCount == 0) {
+        if (taskCount == 0) {
             return -2;
         }
 
-        assert collectedFrameOrdinal < dispatchFrameCount - 1;
+        // Still draining the held task's row-group run: present its next sub-frame without consuming a new
+        // collect-queue entry. getTask() positions the task at this sub-frame.
+        if (heldCollectCursor != HELD_NONE && collectSubFrame + 1 < heldSubFrameCount) {
+            collectSubFrame++;
+            return heldCollectCursor;
+        }
+
+        assert collectedTaskIndex < taskCount - 1;
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         final boolean isFiberSuspendable = isFiberSuspendable();
         final boolean canPark = dispatcher != null && isFiberSuspendable;
@@ -409,6 +438,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 PageFrameSequence<?> thatFrameSequence = task.getFrameSequence();
                 if (thatFrameSequence == this) {
                     assert id == task.getFrameSequenceId() : "ids mismatch: " + id + ", " + task.getFrameSequenceId();
+                    beginCollectTask(cursor, task);
                     return cursor;
                 } else {
                     // Not our task, nothing to collect. Go for another spin.
@@ -419,21 +449,22 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
                         throw buildInterruptionException();
                     }
-                    if (dispatchStartFrameOrdinal == collectedFrameOrdinal + 1) {
+                    if (dispatchStartTaskIndex == collectedTaskIndex + 1) {
                         return -2;
                     }
                 } else {
-                    final int previousDispatchStartFrameOrdinal = dispatchStartFrameOrdinal;
+                    final int previousDispatchStartTaskIndex = dispatchStartTaskIndex;
                     if (dispatch(dispatchLimit, countOnly)
-                            && (!isFiberSuspendable || dispatchStartFrameOrdinal != previousDispatchStartFrameOrdinal)) {
+                            && (!isFiberSuspendable || dispatchStartTaskIndex != previousDispatchStartTaskIndex)) {
                         continue;
                     }
                     if (dispatcher != null && !isActive()) {
                         continue;
                     }
                 }
-                if (dispatchStartFrameOrdinal == collectedFrameOrdinal + 1) {
+                if (dispatchStartTaskIndex == collectedTaskIndex + 1) {
                     reduceLocally(countOnly);
+                    beginCollectTask(LOCAL_TASK_CURSOR, localTask);
                     return LOCAL_TASK_CURSOR;
                 }
                 if (canPark) {
@@ -474,7 +505,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // pass one to cache page addresses
             // this has to be separate pass to ensure there no cache reads
             // while cache might be resizing
-            frameAddressCache.of(base.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(base.getMetadata(), frameCursor);
 
             this.collectSubSeq = collectSubSeq;
             id = ID_SEQ.incrementAndGet();
@@ -518,7 +549,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     public void reset() {
         // reset() must be called only if there are no tasks in progress for this page frame sequence
-        assert frameCount == 0 || reduceFinishedCounter.get() == dispatchStartFrameOrdinal;
+        assert taskCount == 0 || reduceFinishedCounter.get() == dispatchStartTaskIndex;
         if (registeredContext != null) {
             registeredContext.unregisterPageFrameSequence(this);
             registeredContext = null;
@@ -526,14 +557,20 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
         // prepare different frame sequence using the same object instance
         frameCount = 0;
-        dispatchFrameCount = 0;
-        firstDispatchFrameIndex = 0;
-        dispatchFrameIndexStep = 1;
-        dispatchStartFrameOrdinal = 0;
-        collectedFrameOrdinal = -1;
+        taskCount = 0;
+        dispatchFrameHi = 0;
+        dispatchFrameLo = 0;
+        dispatchFrameStep = 1;
+        dispatchStartTaskIndex = 0;
+        firstDispatchRun = 0;
+        collectedTaskIndex = -1;
+        heldCollectCursor = HELD_NONE;
+        collectSubFrame = 0;
+        heldSubFrameCount = 0;
         readyToDispatch = false;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
+        runFirstFrames.clear();
         frameRowCounts.clear();
 
         Throwable cleanupFailure = null;
@@ -612,9 +649,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     /**
      * Prepares the sequence to dispatch the frames from {@code firstFrameIndex} to {@code lastFrameIndex}, both
-     * inclusive, in that order, which runs backward when {@code lastFrameIndex} is the lower one. The frames keep their
-     * indexes, and {@link PageFrameReduceTask#getFrameOrdinal()} gives a task's position in the dispatch order. The
-     * sequence must have been prepared for dispatch. The method is not thread-safe.
+     * inclusive, in that order. A task covers the portion of a row-group run within the range. The sequence must
+     * have been prepared for dispatch. The method is not thread-safe.
      */
     public void toTop(int firstFrameIndex, int lastFrameIndex) {
         assert firstFrameIndex >= 0 && firstFrameIndex < frameCount && lastFrameIndex >= 0 && lastFrameIndex < frameCount;
@@ -633,22 +669,28 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         // done is reset by method call above
         done = false;
         id = newId;
-        firstDispatchFrameIndex = firstFrameIndex;
-        dispatchFrameIndexStep = lastFrameIndex < firstFrameIndex ? -1 : 1;
-        dispatchFrameCount = Math.abs(lastFrameIndex - firstFrameIndex) + 1;
-        dispatchStartFrameOrdinal = 0;
-        collectedFrameOrdinal = -1;
+        firstDispatchRun = getRunIndex(firstFrameIndex);
+        dispatchFrameStep = lastFrameIndex < firstFrameIndex ? -1 : 1;
+        dispatchFrameLo = Math.min(firstFrameIndex, lastFrameIndex);
+        dispatchFrameHi = Math.max(firstFrameIndex, lastFrameIndex) + 1;
+        taskCount = Math.abs(getRunIndex(lastFrameIndex) - firstDispatchRun) + 1;
+        dispatchStartTaskIndex = 0;
+        collectedTaskIndex = -1;
         reduceFinishedCounter.set(0);
         reduceStartedCounter.set(0);
         workStealingStrategy.of(reduceStartedCounter);
         resetCancellation();
     }
 
+    int getDispatchFrameStep() {
+        return dispatchFrameStep;
+    }
+
     private void awaitReduced(PageFrameReduceDispatcher dispatcher, boolean isFiberSuspendable) {
         final boolean canPark = dispatcher != null && isFiberSuspendable;
         while (true) {
             final long observedProgress = canPark ? getProgressVersion() : 0;
-            if (reduceFinishedCounter.get() >= dispatchStartFrameOrdinal) {
+            if (reduceFinishedCounter.get() >= dispatchStartTaskIndex) {
                 break;
             }
             if (canPark) {
@@ -659,13 +701,44 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    private void beginCollectTask(long cursor, PageFrameReduceTask task) {
+        heldCollectCursor = cursor;
+        collectSubFrame = 0;
+        heldSubFrameCount = task.getSubFrameCount();
+    }
+
     private void buildAddressCache() {
+        runFirstFrames.clear();
+        taskCount = 0;
+        boolean prevCustomDecode = false;
+        int prevRowGroup = -1;
+        int prevPartitionIndex = -1;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            // Only custom-decode sub-frames of one row group join one task, so the decoder prepares the
+            // row group's window once. Other frames stay single-frame tasks: the collector reads their
+            // reduce output and never decodes them again.
+            final int rowGroup = frame.getParquetRowGroup();
+            final int partitionIndex = frame.getPartitionIndex();
+            final boolean customDecode = rowGroup >= 0
+                    && frame.getPartitionFrameState() != 0
+                    && PartitionFrameState.requiresMaterialization(frame.getPartitionFrameState(), rowGroup);
+            final boolean isSameRun = frameCount > 0
+                    && customDecode
+                    && prevCustomDecode
+                    && rowGroup == prevRowGroup
+                    && partitionIndex == prevPartitionIndex;
+            if (!isSameRun) {
+                runFirstFrames.add(frameCount);
+            }
+            prevCustomDecode = customDecode;
+            prevRowGroup = rowGroup;
+            prevPartitionIndex = partitionIndex;
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
-        dispatchFrameCount = frameCount;
+        dispatchFrameHi = frameCount;
+        taskCount = runFirstFrames.size();
 
         // Covered frames decode their columns on the async workers (in
         // PageFrameMemoryPool.navigateTo) by iterating detached cursors over the
@@ -695,8 +768,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     /**
      * This method is re-enterable. It has to be in case queue capacity or the dispatch limit is smaller
-     * than number of frames to be dispatched. When it is the case, frame count published so far is
-     * stored in the `dispatchStartFrameOrdinal` field. This method has no responsibility to deal with
+     * than number of tasks to be dispatched. When it is the case, task count published so far is
+     * stored in the `dispatchStartTaskIndex` field. This method has no responsibility to deal with
      * "collect" stage hence it deals with everything to unblock the collect stage.
      *
      * @param dispatchLimit a cap for the number of in-flight tasks
@@ -721,7 +794,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         boolean hasPublication = dispatcher == null || dispatcher.tryAcquirePublication();
         boolean idle = true;
         boolean dispatched = false;
-        final int collectedFrameCount = collectedFrameOrdinal + 1;
+        final int collectedTaskCount = collectedTaskIndex + 1;
 
         try {
             if (!hasPublication) {
@@ -731,15 +804,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 return false;
             }
             long cursor;
-            int i = dispatchStartFrameOrdinal;
+            int i = dispatchStartTaskIndex;
             OUT:
-            for (; i < dispatchFrameCount; i++) {
+            for (; i < taskCount; i++) {
                 // We cannot process work on this thread. If we do the consumer will
                 // never get the executions results. Consumer only picks ready to go
                 // tasks from the queue.
 
                 while (true) {
-                    final int totalDispatched = dispatchStartFrameOrdinal - collectedFrameCount;
+                    final int totalDispatched = dispatchStartTaskIndex - collectedTaskCount;
                     // Treat situation when we hit the dispatch limit as if it was a full queue (-1).
                     if (totalDispatched >= dispatchLimit) {
                         cursor = -1;
@@ -754,15 +827,15 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         LOG.debug()
                                 .$("dispatched [shard=").$(shard)
                                 .$(", id=").$(getId())
-                                .$(", frameIndex=").$(getDispatchFrameIndex(i))
-                                .$(", frameCount=").$(frameCount)
+                                .$(", taskIndex=").$(i)
+                                .$(", taskCount=").$(taskCount)
                                 .$(", cursor=").$(cursor)
                                 .I$();
-                        dispatchStartFrameOrdinal = i + 1;
+                        dispatchStartTaskIndex = i + 1;
                         dispatched = true;
                         break;
                     } else if (cursor == -1) {
-                        if (!workStealingStrategy.shouldSteal(collectedFrameCount)) {
+                        if (!workStealingStrategy.shouldSteal(collectedTaskCount)) {
                             return dispatched;
                         }
                         // start stealing work to unload the queue
@@ -772,7 +845,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                             hasPublication = false;
                         }
                         if (stealWork(reduceQueue, reduceSubSeq, localRecord, workStealCircuitBreaker)) {
-                            if (reduceFinishedCounter.get() > collectedFrameCount) {
+                            if (reduceFinishedCounter.get() > collectedTaskCount) {
                                 // We have something to collect, so let's do it!
                                 return true;
                             }
@@ -799,7 +872,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 hasPublication = false;
             }
 
-            if (reduceFinishedCounter.get() > collectedFrameCount) {
+            if (reduceFinishedCounter.get() > collectedTaskCount) {
                 // We have something to collect, so let's do it!
                 return true;
             }
@@ -810,7 +883,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             // specifically count only our items
 
             // join the gang to consume published tasks
-            while (reduceFinishedCounter.get() < dispatchStartFrameOrdinal) {
+            while (reduceFinishedCounter.get() < dispatchStartTaskIndex) {
                 idle = false;
                 // The owner may take its own published frames here, so it lets the strategy hold
                 // it back first. An inactive sequence only drains, which the strategy must not hold.
@@ -837,18 +910,51 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
     }
 
+    // Finalises the held task: marks its run collected, releases its frame memory, and (for a queue task)
+    // frees the collect-queue slot. Called on the run's last sub-frame and on force-collect / abandon.
+    private void finalizeHeldTask(long cursor, boolean forceCollect) {
+        if (cursor == LOCAL_TASK_CURSOR) {
+            collectedTaskIndex = localTask.getTaskIndex();
+            localTask.collected();
+            if (done) {
+                suspendCollectSubSeq();
+            }
+        } else {
+            PageFrameReduceTask task = reduceQueue.get(cursor);
+            collectedTaskIndex = task.getTaskIndex();
+            task.collected(forceCollect);
+            collectSubSeq.done(cursor);
+            if (done) {
+                suspendCollectSubSeq();
+            }
+        }
+        heldCollectCursor = HELD_NONE;
+    }
+
     private int getBlockedShard() {
-        return reduceFinishedCounter.get() > collectedFrameOrdinal + 1 ? shard : -1;
+        return reduceFinishedCounter.get() > collectedTaskIndex + 1 ? shard : -1;
+    }
+
+    private int getRunFrameHi(int run) {
+        return run + 1 < runFirstFrames.size() ? runFirstFrames.getQuick(run + 1) : frameCount;
+    }
+
+    private int getRunIndex(int frameIndex) {
+        if (runFirstFrames.size() == frameCount) {
+            return frameIndex;
+        }
+        final int index = runFirstFrames.binarySearchUniqueList(frameIndex);
+        return index >= 0 ? index : -index - 2;
     }
 
     private void reduceLocally(boolean countOnly) {
-        assert dispatchStartFrameOrdinal < dispatchFrameCount;
+        assert dispatchStartTaskIndex < taskCount;
 
         if (localTask == null) {
             localTask = localTaskFactory.getInstance();
             localTask.setTaskType(taskType);
         }
-        localTask.of(this, dispatchStartFrameOrdinal++, countOnly);
+        localTask.of(this, dispatchStartTaskIndex++, countOnly);
 
         final boolean isFiberSuspendable = isFiberSuspendable();
         final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
@@ -877,8 +983,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     .$("reducing locally [shard=").$(shard)
                     .$(", id=").$(id)
                     .$(", taskType=").$(taskType)
-                    .$(", frameIndex=").$(localTask.getFrameIndex())
-                    .$(", frameCount=").$(frameCount)
+                    .$(", taskIndex=").$(localTask.getTaskIndex())
+                    .$(", taskCount=").$(taskCount)
                     .$(", active=").$(isActive())
                     .I$();
             if (isActive()) {
@@ -891,8 +997,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         .$("local reduce error [error=").$(th)
                         .$(", id=").$(id)
                         .$(", taskType=").$(taskType)
-                        .$(", frameIndex=").$(localTask.getFrameIndex())
-                        .$(", frameCount=").$(frameCount)
+                        .$(", taskIndex=").$(localTask.getTaskIndex())
+                        .$(", taskCount=").$(taskCount)
                         .I$();
                 // Route the error through the local task so the collector sees it via
                 // task.hasError() and can re-throw the original class via task.buildError().

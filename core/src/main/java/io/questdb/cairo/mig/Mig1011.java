@@ -57,7 +57,7 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * committed snapshot in place, and a rerun skips partitions already recorded.
  * <p>
  * The migration must stay {@link MigrationAction.StorageVersionAgnostic}. Composite partitions shipped in
- * 10.1.0, before this migration, so a table can already carry {@code ColumnType.MAX_STORAGE_VERSION} in its
+ * 10.1.0, before this migration, so a table can already carry {@code ColumnType.COMPOSITE_STORAGE_VERSION} in its
  * {@code _meta} when the migration first runs, and {@link EngineMigration} runs only agnostic migrations on
  * such a table. Its parquet partitions would otherwise never gain the record, and their FLOAT and DOUBLE
  * columns would never prune a negated range comparison.

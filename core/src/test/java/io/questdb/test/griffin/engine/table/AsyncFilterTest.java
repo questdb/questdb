@@ -71,7 +71,7 @@ public class AsyncFilterTest extends AbstractCairoTest {
                             Long.MAX_VALUE
                     )
             ) {
-                addressCache.of(factory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+                addressCache.of(factory.getMetadata(), frameCursor);
                 int frameCount = 0;
                 PageFrame frame;
                 while ((frame = frameCursor.next()) != null) {

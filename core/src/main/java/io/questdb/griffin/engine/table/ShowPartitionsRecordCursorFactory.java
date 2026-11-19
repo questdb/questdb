@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -40,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
+import io.questdb.cairo.sql.PartitionFrameSource;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -168,6 +170,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
+        private final PartitionDeltaStats deltaStats = new PartitionDeltaStats();
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
@@ -281,6 +284,14 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         /**
+         * Whether the Delta stats name a Parquet base, which the catalog may have replaced.
+         */
+        private boolean isDeltaParquetBase() {
+            final int kind = deltaStats.getBaseSource().getKind();
+            return kind == PartitionFrameSource.PARQUET || kind == PartitionFrameSource.REMOTE_PARQUET;
+        }
+
+        /**
          * Mmaps the _pm file, initializes the lazy ParquetMetaFileReader, and extracts
          * the parquet file size. The reader stays open so that min/max timestamps
          * can be read later in the same loadNextPartition() call. The mmap is
@@ -309,6 +320,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
             CharSequence dynamicTsColName = tsColName;
+            boolean hasDelta = false;
+            boolean isDeltaParquet = false;
             path.trimTo(rootLen).$();
 
             TxReader tableTxReader = tableReader.getTxFile();
@@ -323,21 +336,37 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
-                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
-                if (isParquet) {
-                    openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
-                } else if (hasParquetGenerated) {
-                    // generated-but-not-switched: offset 3 holds the seqTxn, not a size. The local
-                    // data.parquet still exists, so stat it for the real on-disk parquet size.
-                    int dirLen = path.size();
-                    parquetFileSize = ff.length(path.concat(TableUtils.PARQUET_PARTITION_NAME).$());
-                    path.trimTo(dirLen);
+                hasDelta = tableTxReader.getPartitionHasDelta(partitionIndex);
+                if (hasDelta) {
+                    tableReader.readDeltaStats(partitionIndex, deltaStats);
+                    isDeltaParquet = isDeltaParquetBase();
+                    // A Delta base replacement leaves _txn as it was: the catalog's base says where reads go.
+                    isRemotelyServed = deltaStats.getBaseSource().getKind() == PartitionFrameSource.REMOTE_PARQUET;
+                }
+                final long partitionNameTxn = tableTxReader.getPartitionNameTxn(partitionIndex);
+                if (isDeltaParquet) {
+                    // A Delta base replacement updates neither _txn nor _pm, so read the catalog's base.
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, deltaStats.getBaseSource().getPartitionNameTxn());
+                    openDeltaParquetMeta(path);
+                    path.trimTo(rootLen);
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, partitionNameTxn);
+                } else {
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, partitionNameTxn);
+                    if (isParquet) {
+                        openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
+                    } else if (hasParquetGenerated) {
+                        // generated-but-not-switched: offset 3 holds the seqTxn, not a size. The local
+                        // data.parquet still exists, so stat it for the real on-disk parquet size.
+                        int dirLen = path.size();
+                        parquetFileSize = ff.length(path.concat(TableUtils.PARQUET_PARTITION_NAME).$());
+                        path.trimTo(dirLen);
+                    }
                 }
                 // A COMPOSITE partition spends its offset-3 value field on the geometry pointer, so
                 // getNativePartitionSeqTxn reports "unknown" for it; its stamp lives in the _geometry
                 // record instead.
                 final long resolvedSeqTxn;
-                if (isParquet) {
+                if (isParquet || isDeltaParquet) {
                     resolvedSeqTxn = parquetMetaReader != null && parquetMetaReader.isOpen() ? parquetMetaReader.getResolvedSeqTxn() : -1L;
                 } else if (tableTxReader.isPartitionComposite(partitionIndex)) {
                     resolvedSeqTxn = tableReader.getGeometry().getSeqTxn(partitionIndex);
@@ -421,11 +450,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 path.parent();
             }
 
+            final long baseRows = numRows;
             partitionSize = ff.getDirSize(path);
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
-            if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
-                if (isParquet && parquetMetaReader != null && parquetMetaReader.isOpen()) {
+            if (PartitionBy.isPartitioned(partitionBy) && baseRows > 0L) {
+                if ((isParquet || isDeltaParquet) && parquetMetaReader != null && parquetMetaReader.isOpen()) {
                     int tsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
                     int rowGroupCount = parquetMetaReader.getRowGroupCount();
                     if (tsIndex >= 0 && rowGroupCount > 0) {
@@ -442,12 +472,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     final PartitionGeometry geometry = tableReader.getGeometry();
                     minTimestamp = geometry.getPieceTimestampLo(partitionIndex, 0);
                     maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);
-                } else if (!isParquet) {
+                } else if (!isParquet && !isDeltaParquet) {
                     TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                     long fd = -1;
                     try {
                         fd = TableUtils.openRO(ff, path.$(), LOG);
-                        long lastOffset = (numRows - 1) * Long.BYTES; // timestamp size
+                        long lastOffset = (baseRows - 1) * Long.BYTES; // timestamp size
                         minTimestamp = ff.readNonNegativeLong(fd, 0);
                         maxTimestamp = ff.readNonNegativeLong(fd, lastOffset);
                     } catch (CairoException e) {
@@ -462,6 +492,62 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     minTimestamp = Long.MIN_VALUE;
                     maxTimestamp = Long.MIN_VALUE;
                 }
+            }
+            if (hasDelta) {
+                numRows = deltaStats.getRowCount();
+                // Preserve unknown base bounds when its timestamp source is unavailable.
+                if (baseRows == 0) {
+                    if (deltaStats.getMinTimestamp() != Long.MAX_VALUE) {
+                        minTimestamp = deltaStats.getMinTimestamp();
+                        maxTimestamp = deltaStats.getMaxTimestamp();
+                    }
+                } else if (minTimestamp != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
+                    minTimestamp = Math.min(minTimestamp, deltaStats.getMinTimestamp());
+                    maxTimestamp = Math.max(maxTimestamp, deltaStats.getMaxTimestamp());
+                }
+            }
+        }
+
+        /**
+         * Maps the committed prefix of the Delta base's metadata slot, as TableReader does,
+         * and takes the Parquet file size from its last footer. Call {@link #closeParquetMeta()}
+         * to release the mmap.
+         */
+        private void openDeltaParquetMeta(Path partitionDirPath) {
+            final PartitionFrameSource source = deltaStats.getBaseSource();
+            final long committedBytes = source.getMetadataCommittedBytes();
+            final int dirLen = partitionDirPath.size();
+            partitionDirPath.concat(source.getMetadataSlot() == 0 ? TableUtils.PARQUET_METADATA_FILE_NAME : TableUtils.PARQUET_METADATA_B_FILE_NAME).$();
+            try {
+                if (parquetMetaReader == null) {
+                    parquetMetaReader = new ParquetMetaFileReader();
+                }
+                final long fd = TableUtils.openRO(ff, partitionDirPath.$(), LOG);
+                try {
+                    final long available = ff.length(fd);
+                    if (committedBytes <= 0 || available < committedBytes) {
+                        throw CairoException.critical(0)
+                                .put("Parquet metadata is shorter than catalog prefix [required=").put(committedBytes)
+                                .put(", available=").put(available).put(']');
+                    }
+                    final long addr = TableUtils.mapRO(ff, fd, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                    try {
+                        parquetMetaReader.of(addr, committedBytes);
+                    } catch (Throwable e) {
+                        ff.munmap(addr, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+                        throw e;
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+                parquetMetaReader.resolveLastFooter(false);
+                parquetFileSize = parquetMetaReader.getParquetFileSize();
+            } catch (Throwable e) {
+                final String message = e.getMessage();
+                LOG.error().$("could not read parquet metadata [path=").$(partitionDirPath).$(", error=").$(message).I$();
+                closeParquetMeta();
+            } finally {
+                partitionDirPath.trimTo(dirLen);
             }
         }
 

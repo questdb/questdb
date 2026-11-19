@@ -82,6 +82,9 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
 
     @Override
     public long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount) {
+        if (pageFrame.getPartitionFrameState() != 0) {
+            return -1;
+        }
         long count = 0;
         for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
             final long keyRowCount = keyCursorFactories.getQuick(i).getRowCount(pageFrame, rowLo, rowHi, maxCount - count);

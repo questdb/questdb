@@ -188,18 +188,18 @@ public class EngineMigration {
                                         .I$();
                                 return;
                             }
-                            int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
-                            // A version in (latestTableVersion, ColumnType.MAX_STORAGE_VERSION] is not a migration
-                            // step: it marks a table that holds composite partitions and has received what
-                            // _upgrade.d records. Such a table takes only storage-version agnostic migrations
-                            // and keeps its _meta version. Migration leaves a table from a newer binary alone.
-                            final boolean hasCompositePartitions = currentTableVersion > latestTableVersion;
-                            final int tableVersion = Math.min(currentTableVersion, latestTableVersion);
+                            final int storedTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
+                            final boolean hasCompositeOrDeltaPartitions = ColumnType.isCompositeStorageVersion(storedTableVersion)
+                                    || ColumnType.isDeltaStorageVersion(storedTableVersion);
+                            // Known storage markers keep their _meta version and receive migrations recorded in _upgrade.d.
+                            // Leave unknown versions above latestTableVersion alone.
+                            final boolean isMarked = hasCompositeOrDeltaPartitions || ColumnType.isDowngradeLockedStorageVersion(storedTableVersion);
+                            final int currentTableVersion = isMarked ? latestTableVersion : storedTableVersion;
                             // _upgrade.d records the compatible migrations every table at the table version has received
-                            final int firstVersion = tableVersion < latestTableVersion
-                                    ? tableVersion + 1
-                                    : Math.max(tableVersion, recordedMigrationVersion) + 1;
-                            if (currentTableVersion <= ColumnType.MAX_STORAGE_VERSION && firstVersion <= latestMigrationVersion) {
+                            final int firstVersion = currentTableVersion < latestTableVersion
+                                    ? currentTableVersion + 1
+                                    : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
+                            if (currentTableVersion <= latestTableVersion && firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())
                                         .$(", fromVersion=").$(firstVersion - 1)
@@ -221,8 +221,8 @@ public class EngineMigration {
 
                                 for (int ver = firstVersion; ver <= latestMigrationVersion; ver++) {
                                     final MigrationAction migration = getMigrationToVersion(ver);
-                                    if (migration != null && hasCompositePartitions && !(migration instanceof MigrationAction.StorageVersionAgnostic)) {
-                                        LOG.info().$("skipping storage version dependent migration on table with composite partitions [path=").$(path)
+                                    if (migration != null && hasCompositeOrDeltaPartitions && !(migration instanceof MigrationAction.StorageVersionAgnostic)) {
+                                        LOG.info().$("skipping storage version dependent migration on table with composite or Delta partitions [path=").$(path)
                                                 .$(", toVersion=").$(ver)
                                                 .I$();
                                     } else if (migration != null) {
@@ -297,7 +297,7 @@ public class EngineMigration {
         MIGRATIONS.put(425, Mig614::migrate);
         MIGRATIONS.put(426, Mig620::migrate);
         MIGRATIONS.put(429, Mig941::migrate);
-        MIGRATIONS.put(430, Mig1002::migrate);
+        MIGRATIONS.put(430, (MigrationAction.StorageVersionAgnostic) Mig1002::migrate);
         MIGRATIONS.put(431, (MigrationAction.StorageVersionAgnostic) Mig1011::migrate);
     }
 }
