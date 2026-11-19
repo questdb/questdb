@@ -3429,6 +3429,17 @@ public class ParquetTest extends AbstractCairoTest {
                             2022-02-25T02:00:00.000000Z\te1\t2\tE1\tü1\t2\tÜ1
                             2022-02-25T02:39:00.000000Z\te40\t3\tE40\tü40\t3\tÜ40
                             """);
+            // The update costs no value its ASCII fast path that it need not: v1 keeps it in every row
+            // group, v2 in the 45 values of the row groups written before the first non-ASCII one.
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 85, 45);
+
+            // The next update rewrites the file. The Parquet footer holds one flag per column, so v2 loses
+            // the fast path everywhere and v1 keeps it.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, 0);
+            executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T03:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'g' || x, 'h' || x FROM long_sequence(40)");
+            Assert.assertNotEquals("the fourth commit must rewrite the parquet partition", nameTxn, getPartitionNameTxn("x"));
+            assertSqlCursors(query + "y", query + "x");
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 125, 0);
         });
     }
 
@@ -3521,6 +3532,26 @@ public class ParquetTest extends AbstractCairoTest {
         executeOnVarcharAsciiFlagTables("INSERT INTO %s (ts, i, v) SELECT '2022-02-25T07:00:00'::TIMESTAMP + x * 1_000_000L, x::INT, 'abc' || x FROM long_sequence(30)");
         Assert.assertNotEquals("the merge after ADD COLUMN must rewrite the parquet partition", nameTxn, getPartitionNameTxn("x"));
         assertVarcharAsciiFlagTablesMatch();
+    }
+
+    // Counts the values each VARCHAR column of the query returns flagged ASCII.
+    private void assertAsciiFlaggedValueCounts(String query, int... expectedCounts) throws Exception {
+        final int[] counts = new int[expectedCounts.length];
+        try (
+                RecordCursorFactory factory = select(query);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0; i < counts.length; i++) {
+                    final Utf8Sequence value = record.getVarcharA(i);
+                    if (value != null && value.isAscii()) {
+                        counts[i]++;
+                    }
+                }
+            }
+        }
+        Assert.assertArrayEquals(expectedCounts, counts);
     }
 
     // length() and upper() take the ASCII fast path for a value flagged ASCII, so a stale flag changes their

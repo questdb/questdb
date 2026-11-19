@@ -7100,7 +7100,9 @@ mod tests {
         ) -> Result<Vec<Vec<bool>>, Box<dyn Error>> {
             use crate::allocator::TestAllocatorState;
             use crate::parquet_metadata::reader::ParquetMetaReader;
-            use crate::parquet_read::parquet_meta_decode::{decode_row_group, ColumnChunkSource};
+            use crate::parquet_read::parquet_meta_decode::{
+                decode_row_group, decode_row_group_range, ColumnChunkSource,
+            };
             use crate::parquet_read::{DecodeContext, RowGroupBuffers};
 
             let parquet = std::fs::read(self.parquet.path())?;
@@ -7130,6 +7132,26 @@ mod tests {
                         .collect(),
                 );
             }
+            // the decode of all row groups at once, as an O3 merge reads them, flags alike
+            let mut ctx = DecodeContext::new(parquet.as_ptr(), parquet.len() as u64);
+            let mut bufs = RowGroupBuffers::new(alloc.allocator());
+            let row_group_count = reader.row_group_count() as usize;
+            let rows = decode_row_group_range(
+                &mut ctx,
+                &mut bufs,
+                ColumnChunkSource::File(&parquet),
+                &reader,
+                &[(column, ColumnTypeTag::VarcharSlice.into_type())],
+                0,
+                row_group_count - 1,
+            )?;
+            assert_eq!(rows, 4 * row_group_count);
+            let range_flags: Vec<bool> = bufs.column_buffers()[0]
+                .aux_vec
+                .chunks_exact(16)
+                .map(|entry| entry[0] & 0b10 != 0)
+                .collect();
+            assert_eq!(range_flags, flags.concat());
             Ok(flags)
         }
 
@@ -7190,7 +7212,8 @@ mod tests {
         // a reader of the snapshot before the append sees its one row group, flagged
         assert_eq!(file.decoded_ascii_flags_at(pm_size_before, 2)?, [ASCII]);
 
-        // later appends flag their own chunks; b's non-ASCII chunk stays as it is
+        // a later append flags the chunks of a; it does not scan new values of b, which the
+        // parquet footer now calls non-ASCII
         file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
         assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
