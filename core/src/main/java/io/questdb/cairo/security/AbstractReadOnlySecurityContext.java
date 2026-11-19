@@ -157,6 +157,12 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAutoCreateOwner() {
+        // a read-only context auto-creates nothing, see authorizeTableCreate() and authorizeAlterTableAddColumn()
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeCopyCancel(SecurityContext cancellingSecurityContext) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
