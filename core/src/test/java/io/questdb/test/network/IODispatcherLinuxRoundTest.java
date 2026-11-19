@@ -46,6 +46,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.tools.TestMillisecondClock;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -158,14 +159,14 @@ public class IODispatcherLinuxRoundTest {
     public void testIdleTimeoutsInRoundWithEvents() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (Harness h = new Harness(50)) {
-                h.clock.tick = 0;
+                h.clock.millis = 0;
                 final long[] old = h.connect(2);
-                h.clock.tick = 40;
+                h.clock.millis = 40;
                 final long[] fresh = h.connect(3);
 
                 // at 60 the rows created at 0 are past the idle timeout and those created at 40
                 // aren't; the idle scan runs in the same round as fresh[0]'s event
-                h.clock.tick = 60;
+                h.clock.millis = 60;
                 h.round(read(fresh[0]));
 
                 Assert.assertEquals(1, h.publishedCount(fresh[0]));
@@ -247,7 +248,7 @@ public class IODispatcherLinuxRoundTest {
 
                 // every row gets a heartbeat, which removes its fd from epoll and adds it back
                 // once the worker answers; a row left behind by B would try to remove fd -1
-                h.clock.tick = 20;
+                h.clock.millis = 20;
                 h.settle();
                 h.settle();
                 for (long fd : new long[]{a, x, c}) {
@@ -493,6 +494,10 @@ public class IODispatcherLinuxRoundTest {
             return LISTENER_FD;
         }
 
+        private boolean isFake(long fd) {
+            return fd == LISTENER_FD || (fd >= FIRST_CONNECTION_FD && fd < nextFd);
+        }
+
         int closedCount(long fd) {
             int count = 0;
             for (int i = 0, n = closed.size(); i < n; i++) {
@@ -511,10 +516,6 @@ public class IODispatcherLinuxRoundTest {
             }
             return fds;
         }
-
-        private boolean isFake(long fd) {
-            return fd == LISTENER_FD || (fd >= FIRST_CONNECTION_FD && fd < nextFd);
-        }
     }
 
     /**
@@ -523,7 +524,7 @@ public class IODispatcherLinuxRoundTest {
      * and it answers each heartbeat. Either takes effect at the end of the next round.
      */
     private static final class Harness implements QuietCloseable {
-        final TestClock clock = new TestClock();
+        final TestMillisecondClock clock = new TestMillisecondClock(0);
         final HashMap<Long, TestContext> contexts = new HashMap<>();
         final TestDispatcher dispatcher;
         final FakeEpoll epoll;
@@ -635,15 +636,6 @@ public class IODispatcherLinuxRoundTest {
         }
     }
 
-    private static final class TestClock implements MillisecondClock {
-        long tick;
-
-        @Override
-        public long getTicks() {
-            return tick;
-        }
-    }
-
     private static final class TestContext extends IOContext<TestContext> {
         TestContext(NetworkFacade nf) {
             super(TestSocket::new, nf, LOG);
@@ -658,14 +650,14 @@ public class IODispatcherLinuxRoundTest {
             super(configuration, ioContextFactory);
         }
 
+        int pendingSize() {
+            return pending.size();
+        }
+
         @Override
         protected void publishOperation(int operation, TestContext context) {
             publishedSizes.add(pending.size());
             super.publishOperation(operation, context);
-        }
-
-        int pendingSize() {
-            return pending.size();
         }
     }
 
