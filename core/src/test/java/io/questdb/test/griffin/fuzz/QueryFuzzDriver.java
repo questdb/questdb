@@ -375,6 +375,7 @@ public final class QueryFuzzDriver {
                 .$(runner.getParallelJoinPartialReadSwapped()).$(" swapped, ")
                 .$(runner.getParallelJoinPartialReadContinued()).$(" continued); ")
                 .$(runner.getParallelJoinFirstReadRuns()).$(" executions under the rows a client reads first, ")
+                .$(runner.getParallelJoinFirstReadFormRuns()).$(" of which reached the join through an operator over it, ")
                 .$(runner.getParallelJoinLimitFormRuns()).$(" whose LIMIT reached the join from outside its own query; ")
                 .$(runner.getParallelJoinStepperCopyRuns()).$(" queries ran the stages' stepper copies (")
                 .$(runner.getParallelJoinStepperCopyStackedRuns()).$(" stacked in the query's orientation, ")

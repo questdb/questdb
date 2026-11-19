@@ -98,8 +98,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * A join whose rows are the query's own, one for one, see {@link #markClientRowSource()}, takes the
  * rows that the client reads first, see {@link SqlExecutionContext#getFirstReadRows()}, as such a
  * LIMIT: an HTTP page, a CSV export's limit or a PostgreSQL Execute's row limit then first joins
- * only the probe rows that the page may need, and a client that reads on, as a PostgreSQL portal does, reads on into the
- * full window.
+ * only the probe rows that the page may need, and a client that reads on, as a PostgreSQL portal
+ * does, reads on into the full window. The rows that the client reads first reach the joins that
+ * a LIMIT of the query would reach, through the same operators.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
@@ -114,7 +115,8 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     private UnorderedPageFrameSequence<HashJoinBuildRoundAtom> buildRounds;
     private AsyncHashJoinRecordCursor cursor;
     private PageFrameSequence<AsyncHashJoinAtom> frameSequence;
-    // True when the query's rows are the join's own, one for one; see markClientRowSource().
+    // True when the query's first rows need at most as many rows of the join; see
+    // markClientRowSource().
     private boolean isClientRowSource;
     // The upper bound of the LIMIT of the query over the join, null when it states none.
     private Function limitHiFunction;
@@ -369,13 +371,16 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     }
 
     /**
-     * Marks the join as the source of the query's rows: the planner found it under the query's
-     * projections alone, so the rows the client reads are the join's own, one for one, in order.
+     * Marks the join as a source of the query's rows: the planner found it under operators that
+     * read at most one row of it per row they return, those through which a LIMIT of the query
+     * reaches it too, such as projections, the master side of an ASOF or LT join or a branch of a
+     * UNION ALL, so the first rows that the client reads need at most as many rows of the join.
      * Each execution then takes the rows that the client reads first, see
      * {@link SqlExecutionContext#getFirstReadRows()}, as the rows its first window may need, or the
-     * LIMIT's rows when fewer; see {@link AsyncHashJoinRecordCursor}. The join of any other query,
-     * under a sort, a GROUP BY, a filter or a LIMIT, for example, reads more rows than the client
-     * does, and never reads the hint.
+     * LIMIT's rows when fewer; see {@link AsyncHashJoinRecordCursor}. Every operator on the way
+     * opens the join's cursor as it opens its own, while the hint holds. The join of any other
+     * query, under a sort, a GROUP BY, a filter or a LIMIT, for example, may yield more rows than
+     * the client reads, and never reads the hint.
      */
     public void markClientRowSource() {
         isClientRowSource = true;

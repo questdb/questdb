@@ -361,12 +361,17 @@ public class PGAsyncHashJoinTest extends BasePGTest {
     // Executes named statements under Execute row limits, twice over, in binary and text transfer,
     // and appends their rows to the sink: pgjdbc's maxRows, which the client reads alone, and its
     // fetch size, after which it resumes the portal to read every row. A row limit is the rows that
-    // the join's first window is cut for, on that statement's executions alone; a sort over the join
-    // reads every row of it, and the join leaves its window as it is. A statement that fails to open
+    // the join's first window is cut for, on that statement's executions alone, also under an ASOF
+    // join and a UNION ALL; a sort over the join reads every row of it, and the join leaves its
+    // window as it is. A statement that fails to open
     // its cursor, once the join took the limit, leaves no trace of it on the connection.
     private void readUnderRowLimits(int port, StringSink sink, boolean isParallel) throws Exception {
         final String sql = "SELECT f8.v, d3.w FROM f8 JOIN d3 ON f8.k = d3.k";
         final String sorted = sql + " ORDER BY d3.w DESC, f8.v";
+        // The join as the master of an ASOF join, and the branches of a UNION ALL, of which the
+        // second branch's join opens last: the row limit reaches each join, as it reaches sql's.
+        final String asof = "SELECT f8.v, d3.w, g.v gv FROM f8 JOIN d3 ON f8.k = d3.k ASOF JOIN f8 g";
+        final String union = sql + " UNION ALL " + sql;
         final String failing = "SELECT f8.v, d3.w, test_fault() x FROM f8 JOIN d3 ON f8.k = d3.k";
         final long none = isParallel ? Long.MAX_VALUE : -1;
         final StringSink rows = new StringSink();
@@ -375,8 +380,8 @@ public class PGAsyncHashJoinTest extends BasePGTest {
             // every later execution.
             try (Connection connection = getConnection(Mode.EXTENDED, port, isBinary, 1)) {
                 AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
-                for (String query : new String[]{sql, sorted}) {
-                    final boolean isQueryRows = query.equals(sql);
+                for (String query : new String[]{sql, sorted, asof, union}) {
+                    final boolean isQueryRows = !query.equals(sorted);
                     try (PreparedStatement statement = connection.prepareStatement(query)) {
                         statement.setMaxRows(3);
                         for (int execution = 0; execution < 2; execution++) {

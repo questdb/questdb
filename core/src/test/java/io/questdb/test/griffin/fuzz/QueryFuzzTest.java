@@ -1042,6 +1042,31 @@ public class QueryFuzzTest extends AbstractCairoTest {
         );
     }
 
+    // Pins the forms without a LIMIT of the generated equi-join queries, see EquiJoinClause: the joins
+    // under an ASOF or LT join of which they are the master, under a UNION ALL and under a WHERE
+    // that holds no column, which the rows that a client reads first reach through the operator,
+    // as the parallel join axis compares the rows with the ordinary plan's. Frames of two rows leave
+    // a short first read fewer frames to dispatch than the probe has. One query in twenty is an
+    // equi-join, and one in about forty of those runs a form of an operator without a LIMIT under
+    // the rows a client reads first: the seed draws five such executions in 600 queries, where
+    // most seeds draw none or one.
+    @Test
+    public void testParallelJoinFirstReadFormsAxis() throws Exception {
+        withSystemProperties(
+                new String[][]{
+                        {FuzzConfig.QUERIES_PROP, "600"},
+                        {"questdb.fuzz.s0", "17"},
+                        {"questdb.fuzz.s1", "27"},
+                        {FuzzConfig.PARALLEL_JOIN_FRAMES_PROP, "2"},
+                        {FuzzConfig.PARQUET_ROW_GROUP_PROP, "0"},
+                },
+                () -> runQueryFuzz(runner -> Assert.assertTrue(
+                        "first-read forms " + runner.getParallelJoinFirstReadFormRuns(),
+                        runner.getParallelJoinFirstReadFormRuns() > 0
+                ))
+        );
+    }
+
     // Pins the LIMIT forms of the generated equi-join queries, see EquiJoinClause: the LIMIT of a
     // sub-query or a CTE over the joins, of a UNION ALL, of an ASOF or LT join of which the joins are
     // the master, and of the joins under a WHERE that holds no column, which the parallel hash join

@@ -345,33 +345,43 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
             // The rows that the client reads first bound the execution's reach, as a LIMIT does: one
             // factory reads every row under each, and 18,749 rows read first translate through the
             // slots, 18,750 open the shared cache, as does no bound, and 18,749 go back to the slots.
-            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
-            final String expected = ordinaryRows(sql, sqlExecutionContext);
-            try (RecordCursorFactory factory = select(sql)) {
-                final AsyncHashJoinRecordCursorFactory join = find(factory);
-                Assert.assertNotNull(join);
-                Assert.assertTrue(join.isClientRowSource());
-                for (long firstRead : new long[]{18_749, 18_750, Long.MAX_VALUE, 18_749}) {
-                    sqlExecutionContext.setFirstReadRows(firstRead);
-                    final RecordCursor cursor;
-                    try {
-                        cursor = factory.getCursor(sqlExecutionContext);
-                    } finally {
-                        sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
-                    }
-                    final MemoryTracker tracker;
-                    try (cursor) {
-                        Assert.assertEquals(expected, printRows(cursor, factory));
-                        tracker = sqlExecutionContext.getMemoryTracker();
-                        Assert.assertNotNull(tracker);
-                        if (firstRead < 18_750) {
-                            assertSlotCached(join);
-                        } else {
-                            assertSharedCache(join);
-                            Assert.assertTrue(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+            // The join alone, as the master of an ASOF join, and as both branches of a UNION ALL.
+            final String join = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            for (String sql : new String[]{
+                    join,
+                    "SELECT f.ts, f.sym, d.w, g.v gv FROM f LEFT JOIN d ON f.sym = d.sym ASOF JOIN f g",
+                    join + " UNION ALL " + join,
+            }) {
+                final String expected = ordinaryRows(sql, sqlExecutionContext);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, sqlExecutionContext);
+                    Assert.assertEquals(sql, sql.contains(" UNION ALL ") ? 2 : 1, joins.size());
+                    for (long firstRead : new long[]{18_749, 18_750, Long.MAX_VALUE, 18_749}) {
+                        sqlExecutionContext.setFirstReadRows(firstRead);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(sqlExecutionContext);
+                        } finally {
+                            sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
                         }
+                        final MemoryTracker tracker;
+                        try (cursor) {
+                            Assert.assertEquals(sql, expected, printRows(cursor, factory));
+                            tracker = sqlExecutionContext.getMemoryTracker();
+                            Assert.assertNotNull(tracker);
+                            for (int i = 0, n = joins.size(); i < n; i++) {
+                                final AsyncHashJoinRecordCursorFactory asyncJoin = joins.getQuick(i);
+                                Assert.assertTrue(sql, asyncJoin.isClientRowSource());
+                                if (firstRead < 18_750) {
+                                    assertSlotCached(asyncJoin);
+                                } else {
+                                    assertSharedCache(asyncJoin);
+                                    Assert.assertTrue(sql, asyncJoin.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+                                }
+                            }
+                        }
+                        Assert.assertEquals(sql, 0, tracker.getUsed());
                     }
-                    Assert.assertEquals(0, tracker.getUsed());
                 }
             }
         });

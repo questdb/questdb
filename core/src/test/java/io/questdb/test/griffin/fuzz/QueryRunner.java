@@ -291,6 +291,10 @@ public final class QueryRunner {
     // Executions of the parallel hash join, on any axis, whose rows were the query's own and whose
     // cursor opened under the rows that a client reads first; see firstReadRows().
     private int parallelJoinFirstReadRuns;
+    // Executions of a query without a LIMIT in a form of EquiJoinClause that puts its joins under an
+    // ASOF or LT join, a UNION ALL or a WHERE that holds no column, on any axis, whose parallel hash
+    // join that opened last took the rows that the client reads first; see isFirstReadForm().
+    private int parallelJoinFirstReadFormRuns;
     // Executions of a query of a LIMIT form, on any axis, whose positive LIMIT a parallel hash join
     // took; see EquiJoinClause.limitForm().
     private int parallelJoinLimitFormRuns;
@@ -633,6 +637,16 @@ public final class QueryRunner {
      */
     public int getParallelJoinFirstReadRuns() {
         return parallelJoinFirstReadRuns;
+    }
+
+    /**
+     * Executions of a query without a LIMIT whose joins EquiJoinClause put under an ASOF or LT join,
+     * a UNION ALL or a WHERE that holds no column, see {@link EquiJoinClause#limitForm(String)},
+     * whose parallel hash join that opened last took the rows that the client reads first: they
+     * reached the join through the operator over it.
+     */
+    public int getParallelJoinFirstReadFormRuns() {
+        return parallelJoinFirstReadFormRuns;
     }
 
     /**
@@ -1797,6 +1811,15 @@ public final class QueryRunner {
         }
     }
 
+    // True for the forms of EquiJoinClause that put the joins under an operator other than
+    // projections: an ASOF or LT join, a UNION ALL or a WHERE that holds no column.
+    private static boolean isFirstReadForm(int form) {
+        return form == EquiJoinClause.LIMIT_FORM_AS_OF
+                || form == EquiJoinClause.LIMIT_FORM_LT
+                || form == EquiJoinClause.LIMIT_FORM_UNION_ALL
+                || form == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER;
+    }
+
     /**
      * The rows that a protocol's client reads first, under which {@link #runOnce} opens the cursor of
      * half of the queries: one row, a few, or up to a page of 2,000, drawn from the query's text, so
@@ -2620,14 +2643,20 @@ public final class QueryRunner {
             } finally {
                 executionContext.setFirstReadRows(Long.MAX_VALUE);
             }
-            // A join that opened its cursor under a LIMIT form's positive LIMIT took the LIMIT: the
-            // joins of these forms are not the query's rows, which no first-read rows reach. The
+            // A join that opened its cursor under a LIMIT form's positive LIMIT took the LIMIT, which
+            // stands between the join and the client's first rows. A join under a form without a
+            // LIMIT took the client's first rows, if any, through the operator over it. The
             // generator that writes the forms names them, so that the two cannot drift apart.
             final long firstWindowRows = AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
-            if (firstWindowRows > 0
-                    && firstWindowRows != Long.MAX_VALUE
-                    && EquiJoinClause.limitForm(sql) != EquiJoinClause.LIMIT_FORM_NONE) {
-                parallelJoinLimitFormRuns++;
+            if (firstWindowRows > 0 && firstWindowRows != Long.MAX_VALUE) {
+                final int form = EquiJoinClause.limitForm(sql);
+                if (form != EquiJoinClause.LIMIT_FORM_NONE) {
+                    if (EquiJoinClause.hasLimit(sql)) {
+                        parallelJoinLimitFormRuns++;
+                    } else if (firstWindowRows == firstReadRows && isFirstReadForm(form)) {
+                        parallelJoinFirstReadFormRuns++;
+                    }
+                }
             }
             try (RecordCursor cursor = firstReadCursor) {
                 RecordMetadata metadata = factory.getMetadata();

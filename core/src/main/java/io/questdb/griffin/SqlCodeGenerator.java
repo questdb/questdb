@@ -526,8 +526,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     // The inputs whose rows a LIMIT over their owner bounds, and their owners, paired by index: the
     // master of an ASOF or LT join, which reads one row of it per row it returns, and each branch of
-    // a UNION ALL, which returns every row it reads; see handOverLimit(). They hold the factories of
-    // the compilation under way, and the outermost generate() clears them as it returns or fails.
+    // a UNION ALL, which returns every row it reads; see collectRowBoundedJoins(). They hold the
+    // factories of the compilation under way, and the outermost generate() clears them as it
+    // returns or fails, once it marked the joins whose rows are the query's own.
     private final ObjList<RecordCursorFactory> limitBoundedInputOwners = new ObjList<>();
     private final ObjList<RecordCursorFactory> limitBoundedInputs = new ObjList<>();
     // this list is used to generate record sinks
@@ -1094,8 +1095,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * The inputs that the compilation under way recorded for its LIMITs to follow, see
-     * {@code handOverLimit()}; none once the outermost compilation returned or failed.
+     * The inputs that the compilation under way recorded for its LIMITs, and the rows that the
+     * client reads first, to follow, see {@code collectRowBoundedJoins()}; none once the outermost
+     * compilation returned or failed.
      */
     @TestOnly
     public int getLimitBoundedInputCountForTesting() {
@@ -2244,25 +2246,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Marks the parallel hash join whose rows are the query's own, one for one, in order, under the
-     * query's projections alone, see {@link AsyncHashJoinRecordCursorFactory#markClientRowSource()}:
-     * the rows that the client reads first then bound the rows that the join's first window may
-     * need. Any other factory over the join, a sort, a GROUP BY, a filter or a LIMIT among them, may
-     * read more of the join's rows than the client reads, and leaves the join unmarked.
-     *
-     * @param factory the query's factory, as generated for its outermost model
-     */
-    private static void markClientRowSource(RecordCursorFactory factory) {
-        RecordCursorFactory current = factory;
-        while (current instanceof SelectedRecordCursorFactory || current instanceof VirtualRecordCursorFactory) {
-            current = current.getBaseFactory();
-        }
-        if (current instanceof AsyncHashJoinRecordCursorFactory join) {
-            join.markClientRowSource();
-        }
-    }
-
-    /**
      * Reconciles a parallel hash join's equality keys for one orientation of its inputs, or returns
      * null when they keep the ordinary plan, as {@link HashJoinGroupByKeys#add} decides per key. The
      * keys address the columns of the inputs' frame scans, which the probe and build records read; a
@@ -2757,7 +2740,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     // Records an input whose owner reads at most one row of it per row the owner returns, so that a
-    // LIMIT over the owner bounds the input's rows; see handOverLimit().
+    // LIMIT over the owner, or the rows that the client reads first, bounds the input's rows; see
+    // collectRowBoundedJoins().
     private void addLimitBoundedInput(RecordCursorFactory owner, RecordCursorFactory input) {
         limitBoundedInputOwners.add(owner);
         limitBoundedInputs.add(input);
@@ -3246,6 +3230,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return new WorkerFunctionLists(perWorkerGroupByFunctions, perWorkerKeyFunctions);
+    }
+
+    /**
+     * The parallel hash joins whose rows bound the rows of the given factory: the joins that a walk
+     * from the factory reaches through factories that read at most one row of their input per row
+     * they return, so that the factory's first n rows need at most the first n rows of each. Null
+     * when the walk reaches none. Projections, the SYMBOL casts over a union and runtime-constant
+     * filters read their base's rows one for one, or none; the master of an ASOF or LT join and the
+     * branches of a UNION ALL are inputs that their owners read so, see
+     * {@link #addLimitBoundedInput}. Any other factory, such as a sort, a filter, a GROUP BY or a
+     * LIMIT, may read more rows of its input than it returns, and ends the walk, as a parallel hash
+     * join does. A LIMIT over the factory and the rows that the client reads first reach the same
+     * joins, see {@link #handOverLimit} and {@link #markClientRowSource}.
+     */
+    private @Nullable ObjList<AsyncHashJoinRecordCursorFactory> collectRowBoundedJoins(RecordCursorFactory factory) {
+        // The walk keeps the inputs it has yet to visit, the branches of a UNION ALL, in a list.
+        ObjList<AsyncHashJoinRecordCursorFactory> joins = null;
+        ObjList<RecordCursorFactory> pendingInputs = null;
+        RecordCursorFactory current = factory;
+        while (current != null) {
+            if (current instanceof SelectedRecordCursorFactory
+                    || current instanceof VirtualRecordCursorFactory
+                    || current instanceof UnionSymbolCastRecordCursorFactory
+                    || current instanceof RuntimeConstGateRecordCursorFactory) {
+                current = current.getBaseFactory();
+                continue;
+            }
+            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+                if (joins == null) {
+                    joins = new ObjList<>();
+                }
+                joins.add(join);
+            } else {
+                for (int i = 0, n = limitBoundedInputOwners.size(); i < n; i++) {
+                    if (limitBoundedInputOwners.getQuick(i) == current) {
+                        if (pendingInputs == null) {
+                            pendingInputs = new ObjList<>();
+                        }
+                        pendingInputs.add(limitBoundedInputs.getQuick(i));
+                    }
+                }
+            }
+            current = pendingInputs != null && pendingInputs.size() > 0 ? pendingInputs.popLast() : null;
+        }
+        return joins;
     }
 
     /**
@@ -15708,46 +15737,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Hands the model's LIMIT to every parallel hash join whose rows it bounds, see
-     * {@link AsyncHashJoinRecordCursorFactory#ofLimit}: the joins that a walk from the LIMIT's base
-     * factory reaches through factories that read at most one row of their input per row they
-     * return. Projections, the SYMBOL casts over a union and runtime-constant filters read their
-     * base's rows one for one, or none; the master of an ASOF or LT join and the branches of a UNION
-     * ALL are inputs that their owners read so, see {@link #addLimitBoundedInput}. Any other factory,
-     * such as a sort, a filter, a GROUP BY or another LIMIT, may read more rows of its input than it
-     * returns, and ends the walk, as a parallel hash join does. Each join takes a parse of the LIMIT
-     * of its own. The LIMIT only narrows a join's first window, and never changes its rows.
+     * {@link AsyncHashJoinRecordCursorFactory#ofLimit}: the joins that
+     * {@link #collectRowBoundedJoins} reaches from the LIMIT's base factory. Each join takes a parse
+     * of the LIMIT of its own. The LIMIT only narrows a join's first window, and never changes its
+     * rows.
      */
     private void handOverLimit(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        // The walk collects the joins first, since a parse may generate a sub-query, and keeps the
-        // inputs it has yet to visit, the branches of a UNION ALL, in a list.
-        ObjList<AsyncHashJoinRecordCursorFactory> joins = null;
-        ObjList<RecordCursorFactory> pendingInputs = null;
-        RecordCursorFactory current = factory;
-        while (current != null) {
-            if (current instanceof SelectedRecordCursorFactory
-                    || current instanceof VirtualRecordCursorFactory
-                    || current instanceof UnionSymbolCastRecordCursorFactory
-                    || current instanceof RuntimeConstGateRecordCursorFactory) {
-                current = current.getBaseFactory();
-                continue;
-            }
-            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
-                if (joins == null) {
-                    joins = new ObjList<>();
-                }
-                joins.add(join);
-            } else {
-                for (int i = 0, n = limitBoundedInputOwners.size(); i < n; i++) {
-                    if (limitBoundedInputOwners.getQuick(i) == current) {
-                        if (pendingInputs == null) {
-                            pendingInputs = new ObjList<>();
-                        }
-                        pendingInputs.add(limitBoundedInputs.getQuick(i));
-                    }
-                }
-            }
-            current = pendingInputs != null && pendingInputs.size() > 0 ? pendingInputs.popLast() : null;
-        }
+        // The walk collects the joins first, since a parse may generate a sub-query.
+        final ObjList<AsyncHashJoinRecordCursorFactory> joins = collectRowBoundedJoins(factory);
         if (joins != null) {
             for (int i = 0, n = joins.size(); i < n; i++) {
                 final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
@@ -16309,6 +16306,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         filter.clear();
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             filter.add(SqlUtil.getColumnIndex(metadata, columnNames.getQuick(i)) + 1);
+        }
+    }
+
+    /**
+     * Marks the parallel hash joins whose rows bound the query's first rows, see
+     * {@link AsyncHashJoinRecordCursorFactory#markClientRowSource()}: the joins that
+     * {@link #collectRowBoundedJoins} reaches from the query's factory, as a LIMIT of the query
+     * would reach them. The rows that the client reads first then bound the rows that each join's
+     * first window may need. A join under any other factory, a sort, a GROUP BY, a filter or a LIMIT
+     * among them, may yield more rows than the client reads, and stays unmarked. Runs before the
+     * outermost compilation clears the inputs that the walk follows.
+     *
+     * @param factory the query's factory, as generated for its outermost model
+     */
+    private void markClientRowSource(RecordCursorFactory factory) {
+        final ObjList<AsyncHashJoinRecordCursorFactory> joins = collectRowBoundedJoins(factory);
+        if (joins != null) {
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                joins.getQuick(i).markClientRowSource();
+            }
         }
     }
 

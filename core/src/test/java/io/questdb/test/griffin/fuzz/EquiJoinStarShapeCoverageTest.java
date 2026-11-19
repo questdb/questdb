@@ -238,6 +238,14 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         assertCorpusHas(limitFormCorpus, "a LIMIT over an ASOF join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_AS_OF);
         assertCorpusHas(limitFormCorpus, "a LIMIT over an LT join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_LT);
         assertCorpusHas(limitFormCorpus, "a LIMIT over a star under a WHERE that holds no column", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER);
+        // The same forms without a LIMIT, through which the rows that a client reads first reach the
+        // star's joins.
+        assertCorpusHas(limitFormCorpus, "a sub-query of a star without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_SUB_QUERY && q.limit == null);
+        assertCorpusHas(limitFormCorpus, "a CTE of a star without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_CTE && q.limit == null);
+        assertCorpusHas(limitFormCorpus, "a UNION ALL of a star with itself without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_UNION_ALL && q.limit == null);
+        assertCorpusHas(limitFormCorpus, "an ASOF join whose master is a star without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_AS_OF && q.limit == null);
+        assertCorpusHas(limitFormCorpus, "an LT join whose master is a star without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_LT && q.limit == null);
+        assertCorpusHas(limitFormCorpus, "a star under a WHERE that holds no column without a LIMIT", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER && q.limit == null);
     }
 
     @Test
@@ -303,7 +311,9 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         // Three tables shaped as the fuzz tables are, at their largest: 149, 150 and 151 rows of
         // the same key columns, drawn by the same rnd calls. No star the generator draws over them
         // returns more than MAX_STAR_ROWS rows, while a star with duplicate keys in two joins still
-        // returns more rows than its left input holds. A star in a LIMIT form runs in that form.
+        // returns more rows than its left input holds. A star in a LIMIT form, with or without its
+        // LIMIT, runs in that form, and a UNION ALL form returns the star's rows twice, of which the
+        // budget bounds one copy.
         assertMemoryLeak(() -> {
             final ObjList<FuzzTable> tables = tables();
             for (int i = 0; i < tables.size(); i++) {
@@ -340,9 +350,10 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                     continue;
                 }
                 stars++;
-                maxRows = Math.max(maxRows, rows);
-                multiplied += q.countSingleKeyJoins() >= 2 && rows > 151 ? 1 : 0;
-                Assert.assertTrue(rows + " rows: " + sql, rows <= MAX_STAR_ROWS);
+                final long starRows = q.limitForm == EquiJoinClause.LIMIT_FORM_UNION_ALL ? rows / 2 : rows;
+                maxRows = Math.max(maxRows, starRows);
+                multiplied += q.countSingleKeyJoins() >= 2 && starRows > 151 ? 1 : 0;
+                Assert.assertTrue(rows + " rows: " + sql, starRows <= MAX_STAR_ROWS);
             }
             Assert.assertTrue("stars: " + stars, stars > STAR_BUDGET_DRAWS / 4);
             Assert.assertTrue("max rows: " + maxRows, maxRows > 1_000);

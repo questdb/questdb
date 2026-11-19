@@ -93,6 +93,14 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
             {"SELECT f.v, d1.w, row_number() OVER () rn FROM f JOIN d1 ON f.k = d1.k", "limit=1,10&count=true"},
     };
     private static final String STAR = PAGED_REQUESTS[0][0];
+    // The star under each operator through which the rows that the client reads first reach its
+    // join: the master side of an ASOF join, the branches of a UNION ALL, of which the last branch's
+    // join opens last, and a WHERE that holds no column.
+    private static final String[] STAR_UNDER_OPERATORS = {
+            "SELECT f.k, f.v, d1.w, d2.w2, g.v gv FROM f LEFT JOIN d1 ON f.k = d1.k JOIN d2 ON f.l = d2.l ASOF JOIN f g",
+            STAR + " UNION ALL " + STAR,
+            STAR + " WHERE now() > '2020-01-01'::TIMESTAMP",
+    };
 
     @After
     public void resetLatch() {
@@ -187,9 +195,9 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
 
     @Test
     public void testExecPagesWithoutCountBoundTheFirstWindow() throws Exception {
-        // [query, query parameters, the rows that the join's first window was cut for]. A page
-        // without a row count reads the rows up to its last one and one more; a count, no page or
-        // a join that is not the query's rows leaves the window as it is, but for the LIMIT of a
+        // [query, query parameters, the rows that the last join to open cut its first window for]. A
+        // page without a row count reads the rows up to its last one and one more; a count, no page
+        // or a join that is not the query's rows leaves the window as it is, but for the LIMIT of a
         // query over a sub-query of the join, which the join takes.
         final Object[][] requests = {
                 {STAR, "limit=1,7", 8L},
@@ -204,6 +212,15 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
                 {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
                 {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", 50L},
                 {STAR, "limit=2,4", 5L},
+                // The star under an ASOF join, a UNION ALL and a WHERE that holds no column, under a
+                // page and under a count.
+                {STAR_UNDER_OPERATORS[0], "limit=1,7", 8L},
+                {STAR_UNDER_OPERATORS[0], "limit=1,7&count=true", Long.MAX_VALUE},
+                {STAR_UNDER_OPERATORS[1], "limit=1,7", 8L},
+                {STAR_UNDER_OPERATORS[1], "limit=5_990,6_010", 6_011L},
+                {STAR_UNDER_OPERATORS[1], "limit=1,7&count=true", Long.MAX_VALUE},
+                {STAR_UNDER_OPERATORS[2], "limit=1,7", 8L},
+                {STAR_UNDER_OPERATORS[2], "", Long.MAX_VALUE},
         };
         final ObjList<String> expected = new ObjList<>();
         final ObjList<String> actual = new ObjList<>();
@@ -272,9 +289,9 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
 
     @Test
     public void testExportCsvLimitsBoundTheFirstWindow() throws Exception {
-        // [query, query parameters, the rows that the join's first window was cut for]. A CSV export
-        // without a row count reads the rows up to the larger of its skip and stop and one more; a
-        // count, no limit, a Parquet export, which reads every row, or a join that is not the
+        // [query, query parameters, the rows that the last join to open cut its first window for]. A
+        // CSV export without a row count reads the rows up to the larger of its skip and stop and one
+        // more; a count, no limit, a Parquet export, which reads every row, or a join that is not the
         // query's rows leaves the window as it is, but for the LIMIT of a query over a sub-query of
         // the join, which the join takes.
         final Object[][] requests = {
@@ -292,6 +309,12 @@ public class HttpAsyncHashJoinTest extends AbstractTest {
                 {STAR + " ORDER BY f.v DESC", "limit=1,7", Long.MAX_VALUE},
                 {"SELECT * FROM (" + STAR + ") LIMIT 50", "limit=1,7", 50L},
                 {STAR, "limit=2,4", 5L},
+                // The star under an ASOF join, a UNION ALL and a WHERE that holds no column, under a
+                // limit and under a count.
+                {STAR_UNDER_OPERATORS[0], "limit=1,7", 8L},
+                {STAR_UNDER_OPERATORS[1], "limit=1,7", 8L},
+                {STAR_UNDER_OPERATORS[1], "limit=1,7&count=true", Long.MAX_VALUE},
+                {STAR_UNDER_OPERATORS[2], "limit=7", 8L},
         };
         final ObjList<String> expected = new ObjList<>();
         final ObjList<String> actual = new ObjList<>();
