@@ -4247,7 +4247,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 syncDeltaTableFiles(syncPath);
             }
             syncPath.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
-            syncDeltaTableFile(syncPath);
+            syncDeltaTableFile(syncPath, false);
             syncDeltaTableDirectory(syncPath.of(configuration.getDbRoot()).concat(tableToken));
         }
     }
@@ -21044,12 +21044,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void syncDeltaTableFile(Path syncPath) {
+    private void syncDeltaTableFile(Path syncPath, boolean listed) {
         final long size = ff.length(syncPath.$());
-        if (size < 0) {
-            throw CairoException.critical(ff.errno()).put("missing Delta base file [path=").put(syncPath).put(']');
+        long fd = -1;
+        if (size >= 0) {
+            fd = Os.isWindows() ? ff.openRW(syncPath.$(), CairoConfiguration.O_NONE) : ff.openRO(syncPath.$());
         }
-        final long fd = Os.isWindows() ? openRW(ff, syncPath.$(), LOG, CairoConfiguration.O_NONE) : openRO(ff, syncPath.$(), LOG);
+        if (fd < 0) {
+            final int errno = ff.errno();
+            // While the writer holds the table, only purge jobs delete its files, and only obsolete versions.
+            // A listed file they removed before its sync is not part of the base.
+            if (listed && !ff.exists(syncPath.$())) {
+                return;
+            }
+            throw CairoException.critical(errno).put(size < 0 ? "missing Delta base file [path=" : "cannot open Delta base file [path=")
+                    .put(syncPath).put(']');
+        }
         try {
             if (ff.length(fd) != size) {
                 throw CairoException.critical(0).put("Delta base changed during sync [path=").put(syncPath).put(']');
@@ -21076,7 +21086,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (type == Files.DT_DIR) {
                         syncDeltaTableFiles(syncPath);
                     } else if (type == Files.DT_FILE) {
-                        syncDeltaTableFile(syncPath);
+                        syncDeltaTableFile(syncPath, true);
                     } else {
                         throw CairoException.nonCritical().put("unsupported linked Delta base file [path=").put(syncPath).put(']');
                     }
