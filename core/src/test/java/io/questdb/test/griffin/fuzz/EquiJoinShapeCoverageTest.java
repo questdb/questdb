@@ -50,7 +50,9 @@ import java.util.regex.Pattern;
  * residuals, post-join filters, backward probes or negative limits would leave the operator's
  * paths for them unchecked while the run stays green. Also pins the band that
  * {@link QueryGenerator} carves for the shape out of the SIMPLE range: with the knob off, the
- * generator draws exactly what it drew before the band existed.
+ * generator draws exactly what it drew before the band existed. And pins
+ * {@link EquiJoinClause#unwrapLimitForm(String)}, through which this test and
+ * {@link EquiJoinStarShapeCoverageTest} read a query of a LIMIT form.
  * <p>
  * The generator is random, so each assertion runs over a corpus; the seed is fixed so a failure
  * is reproducible.
@@ -58,13 +60,6 @@ import java.util.regex.Pattern;
 public class EquiJoinShapeCoverageTest {
     private static final int CORPUS_SIZE = 4_000;
     private static final int GENERATOR_DRAWS = 20_000;
-    // A query's LIMIT, literal or bound, which comes last.
-    private static final Pattern LIMIT = Pattern.compile(" LIMIT (?:\\d+, )?-?(?:\\d+|\\$1)$");
-    // The WHERE clause of the LIMIT form of EquiJoinClause that states the LIMIT under a WHERE that
-    // holds no column, which it adds only to a query without a WHERE clause.
-    private static final String RUNTIME_CONSTANT_FILTER_LIMIT_FORM = " WHERE now() > '2000-01-01'";
-    // The head of the LIMIT form of EquiJoinClause that states the LIMIT over a sub-query.
-    private static final String SUB_QUERY_LIMIT_FORM = "SELECT * FROM (";
 
     @Test
     public void testBandIsCarvedFromSimpleWithoutExtraDraws() {
@@ -124,7 +119,7 @@ public class EquiJoinShapeCoverageTest {
             // The query that a LIMIT form wraps holds the order that its LIMIT needs, and its WHERE
             // clause, if any, the query's filters: the WHERE that holds no column, which a LIMIT
             // form adds, goes with the form.
-            final String sql = unwrapLimitForm(EquiJoinClause.generate(rnd, left, right, null, false).sql());
+            final String sql = EquiJoinClause.unwrapLimitForm(EquiJoinClause.generate(rnd, left, right, null, false).sql());
             if (!Pattern.compile(" LIMIT (?:\\d+, )?-?\\d+$").matcher(sql).find()) {
                 continue;
             }
@@ -164,6 +159,11 @@ public class EquiJoinShapeCoverageTest {
             Assert.assertEquals("query " + i + ": " + literal.sql(), literalRnd.getSeed1(), bindRnd.getSeed1());
             Assert.assertEquals(literal.deterministic(), bind.deterministic());
             Assert.assertEquals(join(literal.sql()), join(bind.sql()));
+            // The LIMIT forms draw from a generator of their own, which the seeds above do not
+            // show, and join() reads the query that a form wraps: both forms of the query take the
+            // same LIMIT form, with the same ASOF or LT join, keyed and under a TOLERANCE alike.
+            Assert.assertEquals(literal.sql(), EquiJoinClause.limitForm(literal.sql()), EquiJoinClause.limitForm(bind.sql()));
+            Assert.assertEquals(literal.sql(), EquiJoinClause.limitFormText(literal.sql()), EquiJoinClause.limitFormText(bind.sql()));
             bound += ctx.getBindValues().size() > 0 ? 1 : 0;
         }
         Assert.assertTrue("no query bound a value", bound > 0);
@@ -192,7 +192,7 @@ public class EquiJoinShapeCoverageTest {
             final Matcher matcher = limit.matcher(literal.sql());
             final boolean hasLimit = matcher.find();
             // A LIMIT form keeps the query's own projection list inside it.
-            if (!hasLimit || unwrapLimitForm(literal.sql()).startsWith("SELECT * ")) {
+            if (!hasLimit || EquiJoinClause.unwrapLimitForm(literal.sql()).startsWith("SELECT * ")) {
                 selectStar += hasLimit ? 1 : 0;
                 Assert.assertNull(bind.sql(), ctx.getLimitValue());
                 Assert.assertFalse(bind.sql(), bind.sql().contains("$1"));
@@ -261,7 +261,7 @@ public class EquiJoinShapeCoverageTest {
         // TOLERANCE, an LT join and a WHERE that holds no column.
         Assert.assertTrue(
                 "the generator produced no query with a LIMIT over a sub-query in " + CORPUS_SIZE + " queries",
-                Arrays.stream(corpus.split("\n")).anyMatch(EquiJoinShapeCoverageTest::isSubQueryLimitForm)
+                Arrays.stream(corpus.split("\n")).anyMatch(sql -> EquiJoinClause.limitForm(sql) == EquiJoinClause.LIMIT_FORM_SUB_QUERY)
         );
         assertCorpusMatches(corpus, "a LIMIT over a CTE", Pattern.compile("^WITH q AS \\(SELECT [^\\n]* JOIN [^\\n]*\\) SELECT \\* FROM q LIMIT (?:\\d+, )?-?\\d+$", Pattern.MULTILINE));
         assertCorpusMatches(corpus, "a LIMIT over a UNION ALL", Pattern.compile(" UNION ALL SELECT [^\\n]* JOIN [^\\n]* LIMIT (?:\\d+, )?-?\\d+$", Pattern.MULTILINE));
@@ -398,11 +398,142 @@ public class EquiJoinShapeCoverageTest {
         Assert.assertTrue(limits > 0);
     }
 
+    @Test
+    public void testUnwrapLimitFormInvertsEveryForm() {
+        // EquiJoinClause.unwrapLimitForm() takes the query back out of each LIMIT form that
+        // applyLimitForm() writes, with its LIMIT as it was, literal or bound, and limitFormText()
+        // returns the text that the form added. No form: no LIMIT, a LIMIT, and a query whose left
+        // input is a sub-query, which starts as the sub-query form does.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k",
+                EquiJoinClause.LIMIT_FORM_NONE,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k",
+                ""
+        );
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_NONE,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LIMIT 5",
+                ""
+        );
+        assertUnwrapsLimitForm(
+                "SELECT * FROM (SELECT * FROM t0 LIMIT 43) l JOIN t1 r ON l.k = r.k AND (l.c0 > r.c0) LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_NONE,
+                "SELECT * FROM (SELECT * FROM t0 LIMIT 43) l JOIN t1 r ON l.k = r.k AND (l.c0 > r.c0) LIMIT 5",
+                ""
+        );
+        // A sub-query and a CTE over the query.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM (SELECT * FROM (SELECT * FROM t0 LIMIT 43) l JOIN t1 r ON l.k = r.k ORDER BY l.ts) LIMIT 2, -5",
+                EquiJoinClause.LIMIT_FORM_SUB_QUERY,
+                "SELECT * FROM (SELECT * FROM t0 LIMIT 43) l JOIN t1 r ON l.k = r.k ORDER BY l.ts LIMIT 2, -5",
+                "SELECT * FROM ()"
+        );
+        // A parenthesis in a literal leaves the sub-query open; one that never closes fails.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM (SELECT * FROM t0 l JOIN t1 r ON l.k = r.k WHERE (l.c2 != ')')) LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_SUB_QUERY,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k WHERE (l.c2 != ')') LIMIT 5",
+                "SELECT * FROM ()"
+        );
+        final String unclosed = "SELECT * FROM (SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LIMIT 5";
+        Assert.assertEquals(
+                "unbalanced parentheses: " + unclosed,
+                Assert.assertThrows(AssertionError.class, () -> EquiJoinClause.limitForm(unclosed)).getMessage()
+        );
+        assertUnwrapsLimitForm(
+                "WITH q AS (SELECT l.k AS c0, l.k + $1 AS c1 FROM t0 l JOIN t1 r ON l.k = r.k ORDER BY l.ts) SELECT * FROM q LIMIT $1",
+                EquiJoinClause.LIMIT_FORM_CTE,
+                "SELECT l.k AS c0, l.k + $1 AS c1 FROM t0 l JOIN t1 r ON l.k = r.k ORDER BY l.ts LIMIT $1",
+                "WITH q AS () SELECT * FROM q"
+        );
+        // A UNION ALL of the query with itself, whose text leaves out the second branch.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l LEFT JOIN t1 r ON l.k = r.k UNION ALL SELECT * FROM t0 l LEFT JOIN t1 r ON l.k = r.k LIMIT -5",
+                EquiJoinClause.LIMIT_FORM_UNION_ALL,
+                "SELECT * FROM t0 l LEFT JOIN t1 r ON l.k = r.k LIMIT -5",
+                " UNION ALL "
+        );
+        // ASOF joins under a TOLERANCE, keyed on the left input's renamed SYMBOL key and not, before
+        // a WHERE and before the LIMIT.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM (SELECT sym AS sym_v, k, ts FROM t0) l JOIN t1 r ON l.k = r.k ASOF JOIN t2 a ON a.sym = l.sym_v TOLERANCE 1h WHERE (r.c0 > 1) ORDER BY l.ts LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_AS_OF,
+                "SELECT * FROM (SELECT sym AS sym_v, k, ts FROM t0) l JOIN t1 r ON l.k = r.k WHERE (r.c0 > 1) ORDER BY l.ts LIMIT 5",
+                " ASOF JOIN t2 a ON a.sym = l.sym_v TOLERANCE 1h"
+        );
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k ASOF JOIN t1 a TOLERANCE 1h LIMIT 7, $1",
+                EquiJoinClause.LIMIT_FORM_AS_OF,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LIMIT 7, $1",
+                " ASOF JOIN t1 a TOLERANCE 1h"
+        );
+        // LT joins, keyed before an ORDER BY and not before a WHERE.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LT JOIN t1 a ON a.sym = l.sym ORDER BY l.ts LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_LT,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k ORDER BY l.ts LIMIT 5",
+                " LT JOIN t1 a ON a.sym = l.sym"
+        );
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l LEFT JOIN t1 r ON l.k = r.k LT JOIN t1 a WHERE (r.k IS NULL) LIMIT -$1",
+                EquiJoinClause.LIMIT_FORM_LT,
+                "SELECT * FROM t0 l LEFT JOIN t1 r ON l.k = r.k WHERE (r.k IS NULL) LIMIT -$1",
+                " LT JOIN t1 a"
+        );
+        // A WHERE that holds no column.
+        assertUnwrapsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k WHERE now() > '2000-01-01' ORDER BY l.ts DESC LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER,
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k ORDER BY l.ts DESC LIMIT 5",
+                " WHERE now() > '2000-01-01'"
+        );
+        // Forms that applyLimitForm() does not write: a UNION ALL of two different queries, an LT
+        // join under a TOLERANCE, an ASOF join on another key, and a CTE that a WHERE follows.
+        assertRejectsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k UNION ALL SELECT * FROM t0 l JOIN t1 r ON l.k = r.lk LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_UNION_ALL,
+                "a UNION ALL form of two different queries: "
+        );
+        assertRejectsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k LT JOIN t1 a TOLERANCE 1h LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_LT,
+                "an ASOF or LT join that no LIMIT form writes: "
+        );
+        assertRejectsLimitForm(
+                "SELECT * FROM t0 l JOIN t1 r ON l.k = r.k ASOF JOIN t1 a ON a.k = l.k LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_AS_OF,
+                "an ASOF or LT join that no LIMIT form writes: "
+        );
+        assertRejectsLimitForm(
+                "WITH q AS (SELECT * FROM t0 l JOIN t1 r ON l.k = r.k) SELECT * FROM q WHERE (k > 1) LIMIT 5",
+                EquiJoinClause.LIMIT_FORM_CTE,
+                "a CTE form whose LIMIT does not follow the CTE: "
+        );
+    }
+
     private static void assertCorpusMatches(String corpus, String what, Pattern pattern) {
         Assert.assertTrue(
                 "the generator produced no query with " + what + " in " + CORPUS_SIZE + " queries",
                 pattern.matcher(corpus).find()
         );
+    }
+
+    // The query reads as the given LIMIT form, but not as applyLimitForm() writes it:
+    // unwrapLimitForm() and limitFormText() fail with the given message and the query.
+    private static void assertRejectsLimitForm(String sql, int form, String message) {
+        Assert.assertEquals(sql, form, EquiJoinClause.limitForm(sql));
+        final AssertionError unwrapError = Assert.assertThrows(sql, AssertionError.class, () -> EquiJoinClause.unwrapLimitForm(sql));
+        Assert.assertEquals(message + sql, unwrapError.getMessage());
+        final AssertionError textError = Assert.assertThrows(sql, AssertionError.class, () -> EquiJoinClause.limitFormText(sql));
+        Assert.assertEquals(message + sql, textError.getMessage());
+    }
+
+    // The query is of the given LIMIT form, which wraps the given query and adds the given text.
+    private static void assertUnwrapsLimitForm(String sql, int form, String query, String text) {
+        Assert.assertEquals(sql, form, EquiJoinClause.limitForm(sql));
+        Assert.assertEquals(sql, query, EquiJoinClause.unwrapLimitForm(sql));
+        Assert.assertEquals(sql, text, EquiJoinClause.limitFormText(sql));
     }
 
     // The index of the parenthesis that closes the one at the given index.
@@ -435,9 +566,10 @@ public class EquiJoinShapeCoverageTest {
     }
 
     // The query from its FROM to its ON condition: the inputs and the keys, which a bind variable
-    // inside an input's filter leaves out of the comparison.
+    // inside an input's filter leaves out of the comparison, of the query that a LIMIT form, if
+    // any, wraps.
     private static String join(String sql) {
-        final String query = unwrapLimitForm(sql);
+        final String query = EquiJoinClause.unwrapLimitForm(sql);
         final String join = query.substring(query.indexOf(" FROM "));
         return join.replaceAll("\\(SELECT [^()]* WHERE [^\\n]*?\\) ([lr]) ", "(input) $1 ")
                 .replaceAll(" AND \\(.*", "")
@@ -492,15 +624,6 @@ public class EquiJoinShapeCoverageTest {
         return -1;
     }
 
-    // True when the query is the LIMIT form of EquiJoinClause that states the LIMIT over a sub-query
-    // of the query, rather than a query whose left input is a sub-query.
-    private static boolean isSubQueryLimitForm(String sql) {
-        final Matcher limit = LIMIT.matcher(sql);
-        return sql.startsWith(SUB_QUERY_LIMIT_FORM)
-                && limit.find()
-                && closing(sql, SUB_QUERY_LIMIT_FORM.length() - 1) == limit.start() - 1;
-    }
-
     // True when the left input is a projection with a WHERE clause of its own.
     private static boolean isLeftProjectionFiltered(String sql) {
         final int from = indexAtDepthZero(sql, " FROM ", 0);
@@ -550,32 +673,5 @@ public class EquiJoinShapeCoverageTest {
         columns.add(new FuzzColumn("c2", VarcharType.INSTANCE));
         columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
         return new FuzzTable(name, columns, "ts");
-    }
-
-    // The query that a LIMIT form of EquiJoinClause states, with its LIMIT: the query of a sub-query
-    // or a CTE over it, the first branch of a UNION ALL of it with itself, or the query without the
-    // WHERE that holds no column; any other query as it is.
-    private static String unwrapLimitForm(String sql) {
-        final Matcher limit = LIMIT.matcher(sql);
-        if (!limit.find()) {
-            return sql;
-        }
-        final String limitClause = sql.substring(limit.start());
-        if (isSubQueryLimitForm(sql)) {
-            return sql.substring(SUB_QUERY_LIMIT_FORM.length(), limit.start() - 1) + limitClause;
-        }
-        final String cte = "WITH q AS (";
-        if (sql.startsWith(cte)) {
-            return sql.substring(cte.length(), closing(sql, cte.length() - 1)) + limitClause;
-        }
-        final int union = indexAtDepthZero(sql, " UNION ALL ", 0);
-        if (union > 0) {
-            return sql.substring(0, union) + limitClause;
-        }
-        final int filter = indexAtDepthZero(sql, RUNTIME_CONSTANT_FILTER_LIMIT_FORM, 0);
-        if (filter > 0) {
-            return sql.substring(0, filter) + sql.substring(filter + RUNTIME_CONSTANT_FILTER_LIMIT_FORM.length());
-        }
-        return sql;
     }
 }

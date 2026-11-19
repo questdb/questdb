@@ -58,6 +58,10 @@ import java.util.regex.Pattern;
  * so a generator that stops emitting any of these leaves the operator's paths for them unchecked
  * while the run stays green. {@link EquiJoinShapeCoverageTest} pins the shape of a single join.
  * <p>
+ * A query that states its LIMIT in one of the generator's LIMIT forms, see
+ * {@link EquiJoinClause#limitForm(String)}, is taken apart as the query that the form wraps, whose
+ * joins the form's LIMIT reaches; the corpus pins every form over a star.
+ * <p>
  * The generator is random, so each assertion runs over a corpus; the seeds are fixed so a failure
  * is reproducible.
  */
@@ -96,7 +100,9 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                 continue;
             }
             Assert.assertFalse("a bare LIMIT over a filtered left input: " + sql, isLeftFiltered);
-            bareStars += query.joins.size() > 1 ? 1 : 0;
+            // A LIMIT stated on the star itself: a LIMIT form, which reaches the joins from outside
+            // their own query, has pins of its own.
+            bareStars += query.joins.size() > 1 && query.limitForm == EquiJoinClause.LIMIT_FORM_NONE ? 1 : 0;
         }
         Assert.assertTrue("bare LIMIT over stars: " + bareStars, bareStars > 0);
         Assert.assertTrue("ordered LIMIT over a filtered left input: " + orderedOverFilteredLeft, orderedOverFilteredLeft > 0);
@@ -106,7 +112,8 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
     public void testBindFormDrawsTheSameRandomSequence() {
         // QueryFuzzTest regenerates a query with a BindContext from the same rnd state and needs
         // the same query back, so building the bind form must not draw anything extra: the joins,
-        // their types, aliases and keys, the window functions and the order stay the same.
+        // their types, aliases and keys, the window functions, the order and the LIMIT form stay
+        // the same.
         final ObjList<FuzzTable> tables = tables();
         final Rnd literalRnd = new Rnd(0x5eed, 0x9507);
         final Rnd bindRnd = new Rnd(0x5eed, 0x9507);
@@ -121,6 +128,11 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
             Assert.assertEquals(literal.deterministic(), bind.deterministic());
             final Query literalQuery = new Query(literal.sql());
             final Query bindQuery = new Query(bind.sql());
+            // The LIMIT forms draw from a generator of their own, which the seeds above do not
+            // show, and Query reads the query that a form wraps: both forms of the query take the
+            // same LIMIT form, with the same ASOF or LT join, keyed and under a TOLERANCE alike.
+            Assert.assertEquals(literal.sql(), literalQuery.limitForm, bindQuery.limitForm);
+            Assert.assertEquals(literal.sql(), EquiJoinClause.limitFormText(literal.sql()), EquiJoinClause.limitFormText(bind.sql()));
             Assert.assertEquals(literal.sql(), literalQuery.joins.size(), bindQuery.joins.size());
             for (int j = 0, n = literalQuery.joins.size(); j < n; j++) {
                 final Join literalJoin = literalQuery.joins.getQuick(j);
@@ -205,10 +217,18 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                 q -> q.joins.size() > 1 && q.hasPostFilter() && "l.ts DESC".equals(q.orderBy));
         assertCorpusHas(corpus, "a post-filtered star under ORDER BY a window function",
                 q -> q.joins.size() > 1 && q.hasPostFilter() && q.orderBy != null && q.orderBy.startsWith("c") && q.windowAliases().contains(q.orderBy.split(" ")[0]));
-        // Limits over stars.
-        assertCorpusHas(corpus, "a LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && !q.limit.startsWith("-"));
-        assertCorpusHas(corpus, "a negative LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && q.limit.startsWith("-"));
-        assertCorpusHas(corpus, "a range LIMIT over a star", q -> q.joins.size() > 1 && q.limit != null && q.limit.contains(", "));
+        // Limits stated on stars themselves.
+        assertCorpusHas(corpus, "a LIMIT over a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_NONE && q.limit != null && !q.limit.startsWith("-"));
+        assertCorpusHas(corpus, "a negative LIMIT over a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_NONE && q.limit != null && q.limit.startsWith("-"));
+        assertCorpusHas(corpus, "a range LIMIT over a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_NONE && q.limit != null && q.limit.contains(", "));
+        // Every LIMIT form over a star, whose LIMIT reaches the star's joins from outside their own
+        // query, or through an operator over them.
+        assertCorpusHas(corpus, "a LIMIT over a sub-query of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_SUB_QUERY);
+        assertCorpusHas(corpus, "a LIMIT over a CTE of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_CTE);
+        assertCorpusHas(corpus, "a LIMIT over a UNION ALL of a star with itself", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_UNION_ALL);
+        assertCorpusHas(corpus, "a LIMIT over an ASOF join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_AS_OF);
+        assertCorpusHas(corpus, "a LIMIT over an LT join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_LT);
+        assertCorpusHas(corpus, "a LIMIT over a star under a WHERE that holds no column", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER);
     }
 
     @Test
@@ -225,7 +245,10 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         int unordered = 0;
         for (int i = 0, n = corpus.size(); i < n; i++) {
             final Query q = corpus.getQuick(i);
-            if (!q.isSwapCandidateShape()) {
+            // A LIMIT form puts a parent over the joins that may ask the joined rows for their order
+            // itself, as an ASOF or LT join does, which the classification by order below does not
+            // model.
+            if (q.limitForm != EquiJoinClause.LIMIT_FORM_NONE || !q.isSwapCandidateShape()) {
                 continue;
             }
             final String right = q.joins.getQuick(0).input;
@@ -254,7 +277,8 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
 
     @Test
     public void testSingleJoinDrawsNoStar() {
-        // The single join keeps the shape EquiJoinShapeCoverageTest pins: one join, no window.
+        // The single join keeps the shape EquiJoinShapeCoverageTest pins: one join, no window. The
+        // ASOF or LT join of a LIMIT form goes with the form, which Query leaves out.
         final Rnd rnd = new Rnd(0x5eed, 0xe7a3);
         final ObjList<FuzzTable> tables = tables();
         for (int i = 0; i < CORPUS_SIZE; i++) {
@@ -270,7 +294,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         // Three tables shaped as the fuzz tables are, at their largest: 149, 150 and 151 rows of
         // the same key columns, drawn by the same rnd calls. No star the generator draws over them
         // returns more than MAX_STAR_ROWS rows, while a star with duplicate keys in two joins still
-        // returns more rows than its left input holds.
+        // returns more rows than its left input holds. A star in a LIMIT form runs in that form.
         assertMemoryLeak(() -> {
             final ObjList<FuzzTable> tables = tables();
             for (int i = 0; i < tables.size(); i++) {
@@ -449,61 +473,67 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
 
     /**
      * A generated query, taken apart at the top level: the projection, the left input, the joins,
-     * the WHERE conjuncts, the ORDER BY and the LIMIT.
+     * the WHERE conjuncts, the ORDER BY and the LIMIT. A query in a LIMIT form is taken apart as
+     * the query that the form wraps, see {@link EquiJoinClause#unwrapLimitForm(String)}, and keeps
+     * its form in {@code limitForm}.
      */
     private static final class Query {
         final ObjList<String> conjuncts = new ObjList<>();
         final ObjList<Join> joins = new ObjList<>();
         final String leftInput;
         final String limit;
+        // One of the LIMIT_FORM_* values of EquiJoinClause.
+        final int limitForm;
         final String orderBy;
         final String select;
         final String sql;
 
         Query(String sql) {
             this.sql = sql;
-            final int from = indexAtDepthZero(sql, 0, " FROM ");
+            limitForm = EquiJoinClause.limitForm(sql);
+            final String query = EquiJoinClause.unwrapLimitForm(sql);
+            final int from = indexAtDepthZero(query, 0, " FROM ");
             Assert.assertTrue(sql, from > 0);
-            select = sql.substring("SELECT ".length(), from);
-            final int whereAt = indexAtDepthZero(sql, from, " WHERE ");
-            final int orderAt = indexAtDepthZero(sql, from, " ORDER BY ");
-            final int limitAt = indexAtDepthZero(sql, from, " LIMIT ");
-            final int joinsEnd = firstOf(sql.length(), whereAt, orderAt, limitAt);
-            int at = indexAtDepthZero(sql, from, " LEFT JOIN ", " JOIN ");
+            select = query.substring("SELECT ".length(), from);
+            final int whereAt = indexAtDepthZero(query, from, " WHERE ");
+            final int orderAt = indexAtDepthZero(query, from, " ORDER BY ");
+            final int limitAt = indexAtDepthZero(query, from, " LIMIT ");
+            final int joinsEnd = firstOf(query.length(), whereAt, orderAt, limitAt);
+            int at = indexAtDepthZero(query, from, " LEFT JOIN ", " JOIN ");
             Assert.assertTrue(sql, at > 0);
-            final String left = sql.substring(from + 6, at);
+            final String left = query.substring(from + 6, at);
             leftInput = left.substring(0, left.length() - " l".length());
             Assert.assertTrue(sql, left.endsWith(" l"));
             while (at > 0 && at < joinsEnd) {
-                final boolean isLeftJoin = sql.startsWith(" LEFT JOIN ", at);
+                final boolean isLeftJoin = query.startsWith(" LEFT JOIN ", at);
                 final int inputStart = at + (isLeftJoin ? " LEFT JOIN ".length() : " JOIN ".length());
-                final int onAt = indexAtDepthZero(sql, inputStart, " ON ");
-                final String inputAndAlias = sql.substring(inputStart, onAt);
+                final int onAt = indexAtDepthZero(query, inputStart, " ON ");
+                final String inputAndAlias = query.substring(inputStart, onAt);
                 final int space = inputAndAlias.lastIndexOf(' ');
-                int next = indexAtDepthZero(sql, onAt + 4, " LEFT JOIN ", " JOIN ");
+                int next = indexAtDepthZero(query, onAt + 4, " LEFT JOIN ", " JOIN ");
                 if (next < 0 || next > joinsEnd) {
                     next = joinsEnd;
                 }
-                joins.add(new Join(isLeftJoin, inputAndAlias.substring(0, space), inputAndAlias.substring(space + 1), sql.substring(onAt + 4, next)));
+                joins.add(new Join(isLeftJoin, inputAndAlias.substring(0, space), inputAndAlias.substring(space + 1), query.substring(onAt + 4, next)));
                 at = next < joinsEnd ? next : -1;
             }
             if (whereAt > 0) {
-                final int end = firstOf(sql.length(), orderAt, limitAt);
+                final int end = firstOf(query.length(), orderAt, limitAt);
                 int open = whereAt + " WHERE ".length();
-                if (sql.startsWith("test_fault() AND ", open)) {
+                if (query.startsWith("test_fault() AND ", open)) {
                     open += "test_fault() AND ".length();
                 }
-                while (open < end && sql.charAt(open) == '(') {
-                    final int close = closing(sql, open);
-                    conjuncts.add(sql.substring(open, close + 1));
+                while (open < end && query.charAt(open) == '(') {
+                    final int close = closing(query, open);
+                    conjuncts.add(query.substring(open, close + 1));
                     open = close + 1;
-                    if (sql.startsWith(" AND ", open)) {
+                    if (query.startsWith(" AND ", open)) {
                         open += " AND ".length();
                     }
                 }
             }
-            orderBy = orderAt > 0 ? sql.substring(orderAt + " ORDER BY ".length(), limitAt > 0 ? limitAt : sql.length()) : null;
-            limit = limitAt > 0 ? sql.substring(limitAt + " LIMIT ".length()) : null;
+            orderBy = orderAt > 0 ? query.substring(orderAt + " ORDER BY ".length(), limitAt > 0 ? limitAt : query.length()) : null;
+            limit = limitAt > 0 ? query.substring(limitAt + " LIMIT ".length()) : null;
         }
 
         private static int firstOf(int otherwise, int... indexes) {

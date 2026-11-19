@@ -37,6 +37,9 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * Row-producing equi-joins across WAL tables: the INNER and LEFT OUTER hash joins that the
  * parallel hash join ({@code Async Hash Join}) runs in place of {@code Hash Join Light} and
@@ -127,18 +130,34 @@ import org.jetbrains.annotations.Nullable;
  * {@link #applyLimitForm}: the {@code LIMIT} of a sub-query or a CTE over the query, of a UNION ALL of
  * the query with itself, or of the query under an ASOF or LT join of which the joins are the master,
  * or under a WHERE that holds no column. The forms draw from a generator of their own, seeded from
- * the query's, so that every query keeps the draws it made before they existed.
+ * the query's, so that every query keeps the draws it made before they existed. For the tests that
+ * read the generated queries, {@link #limitForm(String)} names the form of a query and
+ * {@link #unwrapLimitForm(String)} takes the query back out of it.
  */
 public final class EquiJoinClause {
     public static final String LEFT_ALIAS = "l";
+    // The LIMIT forms that applyLimitForm() draws, see limitForm().
+    public static final int LIMIT_FORM_AS_OF = 3;
+    public static final int LIMIT_FORM_CTE = 1;
+    public static final int LIMIT_FORM_LT = 4;
+    // A query that states its LIMIT, if it has one, as it is.
+    public static final int LIMIT_FORM_NONE = -1;
+    public static final int LIMIT_FORM_RUNTIME_CONSTANT_FILTER = 5;
+    public static final int LIMIT_FORM_SUB_QUERY = 0;
+    public static final int LIMIT_FORM_UNION_ALL = 2;
     // The most joins of one query: the first join and up to five later ones.
     public static final int MAX_JOINS = 6;
     public static final String RIGHT_ALIAS = "r";
+    // The head of the ASOF join of a LIMIT form, see applyLimitForm().
+    private static final String AS_OF_LIMIT_FORM_HEAD = " ASOF JOIN ";
     // Operators that never turn a comparison of two inputs into a join key.
     private static final String[] CROSS_INPUT_OPS = {"<", "<=", ">", ">=", "!="};
     // The optimiser moves a constant conjunct into the join model's constant WHERE clause; only a
     // false one shows an operator that ignores it, so three in four are false.
     private static final String[] CONSTANT_PREDICATES = {"1 = 0", "false", "2 < 1", "1 = 1"};
+    // The texts of the CTE form before and after the query, see applyLimitForm().
+    private static final String CTE_LIMIT_FORM_HEAD = "WITH q AS (";
+    private static final String CTE_LIMIT_FORM_TAIL = ") SELECT * FROM q";
     // The estimated rows that the joins produce per left row, past which a later join takes a
     // selective key or a narrowed dimension. The fuzz tables hold up to about 150 rows, so a query
     // returns a few thousand rows at most, which every axis materializes several times. The
@@ -160,25 +179,36 @@ public final class EquiJoinClause {
     // SYMBOL, 46-50 LONG and VARCHAR and 51-55 INT and LONG; 56-57 INT against LONG and 58-59 the
     // designated timestamps. All but the INT and SYMBOL keys stage their key into a map.
     private static final int KEY_PICKS = 60;
-    // The LIMIT forms of applyLimitForm(), and the draw past them that keeps the query as it is.
-    private static final int LIMIT_FORM_AS_OF = 3;
-    private static final int LIMIT_FORM_CTE = 1;
-    private static final int LIMIT_FORM_LT = 4;
-    private static final int LIMIT_FORM_RUNTIME_CONSTANT_FILTER = 5;
-    private static final int LIMIT_FORM_SUB_QUERY = 0;
-    private static final int LIMIT_FORM_UNION_ALL = 2;
+    // A query's LIMIT, literal or bound, which comes last.
+    private static final Pattern LIMIT_CLAUSE = Pattern.compile(" LIMIT (?:\\d+, )?-?(?:\\d+|\\$1)$");
+    // The draws of applyLimitForm(): the LIMIT_FORM_* values and, past them, the draws that keep the
+    // query as it is.
     private static final int LIMIT_FORMS = 12;
     private static final String LONG_KEY = "lk";
+    // The head of the LT join of a LIMIT form, see applyLimitForm().
+    private static final String LT_LIMIT_FORM_HEAD = " LT JOIN ";
     // The share of its table that a narrowed dimension keeps: the rows of its first one to six
     // hours, twelve at most of at least sixty.
     private static final double NARROWED_SHARE = 0.1;
+    // The WHERE of the LIMIT form that holds no column, see applyLimitForm().
+    private static final String RUNTIME_CONSTANT_FILTER_LIMIT_FORM = " WHERE now() > '2000-01-01'";
     // One later join in this many reads its key off an earlier join's input instead of the left
     // input's: a snowflake join, which the operator leaves to an ordinary hash join over it.
     private static final int SNOWFLAKE_ONE_IN_N = 12;
+    // The text of the sub-query form before the query, see applyLimitForm().
+    private static final String SUB_QUERY_LIMIT_FORM_HEAD = "SELECT * FROM (";
     private static final String SYMBOL_KEY = "sym";
     // The alias of the slave of an ASOF or LT join that a LIMIT form adds, see applyLimitForm().
     private static final String TIME_SERIES_ALIAS = "a";
+    // The ASOF or LT join of a LIMIT form as applyLimitForm() writes it: over a table, keyed on the
+    // left input's SYMBOL key, which a projection may rename, or not, and an ASOF join under a
+    // TOLERANCE or not.
+    private static final Pattern TIME_SERIES_JOIN_LIMIT_FORM = Pattern.compile(
+            " (?:ASOF JOIN \\S+ a(?: ON a\\.sym = l\\.sym(?:_v)?)?(?: TOLERANCE 1h)?|LT JOIN \\S+ a(?: ON a\\.sym = l\\.sym(?:_v)?)?)"
+    );
     private static final String TS = "ts";
+    // The text of the UNION ALL form between the query and its copy, see applyLimitForm().
+    private static final String UNION_ALL_LIMIT_FORM = " UNION ALL ";
     private static final String VARCHAR_KEY = "vk";
 
     private EquiJoinClause() {
@@ -444,6 +474,60 @@ public final class EquiJoinClause {
     }
 
     /**
+     * The LIMIT form in which a query of this generator states its LIMIT, see
+     * {@link #applyLimitForm}: one of the {@code LIMIT_FORM_*} values, {@link #LIMIT_FORM_NONE} for a
+     * query that states its LIMIT, if it has one, as it is. Reads the queries of this generator
+     * only, whose names and literals hold no space: only a form writes a UNION ALL, an ASOF or LT
+     * join or the WHERE that holds no column, and the parenthesis of the sub-query form closes right
+     * before the LIMIT, unlike the one of a query whose left input is a sub-query.
+     */
+    public static int limitForm(String sql) {
+        final int limitStart = limitStart(sql);
+        if (limitStart < 0) {
+            return LIMIT_FORM_NONE;
+        }
+        if (sql.startsWith(SUB_QUERY_LIMIT_FORM_HEAD) && closing(sql, SUB_QUERY_LIMIT_FORM_HEAD.length() - 1) == limitStart - 1) {
+            return LIMIT_FORM_SUB_QUERY;
+        }
+        if (sql.startsWith(CTE_LIMIT_FORM_HEAD)) {
+            return LIMIT_FORM_CTE;
+        }
+        if (sql.contains(UNION_ALL_LIMIT_FORM)) {
+            return LIMIT_FORM_UNION_ALL;
+        }
+        if (sql.contains(AS_OF_LIMIT_FORM_HEAD)) {
+            return LIMIT_FORM_AS_OF;
+        }
+        if (sql.contains(LT_LIMIT_FORM_HEAD)) {
+            return LIMIT_FORM_LT;
+        }
+        return sql.contains(RUNTIME_CONSTANT_FILTER_LIMIT_FORM) ? LIMIT_FORM_RUNTIME_CONSTANT_FILTER : LIMIT_FORM_NONE;
+    }
+
+    /**
+     * The text that the LIMIT form of a query of this generator adds to the query it wraps, which
+     * {@link #unwrapLimitForm(String)} takes out: the texts of the sub-query or of the CTE around the
+     * query, joined; the UNION ALL, without its second branch, a copy of the query that a bind form
+     * writes with its own bind variables; the ASOF or LT join; or the WHERE that holds no column. An
+     * empty string for a query without a form. Throws an AssertionError as unwrapLimitForm() does.
+     */
+    public static String limitFormText(String sql) {
+        return splitLimitForm(sql).text();
+    }
+
+    /**
+     * The query whose LIMIT a query of this generator states in a LIMIT form, with that LIMIT: the
+     * query of the sub-query or of the CTE, the first branch of the UNION ALL, or the query without
+     * the ASOF or LT join or without the WHERE that holds no column; a query without a form as it
+     * is. Reads the queries of this generator only, see {@link #limitForm(String)}, and throws an
+     * AssertionError on a form that {@link #applyLimitForm} does not write, so that a form and its
+     * inverse cannot drift apart unnoticed.
+     */
+    public static String unwrapLimitForm(String sql) {
+        return splitLimitForm(sql).query();
+    }
+
+    /**
      * The key of a join: the source input's key columns against the join's input's, as the key pick
      * says (see {@link #KEY_PICKS}).
      */
@@ -566,18 +650,18 @@ public final class EquiJoinClause {
         final int form = formRnd.nextInt(LIMIT_FORMS);
         switch (form) {
             case LIMIT_FORM_SUB_QUERY:
-                return "SELECT * FROM (" + head + ')' + limit;
+                return SUB_QUERY_LIMIT_FORM_HEAD + head + ')' + limit;
             case LIMIT_FORM_CTE:
-                return "WITH q AS (" + head + ") SELECT * FROM q" + limit;
+                return CTE_LIMIT_FORM_HEAD + head + CTE_LIMIT_FORM_TAIL + limit;
             case LIMIT_FORM_UNION_ALL:
-                return isOrdered ? query : head + " UNION ALL " + head + limit;
+                return isOrdered ? query : head + UNION_ALL_LIMIT_FORM + head + limit;
             case LIMIT_FORM_AS_OF:
             case LIMIT_FORM_LT: {
                 if (!isAscending) {
                     return query;
                 }
                 final StringSink join = new StringSink();
-                join.put(form == LIMIT_FORM_AS_OF ? " ASOF JOIN " : " LT JOIN ").put(slave.getName()).put(' ').put(TIME_SERIES_ALIAS);
+                join.put(form == LIMIT_FORM_AS_OF ? AS_OF_LIMIT_FORM_HEAD : LT_LIMIT_FORM_HEAD).put(slave.getName()).put(' ').put(TIME_SERIES_ALIAS);
                 if (formRnd.nextBoolean()) {
                     join.put(" ON ").put(TIME_SERIES_ALIAS).put('.').put(SYMBOL_KEY)
                             .put(" = ").put(LEFT_ALIAS).put('.').put(l.name(SYMBOL_KEY));
@@ -588,10 +672,26 @@ public final class EquiJoinClause {
                 return query.substring(0, fromEnd) + join + query.substring(fromEnd);
             }
             case LIMIT_FORM_RUNTIME_CONSTANT_FILTER:
-                return hasWhere ? query : query.substring(0, fromEnd) + " WHERE now() > '2000-01-01'" + query.substring(fromEnd);
+                return hasWhere ? query : query.substring(0, fromEnd) + RUNTIME_CONSTANT_FILTER_LIMIT_FORM + query.substring(fromEnd);
             default:
                 return query;
         }
+    }
+
+    // The index of the parenthesis that closes the one at the given index, past quoted literals.
+    private static int closing(String sql, int open) {
+        int depth = 0;
+        for (int i = open; i < sql.length(); i++) {
+            final char c = sql.charAt(i);
+            if (c == '\'') {
+                i = sql.indexOf('\'', i + 1);
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return i;
+            }
+        }
+        throw new AssertionError("unbalanced parentheses: " + sql);
     }
 
     /**
@@ -643,6 +743,12 @@ public final class EquiJoinClause {
             return 17;
         }
         return 1;
+    }
+
+    // The start of the query's LIMIT, literal or bound, which comes last, or -1 without a LIMIT.
+    private static int limitStart(String sql) {
+        final Matcher limit = LIMIT_CLAUSE.matcher(sql);
+        return limit.find() ? limit.start() : -1;
     }
 
     /**
@@ -750,6 +856,66 @@ public final class EquiJoinClause {
     }
 
     /**
+     * Takes a query of this generator apart at its LIMIT form, see {@link #unwrapLimitForm(String)}
+     * and {@link #limitFormText(String)}: the inverse of {@link #applyLimitForm}, which checks that
+     * the form is one that applyLimitForm() writes.
+     */
+    private static LimitFormSplit splitLimitForm(String sql) {
+        final int form = limitForm(sql);
+        if (form == LIMIT_FORM_NONE) {
+            return new LimitFormSplit(sql, "");
+        }
+        final int limitStart = limitStart(sql);
+        final String limit = sql.substring(limitStart);
+        return switch (form) {
+            case LIMIT_FORM_SUB_QUERY -> new LimitFormSplit(
+                    sql.substring(SUB_QUERY_LIMIT_FORM_HEAD.length(), limitStart - 1) + limit,
+                    SUB_QUERY_LIMIT_FORM_HEAD + ')'
+            );
+            case LIMIT_FORM_CTE -> {
+                final int tailStart = limitStart - CTE_LIMIT_FORM_TAIL.length();
+                if (!sql.startsWith(CTE_LIMIT_FORM_TAIL, tailStart)) {
+                    throw new AssertionError("a CTE form whose LIMIT does not follow the CTE: " + sql);
+                }
+                yield new LimitFormSplit(sql.substring(CTE_LIMIT_FORM_HEAD.length(), tailStart) + limit, CTE_LIMIT_FORM_HEAD + CTE_LIMIT_FORM_TAIL);
+            }
+            case LIMIT_FORM_UNION_ALL -> {
+                final int union = sql.indexOf(UNION_ALL_LIMIT_FORM);
+                final String query = sql.substring(0, union);
+                if (!query.equals(sql.substring(union + UNION_ALL_LIMIT_FORM.length(), limitStart))) {
+                    throw new AssertionError("a UNION ALL form of two different queries: " + sql);
+                }
+                yield new LimitFormSplit(query + limit, UNION_ALL_LIMIT_FORM);
+            }
+            case LIMIT_FORM_AS_OF, LIMIT_FORM_LT -> {
+                // The join ends where the query's WHERE, ORDER BY or LIMIT starts, whichever comes
+                // first.
+                final int start = sql.indexOf(form == LIMIT_FORM_AS_OF ? AS_OF_LIMIT_FORM_HEAD : LT_LIMIT_FORM_HEAD);
+                int end = limitStart;
+                for (String clause : new String[]{" WHERE ", " ORDER BY "}) {
+                    final int at = sql.indexOf(clause, start);
+                    if (at > -1 && at < end) {
+                        end = at;
+                    }
+                }
+                final String join = sql.substring(start, end);
+                if (!TIME_SERIES_JOIN_LIMIT_FORM.matcher(join).matches()) {
+                    throw new AssertionError("an ASOF or LT join that no LIMIT form writes: " + sql);
+                }
+                yield new LimitFormSplit(sql.substring(0, start) + sql.substring(end), join);
+            }
+            // LIMIT_FORM_RUNTIME_CONSTANT_FILTER
+            default -> {
+                final int filter = sql.indexOf(RUNTIME_CONSTANT_FILTER_LIMIT_FORM);
+                yield new LimitFormSplit(
+                        sql.substring(0, filter) + sql.substring(filter + RUNTIME_CONSTANT_FILTER_LIMIT_FORM.length()),
+                        RUNTIME_CONSTANT_FILTER_LIMIT_FORM
+                );
+            }
+        };
+    }
+
+    /**
      * One join input: the SQL after {@code FROM} (or after the join keyword), the columns it
      * exposes, under the names it exposes them by, and the share of its table's rows it reads at
      * most.
@@ -803,5 +969,12 @@ public final class EquiJoinClause {
             this.keyPick = keyPick;
             this.keySource = keySource;
         }
+    }
+
+    /**
+     * A query of this generator taken apart at its LIMIT form: the query that the form wraps, with
+     * its LIMIT, and the text that the form adds to it, see {@link #limitFormText(String)}.
+     */
+    private record LimitFormSplit(String query, String text) {
     }
 }
