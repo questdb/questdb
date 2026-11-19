@@ -2053,18 +2053,378 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRangeTaskIgnoresSuspendedViewError() throws Exception {
-        // A view WAL suspended while an invalid view takes an ATTACH range fails the task with a "table suspended"
-        // error, which neither loses the backlog nor invalidates the view again.
+    public void testRangeTaskMeetsViewSuspendedBeforeLatch() throws Exception {
+        // With writes to a suspended WAL denied, the view's WAL is suspended after an ATTACH range task's checks and
+        // before its latch, and the view's WAL refuses the task's writer. A valid view drops the range, as when a
+        // restart loses the task, and stays valid. An invalid view's backlog lacks the range, which only the task
+        // carries, so the backlog is lost: RESUME after RESUME WAL refuses instead of returning the view valid without
+        // the attached day.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            for (boolean isInvalid : new boolean[]{false, true}) {
+                createAttachableBaseWithView();
+                if (isInvalid) {
+                    invalidate("test invalidation");
+                }
+                final long viewSeqTxn = viewSeqTxn();
+                runRangeTaskChangingViewBeforeLock(() -> executeInSeam("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL"));
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                assertCache(-1);
+                Assert.assertEquals(isInvalid, viewState().isInvalid());
+                if (isInvalid) {
+                    Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainWalAndMatViewQueues();
+                    assertFailedRangeTaskLostThenRecovered("test invalidation", """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-02T00:00:00.000000Z\tc\t3.0
+                            2024-01-02T01:00:00.000000Z\tc\t5.0
+                            """);
+                } else {
+                    Assert.assertNull(viewState().getBacklogLostReason());
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainWalAndMatViewQueues();
+                    assertViewStatus("valid", "");
+                }
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfConfiguredSuspendedViewLosesBacklog() throws Exception {
+        // With writes to a suspended WAL denied, a view listed in cairo.wal.apply.suspended.tables takes no write, as
+        // after ALTER ... SUSPEND WAL: an invalid view's ATTACH range task loses the backlog, which lacks the range,
+        // and RESUME refuses once the list no longer holds the view.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
             createAttachableBaseWithView();
             invalidate("test invalidation");
             final long viewSeqTxn = viewSeqTxn();
-            failRangeTask(CairoException.tableSuspended(viewToken()));
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, viewToken().getDirName());
+            try {
+                execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(viewState().isLocked());
+                Assert.assertTrue(viewState().isInvalid());
+                Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                assertCache(-1);
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
             assertViewStatus("invalid", "test invalidation");
+            assertFailedRangeTaskLostThenRecovered("test invalidation", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfInvalidViewResumedBeforeLatchAddsRange() throws Exception {
+        // With writes to a suspended WAL denied, an invalid view's ATTACH range task is queued while the view's WAL is
+        // suspended, and RESUME WAL comes after the task's checks and before its latch. The view's WAL then takes the
+        // task's writer, so the task adds the range to the backlog in one view state event, and RESUME catches up on
+        // it.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            final long viewSeqTxn = viewSeqTxn();
+            runRangeTaskChangingViewBeforeLock(() -> executeInSeam("ALTER MATERIALIZED VIEW price_1h RESUME WAL"));
+            drainWalQueue();
+            Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
             Assert.assertNull(viewState().getBacklogLostReason());
+            assertViewStatus("invalid", "test invalidation");
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertPersistedCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            assertResumeSucceeds(RESUME_SQL);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfSuspendedInvalidViewLosesBacklog() throws Exception {
+        // With writes to a suspended WAL denied, an invalid view's ATTACH or UPDATE range task meets the view's WAL
+        // suspended by ALTER ... SUSPEND WAL. The view's WAL refuses the task's writer, and the backlog, which lacks
+        // the range that only the task carries, is lost in memory; the suspension does not invalidate the view again.
+        // A later UPDATE adds nothing to the lost backlog. RESUME waits for RESUME WAL and then refuses with the cause,
+        // instead of returning the view valid without the range.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            for (String refreshType : new String[]{"MANUAL", "IMMEDIATE"}) {
+                for (boolean isAttach : new boolean[]{true, false}) {
+                    createAttachableBaseWithView(refreshType);
+                    invalidate("test invalidation");
+                    execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+                    final long viewSeqTxn = viewSeqTxn();
+                    execute(isAttach ? "ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'" : "UPDATE base SET price = 30.0 WHERE sym = 'c'");
+                    drainWalAndMatViewQueues();
+                    Assert.assertFalse(viewState().isLocked());
+                    assertViewStatus("invalid", "test invalidation");
+                    Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    assertCache(-1);
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                    execute("UPDATE base SET price = 40.0 WHERE sym = 'c'");
+                    drainWalAndMatViewQueues();
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    assertCache(-1);
+
+                    for (String resumeSql : new String[]{RESUME_SQL, RESUME_SKIP_SQL}) {
+                        assertExceptionNoLeakCheck(
+                                resumeSql,
+                                VIEW_NAME_POSITION,
+                                "materialized view WAL is suspended, run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+                        );
+                        Assert.assertTrue(viewState().isInvalid());
+                        Assert.assertFalse(viewState().isLocked());
+                        Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+                    }
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainWalAndMatViewQueues();
+                    assertFailedRangeTaskLostThenRecovered(
+                            "test invalidation",
+                            "ts\tsym\tprice\n"
+                                    + (isAttach ? "2024-01-01T00:00:00.000000Z\ta\t1.0\n" : "")
+                                    + "2024-01-02T00:00:00.000000Z\tc\t40.0\n"
+                                    + "2024-01-02T01:00:00.000000Z\tc\t5.0\n"
+                    );
+                    execute("DROP MATERIALIZED VIEW price_1h");
+                    execute("DROP TABLE base");
+                    drainWalAndMatViewQueues();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfSuspendedViewDefersWhileLatchBusy() throws Exception {
+        // An invalid view's ATTACH range task that finds the view latch taken while the view's WAL is suspended goes
+        // back on the queue, as for any view, and loses the backlog under the latch once the holder lets go.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            Assert.assertTrue(viewState().tryLock());
+            try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+                job.run();
+                Assert.assertNull(viewState().getBacklogLostReason());
+                final MatViewRefreshTask rangeTask = takeRangeTask();
+                Assert.assertEquals(viewToken(), rangeTask.matViewToken);
+                Assert.assertEquals(parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z"), rangeTask.rangeFrom);
+                Assert.assertEquals(parseFloorPartialTimestamp("2024-01-01T23:59:59.999999Z"), rangeTask.rangeTo);
+                engine.getMatViewStateStore().reenqueueRefreshTask(rangeTask);
+                viewState().unlock();
+                drainMatViewQueue(job);
+            }
+            drainWalQueue();
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
             assertCache(-1);
             Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertViewStatus("invalid", "test invalidation");
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfSuspendedViewOverReplacedBaseLosesBacklog() throws Exception {
+        // The base table is dropped and re-created while an invalid view's WAL is suspended and the range task of an
+        // UPDATE of the old base waits in the queue. The view's WAL refuses the task's writer before the task checks
+        // the base table's identity, so the backlog is lost as for any refused range, with that cause rather than
+        // "base table replaced". RESUME refuses either way, and RESUME SKIP BACKLOG takes the new base table.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            execute("UPDATE base SET price = 30.0 WHERE sym = 'c'");
+            drainWalQueue();
+            final int oldBaseTableId = baseToken().getTableId();
+            execute("DROP TABLE base");
+            createBase();
+            final long viewSeqTxn = viewSeqTxn();
+            drainWalAndMatViewQueues();
+            Assert.assertNotEquals(oldBaseTableId, baseToken().getTableId());
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "test invalidation");
+            assertLostThenSkipBacklogJumps(MatViewBacklog.LOST_UPDATE_FAILED, ATTACHABLE_VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfViewSuspendedWhileHoldingLatchKeepsMergedRange() throws Exception {
+        // With writes to a suspended WAL denied, the view's WAL is suspended while an invalid view's ATTACH range task
+        // holds the latch and the view's WAL writer. The task's scan brings the backlog up to the ATTACH and merges the
+        // range into it, and only the view state event is refused: the backlog keeps the range in memory, and RESUME
+        // after RESUME WAL catches up on it, right away, or after the first backlog update after RESUME WAL persisted
+        // the backlog and a restart.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            for (boolean isBacklogUpdated : new boolean[]{false, true}) {
+                createAttachableBaseWithView();
+                invalidate("test invalidation");
+                execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                final long viewSeqTxn = viewSeqTxn();
+                runRangeTaskSuspendingWhileHolding();
+                Assert.assertTrue(viewState().isInvalid());
+                Assert.assertNull(viewState().getBacklogLostReason());
+                assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                String viewRows = """
+                        ts\tsym\tprice
+                        2024-01-01T00:00:00.000000Z\ta\t1.0
+                        2024-01-02T00:00:00.000000Z\tc\t3.0
+                        """;
+                if (isBacklogUpdated) {
+                    // the suspended view takes no backlog update
+                    insert("c", 5.0, "2024-01-02T01:20:00.000000Z");
+                    drainWalAndMatViewQueues();
+                    updateBacklog();
+                    Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                    assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainWalAndMatViewQueues();
+                    insert("c", 6.0, "2024-01-02T02:20:00.000000Z");
+                    drainWalAndMatViewQueues();
+                    updateBacklog();
+                    Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+                    assertViewStatus("invalid", "test invalidation");
+                    final String[] backlog = {
+                            "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z",
+                            "2024-01-02T01:20:00.000000Z", "2024-01-02T01:20:00.000000Z",
+                            "2024-01-02T02:20:00.000000Z", "2024-01-02T02:20:00.000000Z"
+                    };
+                    assertPersistedCache(5, backlog);
+                    restart();
+                    Assert.assertTrue(viewState().isInvalid());
+                    Assert.assertNull(viewState().getBacklogLostReason());
+                    assertCache(5, backlog);
+                    viewRows = """
+                            ts\tsym\tprice
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-02T00:00:00.000000Z\tc\t3.0
+                            2024-01-02T01:00:00.000000Z\tc\t5.0
+                            2024-01-02T02:00:00.000000Z\tc\t6.0
+                            """;
+                } else {
+                    execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+                    drainWalAndMatViewQueues();
+                }
+
+                assertResumeSucceeds(RESUME_SQL);
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                drainWalAndMatViewQueues();
+                assertViewStatus("valid", "");
+                assertViewRows(viewRows);
+                assertSqlCursors(VIEW_SQL, "price_1h");
+                execute("DROP MATERIALIZED VIEW price_1h");
+                execute("DROP TABLE base");
+                drainWalAndMatViewQueues();
+            }
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfViewSuspendedWhileHoldingLatchLosesNextRange() throws Exception {
+        // An invalid view's WAL is suspended while the view's ATTACH range task holds the latch, after the task's scan
+        // merged the range into the backlog, which keeps it in memory. An UPDATE while the view's WAL is still
+        // suspended loses the backlog: the view's WAL refuses the UPDATE's range task, whose range only the task
+        // carries.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            runRangeTaskSuspendingWhileHolding();
+            Assert.assertNull(viewState().getBacklogLostReason());
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+
+            execute("UPDATE base SET price = 30.0 WHERE sym = 'c'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertFailedRangeTaskLostThenRecovered("test invalidation", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t30.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeTaskOfViewSuspendedWhileHoldingLatchLosesTruncateDrop() throws Exception {
+        // A base TRUNCATE applies after an ATTACH and before the ATTACH's range task runs, and the invalid view's WAL
+        // is suspended while the task holds the latch. The task drops the range, whose rows the truncate removed, and
+        // the view's WAL refuses the cache that the task scanned up to the truncate. The range did not reach the cache,
+        // so the backlog is lost, as for any refused range, although the truncate made the range moot.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            // a TRUNCATE in the ATTACH's apply batch would clear the batch's range, and no range task would run
+            execute("TRUNCATE TABLE base");
+            drainWalQueue();
+            final long viewSeqTxn = viewSeqTxn();
+            runRangeTaskSuspendingWhileHolding();
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            assertCache(4);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("invalid", "test invalidation");
+
+            assertResumeRefused(MatViewBacklog.LOST_UPDATE_FAILED);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertResumeSucceeds(RESUME_SKIP_SQL);
+            assertRefreshBaseTxn(4);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            // a TRUNCATE keeps the view's rows
+            assertViewRows(ATTACHABLE_VIEW_ROWS);
+            restart();
+            assertViewStatus("valid", "");
+            Assert.assertNull(viewState().getBacklogLostReason());
         });
     }
 
@@ -2147,6 +2507,30 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeTaskSuspendedViewErrorLosesBacklog() throws Exception {
+        // A view WAL suspended while an invalid view takes an ATTACH range fails the task with a "table suspended"
+        // error before the range reaches the cache. The error does not invalidate the view again, but the backlog lacks
+        // the range, which only the task carries: the backlog is lost, so RESUME refuses instead of returning the view
+        // valid without the attached day.
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            final long viewSeqTxn = viewSeqTxn();
+            failRangeTask(CairoException.tableSuspended(viewToken()));
+            assertViewStatus("invalid", "test invalidation");
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            assertCache(-1);
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            assertFailedRangeTaskLostThenRecovered("test invalidation", """
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    2024-01-02T01:00:00.000000Z\tc\t5.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRangeTaskTruncateDropFailureLosesBacklog() throws Exception {
         // A base TRUNCATE applies after an ATTACH and before the ATTACH's range task runs. The task drops the range,
         // whose rows the truncate removed, and fails to persist the cache it scanned up to the truncate. The range did
@@ -2184,6 +2568,43 @@ public class MatViewBacklogTest extends AbstractCairoTest {
             restart();
             assertViewStatus("valid", "");
             Assert.assertNull(viewState().getBacklogLostReason());
+        });
+    }
+
+    @Test
+    public void testRangeTaskWritesSuspendedViewWalWhenWriteDenialOff() throws Exception {
+        // With writes to a suspended WAL allowed, as by default, an invalid view's ATTACH range task writes its view
+        // state event into the suspended view's WAL, which applies it after RESUME WAL: the backlog keeps the range,
+        // and RESUME catches up on it.
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            final long viewSeqTxn = viewSeqTxn();
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(viewState().isLocked());
+            Assert.assertTrue(viewState().isInvalid());
+            Assert.assertNull(viewState().getBacklogLostReason());
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+            // the view state event waits in the suspended view's WAL
+            assertPersistedCache(-1);
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertPersistedCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertViewStatus("invalid", "test invalidation");
+
+            assertResumeSucceeds(RESUME_SQL);
+            execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1.0
+                    2024-01-02T00:00:00.000000Z\tc\t3.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
         });
     }
 
@@ -2391,6 +2812,43 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSuspendedViewRestartAfterPurgeFindsBacklogLost() throws Exception {
+        // The suspended WAL of an invalid view refused the view's ATTACH range task, which lost the backlog in memory,
+        // and the lost backlog no longer holds back the base's WAL purging after RESUME WAL. A restart forgets the
+        // marker, which no view state event carried: a known defect of its own, "after a restart, RESUME catches up
+        // without an UPDATE/ATTACH range whose failed task marked the backlog lost in memory", which this test does not
+        // assert. Once the purge removed the base's WAL from the view's cache position, RESUME after the restart finds
+        // the backlog lost again and refuses.
+        setProperty(PropertyKey.DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL, "false");
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            createAttachableBaseWithView();
+            invalidate("test invalidation");
+            execute("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(MatViewBacklog.LOST_UPDATE_FAILED, viewState().getBacklogLostReason());
+            execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
+            drainWalAndMatViewQueues();
+            for (int hour = 1; hour < 4; hour++) {
+                // each commit goes through a WAL writer of its own, whose segment the purge can remove
+                engine.releaseInactive();
+                insert("c", 4.0 + hour, "2024-01-02T0" + hour + ":20:00.000000Z");
+                drainWalAndMatViewQueues();
+            }
+            purgeBaseWal();
+            // the ATTACH is base txn 3, and the inserts 4 to 6
+            for (long baseTxn = 3; baseTxn < 7; baseTxn++) {
+                Assert.assertFalse(isBaseWalSegmentPresent(baseTxn));
+            }
+
+            restart();
+            assertViewStatus("invalid", "test invalidation");
+            assertLostThenSkipBacklogJumps(MatViewBacklog.LOST_BASE_TABLE_WAL_MISSING, ATTACHABLE_VIEW_ROWS);
+        });
+    }
+
+    @Test
     public void testSuspendedViewWalReleasesFloor() throws Exception {
         // A suspended view cannot persist its backlog, so it releases the base's WAL floor: the base's WAL above the
         // view's cache position is purged.
@@ -2560,6 +3018,15 @@ public class MatViewBacklogTest extends AbstractCairoTest {
         Assert.assertFalse(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
     }
 
+    // Runs the statement from a refresh job's test seam, which takes no checked exception.
+    private static void executeInSeam(String sql) {
+        try {
+            execute(sql);
+        } catch (SqlException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     private static void makeAttachable(String partition) {
         try (Path path = new Path(); Path other = new Path()) {
             path.of(configuration.getDbRoot()).concat(baseToken()).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
@@ -2660,6 +3127,22 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     private static void restart() {
         engine.getMatViewStateStore().clear();
         engine.hydrateMatViewStateStore();
+    }
+
+    // Runs the view's queued range task and suspends the view's WAL once the task holds the latch and the view's WAL
+    // writer.
+    private static void runRangeTaskSuspendingWhileHolding() {
+        final AtomicBoolean isArmed = new AtomicBoolean(true);
+        try (MatViewRefreshJob job = new MatViewRefreshJob(0, engine, 0)) {
+            job.setOnHoldingLockForTesting(() -> {
+                if (isArmed.compareAndSet(true, false)) {
+                    executeInSeam("ALTER MATERIALIZED VIEW price_1h SUSPEND WAL");
+                }
+            });
+            drainMatViewQueue(job);
+        }
+        Assert.assertFalse(isArmed.get());
+        Assert.assertFalse(viewState().isLocked());
     }
 
     // Takes the view's range task off the refresh queue and puts the other tasks back, so that they run before it.
@@ -2764,10 +3247,10 @@ public class MatViewBacklogTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, viewState().getRefreshIntervals());
     }
 
-    // A failed range task invalidated the valid view in memory and lost the backlog the view starts with. The lost
-    // backlog takes no cache update, REFRESH ... INCREMENTAL sends the user to RESUME, and RESUME refuses with the
-    // cause and writes no view state; RESUME SKIP BACKLOG and a REFRESH ... RANGE over the gap then bring the view to
-    // its SQL on the base. The base commit here adds the row 2024-01-02T01:20 c 5.0.
+    // A failed range task left the view invalid with its backlog lost. The lost backlog takes no cache update,
+    // REFRESH ... INCREMENTAL sends the user to RESUME, and RESUME refuses with the cause and writes no view state;
+    // RESUME SKIP BACKLOG and a REFRESH ... RANGE over the gap then bring the view to its SQL on the base. The base
+    // commit here adds the row 2024-01-02T01:20 c 5.0.
     private void assertFailedRangeTaskLostThenRecovered(String reasonPart, String viewRows) throws Exception {
         Assert.assertTrue(viewState().isInvalid());
         final String reason = viewState().getInvalidationReasonForReport();

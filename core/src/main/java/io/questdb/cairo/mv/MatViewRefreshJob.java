@@ -805,7 +805,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // gate: a view can be suspended in the narrow window between that gate and the getWalWriter acquire, in
     // which case the throw lands in the refresh path's outer catch. The refresh job must treat it as a skip
     // (leave the view valid, do not re-enqueue) rather than a refresh failure -- invalidating a suspended
-    // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume.
+    // view is wrong (resume recovers it) and re-enqueueing would busy-loop the worker until resume. For the task
+    // that adds a base table range to an invalid view's backlog, the refusal is the gate itself, and it loses the
+    // backlog instead of skipping, unless the range reached the cache.
     private static boolean isTableSuspendedError(Throwable th) {
         return th instanceof CairoException ce && ce.isTableSuspended();
     }
@@ -973,6 +975,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * A failure invalidates a valid view, whose cache becomes its backlog: the backlog is lost, since only this task
      * carries the range, unless the task's scan brought the cache up to the operation and merged the range into it, as
      * when the view state event fails. A failure loses an invalid view's backlog.
+     * <p>
+     * A view whose WAL is suspended with cairo.wal.apply.suspended.write.denied on takes no write: a valid view drops
+     * the range, as when a restart loses the task; an invalid view loses its backlog, unless the range reached its
+     * cache as above.
      */
     private void addRefreshRange(@NotNull MatViewRefreshTask refreshTask) {
         final TableToken viewToken = refreshTask.matViewToken;
@@ -985,9 +991,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         final MatViewDefinition viewDefinition = viewState.getViewDefinition();
-        if (isViewWriteSuspended(viewToken)) {
-            // The cache persists through the view's WAL, which takes no write while suspended. The range goes, as
-            // it does when a restart loses the task.
+        if (!viewState.isInvalid() && isViewWriteSuspended(viewToken)) {
+            // A valid view's cache persists through the view's WAL, which takes no write while suspended. The range
+            // goes, as it does when a restart loses the task. An invalid view goes on to the latch, where the view's
+            // WAL refuses the writer and the refusal loses its backlog.
             LOG.info().$("dropping base table range, materialized view is suspended [view=").$(viewToken)
                     .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeFrom)
                     .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeTo)
@@ -1039,8 +1046,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (Throwable th) {
             if (isTableSuspendedError(th)) {
-                // The view was suspended between the isViewWriteSuspended gate and the getWalWriter acquire.
-                LOG.info().$("dropping base table range, materialized view is suspended [view=").$(viewToken).I$();
+                // The view's WAL refused the writer or the view state event: the view was invalid at the
+                // isViewWriteSuspended gate, which lets it through, or it was suspended after the gate.
+                LOG.info().$("dropping base table range, materialized view is suspended [view=").$(viewToken)
+                        .$(", from=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeFrom)
+                        .$(", to=").$ts(viewDefinition.getBaseTableTimestampDriver(), refreshTask.rangeTo)
+                        .I$();
+                if (isBacklog && rangeOutcome != RANGE_MERGED) {
+                    // Only this task carries the range, since the base table's WAL scan skips UPDATE and ATTACH, so an
+                    // invalid view's backlog stays tracked only when the range is in its cache, merged after a scan
+                    // that read the base table's WAL up to the operation. The latch has kept the backlog tracked since
+                    // the re-check: nothing in the task loses it and then throws.
+                    assert viewState.hasTrackedBacklog();
+                    MatViewBacklog.markLost(engine, null, viewState, MatViewBacklog.LOST_UPDATE_FAILED);
+                }
                 return;
             }
             if (handleErrorRetryRefresh(th, viewToken, stateStore, refreshTask)) {
