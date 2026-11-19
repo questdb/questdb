@@ -73,7 +73,7 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * This class provides optimized bulk column writes, avoiding per-row overhead
  * when ingesting columnar data (like QWP v1).
  * <p>
- * <b>Thread Safety:</b> Not thread-safe. Each WalWriter should have its own instance.
+ * <b>Thread Safety:</b> Not thread-safe. Each {@link WalColumnSink} should have its own instance.
  */
 //TODO [mtopolnik]: This class shouldn't have a dependency to the Wire protocol layer.
 // This works for now because QWP is the only user of columnar appending. When introducing
@@ -85,42 +85,26 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     private final Decimal64 decimal64 = new Decimal64();
     private final Long256Impl long256 = new Long256Impl();
     private final DirectArray reusableArray = new DirectArray();
+    private final WalColumnSink sink;
     private final StringSink strSink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
-    private final WalWriter walWriter;
     private boolean inColumnarWrite;
     private int pendingRowCount;
     private long startRowId;
 
-    public WalColumnarRowAppender(WalWriter walWriter) {
-        this.walWriter = walWriter;
+    public WalColumnarRowAppender(WalColumnSink sink) {
+        this.sink = sink;
     }
 
     @Override
     public void beginColumnarWrite(int rowCount) {
-        walWriter.checkDistressed();
+        sink.checkDistressed();
         if (inColumnarWrite) {
             throw CairoException.nonCritical().put("already in columnar write mode");
         }
-        // Handle pending segment roll, similar to what newRow() does.
-        // This is needed when columns are added while rollSegmentOnNextRow is true,
-        // since addColumn defers opening column files until the segment is rolled.
-        // The roll opens an empty segment without copying rows, so it must never
-        // find uncommitted rows: the flag is set only after a commit and by
-        // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
-        // keeps rows uncommitted across blocks and relies on this.
-        assert !walWriter.rollSegmentOnNextRow || walWriter.getUncommittedRowCount() == 0;
-        try {
-            if (walWriter.rollSegmentOnNextRow) {
-                walWriter.rollSegment();
-                walWriter.rollSegmentOnNextRow = false;
-            }
-        } catch (Throwable e) {
-            walWriter.distressed = true;
-            throw e;
-        }
+        sink.beginColumnarWrite();
         this.pendingRowCount = rowCount;
-        this.startRowId = walWriter.getSegmentRowCount();
+        this.startRowId = sink.getSegmentRowCount();
         this.inColumnarWrite = true;
     }
 
@@ -131,7 +115,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
 
         // Reset append positions to before the write started
-        walWriter.cancelColumnarWrite(startRowId);
+        sink.cancelColumnarWrite();
 
         inColumnarWrite = false;
         pendingRowCount = 0;
@@ -147,7 +131,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         checkInColumnarWrite();
 
         // Update WAL writer state
-        walWriter.finishColumnarWrite(pendingRowCount, minTimestamp, maxTimestamp, outOfOrder);
+        sink.finishColumnarWrite(pendingRowCount, minTimestamp, maxTimestamp, outOfOrder);
 
         inColumnarWrite = false;
         pendingRowCount = 0;
@@ -166,8 +150,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -205,15 +189,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putBinaryColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -226,14 +210,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putBooleanColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -243,13 +227,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             dataMem.putByte(cursor.isNull() ? (byte) 0 : (cursor.getValue() ? (byte) 1 : (byte) 0));
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putBooleanToNumericColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount, int columnType) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
@@ -292,14 +276,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unsupported boolean-to-numeric target type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putBooleanToStringColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -312,14 +296,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putBooleanToVarcharColumn(int columnIndex, QwpBooleanColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -332,14 +316,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putCharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -365,7 +349,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -402,8 +386,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     @Override
     public void putDecimalToStringColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
         int wireScale = cursor.getScale() & 0xFF;
         byte wireType = cursor.getTypeCode();
 
@@ -457,14 +441,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unknown decimal wire type: ").put(wireType);
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putDecimalToVarcharColumn(int columnIndex, QwpDecimalColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
         int wireScale = cursor.getScale() & 0xFF;
         byte wireType = cursor.getTypeCode();
 
@@ -518,7 +502,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unknown decimal wire type: ").put(wireType);
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -530,8 +514,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         checkInColumnarWrite();
         if (nullBitmapAddress == 0) {
             // No nulls: a direct copy.
-            walWriter.getDataColumn(columnIndex).putBlockOfBytes(valuesAddress, (long) valueCount * valueSize);
-            walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+            sink.getDataColumn(columnIndex).putBlockOfBytes(valuesAddress, (long) valueCount * valueSize);
+            sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
         } else {
             putFixedColumnWithNulls(columnIndex, valuesAddress, nullBitmapAddress, rowCount);
         }
@@ -540,8 +524,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     @Override
     public void putFixedOtherToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -554,14 +538,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFixedOtherToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, byte ilpType) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -574,7 +558,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -582,7 +566,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -599,7 +583,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -607,7 +591,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -624,7 +608,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -632,7 +616,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -649,7 +633,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 validateAndWriteDecimalValue(dataMem, decimal, columnType, columnIndex);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -657,7 +641,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
         cursor.resetRowPosition();
@@ -680,14 +664,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unsupported small decimal type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFixedToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -700,36 +684,36 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFixedToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = sink.getSymbolMapReader(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                walWriter.markSymbolMapNull(columnIndex);
+                sink.markSymbolMapNull(columnIndex);
             } else {
                 strSink.clear();
                 Numbers.append(strSink, cursor.getLong());
-                int symbolKey = walWriter.resolveSymbol(columnIndex, strSink, symbolMapReader);
+                int symbolKey = sink.resolveSymbol(columnIndex, strSink, symbolMapReader);
                 dataMem.putInt(symbolKey);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFixedToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -742,13 +726,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putIntToIPv4Column(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
@@ -758,7 +742,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 dataMem.putInt((int) cursor.getLong());
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -769,7 +753,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnPrecision = ColumnType.getDecimalPrecision(columnType);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
@@ -792,7 +776,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         } catch (QwpParseException e) {
             throw CairoException.schemaMismatch().put("failed to convert float column to decimal");
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -800,7 +784,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
@@ -874,14 +858,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFloatToStringColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -894,36 +878,36 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFloatToSymbolColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = sink.getSymbolMapReader(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                walWriter.markSymbolMapNull(columnIndex);
+                sink.markSymbolMapNull(columnIndex);
             } else {
                 strSink.clear();
                 Numbers.append(strSink, cursor.getDouble());
-                int symbolKey = walWriter.resolveSymbol(columnIndex, strSink, symbolMapReader);
+                int symbolKey = sink.resolveSymbol(columnIndex, strSink, symbolMapReader);
                 dataMem.putInt(symbolKey);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putFloatToVarcharColumn(int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -936,7 +920,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -945,7 +929,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
@@ -977,14 +961,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     .put("invalid GeoHash column type: ").put(ColumnType.nameOf(columnType));
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putGeoHashToStringColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1002,14 +986,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putGeoHashToVarcharColumn(int columnIndex, QwpGeoHashColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1027,7 +1011,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -1035,7 +1019,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             int columnIndex, QwpFixedWidthColumnCursor cursor, int rowCount, int columnType
     ) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
@@ -1108,15 +1092,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1131,13 +1115,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToBooleanColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1165,13 +1149,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToDecimalColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int columnPrecision = ColumnType.getDecimalPrecision(columnType);
         int columnScale = ColumnType.getDecimalScale(columnType);
 
@@ -1189,13 +1173,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     putStringToDecimal128Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
             default -> putStringToDecimal256Loop(dataMem, cursor, rowCount, columnPrecision, columnScale, columnIndex);
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToGeoHashColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int typeBits = ColumnType.getGeoHashBits(columnType);
 
         cursor.resetRowPosition();
@@ -1267,13 +1251,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("invalid GeoHash column type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToLong256Column(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1289,13 +1273,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 dataMem.putLong256(result.getLong0(), result.getLong1(), result.getLong2(), result.getLong3());
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToNumericColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         switch (ColumnType.tagOf(columnType)) {
@@ -1409,36 +1393,36 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             default -> throw CairoException.nonCritical()
                     .put("unsupported target type: ").put(ColumnType.nameOf(columnType));
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToSymbolColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = sink.getSymbolMapReader(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
             if (cursor.isNull()) {
                 dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                walWriter.markSymbolMapNull(columnIndex);
+                sink.markSymbolMapNull(columnIndex);
             } else {
                 DirectUtf8Sequence value = cursor.getUtf8Value();
                 strSink.clear();
                 CharSequence symbolValue = Utf8s.directUtf8ToUtf16(value, strSink);
-                int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                int symbolKey = sink.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
                 dataMem.putInt(symbolKey);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToTimestampColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount, int columnType) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         boolean columnIsNanos = (columnType == ColumnType.TIMESTAMP_NANO);
 
         cursor.resetRowPosition();
@@ -1464,13 +1448,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putStringToUuidColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1489,7 +1473,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -1508,8 +1492,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        SymbolMapReader symbolMapReader = walWriter.getSymbolMapReader(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        SymbolMapReader symbolMapReader = sink.getSymbolMapReader(columnIndex);
 
         if (symbolMapReader == null) {
             throw CairoException.nonCritical().put("symbol map reader is not available");
@@ -1531,7 +1515,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 cursor.advanceRow();
                 if (cursor.isNull()) {
                     dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                    walWriter.markSymbolMapNull(columnIndex);
+                    sink.markSymbolMapNull(columnIndex);
                     continue;
                 }
 
@@ -1547,11 +1531,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 CharSequence symbolValue = cursor.getSymbolCharSequence();
                 if (symbolValue == null) {
                     dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                    walWriter.markSymbolMapNull(columnIndex);
+                    sink.markSymbolMapNull(columnIndex);
                     continue;
                 }
 
-                symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                symbolKey = sink.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
                 dataMem.putInt(symbolKey);
                 if (symbolKey < initialSymbolCount) {
                     columnCache.put(clientSymbolId, symbolKey);
@@ -1562,32 +1546,32 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 cursor.advanceRow();
                 if (cursor.isNull()) {
                     dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                    walWriter.markSymbolMapNull(columnIndex);
+                    sink.markSymbolMapNull(columnIndex);
                     continue;
                 }
 
                 DirectUtf8Sequence utf8Value = cursor.getSymbolUtf8();
                 if (utf8Value == null) {
                     dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                    walWriter.markSymbolMapNull(columnIndex);
+                    sink.markSymbolMapNull(columnIndex);
                     continue;
                 }
 
                 strSink.clear();
                 CharSequence symbolValue = Utf8s.directUtf8ToUtf16(utf8Value, strSink);
-                int symbolKey = walWriter.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
+                int symbolKey = sink.resolveSymbol(columnIndex, symbolValue, symbolMapReader);
                 dataMem.putInt(symbolKey);
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putSymbolToStringColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1603,14 +1587,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putSymbolToVarcharColumn(int columnIndex, QwpSymbolColumnCursor cursor, int rowCount) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
             cursor.advanceRow();
@@ -1633,7 +1617,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 }
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -1647,8 +1631,8 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int timestampIndex = walWriter.getMetadata().getTimestampIndex();
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        int timestampIndex = sink.getMetadata().getTimestampIndex();
         boolean isDesignated = (columnIndex == timestampIndex);
 
         if (isDesignated) {
@@ -1663,7 +1647,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     timestamp = Unsafe.getLong(valuesAddress + (long) valueIdx * 8);
                     valueIdx++;
                 }
-                walWriter.validateDesignatedTimestampBounds(timestamp);
+                sink.validateDesignatedTimestampBounds(timestamp);
                 dataMem.putLong128(timestamp, startRowId + row);
             }
         } else {
@@ -1683,7 +1667,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, this.startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, this.startRowId + rowCount - 1);
     }
 
     @Override
@@ -1698,7 +1682,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
 
         // Determine conversion direction
         // TYPE_TIMESTAMP = microseconds, TYPE_TIMESTAMP_NANOS = nanoseconds
@@ -1733,7 +1717,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
             if (isDesignated) {
                 // Designated timestamp: write 128-bit (timestamp, rowId) pairs
-                walWriter.validateDesignatedTimestampBounds(timestamp);
+                sink.validateDesignatedTimestampBounds(timestamp);
                 dataMem.putLong128(timestamp, startRowId + row);
             } else {
                 // Non-designated timestamp: write as regular LONG
@@ -1741,14 +1725,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, this.startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, this.startRowId + rowCount - 1);
     }
 
     @Override
     public void putTimestampToStringColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
         boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
 
         cursor.resetRowPosition();
@@ -1764,14 +1748,14 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 StringTypeDriver.appendValue(auxMem, dataMem, strSink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putTimestampToVarcharColumn(int columnIndex, QwpTimestampColumnCursor cursor, int rowCount, byte ilpType) {
         checkInColumnarWrite();
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
         boolean wireIsNanos = (ilpType == TYPE_TIMESTAMP_NANOS);
 
         cursor.resetRowPosition();
@@ -1787,15 +1771,15 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 VarcharTypeDriver.appendValue(auxMem, dataMem, utf8Sink);
             }
         }
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
     public void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        MemoryMA auxMem = walWriter.getAuxColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
+        MemoryMA auxMem = sink.getAuxColumn(columnIndex);
 
         cursor.resetRowPosition();
         for (int row = 0; row < rowCount; row++) {
@@ -1808,7 +1792,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             }
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     private static void formatFixedOtherValue(CharSink<?> sink, QwpFixedWidthColumnCursor cursor, byte ilpType) {
@@ -1859,7 +1843,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     .put("double value ").put(value)
                     .put(" loses precision when converted to ")
                     .put(ColumnType.nameOf(columnType))
-                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                    .put(" [column=").put(sink.getMetadata().getColumnName(columnIndex))
                     .put(']');
         }
         return longValue;
@@ -1876,7 +1860,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
             throw CairoException.schemaMismatch()
                     .put("integer value ").put(value)
                     .put(" out of range for ").put(ColumnType.nameOf(columnType))
-                    .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                    .put(" [column=").put(sink.getMetadata().getColumnName(columnIndex))
                     .put(", min=").put(min)
                     .put(", max=").put(max)
                     .put(']');
@@ -1888,7 +1872,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                 .put("double value ").put(value)
                 .put(" cannot be converted to ")
                 .put(ColumnType.nameOf(columnType))
-                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(" [column=").put(sink.getMetadata().getColumnName(columnIndex))
                 .put(", scale=").put(columnScale)
                 .put(']');
     }
@@ -1899,9 +1883,9 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     private void putFixedColumnWithNulls(int columnIndex, long valuesAddress, long nullBitmapAddress, int rowCount) {
         // Expand sparse to dense, inserting null sentinels
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int valueIdx = 0;
-        final int columnType = walWriter.getMetadata().getColumnType(columnIndex);
+        final int columnType = sink.getMetadata().getColumnType(columnIndex);
         switch (ColumnType.tagOf(columnType)) {
             case ColumnType.BYTE -> {
                 for (int row = 0; row < rowCount; row++) {
@@ -2007,13 +1991,13 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     .put("unsupported column type for direct copy: ").put(ColumnType.nameOf(columnType));
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     private QwpParseException stringParseError(CharSequence typeName, DirectUtf8Sequence value, int columnIndex) {
         return QwpParseException.instance(QwpParseException.ErrorCode.SCHEMA_MISMATCH)
                 .put("cannot parse ").put(typeName).put(" from string [value=").put(value)
-                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(", column=").put(sink.getMetadata().getColumnName(columnIndex))
                 .put(']');
     }
 
@@ -2021,7 +2005,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         return QwpParseException.instance(QwpParseException.ErrorCode.SCHEMA_MISMATCH)
                 .put("cannot parse ").put(ColumnType.nameOf(columnType))
                 .put(" from string [value=").put(value)
-                .put(", column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(", column=").put(sink.getMetadata().getColumnName(columnIndex))
                 .put(']');
     }
 
@@ -2098,7 +2082,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     ) {
         checkInColumnarWrite();
 
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        MemoryMA dataMem = sink.getDataColumn(columnIndex);
         int wireScale = cursor.getScale() & 0xFF;
         int columnScale = ColumnType.getDecimalScale(columnType);
 
@@ -2114,7 +2098,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
                     .put("unknown decimal wire type: ").put(cursor.getTypeCode());
         }
 
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
+        sink.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     private void putFloatToDecimal128Loop(
@@ -2464,7 +2448,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         throw CairoException.schemaMismatch()
                 .put("decimal value overflows ")
                 .put(ColumnType.nameOf(columnType))
-                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(" [column=").put(sink.getMetadata().getColumnName(columnIndex))
                 .put(", decimal=").put(decimal)
                 .put(']');
     }
@@ -2473,7 +2457,7 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         throw CairoException.schemaMismatch()
                 .put("decimal value causes precision loss converting to ")
                 .put(ColumnType.nameOf(columnType))
-                .put(" [column=").put(walWriter.getMetadata().getColumnName(columnIndex))
+                .put(" [column=").put(sink.getMetadata().getColumnName(columnIndex))
                 .put(", decimal=").put(decimal)
                 .put(']');
     }

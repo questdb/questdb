@@ -5319,7 +5319,7 @@ public class WalWriterTest extends AbstractCairoTest {
     public void testTenantCloseRunsPoolBookkeepingWhenColumnarCancelFails() throws Exception {
         // M2 follow-up: cleanupBeforeClose() also cancels a pending columnar
         // write, via WalColumnarRowAppender.cancelColumnarWrite() ->
-        // WalWriter.cancelColumnarWrite(startRowId) -> setAppendPosition() --
+        // WalWriter.cancelColumnarWrite() -> setAppendPosition() --
         // the same IO-performing rollback call as
         // testTenantCloseRunsPoolBookkeepingWhenRollbackFails(). Before the
         // distressed latch was added to cleanupBeforeClose(), this path had
