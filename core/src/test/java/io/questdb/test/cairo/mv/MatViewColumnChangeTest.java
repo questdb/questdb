@@ -35,6 +35,7 @@ import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -162,6 +163,10 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     private final CountDownLatch applyRelease = new CountDownLatch(1);
     private final AtomicReference<Throwable> applierError = new AtomicReference<>();
     private final AtomicReference<String> pauseSuffix = new AtomicReference<>();
+    // A test that fails the WAL apply of a column change sets it to the changed table's directory and the swap file of
+    // its metadata: every removal of the swap file then fails, after the pause when the test races the change, and the
+    // apply fails before the change is visible.
+    private final AtomicReference<String> removalFailSuffix = new AtomicReference<>();
     private final FilesFacade pausingFf = new TestFilesFacadeImpl() {
         @Override
         public boolean removeQuiet(LPSZ name) {
@@ -173,6 +178,10 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
+            }
+            final String failSuffix = removalFailSuffix.get();
+            if (failSuffix != null && Utf8s.containsAscii(name, failSuffix)) {
+                return false;
             }
             return super.removeQuiet(name);
         }
@@ -347,6 +356,68 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             execute("DROP MATERIALIZED VIEW mv");
             drainWalAndMatViewQueues();
             Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testGuardAfterPassContinuesPastViewCheckedBeforeChange() throws Exception {
+        // The refreshed view mv0, which calls count(), precedes the view mv, created and built while the DROP of count
+        // applies, in the base's dependent views. The guard's check after the change skips mv0, whose SQL the check
+        // before the change found without a bare count, and goes on to invalidate mv.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBase();
+            createViewAndBuild("mv0", "REFRESH MANUAL", COUNT_CALL_SQL);
+            assertViewState("mv0", "valid", "", 1);
+            raceColumnChange("base", DROP_COUNT, () -> createViewAndBuild("mv", "REFRESH MANUAL", COUNT_VIEW_SQL));
+            drainWalAndMatViewQueues();
+            assertViewState("mv0", "valid", "", 1);
+            Assert.assertFalse(getViewState("mv0").hasPendingInvalidationReason());
+            assertViewRows("mv0", COUNT_CALL_ROWS);
+            assertViewState("mv", "invalid", COUNT_REASON, 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+        });
+    }
+
+    @Test
+    public void testGuardAfterPassForgetsChangeWhoseApplyFailed() throws Exception {
+        // The WAL apply job's guard checks the base's views before the DROP of count applies, and the apply fails and
+        // suspends the base's WAL, so the guard's check after the change does not run. The same job then applies a
+        // change of base2 that changes no column name, and the guard checks no view of base2 after it: the refreshed
+        // view mv2, whose SQL reads base2's column count bare, stays valid and keeps reading the column.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBase();
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, count LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base2 VALUES ('a', 1.0, 7, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, 8, '2024-01-01T01:10:00.000000Z')");
+            drainWalQueue();
+            createViewAndBuild("mv2", "REFRESH MANUAL", BASE2_COUNT_VIEW_SQL);
+            assertViewState("mv2", "valid", "", 1);
+            final TableToken baseToken = engine.verifyTableName("base");
+            final TableToken base2Token = engine.verifyTableName("base2");
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                removalFailSuffix.set(baseToken.getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+                execute(DROP_COUNT);
+                drainWalQueue(walApplyJob);
+                removalFailSuffix.set(null);
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(baseToken));
+                Assert.assertEquals(1, appliedTxn(baseToken));
+
+                // the guard sees structural changes only, such as DEDUP ENABLE, which changes no column name
+                execute("ALTER TABLE base2 DEDUP ENABLE UPSERT KEYS(ts)");
+                drainWalQueue(walApplyJob);
+                Assert.assertEquals(2, appliedTxn(base2Token));
+            }
+            Assert.assertFalse(getViewState("mv2").hasPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewState("mv2", "valid", "", 1);
+            assertViewRows("mv2", COUNT_COLUMN_ROWS);
+
+            execute("INSERT INTO base2 VALUES ('c', 3.0, 9, '2024-01-01T02:10:00.000000Z')");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mv2 INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv2", "valid", "", 3);
+            assertViewRows("mv2", COUNT_COLUMN_ROWS + "2024-01-01T02:00:00.000000Z\tc\t9\t3.0\n");
+            assertSqlCursors(BASE2_COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv2 ORDER BY ts, sym");
         });
     }
 
@@ -2126,6 +2197,40 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
             assertViewState("mv", "valid", "", 3);
             assertViewRows("mv", COUNT_CALL_ROWS + "2024-01-01T02:00:00.000000Z\ta\t2\t6.0\n");
             assertSqlCursors(COUNT_CALL_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testGuardKeepsViewCreatedWhileDropFailsToApply() throws Exception {
+        // The view is created and built from base txn 1 while the DROP of count applies, after the guard checked the
+        // base's views, and the apply then fails and suspends the base's WAL. The guard checks no view after a change
+        // that did not apply, so the view stays valid. RESUME WAL then skips the DROP, the base keeps the column count,
+        // and the view keeps refreshing with rows that read it. No row inserted after the resume could hold a count:
+        // the base's writes follow its sequencer, which has dropped the column.
+        assertMemoryLeak(pausingFf, () -> {
+            createCountBase();
+            final TableToken baseToken = engine.verifyTableName("base");
+            removalFailSuffix.set(baseToken.getDirName() + Files.SEPARATOR + TableUtils.META_SWAP_FILE_NAME);
+            raceColumnChange("base", DROP_COUNT, () -> createViewAndBuild("mv", "REFRESH MANUAL", COUNT_VIEW_SQL));
+            removalFailSuffix.set(null);
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(baseToken));
+            Assert.assertEquals(1, appliedTxn(baseToken));
+            Assert.assertFalse(getViewState("mv").hasPendingInvalidationReason());
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 1);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+
+            // the DROP is the base's txn 2, which the resume skips, and the refresh moves past it with nothing to
+            // recompute
+            execute("ALTER TABLE base RESUME WAL FROM TXN 3");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(baseToken));
+            Assert.assertEquals(2, appliedTxn(baseToken));
+            execute("REFRESH MATERIALIZED VIEW mv INCREMENTAL");
+            drainWalAndMatViewQueues();
+            assertViewState("mv", "valid", "", 2);
+            assertViewRows("mv", COUNT_COLUMN_ROWS);
+            assertSqlCursors(COUNT_VIEW_SQL + " ORDER BY ts, sym", "mv ORDER BY ts, sym");
         });
     }
 
