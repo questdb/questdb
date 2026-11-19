@@ -460,7 +460,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     public void addStatementRequirements(int position, CharSequence statement, int requirements, SqlExecutionContext executionContext)
             throws SqlException {
         admitRequirements(requirements, position, statement, true, executionContext);
-        executionRequirements.add(requirements, requirementPosition(position));
+        executionRequirements.add(requirements, getRequirementPosition(position));
     }
 
     /**
@@ -491,7 +491,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             return false;
         }
         admitRequirements(factory.getExecutionRequirements(), position, name, false, executionContext);
-        executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
+        executionRequirements.add(factory.getExecutionRequirements(), getRequirementPosition(position));
         return true;
     }
 
@@ -924,7 +924,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             nonDeterministicCallNames.add(Chars.toString(name));
             nonDeterministicCallPositions.add(position);
         }
-        executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
+        executionRequirements.add(factory.getExecutionRequirements(), getRequirementPosition(position));
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
@@ -1087,6 +1087,15 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
 
     public int getNonDeterministicCallPosition(int index) {
         return nonDeterministicCallPositions.getQuick(index);
+    }
+
+    /**
+     * The position where the requirements of a call or SHOW statement at {@code position} surface in the compiled SQL:
+     * the name of the outermost view binding entered, see {@link #enterExecutionRequirementPosition}, or the position
+     * itself.
+     */
+    public int getRequirementPosition(int position) {
+        return executionRequirementPosition > -1 ? executionRequirementPosition : position;
     }
 
     /**
@@ -1677,7 +1686,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             return;
         }
         if ((requirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            final int requirementPosition = requirementPosition(position);
+            final int requirementPosition = getRequirementPosition(position);
             if (executionContext.isViewMetadataSubquery()) {
                 SqlExecutionRequirements.checkViewMetadataSubquery(requirements, requirementPosition, name, isStatement);
             }
@@ -1689,9 +1698,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             return;
         }
         if (executionContext.isMatViewCompile()) {
-            executionRequirements.defer(requirements, requirementPosition(position), name, isStatement, executionContext.getTableFunctionView());
+            executionRequirements.defer(requirements, getRequirementPosition(position), name, isStatement, executionContext.getTableFunctionView());
         } else {
-            SqlExecutionRequirements.checkStoredView(requirements, requirementPosition(position), name, isStatement,
+            SqlExecutionRequirements.checkStoredView(requirements, getRequirementPosition(position), name, isStatement,
                     executionContext.getTableFunctionView(), executionContext);
         }
     }
@@ -1976,10 +1985,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             default:
                 return function;
         }
-    }
-
-    private int requirementPosition(int position) {
-        return executionRequirementPosition > -1 ? executionRequirementPosition : position;
     }
 
     /**

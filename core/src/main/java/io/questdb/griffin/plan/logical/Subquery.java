@@ -42,39 +42,16 @@ import io.questdb.std.ObjectFactory;
 public final class Subquery implements Mutable {
     public static final ObjectFactory<Subquery> FACTORY = Subquery::new;
     private final OutputMetadataFactory outputMetadata = new OutputMetadataFactory();
-    private String administrativeCallName;
-    private int administrativeCallPosition = -1;
     private int depth;
-    private boolean isAdministrativeStatement;
     private boolean isStable;
     private LogicalPlan root;
 
     @Override
     public void clear() {
-        administrativeCallName = null;
-        administrativeCallPosition = -1;
         depth = 0;
-        isAdministrativeStatement = false;
         isStable = false;
         root = null;
         outputMetadata.metadata.clear();
-    }
-
-    /**
-     * The name of the first call or SHOW statement binding admitted for the sub-query, which a view's PIVOT IN
-     * subquery holds, that needs the Enterprise security context of the caller, or null, see
-     * {@link io.questdb.griffin.SqlExecutionRequirements#checkViewMetadataSubquery}.
-     */
-    public String getAdministrativeCallName() {
-        return administrativeCallName;
-    }
-
-    /**
-     * The position where the requirements of the call {@link #getAdministrativeCallName()} names surface in the
-     * compiled SQL, or -1.
-     */
-    public int getAdministrativeCallPosition() {
-        return administrativeCallPosition;
     }
 
     public int getDepth() {
@@ -92,10 +69,6 @@ public final class Subquery implements Mutable {
         return root;
     }
 
-    public boolean isAdministrativeStatement() {
-        return isAdministrativeStatement;
-    }
-
     public boolean isStable() {
         return isStable;
     }
@@ -106,12 +79,6 @@ public final class Subquery implements Mutable {
         this.isStable = isStable;
         outputMetadata.of(root.getOutput());
         return this;
-    }
-
-    public void setAdministrativeCall(String name, int position, boolean isStatement) {
-        administrativeCallName = name;
-        administrativeCallPosition = position;
-        isAdministrativeStatement = isStatement;
     }
 
     public void setRoot(LogicalPlan root) {

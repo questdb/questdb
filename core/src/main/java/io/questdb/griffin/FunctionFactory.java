@@ -109,10 +109,11 @@ public interface FunctionFactory {
 
     /**
      * How the value of the call depends on the precision of its TIMESTAMP argument, so a filter over a set column
-     * whose branches differ in precision may make the call at each branch's precision when it does not depend on it.
-     * The default answers {@link TimestampPrecisionUse#DEPENDENT}.
+     * whose branches differ in precision may make the call at each branch's precision when it does not depend on it,
+     * see {@code BranchPrecisionRewrite}. The default answers {@link TimestampPrecisionUse#DEPENDENT}.
      *
-     * @param firstConstant the text of the call's first argument when that is a constant, otherwise null
+     * @param firstConstant the SQL spelling of the call's first argument when that is a text or character constant,
+     *                      quoted as in SQL, otherwise null
      */
     default TimestampPrecisionUse getTimestampPrecisionUse(@Nullable CharSequence firstConstant) {
         return TimestampPrecisionUse.DEPENDENT;

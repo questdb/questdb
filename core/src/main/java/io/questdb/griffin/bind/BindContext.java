@@ -502,9 +502,6 @@ final class BindContext implements Mutable {
         if (scope.intrinsicTimestampColumnIds.size() > 0 && scope.intrinsicTimestampColumnIds.contains(inputId)) {
             scope.intrinsicTimestampColumnIds.add(outputId);
         }
-        if (scope.ambiguousTimestampColumnIds.size() > 0 && scope.ambiguousTimestampColumnIds.contains(inputId)) {
-            scope.ambiguousTimestampColumnIds.add(outputId);
-        }
     }
 
     boolean isAggregate(ExpressionNode expression) {
@@ -616,12 +613,11 @@ final class BindContext implements Mutable {
 
     void stopTimestampIntrinsics(OutputSchema output) {
         final BindScope scope = scopes.current();
-        if (scope.intrinsicTimestampColumnIds.size() == 0 && scope.ambiguousTimestampColumnIds.size() == 0) {
+        if (scope.intrinsicTimestampColumnIds.size() == 0) {
             return;
         }
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             scope.intrinsicTimestampColumnIds.remove(output.getColumnId(i));
-            scope.ambiguousTimestampColumnIds.remove(output.getColumnId(i));
         }
     }
 

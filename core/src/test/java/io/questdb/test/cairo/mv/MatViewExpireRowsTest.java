@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.ExpiryReadPolicy;
+import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -1672,21 +1673,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute("insert into base values (1, '2024-01-01'), (2, '2024-01-02')");
             execute("create materialized view mv as (select * from base)");
             drainWalAndMatViewQueues();
-            try (
-                    SqlExecutionContextImpl walApplyContext = new SqlExecutionContextImpl(engine, 1) {
-                        @Override
-                        public boolean isWalApplication() {
-                            return true;
-                        }
-                    }.with(AllowAllSecurityContext.INSTANCE);
-                    SqlCompiler compiler = engine.getSqlCompiler();
-                    AlterOperation alter = compiler.compile("alter materialized view mv set expire rows when ts > '2300-01-01'", walApplyContext)
-                            .getAlterOperation();
-                    TableWriter writer = getWriter("mv")
-            ) {
-                alter.withContext(walApplyContext);
-                writer.apply(alter, true);
-            }
+            replaySetExpireAsWalApply("ts > '2300-01-01'");
             assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1700,6 +1687,187 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("v\n1.0\n2.0\n");
+        });
+    }
+
+    @Test
+    public void testNegationCancellingOverNullRejected() throws Exception {
+        // A read binds the keep-filter, NOT (<predicate>) with the negation pushed down, so an odd count of NOT over
+        // NULL cancels to a bare NULL at the root of the filter, which is no boolean expression, while the predicate
+        // binds on its own as one. DDL binds the keep-filter through the read path itself, so it refuses such a
+        // policy at CREATE and at ALTER with the read's error. A stored one fails every read of the view, which the
+        // replay of a SET EXPIRE shows. An even count leaves a negation over NULL, which reads NULL as false, and an
+        // operand of AND or OR, which takes NULL as false; both bind.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values (1.0, '2024-01-01'), (2.0, '2024-01-02')");
+            drainWalQueue();
+            final String error = "invalid EXPIRE ROWS predicate: boolean expression expected";
+            final String[] rejected = {"NOT null", "not (null)", "NOT NOT NOT null", "NOT ((null))"};
+            for (String policy : rejected) {
+                assertExceptionNoLeakCheck("create materialized view mv as (select * from base) expire rows when " + policy, 25, error);
+                assertNull(engine.getTableTokenIfExists("mv"));
+            }
+            // NULL reads as false, so NOT NOT NULL expires no row, and NOT NULL as true expires every row it meets. A
+            // keep-filter that folds to TRUE leaves the scan of the view, whose size is known.
+            final String[][] accepted = {
+                    {"NOT NOT null", "v\n1.0\n2.0\n", "sized"},
+                    {"v > 1.5 and not null", "v\n1.0\n", "unsized"},
+                    {"v > 1.5 or not null", "v\n", "unsized"},
+                    {"v > 1.5 or null", "v\n1.0\n", "unsized"}
+            };
+            for (String[] policy : accepted) {
+                execute("create materialized view mv as (select * from base) expire rows when " + policy[0]);
+                drainWalAndMatViewQueues();
+                if ("sized".equals(policy[2])) {
+                    assertQuery("select v from mv").noLeakCheck().expectSize().returns(policy[1]);
+                } else {
+                    assertQuery("select v from mv").noLeakCheck().returns(policy[1]);
+                }
+                execute("drop materialized view mv");
+                drainWalAndMatViewQueues();
+            }
+            execute("create materialized view mv as (select * from base) expire rows when v > 1.5");
+            drainWalAndMatViewQueues();
+            for (String policy : rejected) {
+                assertExceptionNoLeakCheck("alter materialized view mv set expire rows when " + policy, 48, error);
+            }
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nv > 1.5\n");
+            assertQuery("select v from mv").noLeakCheck().returns("v\n1.0\n");
+            replaySetExpireAsWalApply("NOT null");
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\nNOT null\n");
+            assertExceptionNoLeakCheck("select v from mv", 14, "invalid EXPIRE ROWS policy of 'mv': boolean expression expected");
+            assertExceptionNoLeakCheck("select count() from mv", 20, "invalid EXPIRE ROWS policy of 'mv': boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testRootAggregateClassifiedByBoundOverload() throws Exception {
+        // Every read and the sweep embed the predicate as an argument, where an aggregate is illegal, so DDL refuses
+        // an aggregate root with the policy's own rule. The overload the root binds to decides it, not the name of
+        // the call: array_elem_max over one array is the aggregate, over two the element-wise scalar, which is no
+        // boolean expression, and binds where a boolean wraps it. An aggregate nested in an argument fails as in any
+        // expression. A window function makes the policy a window policy, which binds as one.
+        assertMemoryLeak(() -> {
+            execute("create table base (flag boolean, v double, a double[], ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into base values (true, 1.0, ARRAY[1.0], '2024-01-01'), (false, 2.0, ARRAY[-1.0], '2024-01-02')");
+            drainWalQueue();
+            final String[][] rejected = {
+                    {"bool_and(flag)", "invalid EXPIRE ROWS predicate: aggregate functions are not supported"},
+                    {"(bool_and(flag))", "invalid EXPIRE ROWS predicate: aggregate functions are not supported"},
+                    {"count()", "invalid EXPIRE ROWS predicate: aggregate functions are not supported"},
+                    {"array_elem_max(a)", "invalid EXPIRE ROWS predicate: aggregate functions are not supported"},
+                    {"array_elem_max(a, a)", "invalid EXPIRE ROWS predicate: expected a boolean expression"},
+                    {"not bool_and(flag)", "invalid EXPIRE ROWS predicate: Aggregate function cannot be passed as an argument"},
+                    {"max(v) > 1.0", "invalid EXPIRE ROWS predicate: Aggregate function cannot be passed as an argument"},
+                    {"bool_or(flag) over ()", "invalid EXPIRE ROWS policy: non-window function called in window context"}
+            };
+            for (String[] policy : rejected) {
+                assertExceptionNoLeakCheck("create materialized view mv as (select * from base) expire rows when " + policy[0], 25, policy[1]);
+                assertNull(engine.getTableTokenIfExists("mv"));
+            }
+            execute("create materialized view mv as (select * from base) expire rows when array_elem_max(a, a)[1] > 0");
+            drainWalAndMatViewQueues();
+            assertQuery("select v from mv").noLeakCheck().returns("v\n2.0\n");
+            for (String[] policy : rejected) {
+                assertExceptionNoLeakCheck("alter materialized view mv set expire rows when " + policy[0], 48, policy[1]);
+            }
+            assertQuery("select expire_clause from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\narray_elem_max(a, a)[1] > 0\n");
+        });
+    }
+
+    @Test
+    public void testPredicateWithNoExpressionRejected() throws Exception {
+        // Text that holds no expression binds to nothing, which is no boolean expression. The grammar refuses an empty
+        // WHEN before validation, so only a caller of the compiler API reaches this.
+        assertMemoryLeak(() -> {
+            execute("create table x (v double, ts timestamp) timestamp(ts) partition by day");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("x"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                for (String text : new String[]{"", "   ", "/* no expression */"}) {
+                    try {
+                        compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, text, 7);
+                        Assert.fail("expected a rejection of '" + text + "'");
+                    } catch (SqlException e) {
+                        assertEquals(7, e.getPosition());
+                        TestUtils.assertEquals("invalid EXPIRE ROWS predicate: expected a boolean expression", e.getFlyweightMessage());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testClassificationWithoutDesignatedTimestampProvesNoThreshold() throws Exception {
+        // Only a comparison with the designated timestamp proves that a clock threshold advances. Over metadata with
+        // no designated timestamp, which only a caller of the compiler API passes, the same comparison on a TIMESTAMP
+        // column reads the clock and proves nothing, while a clock-free predicate stays monotonic.
+        assertMemoryLeak(() -> {
+            execute("create table x (v double, t timestamp)");
+            try (
+                    TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("x"));
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final ExpiryValidationResult clockThreshold = compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "t < dateadd('d', -1, now())", 0);
+                assertTrue(clockThreshold.hasClock());
+                assertFalse(clockThreshold.isDeterministic());
+                assertFalse(clockThreshold.isMonotonic());
+                final ExpiryValidationResult clockFree = compiler.validateExpiryPredicateOnMetadata(
+                        sqlExecutionContext, metadata, "v < 0", 0);
+                assertFalse(clockFree.hasClock());
+                assertTrue(clockFree.isMonotonic());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateValidatesPolicyOverViewTimestamp() throws Exception {
+        // The TIMESTAMP clause of a view can designate a column its SELECT does not. CREATE validates and classifies
+        // the policy over the metadata the view is created with, as the cleanup job and materialized_views() do, so
+        // a threshold on the view's designated timestamp counts as one at CREATE too: no advisory says the policy
+        // keeps its rows on disk while materialized_views() reports that cleanup reclaims them, and a NULL threshold
+        // fails as it does at ALTER.
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts2 timestamp, ts timestamp) timestamp(ts) partition by day wal");
+            assertExceptionNoLeakCheck(
+                    "create materialized view mv as (select ts, max(ts2) mx, sum(v) s from base sample by 1h) timestamp(mx) "
+                            + "expire rows when mx < cast(null as timestamp)",
+                    25,
+                    "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire"
+            );
+            assertNull(engine.getTableTokenIfExists("mv"));
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                execute("create materialized view mv as (select ts, max(ts2) mx, sum(v) s from base sample by 1h) timestamp(mx) "
+                        + "expire rows when mx < dateadd('d', -1, now())");
+                capture.drain();
+                capture.assertLogged("EXPIRE ROWS on an aggregating (non-passthrough) materialized view");
+                capture.assertNotLogged("EXPIRE ROWS policy hides rows without reclaiming disk");
+            } finally {
+                capture.stop();
+            }
+            assertQuery("select expire_enforcement from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_enforcement\nFILTER_AND_RECLAIM\n");
+            assertExceptionNoLeakCheck(
+                    "alter materialized view mv set expire rows when mx < cast(null as timestamp)",
+                    48,
+                    "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire"
+            );
         });
     }
 
@@ -4152,5 +4320,25 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
         final int start = showCreateOutput.indexOf("CREATE MATERIALIZED VIEW");
         assertTrue("no CREATE statement in: " + showCreateOutput, start > -1);
         return showCreateOutput.substring(start).replace("'mv'", "'" + newName + "'");
+    }
+
+    // Replays SET EXPIRE ROWS WHEN <predicate> on view mv as the WAL apply job does: it compiles the statement in a
+    // WAL apply context, which validates nothing, and applies the operation to the view's writer.
+    private static void replaySetExpireAsWalApply(String predicate) throws Exception {
+        try (
+                SqlExecutionContextImpl walApplyContext = new SqlExecutionContextImpl(engine, 1) {
+                    @Override
+                    public boolean isWalApplication() {
+                        return true;
+                    }
+                }.with(AllowAllSecurityContext.INSTANCE);
+                SqlCompiler compiler = engine.getSqlCompiler();
+                AlterOperation alter = compiler.compile("alter materialized view mv set expire rows when " + predicate, walApplyContext)
+                        .getAlterOperation();
+                TableWriter writer = getWriter("mv")
+        ) {
+            alter.withContext(walApplyContext);
+            writer.apply(alter, true);
+        }
     }
 }

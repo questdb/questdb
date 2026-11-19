@@ -24,20 +24,35 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ComparisonOperator;
+import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.fuzz.clauses.SetOperationClause;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.function.LongPredicate;
+
 public class SetFilterPushdownTest extends AbstractCairoTest {
+    // 2024-01-01T00:00:00Z in nanoseconds
+    private static final long BASE_NANOS = 1_704_067_200_000_000_000L;
+
     @Test
     public void testAliasesThreeBranchesAndConjunctResidualKeepTheirScopes() throws Exception {
         assertMemoryLeak(() -> {
@@ -129,6 +144,349 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             final String setLimit = "SELECT id FROM (SELECT ts,id FROM lp_sp_events UNION ALL SELECT ts,id FROM lp_sp_plain LIMIT 1)"
                     + " WHERE hour(ts)>0 ORDER BY id";
             assertRowsAndIntervalScans(setLimit, "id\n", 0);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionBoundsReachIntervalScansAtBranchPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            final String set = "SELECT * FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano) WHERE ";
+            // ts_us * 1000 > 1001 holds from 2us on; ts_ns > 1001 from 1002ns on
+            assertQuery(set + "ts > " + nanos(1_001))
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_micro
+                                      intervals: [("2024-01-01T00:00:00.000002Z","MAX")]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_nano
+                                      intervals: [("2024-01-01T00:00:00.000001002Z","MAX")]
+                            """);
+            // ts_us * 1000 >= 1001 holds from 2us on, the lower bound rounds up
+            assertQuery(set + "ts >= " + nanos(1_001))
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_micro
+                                      intervals: [("2024-01-01T00:00:00.000002Z","MAX")]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_nano
+                                      intervals: [("2024-01-01T00:00:00.000001001Z","MAX")]
+                            """);
+            // ts_us * 1000 < 999 and <= 999 hold up to 0us, the upper bound rounds down
+            for (String operator : new String[]{"<", "<="}) {
+                assertQuery(set + "ts " + operator + ' ' + nanos(999))
+                        .noLeakCheck()
+                        .assertsPlan("Union All\n"
+                                + "    PageFrame\n"
+                                + "        Row forward scan\n"
+                                + "        Interval forward scan on: lp_sp_micro\n"
+                                + "          intervals: [(\"MIN\",\"2024-01-01T00:00:00.000000Z\")]\n"
+                                + "    PageFrame\n"
+                                + "        Row forward scan\n"
+                                + "        Interval forward scan on: lp_sp_nano\n"
+                                + "          intervals: [(\"MIN\",\"2024-01-01T00:00:00.000000" + (operator.length() == 1 ? "998" : "999") + "Z\")]\n");
+            }
+            // BETWEEN keeps [ceil(999ns), floor(1001ns)] = [1us, 1us] in microseconds
+            assertQuery(set + "ts BETWEEN " + nanos(999) + " AND " + nanos(1_001))
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_micro
+                                      intervals: [("2024-01-01T00:00:00.000001Z","2024-01-01T00:00:00.000001Z")]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_nano
+                                      intervals: [("2024-01-01T00:00:00.000000999Z","2024-01-01T00:00:00.000001001Z")]
+                            """);
+            // a microsecond column holds 1000ns, but not 999ns
+            assertQuery(set + "ts IN (" + nanos(999) + ',' + nanos(1_000) + ')')
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_micro
+                                      intervals: [("2024-01-01T00:00:00.000001Z","2024-01-01T00:00:00.000001Z")]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: lp_sp_nano
+                                      intervals: [("2024-01-01T00:00:00.000000999Z","2024-01-01T00:00:00.000000999Z"),("2024-01-01T00:00:00.000001000Z","2024-01-01T00:00:00.000001000Z")]
+                            """);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionBranchFiltersSurviveParameterRebind() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            final String set = "(SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            final String sql = "SELECT id FROM " + set + " WHERE ts > $1 ORDER BY id";
+            for (int defined = 0; defined < 2; defined++) {
+                bindVariableService.clear();
+                if (defined == 1) {
+                    bindVariableService.setTimestampNano(0, BASE_NANOS + 1_001);
+                }
+                // an undefined parameter takes the set's TIMESTAMP_NS type, and both branches scan the intervals it bounds
+                try (
+                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                        RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
+                ) {
+                    Assert.assertEquals(0, countSetResiduals(compiler.getPlanForTesting()));
+                    Assert.assertEquals(2, countIntervalScans(factory, new TextPlanSink()));
+                    bindVariableService.setTimestampNano(0, BASE_NANOS + 1_001);
+                    assertRowsOnly(factory, "id\n3\n");
+                    bindVariableService.setTimestampNano(0, BASE_NANOS + 999);
+                    assertRowsOnly(factory, "id\n2\n3\n12\n13\n");
+                    bindVariableService.setTimestampNano(0, BASE_NANOS - 1);
+                    assertRowsOnly(factory, "id\n1\n2\n3\n11\n12\n13\n");
+                }
+                bindVariableService.setTimestampNano(0, BASE_NANOS + 1_000);
+                assertMixedFilter(set, "ts > $1", "id\n3\n13\n", 0);
+                assertRowsAndIntervalScans(sql, "id\n3\n13\n", 2);
+            }
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionComparisonsMatchTheSetAtMicrosecondBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            final String set = "(SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            // the instants the set returns, in nanoseconds after 2024-01-01, ordered by id
+            final int[] ids = {1, 2, 3, 11, 12, 13};
+            final long[] values = {0, 1_000, 2_000, 999, 1_000, 1_001};
+            // one nanosecond before, at and after the microsecond boundary
+            for (long c : new long[]{999, 1_000, 1_001}) {
+                assertModelFilters(set, "ts", ids, values, c, 2_000, 0, 1_500);
+            }
+            // a cast to a coarser temporal type truncates the set's value to what the branch already holds
+            assertMixedFilter(set, "ts::TIMESTAMP >= '2024-01-01T00:00:00.000001Z'", "id\n2\n3\n12\n13\n", 0);
+            assertMixedFilter(set, "ts::DATE = '2024-01-01'", "id\n1\n2\n3\n11\n12\n13\n", 0);
+            // a TIMESTAMP branch compares text parameters exactly
+            bindVariableService.clear();
+            bindVariableService.setVarchar(0, new Utf8String("2024-01-01T00:00:00.000000001Z"));
+            assertMixedFilter(set, "ts >= $1", "id\n2\n3\n11\n12\n13\n", 0);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionDateBranchesMatchTheSetAtMillisecondBoundaries() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_dates (d DATE,id INT)");
+            execute("INSERT INTO lp_sp_dates VALUES ('2024-01-01T00:00:00.000Z',1),('2024-01-01T00:00:00.001Z',2),('2024-01-01T00:00:00.002Z',3),(NULL,4)");
+            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_micro VALUES ('2024-01-01T00:00:00.000999Z',11),('2024-01-01T00:00:00.001000Z',12),('2024-01-01T00:00:00.001001Z',13)");
+            execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_nano VALUES ('2024-01-01T00:00:00.000999999Z',21),('2024-01-01T00:00:00.001000000Z',22),('2024-01-01T00:00:00.001000001Z',23)");
+            final String micros = "(SELECT d c,id FROM lp_sp_dates UNION ALL SELECT ts,id FROM lp_sp_micro)";
+            final int[] ids = {1, 2, 3, 4, 11, 12, 13};
+            // the instants the sets return, in nanoseconds after 2024-01-01, ordered by id
+            final long[] microValues = {0, 1_000_000, 2_000_000, Numbers.LONG_NULL, 999_000, 1_000_000, 1_001_000};
+            // a microsecond before, at and after the millisecond boundary
+            for (long c : new long[]{999_000, 1_000_000, 1_001_000}) {
+                assertModelFilters(micros, "c", ids, microValues, c, 2_000_000, 0, 1_500_000);
+            }
+            final int[] nanoIds = {1, 2, 3, 4, 21, 22, 23};
+            final long[] nanoValues = {0, 1_000_000, 2_000_000, Numbers.LONG_NULL, 999_999, 1_000_000, 1_000_001};
+            // a nanosecond before, at and after the millisecond boundary
+            for (long c : new long[]{999_999, 1_000_000, 1_000_001}) {
+                assertModelFilters("(SELECT d c,id FROM lp_sp_dates UNION ALL SELECT ts,id FROM lp_sp_nano)", "c", nanoIds, nanoValues, c,
+                        2_000_000, 0, 1_500_000);
+            }
+            // computed text the set types as TIMESTAMP rounds into the DATE branch as a literal does
+            assertMixedFilter(micros, "c >= '2024-01-01T00:00:00.000999Z'::VARCHAR", "id\n2\n3\n11\n12\n13\n", 0);
+            // calls whose value does not depend on the precision bind again over the DATE column
+            assertMixedFilter(micros, "hour(c) = 0", "id\n1\n2\n3\n11\n12\n13\n", 0);
+            assertMixedFilter(micros, "timestamp_floor('T', c) = '2024-01-01T00:00:00.001Z'", "id\n2\n12\n13\n", 0);
+            assertMixedFilter(micros, "dateadd('h', 1, c) > '2024-01-01T01:00:00.000999Z'", "id\n2\n3\n12\n13\n", 0);
+            // a text literal IN spans its interval in every branch; computed text stays above the DATE branch
+            assertMixedFilter(micros, "c IN '2024-01-01T00:00:00.001'", "id\n2\n12\n13\n", 0);
+            assertMixedFilter(micros, "c IN concat('2024-01-01T00:00:00', '.001')", "id\n2\n12\n13\n", 1);
+            // text that is no literal truncates to milliseconds in a DATE comparison, so it stays above the set
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-01-01T00:00:00.000999Z");
+            assertMixedFilter(micros, "c >= $1", "id\n2\n3\n11\n12\n13\n", 1);
+            // a DATE parameter is an instant at every precision
+            bindVariableService.clear();
+            bindVariableService.setDate(0, 1_704_067_200_001L);
+            assertMixedFilter(micros, "c >= $1", "id\n2\n3\n12\n13\n", 0);
+            // a call whose factory declares no precision use may read the raw value, so it stays above the set
+            assertMixedFilter(micros, "coalesce(NULL, c) = '2024-01-01T00:00:00.001000Z'", "id\n2\n12\n", 1);
+            assertMixedFilter(micros, "c = NULL", "id\n4\n", 0);
+            assertMixedFilter(micros, "c != NULL", "id\n1\n2\n3\n11\n12\n13\n", 0);
+            assertMixedFilter(micros, "c IN (NULL, '2024-01-01T00:00:00.001000Z')", "id\n2\n4\n12\n", 0);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionFiltersCrossColumnProjectionsAndJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            execute("CREATE TABLE lp_sp_keys (k INT)");
+            execute("INSERT INTO lp_sp_keys VALUES (2),(3),(13)");
+            final String set = "(SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            final String projected = "SELECT t,id FROM (SELECT id,ts t FROM (SELECT ts,id FROM " + set + ")) WHERE t >= " + nanos(1_001) + " ORDER BY id";
+            assertRowsAndIntervalScans(projected, "t\tid\n2024-01-01T00:00:00.000002000Z\t3\n2024-01-01T00:00:00.000001001Z\t13\n", 2);
+            assertSqlCursors(projected.replace(set, SetOperationClause.fence(set)), projected);
+            // an inner join pushes the conjunct into the set, which rounds it per branch
+            for (String shape : new String[]{" u JOIN lp_sp_keys k ON u.id = k.k AND u.ts = ", " u JOIN lp_sp_keys k ON u.id = k.k WHERE u.ts = "}) {
+                final String sql = "SELECT u.id FROM " + set + shape + nanos(1_001) + " ORDER BY u.id";
+                assertRowsAndIntervalScans(sql, "id\n13\n", 1);
+                assertSqlCursors(sql.replace(set, SetOperationClause.fence(set)), sql);
+            }
+            // an ON condition of one conjunct over the set
+            final String crossed = "SELECT count() FROM " + set + " u JOIN lp_sp_keys k ON u.ts >= " + nanos(1_001);
+            assertRowsAndIntervalScans(crossed, "count\n6\n", 2);
+            assertSqlCursors(crossed.replace(set, SetOperationClause.fence(set)), crossed);
+            // an outer join of inputs without a designated timestamp has no timestamp intrinsics to stop
+            assertQuery("SELECT k.k a, j.k b FROM lp_sp_keys k LEFT JOIN lp_sp_keys j ON k.k = j.k AND j.k > 2 ORDER BY a")
+                    .noLeakCheck()
+                    .returns("a\tb\n2\tnull\n3\t3\n13\t13\n");
+            // an ON conjunct over the preserved side of an outer join filters no input row
+            final String outer = "SELECT u.id, k.k FROM " + set + " u LEFT JOIN lp_sp_keys k ON u.id = k.k AND u.ts > " + nanos(999) + " ORDER BY u.id";
+            assertRowsAndIntervalScans(outer, "id\tk\n1\tnull\n2\t2\n3\t3\n11\tnull\n12\tnull\n13\t13\n", 0);
+            assertSqlCursors(outer.replace(set, SetOperationClause.fence(set)), outer);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionLatestBranchKeepsItsFilterAboveTheLatestRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            execute("CREATE TABLE lp_sp_events (ts TIMESTAMP,id INT,k SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_events VALUES ('2024-01-01T00:00:00.000000Z',31,'A'),('2024-01-01T00:00:00.000001Z',32,'A'),('2024-01-01T00:00:00.000002Z',33,'B')");
+            final String set = "(SELECT ts,id FROM lp_sp_events LATEST ON ts PARTITION BY k UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            // the latest rows are 32 and 33; a filter beneath LATEST ON would return 31 for 'A'
+            assertMixedFilter(set, "ts < " + nanos(999), "id\n", 0);
+            assertMixedFilter(set, "ts <= " + nanos(1_000), "id\n11\n12\n32\n", 0);
+            assertMixedFilter(set, "ts > " + nanos(1_000), "id\n13\n33\n", 0);
+            assertQuery("SELECT * FROM " + set + " WHERE ts > " + nanos(1_000))
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            "Filter filter: 2024-01-01T00:00:00.000001Z<ts",
+                            "Interval forward scan on: lp_sp_nano"
+                    );
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionLimitsBeforeEpochAndFarFuture() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            execute("CREATE TABLE lp_sp_old (t TIMESTAMP,id INT)");
+            // the extreme microseconds whose nanoseconds TIMESTAMP_NS still holds
+            execute("""
+                    INSERT INTO lp_sp_old VALUES
+                        (-9_223_372_036_854_775,1),(-1_000_001,2),(-1,3),(0,4),(NULL,5),(9_223_372_036_854_775,6)
+                    """);
+            final String set = "(SELECT t c,id FROM lp_sp_old UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            final int[] ids = {1, 2, 3, 4, 5, 6, 11, 12, 13};
+            final long[] values = {
+                    -9_223_372_036_854_775_000L, -1_000_001_000L, -1_000L, 0, Numbers.LONG_NULL, 9_223_372_036_854_775_000L,
+                    BASE_NANOS + 999, BASE_NANOS + 1_000, BASE_NANOS + 1_001
+            };
+            final long[] constants = {
+                    Long.MIN_VALUE + 1, -9_223_372_036_854_775_001L, -9_223_372_036_854_775_000L, -9_223_372_036_854_774_999L,
+                    -1_000_001_001L, -1_001, -1_000, -999, -1, 0, 1,
+                    9_223_372_036_854_774_999L, 9_223_372_036_854_775_000L, 9_223_372_036_854_775_001L, Long.MAX_VALUE
+            };
+            final String[] operators = {"=", "!=", "<", "<=", ">", ">="};
+            for (long c : constants) {
+                final String constant = "(" + withUnderscores(c) + ")::TIMESTAMP_NS";
+                for (String operator : operators) {
+                    final ComparisonOperator comparison = ComparisonOperator.of(operator);
+                    Assert.assertNotNull(comparison);
+                    assertMixedFilter(set, "c " + operator + ' ' + constant,
+                            expectedIds(ids, values, v -> comparison.test(v, c), comparison == ComparisonOperator.NOT_EQUAL), 0);
+                }
+                assertMixedFilter(set, "c BETWEEN " + constant + " AND (9_223_372_036_854_775_000)::TIMESTAMP_NS",
+                        expectedIds(ids, values, v -> Math.min(c, 9_223_372_036_854_775_000L) <= v
+                                && v <= Math.max(c, 9_223_372_036_854_775_000L), false), 0);
+            }
+            // the branch compares a microsecond beyond the nanosecond range in microseconds; only reading the
+            // set's column converts it, and fails
+            execute("CREATE TABLE lp_sp_far (t TIMESTAMP,id INT)");
+            execute("INSERT INTO lp_sp_far VALUES ('3000-01-01',1),('2024-01-01',2)");
+            final String far = "(SELECT t c,id FROM lp_sp_far UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            assertQuery("SELECT id FROM " + far + " WHERE c < '2200-01-01' ORDER BY id")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("id\n2\n11\n12\n13\n");
+            assertQuery("SELECT id FROM " + far + " WHERE c > '2200-01-01'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("id\n1\n");
+            try (RecordCursorFactory factory = select("SELECT c, id FROM " + far + " WHERE c > '2200-01-01'")) {
+                assertRowsOnly(factory, "c\tid\n");
+                Assert.fail();
+            } catch (ImplicitCastException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value: 32503680000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            }
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionNestedSetsRoundAtEachLevel() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            execute("CREATE TABLE lp_sp_micro2 (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_micro2 VALUES ('2024-01-01T00:00:00.000001Z',21),('2024-01-01T00:00:00.000003Z',22)");
+            execute("CREATE TABLE lp_sp_dates (d DATE,id INT)");
+            execute("INSERT INTO lp_sp_dates VALUES ('2024-01-01T00:00:00.000Z',31),('2024-01-01T00:00:00.001Z',32)");
+            final String micros = "(SELECT ts,id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_micro2)"
+                    + " UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            assertMixedFilter(micros, "ts >= " + nanos(1_001), "id\n3\n13\n22\n", 0);
+            assertRowsAndIntervalScans("SELECT id FROM " + micros + " WHERE ts >= " + nanos(1_001) + " ORDER BY id", "id\n3\n13\n22\n", 3);
+            assertMixedFilter(micros, "ts = " + nanos(1_000), "id\n2\n12\n21\n", 0);
+            // nanoseconds round to microseconds and then to milliseconds
+            final String dates = "(SELECT ts,id FROM lp_sp_nano UNION ALL SELECT c,id FROM (SELECT d c,id FROM lp_sp_dates"
+                    + " UNION ALL SELECT ts,id FROM lp_sp_micro))";
+            assertMixedFilter(dates, "ts > " + nanos(999), "id\n2\n3\n12\n13\n32\n", 0);
+            assertMixedFilter(dates, "ts <= '2024-01-01T00:00:00.000999999Z'", "id\n1\n2\n3\n11\n12\n13\n31\n", 0);
+            // no microsecond holds the instant, so the inner set reads under a false filter
+            assertMixedFilter(dates, "ts = '2024-01-01T00:00:00.001000001Z'", "id\n", 1);
+            final String chain = "(SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano UNION ALL SELECT ts,id FROM lp_sp_micro2)";
+            assertMixedFilter(chain, "ts BETWEEN " + nanos(999) + " AND " + nanos(2_999), "id\n2\n3\n11\n12\n13\n21\n", 0);
+            assertMixedFilter("(SELECT ts,id FROM lp_sp_nano INTERSECT SELECT ts,id FROM lp_sp_micro)", "ts >= " + nanos(999), "id\n", 0);
+            assertMixedFilter("(SELECT ts,1 id FROM lp_sp_nano INTERSECT SELECT ts,1 FROM lp_sp_micro)", "ts >= " + nanos(999), "id\n1\n", 0);
+            assertMixedFilter("(SELECT ts,id FROM lp_sp_micro EXCEPT SELECT ts,id - 10 FROM lp_sp_nano)", "ts <= " + nanos(1_001), "id\n1\n", 0);
+        });
+    }
+
+    @Test
+    public void testMixedPrecisionStatefulAndSubqueryConjunctsStayAbove() throws Exception {
+        assertMemoryLeak(() -> {
+            createBoundaryRows();
+            final String set = "(SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            // rnd_int(0, 1, 0) * 0 is always 0 but is not one value per execution
+            final String random = "SELECT id FROM " + set + " WHERE ts > dateadd('s', rnd_int(0, 1, 0) * 0, " + nanos(999) + "::TIMESTAMP_NS) ORDER BY id";
+            assertLogicalResidual(random, "id\n2\n3\n12\n13\n", 1);
+            assertRowsAndIntervalScans(random, "id\n2\n3\n12\n13\n", 0);
+            // the sub-query binds once; the branch of the set's own precision takes a copy, as it did before
+            final String subquery = "SELECT id FROM " + set + " WHERE ts > (SELECT min(ts) FROM lp_sp_nano) ORDER BY id";
+            assertQuery(subquery).noLeakCheck().sizeMayVary().returns("id\n2\n3\n12\n13\n");
+            assertSqlCursors(subquery.replace(set, SetOperationClause.fence(set)), subquery);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (RecordCursorFactory factory = compiler.compile(subquery, sqlExecutionContext).getRecordCursorFactory()) {
+                    final ObjList<CursorExpression> cursors = new ObjList<>();
+                    collectCursors(compiler.getPlanForTesting(), cursors);
+                    Assert.assertEquals(2, cursors.size());
+                    Assert.assertSame(cursors.getQuick(0).getSubquery(), cursors.getQuick(1).getSubquery());
+                    Assert.assertEquals(1, countSetResiduals(compiler.getPlanForTesting()));
+                    assertRowsOnly(factory, "id\n2\n3\n12\n13\n");
+                }
+            }
         });
     }
 
@@ -413,12 +771,63 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         });
     }
 
+    private static void collectCursors(LogicalPlan plan, ObjList<CursorExpression> sink) {
+        plan.visitReads(new PlanExpressionVisitor() {
+            @Override
+            public int visitColumnId(int columnId, int position) {
+                return columnId;
+            }
+
+            @Override
+            public BoundExpression visitExpression(BoundExpression expression) {
+                expression.walk(node -> {
+                    if (node instanceof CursorExpression cursor) {
+                        sink.add(cursor);
+                    }
+                    return TreeWalk.CONTINUE;
+                });
+                return expression;
+            }
+        });
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            collectCursors(plan.inputAt(i), sink);
+        }
+    }
+
     private static int countSetResiduals(LogicalPlan plan) {
         int count = plan instanceof FilterPlan filter && filter.getChild() instanceof SetOperationPlan ? 1 : 0;
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             count += countSetResiduals(plan.inputAt(i));
         }
         return count;
+    }
+
+    // The ids, in their order, whose value the predicate keeps, or whose value is NULL when isNullKept.
+    private static String expectedIds(int[] ids, long[] values, LongPredicate predicate, boolean isNullKept) {
+        final StringBuilder expected = new StringBuilder("id\n");
+        for (int i = 0; i < ids.length; i++) {
+            if (values[i] == Numbers.LONG_NULL ? isNullKept : predicate.test(values[i])) {
+                expected.append(ids[i]).append('\n');
+            }
+        }
+        return expected.toString();
+    }
+
+    // The nanosecond literal of 2024-01-01 plus the offset, which is under a second.
+    private static String nanos(long offset) {
+        return String.format("'2024-01-01T00:00:00.%09dZ'", offset);
+    }
+
+    private static String withUnderscores(long value) {
+        final String digits = value < 0 ? Long.toString(value).substring(1) : Long.toString(value);
+        final StringBuilder text = new StringBuilder(value < 0 ? "-" : "");
+        for (int i = 0; i < digits.length(); i++) {
+            if (i > 0 && (digits.length() - i) % 3 == 0) {
+                text.append('_');
+            }
+            text.append(digits.charAt(i));
+        }
+        return text.toString();
     }
 
     private void assertFloorPrecisionMismatches(String stride, String expected) throws Exception {
@@ -434,6 +843,39 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                 assertRowsOnly(factory, expected);
             }
         }
+    }
+
+    private void assertMixedFilter(String set, String predicate, String expected, int residuals) throws Exception {
+        final String sql = "SELECT id FROM " + set + " WHERE " + predicate + " ORDER BY id";
+        assertQuery(sql).noLeakCheck().sizeMayVary().returns(expected);
+        assertSqlCursors("SELECT id FROM " + SetOperationClause.fence(set) + " WHERE " + predicate + " ORDER BY id", sql);
+        assertLogicalResidual(sql, expected, residuals);
+    }
+
+    /**
+     * Every operator against the constant {@code c}, nanoseconds after 2024-01-01, matched against the same
+     * comparison of the instants the set returns, {@code values} in nanoseconds; {@code other} is a second IN element,
+     * {@code lo} and {@code hi} the other BETWEEN bounds, which BETWEEN takes in either order. A NULL value fails every comparison and passes its negation.
+     */
+    private void assertModelFilters(String set, String column, int[] ids, long[] values, long c, long other, long lo, long hi) throws Exception {
+        final String constant = nanos(c);
+        assertMixedFilter(set, column + " = " + constant, expectedIds(ids, values, v -> v == c, false), 0);
+        assertMixedFilter(set, column + " != " + constant, expectedIds(ids, values, v -> v != c, true), 0);
+        assertMixedFilter(set, column + " < " + constant, expectedIds(ids, values, v -> v < c, false), 0);
+        assertMixedFilter(set, column + " <= " + constant, expectedIds(ids, values, v -> v <= c, false), 0);
+        assertMixedFilter(set, column + " > " + constant, expectedIds(ids, values, v -> v > c, false), 0);
+        assertMixedFilter(set, column + " >= " + constant, expectedIds(ids, values, v -> v >= c, false), 0);
+        assertMixedFilter(set, constant + " < " + column, expectedIds(ids, values, v -> v > c, false), 0);
+        assertMixedFilter(set, column + " IN (" + constant + ", " + nanos(other) + ')',
+                expectedIds(ids, values, v -> v == c || v == other, false), 0);
+        assertMixedFilter(set, column + " NOT IN (" + constant + ", " + nanos(other) + ')',
+                expectedIds(ids, values, v -> v != c && v != other, true), 0);
+        assertMixedFilter(set, column + " BETWEEN " + constant + " AND " + nanos(hi),
+                expectedIds(ids, values, v -> Math.min(c, hi) <= v && v <= Math.max(c, hi), false), 0);
+        assertMixedFilter(set, column + " BETWEEN " + nanos(lo) + " AND " + constant,
+                expectedIds(ids, values, v -> Math.min(lo, c) <= v && v <= Math.max(lo, c), false), 0);
+        assertMixedFilter(set, column + " NOT BETWEEN " + constant + " AND " + nanos(hi),
+                expectedIds(ids, values, v -> v < Math.min(c, hi) || Math.max(c, hi) < v, true), 0);
     }
 
     private void assertNanosecondFloorBinding(String set, String stride, String floor, String expected, int intervalScans, int residuals) throws Exception {
@@ -466,13 +908,7 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         try (RecordCursorFactory factory = select(sql)) {
             assertRowsOnly(factory, expected);
             final TextPlanSink sink = new TextPlanSink();
-            sink.of(factory, sqlExecutionContext);
-            int count = 0;
-            for (int line = 1; line <= sink.getLineCount(); line++) {
-                if (sink.getLine(line).toString().contains("Interval forward scan")) {
-                    count++;
-                }
-            }
+            final int count = countIntervalScans(factory, sink);
             Assert.assertEquals(sql + "\n" + sink.getSink(), intervalScans, count);
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
@@ -490,6 +926,26 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         assertQuery("SELECT u.c FROM " + set + " u JOIN lp_sp_one k ON u.c" + predicate + " ORDER BY u.c")
                 .noLeakCheck()
                 .returns(rows);
+    }
+
+    // The interval scans of the factory's plan, which it prints into the sink.
+    private int countIntervalScans(RecordCursorFactory factory, TextPlanSink sink) {
+        sink.of(factory, sqlExecutionContext);
+        int count = 0;
+        for (int line = 1; line <= sink.getLineCount(); line++) {
+            if (sink.getLine(line).toString().contains("Interval forward scan")) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    // The microsecond and nanosecond rows on either side of the first microsecond boundary of 2024.
+    private void createBoundaryRows() throws Exception {
+        execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+        execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
+        execute("INSERT INTO lp_sp_micro VALUES ('2024-01-01T00:00:00.000000Z',1),('2024-01-01T00:00:00.000001Z',2),('2024-01-01T00:00:00.000002Z',3)");
+        execute("INSERT INTO lp_sp_nano VALUES ('2024-01-01T00:00:00.000000999Z',11),('2024-01-01T00:00:00.000001000Z',12),('2024-01-01T00:00:00.000001001Z',13)");
     }
 
     private void createRows() throws Exception {

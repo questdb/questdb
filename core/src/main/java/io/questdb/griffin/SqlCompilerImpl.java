@@ -120,6 +120,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -1010,17 +1011,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
+     * Validates the scalar policy DDL gives a materialized view: {@link #validateExpiryPredicateOnMetadata}, and then
+     * the keep-filter bound through the read path itself, see {@link #validateExpiryKeepFilterReads}. The classifying
+     * callers, the cleanup job and {@code materialized_views()}, read a stored policy and skip that last bind.
+     */
+    @Override
+    public ExpiryValidationResult validateExpiryPolicy(
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            RecordMetadata viewMetadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        final ExpiryValidationResult result = validateExpiryPredicateOnMetadata(executionContext, viewMetadata, predicate, position);
+        // Last, because it clears this compiler, which every check above reads.
+        validateExpiryKeepFilterReads(executionContext, viewToken, viewMetadata, predicate, position);
+        return result;
+    }
+
+    /**
      * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
      * expression consuming the ENTIRE text, with no root-level aggregate and no bind variables. The
      * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
      * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
      * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
      * compiler (its own lexer, parser and binder). It binds with the planner's binder, as reads and the
-     * cleanup sweep do, so a predicate it accepts binds there too.
+     * cleanup sweep do.
      * <p>
-     * The last thing it does is bind the predicate a second time, wrapped exactly as a read wraps it,
-     * because binding the bare predicate does not answer the question the DDL is being asked. See
-     * {@link #validateExpiryKeepFilterBinds}.
+     * The bare predicate is not what a read binds: a read binds its keep-filter, {@code NOT (<predicate>)} with the
+     * negation pushed down, which DDL binds through the read path itself, see {@link #validateExpiryPolicy}. This
+     * binds the shape the cleanup sweep compiles, see {@link #validateExpiryKeepFilterBinds}.
      */
     @Override
     public ExpiryValidationResult validateExpiryPredicateOnMetadata(
@@ -1029,82 +1049,73 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence predicate,
             int position
     ) throws SqlException {
-        Function f = null;
+        final ExpressionNode node;
+        final int predicateType;
         try {
-            final ExpressionNode node;
-            try {
-                clear();
-                lexer.of(predicate);
-                node = parser.expr(lexer, (QueryModel) null, this);
-                // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
-                // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
-                // read's generated SQL, where the leftover token fails the parse. Require the whole
-                // predicate to be one expression, so what validates is exactly what reads execute.
-                final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
-                if (trailingTok != null) {
-                    throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
-                }
-                // The read filter embeds the predicate as an argument, where an aggregate is illegal, and the
-                // binder refuses one at the root as it would in any expression; name the policy's own rule.
-                if (node.type == ExpressionNode.FUNCTION && getFunctionFactoryCache().isGroupBy(node.token)) {
-                    throw SqlException.$(position, "aggregate functions are not supported");
-                }
-                f = bindStatementExpression(node, metadata, ColumnType.UNDEFINED, executionContext);
-            } catch (SqlException | CairoException | ImplicitCastException e) {
-                // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
-                // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
-                // invalid policy rather than escaping the DDL as a bare cast error.
-                final String reason = reasonOf(e);
-                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
+            clear();
+            lexer.of(predicate);
+            node = parser.expr(lexer, (QueryModel) null, this);
+            // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
+            // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
+            // read's generated SQL, where the leftover token fails the parse. Require the whole
+            // predicate to be one expression, so what validates is exactly what reads execute.
+            final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
+            if (trailingTok != null) {
+                throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
             }
-            if (f == null || !ColumnType.isBoolean(f.getType())) {
-                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
-            }
-            // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
-            // every read with "undefined bind variable"; reject it at definition time instead.
-            if (expiryExpressionHasBindVariable(node)) {
-                throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
-            }
-            final IntList referencedColumnIndexes = new IntList();
-            collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
-            // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
-            // function that evaluates such a string reads it in init() but reports neither
-            // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
-            final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
-            // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
-            // that every node gives each row the same value in every execution and session. The cleanup job
-            // evaluates the predicate once per sweep under the root context, so a clock read, a session
-            // value such as current_user(), or any other function whose value can change could make it
-            // delete a row that a later read, or a reader in another session, keeps. The proof works on the
-            // AST rather than on the bound functions: a function reports isNonDeterministic(),
-            // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
-            // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
-            // reaches it.
-            // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
-            // change between evaluations, so a row expired now can un-expire later - physical cleanup
-            // under such a predicate could delete rows the read filter must show again. The expression
-            // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
-            // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
-            // protection: if a subquery ever does reach classification, the predicate is classified
-            // non-monotonic and the cleanup job skips physical deletion for it.
-            final boolean isDeterministic = !hasClock
-                    && !expiryExpressionHasQuery(node)
-                    && isExpiryRowOnlyExpression(node, metadata);
-            final int timestampIndex = metadata.getTimestampIndex();
-            final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
-            final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
-            final boolean isMonotonic = isDeterministic
-                    || isProvenAdvancingClockExpression(thresholdNode);
-            final ExpiryValidationResult result =
-                    new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
-            // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
-            validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
-            // Also re-lexes, so it has to follow everything that reads `node`.
-            rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
-            return result;
-        } finally {
-            Misc.free(f);
+            predicateType = bindExpiryPredicate(node, metadata, position, executionContext);
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
+            // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
+            // invalid policy rather than escaping the DDL as a bare cast error.
+            final String reason = reasonOf(e);
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
         }
+        if (!ColumnType.isBoolean(predicateType)) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
+        }
+        // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
+        // every read with "undefined bind variable"; reject it at definition time instead.
+        if (expiryExpressionHasBindVariable(node)) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
+        }
+        final IntList referencedColumnIndexes = new IntList();
+        collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
+        // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
+        // function that evaluates such a string reads it in init() but reports neither
+        // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
+        final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
+        // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
+        // that every node gives each row the same value in every execution and session. The cleanup job
+        // evaluates the predicate once per sweep under the root context, so a clock read, a session
+        // value such as current_user(), or any other function whose value can change could make it
+        // delete a row that a later read, or a reader in another session, keeps. The proof works on the
+        // AST rather than on the bound functions: a function reports isNonDeterministic(),
+        // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
+        // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
+        // reaches it.
+        // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
+        // change between evaluations, so a row expired now can un-expire later - physical cleanup
+        // under such a predicate could delete rows the read filter must show again. The expression
+        // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
+        // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
+        // protection: if a subquery ever does reach classification, the predicate is classified
+        // non-monotonic and the cleanup job skips physical deletion for it.
+        final boolean isDeterministic = !hasClock
+                && !expiryExpressionHasQuery(node)
+                && isExpiryRowOnlyExpression(node, metadata);
+        final int timestampIndex = metadata.getTimestampIndex();
+        final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
+        final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
+        final boolean isMonotonic = isDeterministic
+                || isProvenAdvancingClockExpression(thresholdNode);
+        final ExpiryValidationResult result =
+                new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
+        // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
+        validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
+        // Also re-lexes, so it has to follow everything that reads `node`.
+        rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
+        return result;
     }
 
     private static void addExpiryRowOnlyFunctions(String... names) {
@@ -3282,6 +3293,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         } finally {
             functionParser.swapCompiler(previous);
+        }
+    }
+
+    /**
+     * Binds an EXPIRE ROWS predicate on its own over a schema built from {@code metadata} and returns its type, or
+     * {@link ColumnType#UNDEFINED} for a predicate with no expression. The binder classifies the root from the overload
+     * it selects: an aggregate root fails with the policy's own rule, since every read and the cleanup sweep embed the
+     * predicate as an argument, where an aggregate is illegal, while a scalar call that shares its name with an
+     * aggregate binds as the scalar it is. Nothing instantiates the bound predicate.
+     */
+    private int bindExpiryPredicate(ExpressionNode predicate, RecordMetadata metadata, int position, SqlExecutionContext executionContext)
+            throws SqlException {
+        assert root == null;
+        if (predicate == null) {
+            return ColumnType.UNDEFINED;
+        }
+        expressionScope.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            expressionScope.addColumnFrom(metadata, i, i);
+        }
+        try {
+            final BoundExpression bound = binder.bindExpressionClassifyingRoot(predicate, expressionScope, executionContext);
+            if (bound instanceof FunctionExpression call && call.isAggregate()) {
+                throw SqlException.$(position, "aggregate functions are not supported");
+            }
+            final int type = bound.getDataType();
+            clearExpressions();
+            return type;
+        } catch (Throwable th) {
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
+        } finally {
+            expressionScope.clear();
         }
     }
 
@@ -7775,7 +7820,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
                 validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
             } else {
-                validationResult = validateExpiryPredicate(executionContext, tableMetadata, clause.predicate, clause.predicatePos);
+                validationResult = validateExpiryPredicate(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
                 authorizeExpiryPredicateSelect(executionContext, tableToken, tableMetadata, validationResult);
             }
             warnIfExpiryKeepsDisk(validationResult, clause.predicate, tableToken.getTableName());
@@ -7791,26 +7836,28 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Parses, binds, and classifies an EXPIRE ROWS predicate against existing table metadata. A successful
+     * Parses, binds, and classifies an EXPIRE ROWS predicate against the metadata of an existing view, and binds its
+     * keep-filter as every read of the view binds it, see {@link SqlCompiler#validateExpiryPolicy}. A successful
      * bind returns the reusable determinism/clock/monotonicity result; any SQL/Cairo error surfaces as a clear
      * SqlException positioned at the predicate.
      */
     private ExpiryValidationResult validateExpiryPredicate(
             SqlExecutionContext executionContext,
+            TableToken viewToken,
             RecordMetadata metadata,
             String predicate,
             int predicatePos
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compiler.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, predicatePos);
+            return compiler.validateExpiryPolicy(executionContext, viewToken, metadata, predicate, predicatePos);
         }
     }
 
     /**
      * Validates the EXPIRE ROWS predicate captured by a CREATE statement BEFORE the object is created,
      * binding it against the columns the object will have. This is purely structural: it parses + binds
-     * the expression against {@code metadata} and checks the result is boolean. It touches no table, so
-     * it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
+     * the expression and the keep-filter every read binds, and checks the result is boolean. It touches no table,
+     * so it needs no SELECT permission (unlike ALTER ... SET EXPIRE, see {@link #authorizeExpiryPredicateSelect})
      * and, running before {@code createMatView}, cannot leave a half-created object behind on failure.
      * Only a CREATE MATERIALIZED VIEW scalar WHEN policy reaches this (EXPIRE ROWS is rejected on plain
      * CREATE TABLE / CTAS / LIKE at parse time), so {@code selectMetadata} is always the view's defining-
@@ -7825,14 +7872,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (predicate == null) {
             return ExpiryValidationResult.MONOTONIC;
         }
-        // Only reachable for a CREATE MATERIALIZED VIEW scalar WHEN policy (EXPIRE ROWS is rejected on plain
-        // CREATE TABLE / CTAS / LIKE), so selectMetadata is always the view's defining-SELECT metadata.
+        // The view has the columns of its defining SELECT, and the designated timestamp CREATE settled from the
+        // SELECT and its TIMESTAMP clause, which can name a column the SELECT does not designate. Reads and the
+        // cleanup job bind the policy over the view's metadata, so validation does too.
+        final GenericRecordMetadata viewMetadata = GenericRecordMetadata.copyOfSansTimestamp(selectMetadata);
+        viewMetadata.setTimestampIndex(createTableOp.getTimestampIndex());
+        // The view does not exist yet, so its token names it for the scan of its reads and stands for no table.
+        final String viewName = Chars.toString(createTableOp.getTableName());
+        final TableToken viewToken = new TableToken(viewName, viewName, null, 0, TableToken.Type.MAT_VIEW, true, false, false, false);
         // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
-            return validationCompiler.validateExpiryPredicateOnMetadata(
-                    executionContext, selectMetadata, predicate, createTableOp.getTableNamePosition());
+            return validationCompiler.validateExpiryPolicy(
+                    executionContext, viewToken, viewMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
 
@@ -8020,6 +8073,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
         } finally {
             Misc.free(f);
+        }
+    }
+
+    /**
+     * Binds the keep-filter of the policy through the read path itself, {@link SqlBinder#bindExpiryKeepFilter}, the
+     * call every read of the view binds the policy with, over a scan of {@code viewMetadata}, and refuses the policy
+     * when that fails, with the read's error. No text spells the read's shape here: the read parses the stored
+     * predicate into {@code NOT (<predicate>)}, pushes the negation down and binds the result as a filter of the scan,
+     * whose rules a bind of the bare predicate does not apply. A negation that cancels another leaves its operand at
+     * the root, where a NULL constant is no boolean expression, so {@code NOT NULL} binds on its own and fails every
+     * read.
+     * <p>
+     * It runs when the user submits the statement, and not when WAL apply replays the stored SET EXPIRE, see
+     * {@link #alterTableSetExpire}.
+     */
+    private void validateExpiryKeepFilterReads(
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            RecordMetadata viewMetadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException {
+        try {
+            clear();
+            final SqlCompilerImpl previous = functionParser.swapCompiler(this);
+            try {
+                binder.bindExpiryKeepFilter(viewToken, viewMetadata, predicate, this, executionContext);
+            } finally {
+                functionParser.swapCompiler(previous);
+            }
+        } catch (SqlException | CairoException | ImplicitCastException e) {
+            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reasonOf(e));
+        } finally {
+            // Nothing generates the bound filter, so the functions its binding prepared close here.
+            CairoException.rethrowCleanupFailure(closePrepared(null));
         }
     }
 
@@ -8991,11 +9079,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Generates a new, owned factory of an optimised sub-query.
      */
     RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-        if (subquery.getAdministrativeCallName() != null && executionContext.isViewMetadataSubquery()) {
-            // the plan of a view's PIVOT IN subquery keeps the sub-query, see FunctionBinder.bindSubquery()
-            SqlExecutionRequirements.checkViewMetadataSubquery(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    subquery.getAdministrativeCallPosition(), subquery.getAdministrativeCallName(), subquery.isAdministrativeStatement());
-        }
         final int depth = scopes.depth();
         final boolean isWindowContextPushed = enterSubquery(SubqueryPhase.GENERATE, subquery.getDepth(), executionContext);
         try {

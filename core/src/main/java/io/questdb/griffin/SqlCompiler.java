@@ -26,6 +26,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
@@ -139,6 +140,21 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * pool calls it on a compiler that has been idle past the pool's inactive TTL, which no statement ages.
      */
     void releaseRetainedCapacity();
+
+    /**
+     * Validates the scalar EXPIRE ROWS predicate a CREATE or ALTER of a materialized view gives it: every check of
+     * {@link #validateExpiryPredicateOnMetadata}, and then the keep-filter of the policy bound exactly as every read of
+     * the view binds it, over a scan of {@code viewMetadata}, so a policy this accepts binds in every read. At CREATE
+     * the view does not exist yet: {@code viewToken} only names it, and {@code viewMetadata} lists the columns the view
+     * is created with. Any error is rewritten as a clear SqlException at {@code position}.
+     */
+    ExpiryValidationResult validateExpiryPolicy(
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            RecordMetadata viewMetadata,
+            CharSequence predicate,
+            int position
+    ) throws SqlException;
 
     /**
      * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}

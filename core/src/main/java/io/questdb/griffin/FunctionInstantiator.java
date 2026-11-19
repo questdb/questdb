@@ -291,6 +291,7 @@ public final class FunctionInstantiator implements Mutable {
         if (metadata != null && metadata.getColumnCount() != input.getColumnCount()) {
             throw new IllegalStateException("bound function input metadata has changed");
         }
+        checkAdministrativeCalls(expression, executionContext);
         final int mark = instantiations.getPos();
         try {
             return instantiateNew(expression, input, metadata, executionContext, true, null);
@@ -320,6 +321,7 @@ public final class FunctionInstantiator implements Mutable {
         if (metadata == null || metadata.getColumnCount() != input.getColumnCount()) {
             throw new IllegalStateException("bound aggregate input metadata has changed");
         }
+        checkAdministrativeCalls(expression, executionContext);
         closePreparation(expression);
         final int mark = instantiations.getPos();
         try {
@@ -363,6 +365,7 @@ public final class FunctionInstantiator implements Mutable {
         if (metadata == null || metadata.getColumnCount() != input.getColumnCount()) {
             throw new IllegalStateException("bound window input metadata has changed");
         }
+        checkAdministrativeCalls(expression, executionContext);
         closePreparation(expression);
         final int mark = instantiations.getPos();
         try {
@@ -558,6 +561,29 @@ public final class FunctionInstantiator implements Mutable {
         }
     }
 
+    /**
+     * The first administrative call, see {@link FunctionExpression#getAdministrativeCallName()}, of the expression in
+     * the order binding and master's FunctionParser build calls, which {@link PostOrderTreeTraversalAlgo} sets: the
+     * arguments of a call, the last one first, before the call. A constant that a fold took from calls keeps the call
+     * it folds as its source, so the walk visits that call too. Returns null when the expression holds none; the walk
+     * does not enter a sub-query, which generates on its own.
+     */
+    private static FunctionExpression administrativeCall(BoundExpression expression) {
+        if (expression instanceof ConstantExpression constant) {
+            return constant.getSource() != null ? administrativeCall(constant.getSource()) : null;
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = call.getArgumentCount() - 1; i > -1; i--) {
+                final FunctionExpression argumentCall = administrativeCall(call.argumentAt(i));
+                if (argumentCall != null) {
+                    return argumentCall;
+                }
+            }
+            return call.getAdministrativeCallName() != null ? call : null;
+        }
+        return null;
+    }
+
     private static void closeWorkers(ObjList<? extends ObjList<? extends Function>> workers, Throwable primary) {
         for (int i = 0, n = workers.size(); i < n; i++) {
             PerWorkerFunctionList.close(workers.getQuick(i), primary);
@@ -591,6 +617,27 @@ public final class FunctionInstantiator implements Mutable {
             entry.relocate(input);
         }
         return root;
+    }
+
+    /**
+     * Rejects the first administrative call, see {@link FunctionExpression#getAdministrativeCallName()}, that code
+     * generation would adopt or build for the expression while it generates a view's PIVOT IN subquery, before any
+     * call of the expression runs. Binding admits one only in a sub-query nested in that subquery, which runs only the
+     * calls its generated plan keeps, as master constructs only those scalars while the subquery is flagged
+     * (cd8749a10a); see FunctionBinder.bindSubquery(). The root binding built for the expression names the first one
+     * it built, a call a fold dropped from the description included, and binding builds calls in the order master
+     * does, see {@link #administrativeCall}.
+     */
+    private void checkAdministrativeCalls(BoundExpression expression, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.isViewMetadataSubquery()) {
+            final PreparedFunctions.Entry entry = prepared.findOwned(expression);
+            final FunctionExpression call = entry != null && entry.getAdministrativeCall() != null
+                    ? entry.getAdministrativeCall() : administrativeCall(expression);
+            if (call != null) {
+                SqlExecutionRequirements.checkViewMetadataSubquery(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                        call.getAdministrativeCallPosition(), call.getAdministrativeCallName(), false);
+            }
+        }
     }
 
     private void closePreparation(BoundExpression expression) {

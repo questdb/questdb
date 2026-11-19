@@ -862,7 +862,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // QueryRunner compares a set operation with its fenced form, which proves something
         // only if the planner pushes the filters of the one into the set's branches and keeps
         // those of the other above the set. The optimiser pushes a filter into branches that
-        // read the column at the set's type, the binder into branches of another precision.
+        // read the column at the set's type, and rewrites it at the precision of a branch that
+        // reads the column at a coarser temporal type.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE b (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

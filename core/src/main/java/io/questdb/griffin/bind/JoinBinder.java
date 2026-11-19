@@ -632,12 +632,6 @@ final class JoinBinder implements Mutable {
         // column elsewhere in the predicate. A mixed-source OR stays intact.
         final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, join.getOutput(), sourceAlias(source),
                 nativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
-        final int sourceIndex = joinExpressionSource(expression, join);
-        if (sourceIndex >= 0 && LogicalPlans.canPushJoinFilter(join.getInputs(), sourceIndex, lastInput)
-                && binder.distributeSetFilter(expression, bound, join.getInputs().getQuick(sourceIndex).getInput(), join.getOutput(),
-                sourceAlias(source), executionContext)) {
-            return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
-        }
         final BoundExpression predicate = ctx.functionBinder.toBooleanSubquery(bound);
         if (predicate.getDataType() != ColumnType.BOOLEAN && (predicate.getDataType() != ColumnType.NULL || !isAndArgument)) {
             final int filterInput = joinFilterInput(expression, join, lastInput);

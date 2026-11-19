@@ -106,6 +106,13 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
+     * Binds the call {@code name} over the already-bound arguments, a list the caller owns and the call only borrows.
+     */
+    BoundExpression bindCall(CharSequence name, int position, ObjList<? extends BoundExpression> args, OutputSchema input) throws SqlException {
+        return callBinder.bindCall(name, position, args, input, executionContext);
+    }
+
+    /**
      * Binds the call {@code name} over the two already-bound arguments.
      */
     BoundExpression bindCall(CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {

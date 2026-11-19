@@ -79,14 +79,6 @@ final class ExpiryReadBinder implements Mutable {
         this.policyParser = policyParser;
     }
 
-    private LogicalPlan bindKeepFilter(ScanPlan scan, TableToken token, String predicate, SqlExecutionContext executionContext) throws SqlException {
-        final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
-                policyParser.parseKeepFilter(predicate, binder.getParserCallback()), ctx.bindingExpressions);
-        final BoundExpression bound = binder.bindPredicate(keepFilter, scan, token.getTableName(), executionContext);
-        bound.walk(POLICY_CALLS);
-        return ctx.planNodes.filters.next().of(scan, bound, scan.getPosition());
-    }
-
     /**
      * The error of a read whose policy fails to bind, which DDL refuses but WAL apply replays as an older version
      * stored it: it names the policy of the table, at the read's position, since the cause sits in the policy text.
@@ -102,6 +94,26 @@ final class ExpiryReadBinder implements Mutable {
      */
     static boolean isQueryPolicy(String predicate) {
         return RowExpiryUtil.isKeepBy(predicate) || RowExpiryUtil.isWindow(predicate);
+    }
+
+    /**
+     * Binds the keep-filter of a policy on a value over the scan of its table: the predicate every read of the table
+     * filters the scan with, the rows the policy has not expired, see {@link RowExpiryUtil#appendKeepFilter}. Reads
+     * and DDL bind the policy through this one method, so a policy DDL accepts binds in every read, see
+     * {@link SqlBinder#bindExpiryKeepFilter}. What the policy reads binds without the policy of the table.
+     */
+    BoundExpression bindKeepFilter(ScanPlan scan, CharSequence predicate, SqlExecutionContext executionContext) throws SqlException {
+        final String tableName = scan.getTableToken().getTableName();
+        tablesBound.add(tableName);
+        try {
+            final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
+                    policyParser.parseKeepFilter(predicate, binder.getParserCallback()), ctx.bindingExpressions);
+            final BoundExpression bound = binder.bindPredicate(keepFilter, scan, tableName, executionContext);
+            bound.walk(POLICY_CALLS);
+            return bound;
+        } finally {
+            tablesBound.remove(tableName);
+        }
     }
 
     /**
@@ -139,16 +151,18 @@ final class ExpiryReadBinder implements Mutable {
         final TableToken token = scan.getTableToken();
         final String predicate = policy.getPredicate();
         scan.markExpiringRead();
-        tablesBound.add(token.getTableName());
         try {
             if (RowExpiryUtil.isKeepLatest(predicate)) {
-                return binder.bindLatestBy(scan, policyParser.parseKeepLatest(policy, position));
+                tablesBound.add(token.getTableName());
+                try {
+                    return binder.bindLatestBy(scan, policyParser.parseKeepLatest(policy, position));
+                } finally {
+                    tablesBound.remove(token.getTableName());
+                }
             }
-            return bindKeepFilter(scan, token, predicate, executionContext);
+            return ctx.planNodes.filters.next().of(scan, bindKeepFilter(scan, predicate, executionContext), scan.getPosition());
         } catch (SqlException e) {
             throw policyError(e, token, position);
-        } finally {
-            tablesBound.remove(token.getTableName());
         }
     }
 

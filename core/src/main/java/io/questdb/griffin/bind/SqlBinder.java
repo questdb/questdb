@@ -26,14 +26,11 @@ package io.questdb.griffin.bind;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.MetadataCache;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
-import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.BindVariableService;
-import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -52,7 +49,6 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlParserCallback;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
-import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
@@ -61,7 +57,6 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -195,11 +190,47 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
+     * Binds the keep-filter of the scalar EXPIRE ROWS policy {@code predicate} of the table exactly as every read of
+     * the table binds it, see {@link ExpiryReadBinder#bindKeepFilter}, in the current scope, which the caller cleared.
+     * The scan it binds over lists the columns of {@code metadata} as a read's scan lists the columns of the table,
+     * and reads its designated timestamp natively. DDL validates a policy with it before the policy reaches any read:
+     * over the view's metadata at ALTER, and at CREATE over the metadata the view is created with, while {@code token}
+     * names a view that does not exist yet.
+     */
+    public BoundExpression bindExpiryKeepFilter(
+            TableToken token,
+            RecordMetadata metadata,
+            CharSequence predicate,
+            SqlParserCallback parserCallback,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        this.parserCallback = parserCallback;
+        final ScanPlan scan = ctx.planNodes.scans.next().of(token, 0, 0);
+        final int timestampIndex = metadata.getTimestampIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            bindScanColumn(scan, i, metadata.getColumnName(i), metadata.getColumnType(i), metadata.isSymbolTableStatic(i),
+                    metadata.isColumnIndexed(i), i == timestampIndex);
+        }
+        scan.markExpiringRead();
+        return expiryReadBinder.bindKeepFilter(scan, predicate, executionContext);
+    }
+
+    /**
      * Binds a stand-alone expression of a statement over the scope, which no alias qualifies.
      */
     public BoundExpression bindExpression(ExpressionNode expression, OutputSchema scope, int preferredType, SqlExecutionContext executionContext)
             throws SqlException {
         return ctx.functionBinder.bind(expression, scope, null, preferredType, executionContext);
+    }
+
+    /**
+     * Binds a stand-alone expression of a statement over the scope, as {@link #bindExpression} does, except that its
+     * root binds as the overload it selects even when that is an aggregate, so the caller classifies the root from the
+     * bound call ({@link FunctionExpression#isAggregate()}) rather than from its name.
+     */
+    public BoundExpression bindExpressionClassifyingRoot(ExpressionNode expression, OutputSchema scope, SqlExecutionContext executionContext)
+            throws SqlException {
+        return ctx.functionBinder.bindClassifyingRoot(expression, scope, null, executionContext);
     }
 
     public void setBareNoArgCallSink(@Nullable ObjList<String> names, @Nullable IntList positions) {
@@ -284,49 +315,9 @@ public final class SqlBinder implements Mutable {
         return false;
     }
 
-    /**
-     * Whether a branch of the set operation, or of a set operation it reads directly, reads the column at the index
-     * as DATE.
-     */
-    private static boolean hasDateBranch(SetOperationPlan operation, int columnIndex) {
-        for (int i = 0; i < 2; i++) {
-            final LogicalPlan branch = operation.inputAt(i);
-            if (branch instanceof SetOperationPlan branchOperation ? hasDateBranch(branchOperation, columnIndex)
-                    : ColumnType.tagOf(branch.getOutput().getColumnType(columnIndex)) == ColumnType.DATE) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Whether the expression reads a bind variable the service does not define yet.
-     */
-    private static boolean hasUndefinedBindVariable(ExpressionNode node, BindVariableService bindVariables) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.BIND_VARIABLE) {
-            return FunctionBinder.definedBindVariable(node.token, bindVariables) == null;
-        }
-        for (int i = 0, n = node.operandCount(); i < n; i++) {
-            if (hasUndefinedBindVariable(node.operandAt(i), bindVariables)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private static boolean isProjectionReference(ExpressionNode expression, OutputSchema source, OutputSchema scope) {
         return FunctionBinder.qualifierEnd(expression, scope) < 0 && getColumnIndexQuiet(source, expression.token) < 0
                 && getColumnIndexQuiet(scope, expression.token) >= 0;
-    }
-
-    /**
-     * Whether the type is DATE or a timestamp, the types whose comparisons bind at the column's own precision.
-     */
-    private static boolean isTemporal(int type) {
-        return ColumnType.isTimestamp(type) || ColumnType.tagOf(type) == ColumnType.DATE;
     }
 
     // An object the principal may not see resolves exactly like a missing one. A model expanded from a view reads
@@ -459,9 +450,6 @@ public final class SqlBinder implements Mutable {
         }
         final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
                 nativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
-        if (distributeSetFilter(expression, bound, input, input.getOutput(), alias, executionContext)) {
-            return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
-        }
         if (!isAndArgument) {
             return bound;
         }
@@ -762,31 +750,6 @@ public final class SqlBinder implements Mutable {
         }
     }
 
-    private LogicalPlan bindSetBranchFilter(
-            ExpressionNode expression, LogicalPlan branch, int columnIndex, OutputSchema scope, int scopeIndex,
-            CharSequence alias, SqlExecutionContext executionContext
-    ) throws SqlException {
-        final OutputSchema output = branch.getOutput();
-        final BoundExpression predicate;
-        try {
-            ctx.tmpScope.clear();
-            ctx.tmpScope.add(output.getColumnId(columnIndex), scope.getColumnName(scopeIndex), output.getColumnType(columnIndex),
-                    output.getMetadata(columnIndex), true, scope.getColumnQualifier(scopeIndex));
-            ctx.tmpScope.setTimestampIndex(output.getTimestampIndex() == columnIndex ? 0 : -1);
-            final IntHashSet nativeTimestampIds = ctx.scope().joinNativeTimestampIds;
-            nativeTimestampIds.clear();
-            ctx.copyTimestampScope(output);
-            predicate = ctx.functionBinder.toBooleanSubquery(ctx.functionBinder.bindPredicate(expression, ctx.tmpScope, alias,
-                    nativeTimestampIds, ColumnType.BOOLEAN, executionContext));
-        } finally {
-            ctx.tmpScope.clear();
-        }
-        if (predicate.getDataType() != ColumnType.BOOLEAN) {
-            throw SqlException.$(expression.position, "boolean expression expected");
-        }
-        return ctx.planNodes.filters.next().of(branch, predicate, predicate.getPosition());
-    }
-
     private LogicalPlan bindSetOperation(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         if (model.getUnionModel() == null) {
@@ -809,21 +772,10 @@ public final class SqlBinder implements Mutable {
             for (int i = 0, n = tmpOutputColumns.size(); i < n; i++) {
                 operation.getOutput().add(ctx.planNodes.nextColumnId(), result.getOutput().getColumnName(i), tmpOutputColumns.getQuick(i), result.getOutput().isVisible(i));
                 operation.getOutput().setSymbolTableStatic(i, SetOperationBinder.isSymbolTableStatic(operation, i));
-                final int leftId = result.getOutput().getColumnId(i);
-                final int rightId = right.getOutput().getColumnId(i);
-                if (scope.intrinsicTimestampColumnIds.contains(leftId) || scope.intrinsicTimestampColumnIds.contains(rightId)
-                        || scope.ambiguousTimestampColumnIds.contains(leftId) || scope.ambiguousTimestampColumnIds.contains(rightId)) {
-                    final int leftType = result.getOutput().getColumnType(i);
-                    final int rightType = right.getOutput().getColumnType(i);
-                    if (LogicalPlans.canPushSetTimestamp(operation, i)) {
-                        scope.intrinsicTimestampColumnIds.add(operation.getOutput().getColumnId(i));
-                    } else if (isTemporal(leftType) && isTemporal(rightType) && (leftType != rightType
-                            || scope.ambiguousTimestampColumnIds.contains(leftId) || scope.ambiguousTimestampColumnIds.contains(rightId))) {
-                        // A bound comparison cannot silently cross a timestamp
-                        // precision conversion. Equal branch precisions bind as
-                        // an ordinary column above a row-selection boundary.
-                        scope.ambiguousTimestampColumnIds.add(operation.getOutput().getColumnId(i));
-                    }
+                if ((scope.intrinsicTimestampColumnIds.contains(result.getOutput().getColumnId(i))
+                        || scope.intrinsicTimestampColumnIds.contains(right.getOutput().getColumnId(i)))
+                        && LogicalPlans.canPushSetTimestamp(operation, i)) {
+                    scope.intrinsicTimestampColumnIds.add(operation.getOutput().getColumnId(i));
                 }
             }
             operation.getOutput().setTimestampIndex(SetOperationBinder.resolveTimestampIndex(operation));
@@ -1082,25 +1034,6 @@ public final class SqlBinder implements Mutable {
         modelDepth++;
     }
 
-    /**
-     * Whether every argument of the call is an instant of the column, see {@link #isInstant}, or precision exact, see
-     * {@link #isPrecisionExact}, and one is an instant.
-     */
-    private boolean hasInstantArgument(ExpressionNode call, boolean isTextExact, SqlExecutionContext executionContext) {
-        boolean hasInstant = false;
-        for (int i = 0, n = call.operandCount(); i < n; i++) {
-            final ExpressionNode argument = call.operandAt(i);
-            if (argument != null) {
-                if (isInstant(argument, isTextExact, executionContext)) {
-                    hasInstant = true;
-                } else if (!isPrecisionExact(argument, isTextExact, executionContext)) {
-                    return false;
-                }
-            }
-        }
-        return hasInstant;
-    }
-
     private boolean isCursorNameTaken(CharSequence name) {
         final BindScope scope = ctx.scope();
         for (int i = 0, n = scope.cursorNames.size(); i < n; i++) {
@@ -1109,113 +1042,6 @@ public final class SqlBinder implements Mutable {
             }
         }
         return false;
-    }
-
-    /**
-     * Whether the expression reads the ambiguous set column, the only column it reads, as an instant: it is the
-     * column, a cast of an instant to DATE or a timestamp, or a call that returns the same instant at every precision,
-     * see {@link TimestampPrecisionUse#PRESERVING}, whose other arguments are precision exact, see
-     * {@link #isPrecisionExact}.
-     */
-    private boolean isInstant(ExpressionNode node, boolean isTextExact, SqlExecutionContext executionContext) {
-        if (node.type == ExpressionNode.LITERAL) {
-            return true;
-        }
-        if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
-            return false;
-        }
-        if (SqlKeywords.isCastKeyword(node.token) && node.paramCount == 2) {
-            return isTemporal(ColumnType.typeOf(node.rhs.token)) && isInstant(node.lhs, isTextExact, executionContext);
-        }
-        return ctx.functionFactoryCache.getTimestampPrecisionUse(node) == TimestampPrecisionUse.PRESERVING
-                && hasInstantArgument(node, isTextExact, executionContext);
-    }
-
-    /**
-     * Whether the conjunct, which reads no column but the ambiguous set column, means the same at each branch's
-     * precision as at the column's set type: it compares instants of the column, see {@link #isInstant}, only with
-     * each other and with timestamp values, see {@link #isTimestampValue}, and reads them otherwise only as arguments of
-     * calls whose value does not depend on the precision, see {@link TimestampPrecisionUse#INVARIANT}. Text that is
-     * not a literal counts as a timestamp value only when {@code isTextExact}, as no branch reads the column as DATE.
-     */
-    private boolean isPrecisionExact(ExpressionNode node, boolean isTextExact, SqlExecutionContext executionContext) {
-        if (node == null) {
-            return true;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            return false;
-        }
-        if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
-            return true;
-        }
-        final int operandCount = node.operandCount();
-        if (ComparisonOperator.of(Chars.toString(node.token)) != null || SqlKeywords.isInKeyword(node.token)
-                || SqlKeywords.isBetweenKeyword(node.token)) {
-            boolean isInstantCompared = false;
-            boolean isTimestampCompared = true;
-            for (int i = 0; i < operandCount; i++) {
-                final ExpressionNode operand = node.operandAt(i);
-                if (operand != null) {
-                    if (isInstant(operand, isTextExact, executionContext)) {
-                        isInstantCompared = true;
-                    } else {
-                        isTimestampCompared = isTimestampCompared && isTimestampValue(operand, isTextExact, executionContext);
-                    }
-                }
-            }
-            if (isInstantCompared) {
-                return isTimestampCompared;
-            }
-        }
-        if (ctx.functionFactoryCache.getTimestampPrecisionUse(node) == TimestampPrecisionUse.INVARIANT) {
-            return hasInstantArgument(node, isTextExact, executionContext);
-        }
-        for (int i = 0; i < operandCount; i++) {
-            if (!isPrecisionExact(node.operandAt(i), isTextExact, executionContext)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Whether the value, which reads no column, is one a comparison converts exactly to the precision of the column it
-     * compares: timestamp text or NULL, a value whose type is DATE or a timestamp, or text when {@code isTextExact}. A
-     * bind variable has the type the service defines; any other expression has the type it binds to on its own,
-     * without input columns. An expression that reads an undefined bind variable is not one, so binding it here
-     * defines no bind variable, and neither is one that fails to bind on its own, which the conjunct's own binding
-     * reports.
-     */
-    private boolean isTimestampValue(ExpressionNode value, boolean isTextExact, SqlExecutionContext executionContext) {
-        final BindVariableService bindVariables = executionContext.getBindVariableService();
-        final int type;
-        switch (value.type) {
-            case ExpressionNode.CONSTANT -> {
-                return Chars.isQuoted(value.token) || SqlKeywords.isNullKeyword(value.token);
-            }
-            case ExpressionNode.BIND_VARIABLE -> {
-                final Function bindVariable = FunctionBinder.definedBindVariable(value.token, bindVariables);
-                if (bindVariable == null) {
-                    return false;
-                }
-                type = bindVariable.getType();
-            }
-            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION -> {
-                if (hasColumnReference(value) || hasUndefinedBindVariable(value, bindVariables)) {
-                    return false;
-                }
-                try {
-                    type = ctx.functionBinder.bind(value, ctx.emptySchema, null, executionContext).getDataType();
-                } catch (SqlException | CairoException | ImplicitCastException | UnsupportedOperationException e) {
-                    return false;
-                }
-            }
-            default -> {
-                return false;
-            }
-        }
-        final short tag = ColumnType.tagOf(type);
-        return isTemporal(type) || isTextExact && (tag == ColumnType.STRING || tag == ColumnType.VARCHAR);
     }
 
     private LowerCaseCharSequenceObjHashMap<CharSequence> mergeHints(
@@ -1247,24 +1073,6 @@ public final class SqlBinder implements Mutable {
             }
         }
         return referenceScope;
-    }
-
-    private boolean referencesOnlyColumn(ExpressionNode expression, OutputSchema output, CharSequence alias, int index) {
-        if (expression == null) {
-            return true;
-        }
-        return switch (expression.type) {
-            case ExpressionNode.LITERAL -> FunctionBinder.findColumn(expression, output, alias) == index;
-            case ExpressionNode.QUERY -> false;
-            default -> {
-                for (int i = 0, n = expression.operandCount(); i < n; i++) {
-                    if (!referencesOnlyColumn(expression.operandAt(i), output, alias, index)) {
-                        yield false;
-                    }
-                }
-                yield true;
-            }
-        };
     }
 
     private int scanHints(QueryModel source) {
@@ -1703,65 +1511,6 @@ public final class SqlBinder implements Mutable {
     ExpressionNode copyWhereClause(QueryModel source) {
         return source.getWhereClause() == null ? null
                 : SqlUtil.optimiseBooleanNot(ExpressionNode.deepClone(ctx.bindingExpressions, source.getWhereClause()), ctx.bindingExpressions);
-    }
-
-    /**
-     * Binds a conjunct that references only a mixed-precision set
-     * timestamp in every set branch, so each branch applies its own precision,
-     * when that precision does not change what it means, see {@link #isPrecisionExact}, and {@code predicate}, the
-     * conjunct bound over the scope, is stable within an execution: each branch then holds an instance of its own.
-     * Returns whether the conjunct left nothing to evaluate above the input.
-     */
-    boolean distributeSetFilter(
-            ExpressionNode expression, BoundExpression predicate, LogicalPlan input, OutputSchema scope, CharSequence alias,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        if (!LogicalPlans.isStableWithinExecution(predicate)) {
-            return false;
-        }
-        final ExpressionNode column = firstColumnReference(expression);
-        if (column == null) {
-            return false;
-        }
-        final int scopeIndex = FunctionBinder.findColumn(column, scope, alias);
-        if (scopeIndex < 0 || !referencesOnlyColumn(expression, scope, alias, scopeIndex)) {
-            return false;
-        }
-        LogicalPlan plan = input;
-        int columnId = scope.getColumnId(scopeIndex);
-        while (plan instanceof ProjectPlan project) {
-            final int index = project.getOutput().getColumnIndexById(columnId);
-            if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression projected)) {
-                return false;
-            }
-            columnId = projected.getColumnId();
-            plan = project.getChild();
-        }
-        if (!(plan instanceof SetOperationPlan operation) || !ctx.scope().ambiguousTimestampColumnIds.contains(columnId)) {
-            return false;
-        }
-        final int columnIndex = operation.getOutput().getColumnIndexById(columnId);
-        return LogicalPlans.setTimestampIndex(operation) == columnIndex
-                && isPrecisionExact(expression, !hasDateBranch(operation, columnIndex), executionContext)
-                && distributeSetFilter(expression, operation, columnIndex, scope, scopeIndex, alias, executionContext);
-    }
-
-    boolean distributeSetFilter(
-            ExpressionNode expression, SetOperationPlan operation, int columnIndex, OutputSchema scope, int scopeIndex,
-            CharSequence alias, SqlExecutionContext executionContext
-    ) throws SqlException {
-        boolean isDistributed = true;
-        for (int i = 0; i < 2; i++) {
-            final LogicalPlan branch = operation.inputAt(i);
-            if (branch instanceof SetOperationPlan branchOperation) {
-                isDistributed &= distributeSetFilter(expression, branchOperation, columnIndex, scope, scopeIndex, alias, executionContext);
-            } else if (LogicalPlans.skipProjects(branch) instanceof LatestByPlan) {
-                isDistributed = false;
-            } else {
-                operation.replaceInput(i, bindSetBranchFilter(expression, branch, columnIndex, scope, scopeIndex, alias, executionContext));
-            }
-        }
-        return isDistributed;
     }
 
     boolean hasSinglePredicateSource(ExpressionNode expression, LogicalPlan input, CharSequence alias) throws SqlException {

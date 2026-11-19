@@ -236,6 +236,53 @@ public class ShowExecutionRequirementsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testViewPivotRejectsOnlyKeptAdministrativeShowInSubSubquery() throws Exception {
+        // The kept sub-query nested in the PIVOT IN subquery holds the statement in a sub-query of its column y. As in
+        // master, where SqlOptimiser.checkDeferredViewMetadataRequirements() rejects only the SHOW factories code
+        // generation took into the plan (cd8749a10a), the view compile accepts the statement where the nested
+        // sub-query reads x only, and rejects it where the nested sub-query filters on y.
+        assertMemoryLeak(() -> {
+            createData();
+            final String nested = "(SELECT 1 x, CASE WHEN (SELECT count() FROM (SHOW TABLES)) >= 0 THEN 1 ELSE 0 END y FROM long_sequence(1))";
+            final String accepted = """
+                    SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                        SELECT cat FROM data WHERE val > (SELECT max(x) FROM %s)
+                    ))""".formatted(nested);
+            final String rejected = """
+                    SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                        SELECT cat FROM data WHERE val > (SELECT max(x) FROM %s WHERE y >= 0)
+                    ))""".formatted(nested);
+            final String expected = """
+                    data\tother
+                    42\t7
+                    """;
+            execute("CREATE VIEW pv AS (" + accepted + ")");
+            execute("COMPILE VIEW pv");
+            drainViewQueue();
+            assertViewStatus("pv", "valid", "");
+            assertQuery("SELECT * FROM pv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            execute("DROP VIEW pv");
+
+            final String create = "CREATE VIEW pv AS (" + rejected + ")";
+            assertQuery(create).noLeakCheck().fails(create.indexOf("SHOW"), VIEW_PIVOT_REJECTION);
+            Assert.assertNull(engine.getTableTokenIfExists("pv"));
+            Assert.assertFalse(sqlExecutionContext.isViewCompile());
+            Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
+
+            // the same PIVOT runs ad hoc, as its caller
+            assertQuery(rejected)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
     private static void createData() throws SqlException {
         execute("CREATE TABLE data (cat VARCHAR, val INT)");
         execute("INSERT INTO data VALUES ('data', 42), ('other', 7)");

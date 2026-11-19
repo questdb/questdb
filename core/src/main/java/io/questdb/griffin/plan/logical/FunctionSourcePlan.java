@@ -34,7 +34,10 @@ public final class FunctionSourcePlan extends LogicalPlan {
     public static final ObjectFactory<FunctionSourcePlan> FACTORY = FunctionSourcePlan::new;
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
+    private String administrativeCallName;
+    private int administrativeCallPosition = -1;
     private boolean hasExternalDataSource;
+    private boolean isAdministrativeStatement;
     private boolean isDeterministic;
     private boolean isLongSequence;
     private boolean isPageFrameSupported;
@@ -50,7 +53,10 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.clear();
         recordSchema.clear();
         sourceColumnIndexes.clear();
+        administrativeCallName = null;
+        administrativeCallPosition = -1;
         hasExternalDataSource = false;
+        isAdministrativeStatement = false;
         isDeterministic = false;
         isLongSequence = false;
         isPageFrameSupported = false;
@@ -70,6 +76,25 @@ public final class FunctionSourcePlan extends LogicalPlan {
         isPageFrameSupported = source.isPageFrameSupported;
         isRandomAccess = source.isRandomAccess;
         scanDirection = source.scanDirection;
+    }
+
+    /**
+     * The name of the first call or SHOW statement binding admitted for the source that needs the Enterprise security
+     * context of the caller, or null, see
+     * {@link io.questdb.griffin.SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. Binding admits such a
+     * source in a sub-query nested in a view's PIVOT IN subquery, and code generation rejects it where it takes the
+     * source while it generates that subquery, see {@link io.questdb.griffin.TableFunctionSources}.
+     */
+    public String getAdministrativeCallName() {
+        return administrativeCallName;
+    }
+
+    /**
+     * The position where the requirements of the call or statement {@link #getAdministrativeCallName()} names surface
+     * in the compiled SQL, or -1.
+     */
+    public int getAdministrativeCallPosition() {
+        return administrativeCallPosition;
     }
 
     /**
@@ -127,6 +152,13 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     /**
+     * Whether {@link #getAdministrativeCallName()} names a SHOW statement rather than a function.
+     */
+    public boolean isAdministrativeStatement() {
+        return isAdministrativeStatement;
+    }
+
+    /**
      * True when every cursor the source opens within one execution yields the same rows in the same order.
      */
     public boolean isDeterministic() {
@@ -171,6 +203,12 @@ public final class FunctionSourcePlan extends LogicalPlan {
         throw new IndexOutOfBoundsException("function source has no input: " + index);
     }
 
+    public void setAdministrativeCall(String name, int position, boolean isStatement) {
+        administrativeCallName = name;
+        administrativeCallPosition = position;
+        isAdministrativeStatement = isStatement;
+    }
+
     public void setDeterministic(boolean isDeterministic) {
         this.isDeterministic = isDeterministic;
     }
@@ -208,7 +246,10 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.visitFacts(visitor);
         visitor.recordFields("recordSchema", recordSchema);
         visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
+        visitor.fact("administrativeCallName", administrativeCallName);
+        visitor.fact("administrativeCallPosition", administrativeCallPosition);
         visitor.fact("hasExternalDataSource", hasExternalDataSource);
+        visitor.fact("isAdministrativeStatement", isAdministrativeStatement);
         visitor.fact("isDeterministic", isDeterministic);
         visitor.fact("isLongSequence", isLongSequence);
         visitor.fact("isPageFrameSupported", isPageFrameSupported);

@@ -558,6 +558,12 @@ public class FilterShapeCoverageTest {
                 Pattern.compile("\\bv (?:=|!=|<|<=|>|>=) '2024-01-0\\d(?:T\\d\\d)?'"));
         assertSetOperationCorpusMatches("ordering against a full timestamp",
                 Pattern.compile("\\bv (?:<|<=|>|>=) '2024-01-0\\dT\\d\\d:\\d\\d:00\\.000000Z'"));
+        // a branch of a coarser precision rounds a time a nanosecond, microsecond or millisecond off the tables' grid
+        for (String time : new String[]{":00:00.000000001Z", ":29:59.999999999Z", ":30:00.000001Z", ":59:59.999999Z", ":30:00.001Z", ":29:59.999Z"}) {
+            assertSetOperationCorpusMatches("comparison against " + time,
+                    Pattern.compile("\\bv (?:=|!=|<|<=|>|>=) '2024-01-0\\dT\\d\\d" + Pattern.quote(time) + '\''));
+            assertSetOperationCorpusMatches("BETWEEN bound " + time, Pattern.compile("\\bv BETWEEN '2024-01-0\\dT\\d\\d" + Pattern.quote(time) + '\''));
+        }
         assertSetOperationCorpusMatches("IN list", Pattern.compile("\\bv (?:NOT )?IN \\("));
         assertSetOperationCorpusMatches("LIKE", Pattern.compile("\\bv (?:NOT )?LIKE '"));
         assertSetOperationCorpusMatches("IS NULL", Pattern.compile("\\bv IS (?:NOT )?NULL"));
@@ -582,11 +588,12 @@ public class FilterShapeCoverageTest {
 
     @Test
     public void testSetOperationLeadsWithTheDesignatedTimestampBesideAnotherPrecision() {
-        // The binder binds a filter over a set column that mixes the designated
-        // timestamp with another precision in each branch, and the optimiser
-        // pushes one into a NULL branch as false; a UNION returns every row
-        // either branch keeps, so it shows any branch filter that means
-        // something else. SetOperationClause draws this lead on purpose: 2_775
+        // The optimiser rewrites a filter over a set column that mixes the
+        // designated timestamp with another precision into each branch at the
+        // branch's precision, and pushes one into a NULL branch as false; a
+        // UNION returns every row either branch keeps, so it shows any branch
+        // filter that means something else. SetOperationClause draws this lead
+        // on purpose: 2_775
         // of the pinned corpus's 20_000 queries. Random terms alone spell it 405
         // times, under the floor of 5%.
         assertSetOperationCorpusShare(

@@ -99,7 +99,10 @@ public final class SqlExecutionRequirements implements Mutable {
      * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use a function, or a
      * SHOW statement, with the given requirements: one that needs the Enterprise security context of the
      * caller, see {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery
-     * again, detached from any caller, whenever it recompiles the view. Other requirements pass.
+     * again, detached from any caller, whenever it recompiles the view. Other requirements pass. A sub-query
+     * nested in that subquery runs only the calls, table functions and SHOW statements its generated plan
+     * keeps, so code generation checks those where it adopts, builds or takes them, see
+     * {@link FunctionInstantiator} and {@link TableFunctionSources}.
      *
      * @param requirements the requirements of the function or statement
      * @param position     where the requirements surface in the compiled SQL

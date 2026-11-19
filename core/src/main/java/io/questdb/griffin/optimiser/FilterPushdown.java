@@ -83,6 +83,7 @@ final class FilterPushdown implements OptimiserPass {
     private static final int RUNTIME_LEAVES = 1;
     private static final int STATIC_LEAVES = 0;
     private final AggregateInputOrder aggregateInputOrder;
+    private final BranchPrecisionRewrite branchPrecision;
     private final IntIntHashMap columnMap;
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
@@ -152,6 +153,7 @@ final class FilterPushdown implements OptimiserPass {
         this.transitiveFactOrigins = transitiveFactOrigins;
         this.transitiveFactNullRejections = transitiveFactNullRejections;
         this.transitiveFacts = transitiveFacts;
+        this.branchPrecision = new BranchPrecisionRewrite(context, narrowingColumns);
     }
 
     @Override
@@ -1150,8 +1152,10 @@ final class FilterPushdown implements OptimiserPass {
 
     /**
      * Pushes the predicate, bound over the operation's column at {@code timestampIndex}, into the branch when the
-     * branch reads that column at the operation's type, or pushes false when the branch reads it at the NULL type and
-     * the predicate rejects NULL, see {@link OptimiserContext#isNullRejecting}; returns whether the branch took it.
+     * branch reads that column at the operation's type, rewrites it over the branch's column when the operation widens
+     * a coarser temporal type there and the predicate reads the column only as an instant, see
+     * {@link BranchPrecisionRewrite}, or pushes false when the branch reads it at the NULL type and the predicate
+     * rejects NULL, see {@link OptimiserContext#isNullRejecting}; returns whether the branch took it.
      */
     private boolean pushSetBranch(SetOperationPlan operation, int branchIndex, BoundExpression predicate, int timestampIndex) throws SqlException {
         final LogicalPlan branch = operation.inputAt(branchIndex);
@@ -1164,6 +1168,11 @@ final class FilterPushdown implements OptimiserPass {
             columnMap.clear();
             columnMap.put(output.getColumnId(timestampIndex), branch.getOutput().getColumnId(timestampIndex));
             replacement = context.getRewriter().copyRemappedColumns(predicate, columnMap);
+        } else if (BranchPrecisionRewrite.isWidenedTemporal(branchType, type)) {
+            replacement = branchPrecision.rewrite(predicate, output.getColumnId(timestampIndex), branch.getOutput(), timestampIndex);
+            if (replacement == null) {
+                return false;
+            }
         } else if (ColumnType.isNull(branchType) && context.isNullRejecting(predicate)) {
             replacement = context.getRewriter().newFalseConstant(predicate.getPosition());
         } else {

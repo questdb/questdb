@@ -70,7 +70,6 @@ final class BindScope implements Mutable {
     final ObjList<BoundExpression> aggregateSubstitutions = new ObjList<>();
     final LowerCaseCharSequenceIntHashMap aliasSequences = new LowerCaseCharSequenceIntHashMap();
     final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
-    final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
     final ObjList<ColumnExpression> cursorColumns;
     final ObjList<CharSequence> cursorNames;
     final ObjList<ExpressionNode> cursorNodes;
@@ -201,7 +200,6 @@ final class BindScope implements Mutable {
         aggregateSubstitutions.clear();
         aliasSequences.clear();
         aliases.clear();
-        ambiguousTimestampColumnIds.clear();
         cursorSources.clear();
         fillBindings.clear();
         groupingKeyIndexes.clear();

@@ -44,6 +44,7 @@ import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.StaticTypeFunction;
@@ -263,6 +264,19 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         callArguments.add(left);
         callArguments.add(right);
         return bindCall(name, position, input, executionContext);
+    }
+
+    /**
+     * Binds a scalar expression whose root binds as the overload it selects, an aggregate included, see
+     * {@link BindingRole#CLASSIFYING_ROOT}. Input schema and alias are borrowed only for this call.
+     */
+    public BoundExpression bindClassifyingRoot(
+            ExpressionNode node,
+            OutputSchema input,
+            CharSequence inputAlias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        return bind(node, BindingRole.CLASSIFYING_ROOT, input, inputAlias, ColumnType.UNDEFINED, null, null, null, executionContext);
     }
 
     public BoundExpression bindGroupByExpression(
@@ -861,29 +875,24 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
-     * Binds the sub-query of an expression. One nested in a view's PIVOT IN subquery runs only if the subquery's plan
-     * keeps it, so binding records the first administrative call or SHOW statement it admits for it rather than
-     * rejecting it, and code generation rejects the sub-query once it generates it, see
-     * {@link io.questdb.griffin.SqlExecutionRequirements#checkViewMetadataSubquery}. The record covers the sub-queries
-     * nested in it too, which run only if it does.
+     * Binds the sub-query of an expression. One nested in a view's PIVOT IN subquery runs only the calls, table
+     * functions and SHOW statements its generated plan keeps, as one in a column that nothing reads keeps none, so
+     * binding admits those that need the Enterprise security context of the caller, here and at every depth below,
+     * rather than rejecting them. Each records the fact on what code generation consumes, see {@link #describeCall}
+     * and {@link io.questdb.griffin.TableFunctionSources}, and code generation, which generates the subquery with the
+     * context flagged again, rejects exactly those it adopts, builds or takes, see
+     * {@link SqlExecutionRequirements#checkViewMetadataSubquery}.
      */
     private Subquery bindSubquery(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         if (!executionContext.isViewMetadataSubquery()) {
             return compiler.bindSubquery(node.queryModel, node.position, executionContext);
         }
-        final int administrativeCount = resolver.getAdministrativeCallCount();
-        final Subquery subquery;
         executionContext.setViewMetadataSubquery(false);
         try {
-            subquery = compiler.bindSubquery(node.queryModel, node.position, executionContext);
+            return compiler.bindSubquery(node.queryModel, node.position, executionContext);
         } finally {
             executionContext.setViewMetadataSubquery(true);
         }
-        if (resolver.getAdministrativeCallCount() > administrativeCount) {
-            subquery.setAdministrativeCall(resolver.getAdministrativeCallName(administrativeCount),
-                    resolver.getAdministrativeCallPosition(administrativeCount), resolver.isAdministrativeStatement(administrativeCount));
-        }
-        return subquery;
     }
 
     /**
@@ -940,6 +949,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case AGGREGATE, GROUP_BY_EXPRESSION -> CallRole.AGGREGATE_ROOT;
                 case STANDALONE ->
                         node.type == ExpressionNode.FUNCTION && isGroupBy(node.token) ? CallRole.AGGREGATE_ROOT : CallRole.ROOT;
+                case CLASSIFYING_ROOT -> ctx.isAggregate(node) ? CallRole.AGGREGATE_ROOT : CallRole.ROOT;
                 default -> CallRole.ROOT;
             };
         }
@@ -1333,8 +1343,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             for (int i = 0, n = arguments.size(); i < n; i++) {
                 flags |= arguments.getQuick(i).getFunctionFlags() & BoundExpression.NO_PARALLELISM;
             }
-            addUnconstructed(pushCall(name, role, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
-                    staticType, flags, position)));
+            addUnconstructed(pushCall(name, role, isSetOperation, describeCall(overload, name, staticType, flags, position)));
             //noinspection resource
             return ctx.planNodes.staticTypes.next().of(staticType, (flags & BoundExpression.NO_PARALLELISM) == 0);
         }
@@ -1358,7 +1367,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 for (int i = 0, n = arguments.size(); i < n; i++) {
                     arguments.getQuick(i).walk(foldedReferenceRecorder);
                 }
-                expression = markSource(constant(function, position), overload, function.getType(), BoundExpression.functionFlags(function), position);
+                expression = markSource(constant(function, position),
+                        describeCall(overload, name, function.getType(), BoundExpression.functionFlags(function), position));
                 dropLeaves(callLeafMark(), leafMark());
             } else if (first != null && isConnective(name) && (function == first || function == second)) {
                 // A connective with a constant operand returns its other operand.
@@ -1367,7 +1377,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             } else {
                 final int flags = role == CallRole.WINDOW_ROOT ? callFlags(function, arguments) | windowContextFlags(sqlExecutionContext.getWindowContext())
                         : callFlags(function, arguments);
-                expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, function.getType(), flags, position);
+                expression = describeCall(overload, name, function.getType(), flags, position);
             }
             pushCall(name, role, isSetOperation, expression);
             return function;
@@ -1408,6 +1418,22 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         captureParameter(parameter, node, isPredefined);
         return parameter;
+    }
+
+    /**
+     * Describes the call the binder resolves now over its bound arguments. A call whose factory needs the Enterprise
+     * security context of the caller records it, as the resolver admitted it, on its description and on the root
+     * being bound, whose built function holds the call or what a fold took from it: binding admits such a call in a
+     * sub-query nested in a view's PIVOT IN subquery, see {@link #bindSubquery}, and code generation rejects it where
+     * it adopts or builds it while it generates that subquery, see {@link FunctionInstantiator}.
+     */
+    private FunctionExpression describeCall(FunctionFactoryDescriptor overload, CharSequence name, int type, int flags, int position) {
+        final FunctionExpression call = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position);
+        if ((overload.getFactory().getExecutionRequirements() & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            call.setAdministrativeCall(Chars.toString(name), resolver.getRequirementPosition(position));
+            ctx.scope().currentPreparation.recordAdministrativeCall(call);
+        }
+        return call;
     }
 
     /**
@@ -1539,10 +1565,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return currentPreparation != null ? currentPreparation.leaves.size() : 0;
     }
 
-    private ConstantExpression markSource(ConstantExpression folded, FunctionFactoryDescriptor overload, int type, int flags, int position) {
-        return markSource(folded, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position));
-    }
-
     /**
      * Replaces each stand-in among the arguments of a call the binder constructs with the constant it stands in for,
      * which the function may keep.
@@ -1576,7 +1598,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     ctx.tmpPositions.add(call.getArgumentPosition(i));
                 }
                 return ctx.planNodes.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
-                        function.getType(), callFlags(function, ctx.tmpArguments), call.getPosition());
+                                function.getType(), callFlags(function, ctx.tmpArguments), call.getPosition())
+                        .setAdministrativeCall(call.getAdministrativeCallName(), call.getAdministrativeCallPosition());
             } finally {
                 ctx.tmpArguments.clear();
                 ctx.tmpPositions.clear();
@@ -2034,6 +2057,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             throw exception;
         }
         if (role == CallRole.AGGREGATE_ROOT && !factory.isGroupBy() && scope.bindingRole != BindingRole.STANDALONE
+                && scope.bindingRole != BindingRole.CLASSIFYING_ROOT
                 && !(scope.bindingRole == BindingRole.GROUP_BY_EXPRESSION && overload.isArrayElementWiseScalar())) {
             final IllegalStateException exception = new IllegalStateException("aggregate root is bound to a non-aggregate factory");
             Misc.freeObjList(args, exception);
@@ -2248,24 +2272,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
-     * The bind variable the service defines under the name, {@code $n} or {@code :name}, or null when it defines none.
-     */
-    static Function definedBindVariable(CharSequence name, BindVariableService service) {
-        if (service == null) {
-            return null;
-        }
-        if (name.charAt(0) == ':') {
-            return service.getFunction(name);
-        }
-        try {
-            final int index = Numbers.parseInt(name, 1, name.length());
-            return index > 0 ? service.getFunction(index - 1) : null;
-        } catch (NumericException e) {
-            return null;
-        }
-    }
-
-    /**
      * The index of the input column the literal names, or -1. A quoted name names the column it spells out in full
      * when the input has one, whatever dots it holds; otherwise, as an unquoted name, its last dot separates a table
      * qualifier from the column name.
@@ -2394,6 +2400,13 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     enum BindingRole {
         AGGREGATE,
+        /**
+         * A scalar expression whose root call binds as the overload it selects, an aggregate included, rather than
+         * failing as an aggregate outside its place: the caller classifies the root from the bound call, so a scalar
+         * overload that shares its name with an aggregate classifies as the scalar it is. An aggregate below the root
+         * fails as it does in a SCALAR binding.
+         */
+        CLASSIFYING_ROOT,
         GROUP_BY_EXPRESSION,
         PREDICATE,
         SCALAR,

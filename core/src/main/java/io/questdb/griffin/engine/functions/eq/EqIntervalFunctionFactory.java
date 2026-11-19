@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -63,6 +64,14 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     ) {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
+        // An untyped NULL is a NULL interval of the other argument's type: NULL = iv holds exactly when iv is NULL,
+        // whichever side the NULL stands on, as iv IS NULL does.
+        if (ColumnType.isNull(a.getType())) {
+            return new NullCheckFunc(b);
+        }
+        if (ColumnType.isNull(b.getType())) {
+            return new NullCheckFunc(a);
+        }
         if (a.getType() != b.getType()) {
             Misc.freeObjList(args);
             return BooleanConstant.FALSE;

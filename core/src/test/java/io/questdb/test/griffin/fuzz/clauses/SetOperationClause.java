@@ -65,17 +65,21 @@ import io.questdb.test.griffin.fuzz.types.SymbolType;
  * Two UNION chains are drawn on purpose. One TEXT query in four leads with two {@code sym}
  * branches and takes the type a third branch gives a SYMBOL. One TEMPORAL query in two leads with
  * the designated timestamp beside its TIMESTAMP_NS or DATE cast, in either order, or beside NULL.
- * The binder binds a filter over that column in each branch only when the branch's precision does
- * not change what the filter means, the optimiser pushes false into the NULL branch only when the
- * filter rejects NULL, and a UNION returns every row either branch keeps.
+ * The optimiser rewrites a filter over that column into a branch of a coarser precision only when
+ * the branch's precision does not change what the filter means, rounding its constants there, it
+ * pushes false into the NULL branch only when the filter rejects NULL, and a UNION returns every
+ * row either branch keeps.
  * <p>
  * The filter reads v the way its family unifies: text against timestamp texts and SYMBOL values,
  * with IN and LIKE; time against timestamps, with IN, BETWEEN, {@code timestamp_floor} and
  * {@code hour}, and through {@code ::LONG} and {@code ::STRING}, whose values depend on the
  * precision; numbers against numbers. Text constants bind as STRING; time constants, quoted
- * texts in the literal form, bind as TIMESTAMP. A join keys on the branches' {@code k}
- * with the filter over {@code u.v} in its ON clause, or, when v is text, on v itself against
- * {@code sym} or {@code vk}; a time or number key would have to match v's unified type exactly.
+ * texts in the literal form, bind as TIMESTAMP, or as TIMESTAMP_NS when they spell nanoseconds,
+ * and fall on the tables' 30-minute grid or a nanosecond, microsecond or millisecond off it,
+ * which a branch of a coarser precision rounds, see {@link #TEMPORAL_TIMES}. A join keys on the
+ * branches' {@code k} with the filter over {@code u.v} in its ON clause, or, when v is text, on v
+ * itself against {@code sym} or {@code vk}; a time or number key would have to match v's unified
+ * type exactly.
  * <p>
  * Each query carries a fenced variant, see {@link #fence}, which keeps the filter above the set.
  * The planner may push the filter into the branches only where it means there what it means over
@@ -97,6 +101,12 @@ public final class SetOperationClause {
     };
     private static final String[] SYMBOL_LEAD = {"sym", "sym"};
     private static final String[] TEMPORAL_CASTS = {"ts::TIMESTAMP_NS", "ts::DATE"};
+    // The minutes and fraction of a time constant: on the fuzz tables' 30-minute grid, or a nanosecond, microsecond or
+    // millisecond before or after a point of it, which a TIMESTAMP or DATE branch rounds to its own precision.
+    private static final String[] TEMPORAL_TIMES = {
+            ":00:00.000000Z", ":15:00.000000Z", ":30:00.000000Z", ":00:00.000000001Z", ":29:59.999999999Z",
+            ":30:00.000001Z", ":59:59.999999Z", ":30:00.001Z", ":29:59.999Z"
+    };
     private static final String[] TEXT_CASTS = {"sym::STRING"};
     private static final String[] TEXT_JOIN_KEYS = {"sym", "vk"};
     private static final String[] UNION_OPERATORS = {"UNION", "UNION ALL"};
@@ -278,8 +288,10 @@ public final class SetOperationClause {
             return new ConstantExpr(family, new FuzzConstant(value, "INT", value));
         }
         if (family == ColumnKind.TEMPORAL) {
-            final String value = timestampText(rnd, 2);
-            return new ConstantExpr(family, new FuzzConstant('\'' + value + '\'', "TIMESTAMP", value));
+            final String value = temporalText(rnd);
+            // a TIMESTAMP cast truncates nanoseconds, which the literal compares exactly
+            final boolean isNanos = value.length() - value.indexOf('.') - 2 > 6;
+            return new ConstantExpr(family, new FuzzConstant('\'' + value + '\'', isNanos ? "TIMESTAMP_NS" : "TIMESTAMP", value));
         }
         final String value = rnd.nextBoolean()
                 ? SymbolType.DOMAIN[rnd.nextInt(SymbolType.DOMAIN.length)]
@@ -312,6 +324,15 @@ public final class SetOperationClause {
             terms.add("null");
         }
         return terms.getQuick(rnd.nextInt(terms.size()));
+    }
+
+    // A time constant of the fuzz tables' days, see TEMPORAL_TIMES, drawn with as many draws as timestampText(rnd, 2).
+    private static String temporalText(Rnd rnd) {
+        final StringSink text = new StringSink();
+        text.put("2024-01-0").put(1 + rnd.nextInt(4));
+        final int hour = rnd.nextInt(24);
+        text.put('T').put(hour < 10 ? "0" : "").put(hour).put(TEMPORAL_TIMES[rnd.nextInt(TEMPORAL_TIMES.length)]);
+        return text.toString();
     }
 
     // Day, hour or microsecond precision; the fuzz tables hold 2024-01-01 to 2024-01-04 at 30-minute steps.

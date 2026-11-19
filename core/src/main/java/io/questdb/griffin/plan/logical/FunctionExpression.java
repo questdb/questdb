@@ -37,6 +37,8 @@ public final class FunctionExpression extends BoundExpression {
     public static final ObjectFactory<FunctionExpression> FACTORY = FunctionExpression::new;
     private final IntList argumentPositions = new IntList();
     private final ObjList<BoundExpression> arguments;
+    private String administrativeCallName;
+    private int administrativeCallPosition = -1;
     private boolean isPolicyPredicate;
     private boolean isProjectedOffset;
     private boolean isSetOperation;
@@ -61,9 +63,30 @@ public final class FunctionExpression extends BoundExpression {
         argumentPositions.clear();
         arguments.clear();
         overload = null;
+        administrativeCallName = null;
+        administrativeCallPosition = -1;
         isPolicyPredicate = false;
         isSetOperation = false;
         isProjectedOffset = false;
+    }
+
+    /**
+     * The name, as the SQL spells it, of the call when its factory needs the Enterprise security context of the
+     * caller, or null, see {@link io.questdb.griffin.SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}.
+     * Binding admits such a call in a sub-query nested in a view's PIVOT IN subquery, and code generation rejects it
+     * where it builds the call while it generates that subquery, see {@link io.questdb.griffin.FunctionInstantiator}.
+     * A copy of the call keeps the fact.
+     */
+    public String getAdministrativeCallName() {
+        return administrativeCallName;
+    }
+
+    /**
+     * The position where the requirements of the call {@link #getAdministrativeCallName()} names surface in the
+     * compiled SQL, or -1.
+     */
+    public int getAdministrativeCallPosition() {
+        return administrativeCallPosition;
     }
 
     public int getArgumentCount() {
@@ -153,9 +176,7 @@ public final class FunctionExpression extends BoundExpression {
     public FunctionExpression of(FunctionExpression expression, int position) {
         of(expression.overload, expression.arguments, expression.argumentPositions,
                 expression.getDataType(), expression.getFunctionFlags(), position);
-        isPolicyPredicate = expression.isPolicyPredicate;
-        isSetOperation = expression.isSetOperation;
-        isProjectedOffset = expression.isProjectedOffset;
+        copyFacts(expression);
         return this;
     }
 
@@ -166,9 +187,7 @@ public final class FunctionExpression extends BoundExpression {
     public FunctionExpression of(FunctionExpression expression, ObjList<BoundExpression> arguments, int functionFlags) {
         of(expression.overload, arguments, expression.argumentPositions,
                 expression.getDataType(), functionFlags, expression.getPosition());
-        isPolicyPredicate = expression.isPolicyPredicate;
-        isSetOperation = expression.isSetOperation;
-        isProjectedOffset = expression.isProjectedOffset;
+        copyFacts(expression);
         return this;
     }
 
@@ -191,5 +210,23 @@ public final class FunctionExpression extends BoundExpression {
         of(expression, expression.getPosition());
         isProjectedOffset = true;
         return this;
+    }
+
+    /**
+     * Records that the call needs the Enterprise security context of the caller, see
+     * {@link #getAdministrativeCallName()}; a null name records that it does not.
+     */
+    public FunctionExpression setAdministrativeCall(String name, int position) {
+        administrativeCallName = name;
+        administrativeCallPosition = position;
+        return this;
+    }
+
+    private void copyFacts(FunctionExpression expression) {
+        administrativeCallName = expression.administrativeCallName;
+        administrativeCallPosition = expression.administrativeCallPosition;
+        isPolicyPredicate = expression.isPolicyPredicate;
+        isSetOperation = expression.isSetOperation;
+        isProjectedOffset = expression.isProjectedOffset;
     }
 }
