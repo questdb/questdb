@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -748,6 +749,22 @@ public class LiveViewInstance implements QuietCloseable {
     // only on the refresh-worker thread under the refresh latch; not volatile
     // because no other thread reads it.
     private long rowsSinceLastCheckpointWritten;
+    // The checkpoint cadence's own clock and row count, which only a cadence root resets. A root
+    // a seal writes is a cadence root when no cadence root was written since the process started
+    // or the timeline retired, when cairo.live.view.checkpoint.rows window rows went through since
+    // the last one, or when the duration cadence elapsed since it; any other root is a repair
+    // root, written only because a repair owed a root at its frontier. The head's counters above
+    // reset at every head transition, a truncate's clear included, so they cannot say what the
+    // cadence called for. Mutated only on the refresh-worker thread under the refresh latch; not
+    // volatile because no other thread reads them.
+    private long lastCadenceRootWrittenUs = Numbers.LONG_NULL;
+    private long rowsSinceLastCadenceRoot;
+    // Ids of the repair roots among the timeline's two newest roots, ascending. The store writer
+    // removes the second-newest root when it is one of them, so a stream of repairs keeps the
+    // cadence roots plus the two newest. In-memory only: a restart forgets them, and the roots
+    // they named stay as ordinary roots. Mutated only on the refresh-worker thread under the
+    // refresh latch.
+    private final LongList checkpointRepairRootIds = new LongList(2);
     // Wall-clock (micros) the seal's writes stay held until, armed at the failure that
     // exhausts the streak's budget and at each one after it. The first cooldown is a pause
     // over the intact timeline, which a transient fault does not outlast; the ones after it
@@ -942,6 +959,16 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void addRowsSinceLastCheckpointWritten(long n) {
         rowsSinceLastCheckpointWritten += n;
+        rowsSinceLastCadenceRoot += n;
+    }
+
+    /**
+     * Accumulates {@code n} into the rows the checkpoint cadence counts since its last cadence
+     * root alone: the window rows a repair's replay put through beyond the ones its closing seal
+     * is passed, which the head's counter does not take.
+     */
+    public void addRowsSinceLastCadenceRoot(long n) {
+        rowsSinceLastCadenceRoot += n;
     }
 
     /**
@@ -1697,6 +1724,18 @@ public class LiveViewInstance implements QuietCloseable {
         return stateReader.getInvalidationReason();
     }
 
+    /**
+     * @return the ids of the repair roots among the timeline's two newest roots, ascending,
+     * which the next seal hands the store writer
+     */
+    public LongList getCheckpointRepairRootIds() {
+        return checkpointRepairRootIds;
+    }
+
+    public long getLastCadenceRootWrittenUs() {
+        return lastCadenceRootWrittenUs;
+    }
+
     public long getLastCheckpointWrittenUs() {
         return lastCheckpointWrittenUs;
     }
@@ -1886,6 +1925,10 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getRefreshRetryNotBeforeUs() {
         return refreshRetryNotBeforeUs;
+    }
+
+    public long getRowsSinceLastCadenceRoot() {
+        return rowsSinceLastCadenceRoot;
     }
 
     public long getRowsSinceLastCheckpointWritten() {
@@ -2611,6 +2654,27 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Forgets the checkpoint cadence and every repair root, for a retire: the fresh history
+     * restarts checkpoint ids at zero, and its first root is a cadence root.
+     */
+    public void clearCheckpointCadenceRoots() {
+        lastCadenceRootWrittenUs = Numbers.LONG_NULL;
+        rowsSinceLastCadenceRoot = 0;
+        checkpointRepairRootIds.clear();
+    }
+
+    /**
+     * Forgets the repair roots a truncate dropped: every one above the head the truncate left.
+     */
+    public void forgetCheckpointRepairRootsAbove(long headCheckpointId) {
+        for (int i = checkpointRepairRootIds.size() - 1; i >= 0; i--) {
+            if (checkpointRepairRootIds.getQuick(i) > headCheckpointId) {
+                checkpointRepairRootIds.removeIndex(i);
+            }
+        }
+    }
+
+    /**
      * Ends this view's refresh-retry backoff and resets the streak that sizes it, so the
      * next fault starts again from the shortest wait. Idempotent, and every caller runs
      * under the refresh latch. See {@link #armRefreshRetryBackoff}.
@@ -2864,6 +2928,41 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void recordCheckpointWriteMicros(long durationUs) {
         this.headCheckpointWriteMicros = durationUs;
+    }
+
+    /**
+     * Records the root a seal appended. A root whose id is at or below the newest tracked id
+     * opened a fresh history, since ids only grow within one, so every tracked id named a root
+     * of the history it replaced. The root the seal replaced and the one it removed go from the
+     * repair roots, and the appended one joins them when it is a repair root.
+     *
+     * @param droppedCheckpointId the head the seal replaced, or {@link Numbers#LONG_NULL}
+     * @param removedCheckpointId the second-newest root the seal removed, or
+     *                            {@link Numbers#LONG_NULL}
+     */
+    public void recordCheckpointRootAppended(
+            long checkpointId,
+            long droppedCheckpointId,
+            long removedCheckpointId,
+            boolean isRepairRoot
+    ) {
+        final int n = checkpointRepairRootIds.size();
+        if (n > 0 && checkpointId <= checkpointRepairRootIds.getQuick(n - 1)) {
+            checkpointRepairRootIds.clear();
+        }
+        checkpointRepairRootIds.remove(droppedCheckpointId);
+        checkpointRepairRootIds.remove(removedCheckpointId);
+        if (isRepairRoot) {
+            checkpointRepairRootIds.add(checkpointId);
+        }
+    }
+
+    /**
+     * Records a cadence root: restarts the checkpoint cadence's clock and row count.
+     */
+    public void recordCadenceRootWritten(long writtenUs) {
+        lastCadenceRootWrittenUs = writtenUs;
+        rowsSinceLastCadenceRoot = 0;
     }
 
     /**

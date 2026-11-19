@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
@@ -34,6 +35,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -65,6 +67,214 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             checkpointsDir(path).concat(LiveViewCheckpointLayout.META_DIR_NAME).slash();
             ff.mkdirs(path, configuration.getMkDirMode());
         }
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastAgainstOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[][] capacities = {{2, 2}, {3, 3}, {3, 4}, {64, 64}};
+            for (int run = 0; run < capacities.length; run++) {
+                final int[] capacity = capacities[run];
+                final long s0 = 0x5EC0_4D1A57L + capacity[0];
+                final long s1 = 0x7A11_0B5EL + capacity[1];
+                final Rnd rnd = new Rnd(s0, s1);
+                final String tag = "capacity=" + capacity[0] + "/" + capacity[1] + ", seeds=" + s0 + "L, " + s1 + "L";
+                // Each run writes its own segments into the one directory.
+                try (Harness h = new Harness(capacity[0], capacity[1], run * 10_000L)) {
+                    // A mix of the mutations a timeline sees: appends, seals over a grown head,
+                    // truncates and seals that drop the second-newest root. Each removal keeps the
+                    // size and must leave every other entry as it was.
+                    long ts = 0;
+                    long id = 0;
+                    h.append(ts, id++);
+                    int removals = 0;
+                    for (int op = 0; op < 400; op++) {
+                        ts += 1 + rnd.nextLong(5);
+                        final int kind = rnd.nextInt(10);
+                        final long sizeBefore = h.reader.size(h.root);
+                        if (kind < 4 && sizeBefore >= 2) {
+                            h.appendRemovingSecondLast(ts, id++);
+                            Assert.assertEquals(tag, sizeBefore, h.reader.size(h.root));
+                            removals++;
+                        } else if (kind == 4) {
+                            h.replaceLast(ts, id++);
+                            Assert.assertEquals(tag, sizeBefore, h.reader.size(h.root));
+                        } else if (kind == 5 && sizeBefore > 4) {
+                            // Keep at least one entry, so the tree never empties.
+                            final long[] first = h.oracle.get(0);
+                            final long[] last = h.oracle.get(h.oracle.size() - 1);
+                            Assert.assertTrue(tag, h.truncate(first[0] + 1 + rnd.nextLong(last[0] - first[0])));
+                        } else {
+                            h.append(ts, id++);
+                        }
+                        if (op % 25 == 0) {
+                            h.assertAgainstOracle(rnd, ts);
+                        }
+                    }
+                    h.assertAgainstOracle(rnd, ts);
+                    Assert.assertTrue(tag + ", removals=" + removals, removals > 100);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastCopiesOnlyTheTwoPaths() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 40; i++) {
+                    h.append(i * 10L, i);
+                }
+                final int childCount = h.reader.rootChildCount(h.root);
+                Assert.assertTrue("expected a multi-level tree", childCount >= 2);
+                final LiveViewCheckpointPageRef[] before = rootChildren(h, childCount);
+                // A replacement copies exactly the rightmost path, one page per level.
+                h.replaceLast(395, 40);
+                final int height = h.writer.getLastSegmentPageCount();
+                Assert.assertTrue("expected a tree three levels tall or more: " + height, height >= 3);
+
+                // In-order appends split leaves two-and-two, so the last leaf holds the last
+                // two positions: the removal rewrites that one leaf and its spine.
+                h.appendRemovingSecondLast(400, 41);
+                Assert.assertEquals(height, h.writer.getLastSegmentPageCount());
+                // Every page the descent decoded is written back, so each one is superseded.
+                Assert.assertEquals(height, h.writer.getLastReleasedSegmentIds().size());
+                assertRootChildrenReused(h, before, childCount - 1);
+                h.assertIterateAll();
+                Assert.assertEquals(40, h.reader.size(h.root));
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastFromALoneRightmostLeafMovesBothSeparators() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 12; i++) {
+                    h.append(i * 10L, i);
+                }
+                // Leaves split two-and-two: [0, 10] [20, 30] [40, 50] [60, 70] ... under
+                // [[0, 20], [40, 60], [80, 100]]. A truncate that keeps 0..60 leaves 60 alone in
+                // the rightmost leaf, beside [40, 50] under one parent.
+                Assert.assertTrue(h.truncate(70));
+                h.replaceLast(65, 100);
+                final int height = h.writer.getLastSegmentPageCount();
+                Assert.assertEquals(3, height);
+                final LiveViewCheckpointPageRef[] before = rootChildren(h, 2);
+
+                // The lone leaf takes the new key, and 65 moves into its left neighbour in place
+                // of 50: both leaves' minimum keys change, and the parent's separators follow.
+                h.appendRemovingSecondLast(95, 101);
+                Assert.assertEquals(height + 1, h.writer.getLastSegmentPageCount());
+                Assert.assertEquals(height + 1, h.writer.getLastReleasedSegmentIds().size());
+                assertRootChildrenReused(h, before, 1);
+                Assert.assertEquals(7, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(65, 100);
+                h.assertFindExact(95, 101);
+                h.assertFindExactMissing(50, 5);
+                for (long c = 35; c <= 100; c += 5) {
+                    h.assertPredecessor(c);
+                    h.assertSuccessor(c);
+                    h.assertFloor(c);
+                    h.assertRange(c, c + 30);
+                }
+                h.append(110, 102);
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastFromALoneLeafUnderTheRoot() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 12; i++) {
+                    h.append(i * 10L, i);
+                }
+                // [[0, 20], [40, 60], [80, 100]] truncated to 0..80: the parent of [80] keeps one
+                // child, which the truncate promotes, so the lone leaf sits right under the root,
+                // one level above its left neighbour [60, 70].
+                Assert.assertTrue(h.truncate(90));
+                Assert.assertEquals(3, h.reader.rootChildCount(h.root));
+                final LiveViewCheckpointPageRef[] before = rootChildren(h, 3);
+
+                // The removal rewrites the lone leaf and the root, and the left neighbour's
+                // path: its parent and the leaf.
+                h.appendRemovingSecondLast(95, 100);
+                Assert.assertEquals(4, h.writer.getLastSegmentPageCount());
+                Assert.assertEquals(4, h.writer.getLastReleasedSegmentIds().size());
+                assertRootChildrenReused(h, before, 1);
+                Assert.assertEquals(9, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(80, 8);
+                h.assertFindExactMissing(70, 7);
+                for (long c = 45; c <= 100; c += 5) {
+                    h.assertPredecessor(c);
+                    h.assertSuccessor(c);
+                    h.assertFloor(c);
+                }
+                h.appendRemovingSecondLast(97, 101);
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastOfTwoEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(4, 4)) {
+                h.append(10, 1);
+                h.append(20, 2);
+                h.appendRemovingSecondLast(30, 3);
+                Assert.assertEquals(2, h.reader.size(h.root));
+                h.assertIterateAll();
+                h.assertFindExact(20, 2);
+                h.assertFindExact(30, 3);
+                h.assertFindExactMissing(10, 1);
+                Assert.assertFalse(h.reader.predecessor(h.root, 20, h.out));
+                h.assertPredecessor(21);
+                h.assertPredecessor(31);
+                h.assertSuccessor(11);
+                h.assertFloor(15);
+                h.assertFloor(25);
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastRejectsAKeyThatIsNotSecondToLast() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                for (int i = 0; i < 12; i++) {
+                    h.append(i * 10L, i);
+                }
+                // The last leaf holds both positions: [100, 110].
+                assertRejected(h, 90, 9, 120, 12, "second-to-last key does not match the removed key");
+                // The timestamp matches, the id does not.
+                assertRejected(h, 100, 9, 120, 12, "second-to-last key does not match the removed key");
+                // The last leaf holds only the newest entry, so the check runs in its left neighbour.
+                Assert.assertTrue(h.truncate(70));
+                assertRejected(h, 40, 4, 120, 12, "second-to-last key does not match the removed key");
+                // The writer serves the next mutation.
+                h.appendRemovingSecondLast(120, 12);
+                h.assertIterateAll();
+            }
+        });
+    }
+
+    @Test
+    public void testAppendRemovingSecondLastRejectsATreeWithFewerThanTwoEntries() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Harness h = new Harness(3, 3)) {
+                assertRejected(h, 0, 0, 10, 1, "cannot remove the second-to-last entry of an empty live view checkpoint timeline");
+                h.append(10, 1);
+                assertRejected(h, 10, 1, 20, 2, "cannot remove the second-to-last entry of a live view checkpoint timeline holding one entry");
+                h.append(20, 2);
+                h.appendRemovingSecondLast(30, 3);
+                h.assertIterateAll();
+            }
+        });
     }
 
     @Test
@@ -581,9 +791,47 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertRejected(Harness h, long removedTs, long removedId, long ts, long id, String message) {
+        final LiveViewCheckpointPageRef before = new LiveViewCheckpointPageRef();
+        before.of(h.root.getSegmentId(), h.root.getOffset(), h.root.getLength());
+        final long segmentId = h.nextSegmentId;
+        try {
+            h.appendRemovingSecondLast(removedTs, removedId, ts, id);
+            Assert.fail("expected a rejection");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), message);
+        }
+        Assert.assertTrue("a rejected removal must leave the root", sameRef(before, h.root));
+        h.assertIterateAll();
+        // Nothing committed, and the in-flight segment is gone.
+        try (Path path = new Path(); Path dir = new Path()) {
+            checkpointsDir(dir);
+            final FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertFalse(ff.exists(LiveViewCheckpointLayout.metaSegmentPath(path, dir, segmentId).$()));
+            Assert.assertFalse(ff.exists(LiveViewCheckpointLayout.metaSegmentTmpPath(path, dir, segmentId).$()));
+        }
+    }
+
+    private static void assertRootChildrenReused(Harness h, LiveViewCheckpointPageRef[] before, int count) {
+        final LiveViewCheckpointPageRef after = new LiveViewCheckpointPageRef();
+        for (int i = 0; i < count; i++) {
+            h.reader.rootChildRef(h.root, i, after);
+            Assert.assertTrue("root child " + i + " must be reused", sameRef(before[i], after));
+        }
+    }
+
     private static Path checkpointsDir(Path path) {
         path.of(configuration.getDbRoot()).concat(LV_DIR).concat("_checkpoints");
         return path;
+    }
+
+    private static LiveViewCheckpointPageRef[] rootChildren(Harness h, int count) {
+        final LiveViewCheckpointPageRef[] refs = new LiveViewCheckpointPageRef[count];
+        for (int i = 0; i < count; i++) {
+            refs[i] = new LiveViewCheckpointPageRef();
+            h.reader.rootChildRef(h.root, i, refs[i]);
+        }
+        return refs;
     }
 
     private static boolean sameRef(LiveViewCheckpointPageRef a, LiveViewCheckpointPageRef b) {
@@ -608,6 +856,11 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
         private long nextSegmentId;
 
         Harness(int leafCapacity, int internalCapacity) {
+            this(leafCapacity, internalCapacity, 0);
+        }
+
+        Harness(int leafCapacity, int internalCapacity, long firstSegmentId) {
+            nextSegmentId = firstSegmentId;
             checkpointsDir(dir);
             writer = new LiveViewCheckpointTimelineWriter(configuration, leafCapacity, internalCapacity);
             writer.of(dir);
@@ -620,6 +873,35 @@ public class LiveViewCheckpointTimelineTest extends AbstractCairoTest {
             writer.append(root, in, nextSegmentId++, tmpRoot);
             root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
             oracleInsert(ts, id, false);
+        }
+
+        void appendRemovingSecondLast(long ts, long id) {
+            final long[] removed = oracle.get(oracle.size() - 2);
+            appendRemovingSecondLast(removed[0], removed[1], ts, id);
+        }
+
+        void appendRemovingSecondLast(long removedTs, long removedId, long ts, long id) {
+            fill(in, ts, id, false);
+            writer.appendRemovingSecondLast(root, removedTs, removedId, in, nextSegmentId++, tmpRoot);
+            root.of(tmpRoot.getSegmentId(), tmpRoot.getOffset(), tmpRoot.getLength());
+            // The oracle drops the entry at the second-to-last position and inserts the key.
+            oracle.remove(oracle.size() - 2);
+            oracleInsert(ts, id, false);
+        }
+
+        void assertAgainstOracle(Rnd rnd, long maxTs) {
+            assertIterateAll();
+            for (int i = 0; i < oracle.size(); i++) {
+                final long[] e = oracle.get(i);
+                assertFindExact(e[0], e[1]);
+            }
+            for (int q = 0; q < 40; q++) {
+                final long c = rnd.nextLong(maxTs + 10) - 5;
+                assertPredecessor(c);
+                assertSuccessor(c);
+                assertFloor(c);
+                assertRange(c, c + rnd.nextLong(40));
+            }
         }
 
         void assertFindExact(long ts, long id) {

@@ -111,6 +111,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // Runs per test method, about half a second each. Raise it locally to soak.
     private static final int RUNS_PER_TEST = 10;
+    private static final long SECOND_MICROS = 1_000_000L;
     // A pass that skips its repair's inline apply rather than injecting a fault.
     private static final int APPLY_SKIP = 11;
     // The anchor dstFrontierEpisode runs under: daily at a wall time the Berlin fall-back repeats
@@ -129,6 +130,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private static final long DST_FRONTIER_SALT0 = 0x3C6EF372FE94F82BL;
     private static final long DST_FRONTIER_SALT1 = 0xA54FF53A5F1D36F1L;
     private static final int DST_FRONTIER_SHAPES = 3;
+    // Salt the draws of jitteryStreamEpisode apart from the run's sequence, so a run that reaches it
+    // draws the rest of its passes as it did before the episode existed.
+    private static final long JITTERY_STREAM_SALT0 = 0x9E3779B97F4A7C15L;
+    private static final long JITTERY_STREAM_SALT1 = 0xD1B54A32D192ED03L;
     private static final long MINUTE_MICROS = 60_000_000L;
     // The rows each batch of departureEpisode commits: above the largest row cadence the knobs
     // draw, so each batch seals a root of its own.
@@ -203,6 +208,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private int firedFaults;
     private int firedThisRun;
     private boolean isOpenSegmentKeyedReplayForced;
+    // Episodes of jitteryStreamEpisode the batch ran, and the repair roots their seals removed.
+    private int jitteryStreamEpisodes;
+    private long jitteryStreamRemovals;
     private LiveViewRefreshJob job;
     // Late rows keptTimelineRetireEpisode committed while the lock kept the timeline, and after
     // the lock went, and the episodes; and the episodes of keptSpliceEpisode.
@@ -630,6 +638,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 .$(", tierReadTableOnly=").$(tierReadTableOnlyChecks)
                 .$(", windowJoin=").$(windowJoinChecks)
                 .$(", dstFrontierEpisodes=").$(dstFrontierEpisodes)
+                .$(", jitteryStreamEpisodes=").$(jitteryStreamEpisodes)
+                .$(", jitteryStreamRemovals=").$(jitteryStreamRemovals)
                 .$(", firedFaults=").$(firedFaults)
                 .$(", injectedRefreshFaults=").$(ledger.injected)
                 .$(", driftFaults=").$(ledger.drift).I$();
@@ -739,6 +749,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             throw new AssertionError("[" + where + "] " + e.getMessage(), e);
         }
         assertSymbolLabelsConsistent("lv", "sym", runKeys);
+        assertRepairRootsAmongTheTwoNewest(instance);
     }
 
     // The checks that hold with a lead resident, a repair parked or a view WAL block pending.
@@ -1286,6 +1297,103 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         } finally {
             knobs.apply(AbstractLiveViewTest::setProperty);
         }
+    }
+
+    /**
+     * Overlapping commits on the synthetic key above every row, under the production cadence: 4 to
+     * 12 commits a second apart, each reaching a salted depth below the previous commit's newest
+     * row - under one commit, or one to three commits. Each repair's closing seal owes a root at
+     * the view's frontier that the cadence does not call for, a repair root, which the seal that
+     * appends the second root above it removes. The episode pins the cadence, the chain count and
+     * the key budget for its duration, so its resumes chain, and gives the run its draws back.
+     * <p>
+     * It asserts its own outcome: the repair roots the view tracks are among the two newest roots
+     * after every commit, the view equals the recompute, and the timeline grows by at most three
+     * roots - the two newest, and at most one cadence root, which the first seal after a restart
+     * or a retire is, or a duration cadence elapsing inside the episode calls for. Five or more
+     * commits under one commit deep whose repairs all resumed, with no chain declined, remove a
+     * repair root: the first commit is in order, and the seals of the next three put two repair
+     * roots and at most one cadence root on top.
+     */
+    private void jitteryStreamEpisode(Rnd rnd, LiveViewFuzzKnobs knobs, PassShape shape) throws Exception {
+        final Rnd episodeRnd = new Rnd(rnd.getSeed0() ^ JITTERY_STREAM_SALT0, rnd.getSeed1() ^ JITTERY_STREAM_SALT1);
+        final int commits = 4 + episodeRnd.nextInt(9);
+        final boolean isShallow = episodeRnd.nextBoolean();
+        final long depthMicros = isShallow
+                ? 1 + episodeRnd.nextLong(SECOND_MICROS - 1)
+                : SECOND_MICROS + episodeRnd.nextLong(2 * SECOND_MICROS);
+        final int rowsPerCommit = 2 + episodeRnd.nextInt(8);
+        driveRefreshToQuiescence(job);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, (String) null);
+        try {
+            final LiveViewInstance instance = viewInstance();
+            final LiveViewRefreshStats stats = job.getStatsForTest();
+            final int entriesBefore = checkpointTimelineIds(instance).size();
+            final long removalsBefore = stats.get(LiveViewRefreshStats.REPAIR_ROOT_REMOVAL_COUNT);
+            final long declinesBefore = stats.get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
+            final long resumesBefore = jitteryResumeCount(stats);
+            final long repairsBefore = jitteryRepairCount(stats);
+            // Above every row by more than the deepest reach, so the first commit is in order.
+            long topTs = Math.max(maxInsertedTs, instance.getLatestSeenTs()) + 4 * SECOND_MICROS;
+            LOG.info().$("LV route fuzz: jittery stream [commits=").$(commits)
+                    .$(", depthMicros=").$(depthMicros)
+                    .$(", rowsPerCommit=").$(rowsPerCommit)
+                    .$(", fromTs=").$ts(topTs).I$();
+            for (int c = 0; c < commits; c++) {
+                setCurrentMicros(currentMicros + SECOND_MICROS);
+                topTs += SECOND_MICROS;
+                // Spread from the depth below the previous commit's newest row up to this one's.
+                final long lowTs = topTs - SECOND_MICROS - depthMicros;
+                final long spacing = (topTs - lowTs) / rowsPerCommit;
+                syntheticSink.clear();
+                syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+                for (int k = 1; k <= rowsPerCommit; k++) {
+                    long t = k == rowsPerCommit ? topTs : lowTs + k * spacing;
+                    while (!syntheticTs.add(t)) {
+                        t--;
+                    }
+                    maxInsertedTs = Math.max(maxInsertedTs, t);
+                    appendEpisodeRow(k > 1, t, SYNTHETIC_KEY);
+                }
+                execute(syntheticSink);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertRepairRootsAmongTheTwoNewest(instance);
+            }
+            assertView(shape.oracleSql, shape.orderBy, "after the jittery stream");
+            final int growth = checkpointTimelineIds(instance).size() - entriesBefore;
+            Assert.assertTrue("the jittery stream's timeline grew by " + growth + " roots", growth <= 3);
+            final long removals = stats.get(LiveViewRefreshStats.REPAIR_ROOT_REMOVAL_COUNT) - removalsBefore;
+            final long resumes = jitteryResumeCount(stats) - resumesBefore;
+            if (isShallow
+                    && commits >= 5
+                    && resumes == commits - 1
+                    && jitteryRepairCount(stats) - repairsBefore == resumes
+                    && stats.get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT) == declinesBefore) {
+                Assert.assertTrue("the jittery stream's chained resumes removed no repair root", removals > 0);
+            }
+            jitteryStreamEpisodes++;
+            jitteryStreamRemovals += removals;
+        } finally {
+            knobs.apply(AbstractLiveViewTest::setProperty);
+        }
+    }
+
+    private static long jitteryRepairCount(LiveViewRefreshStats stats) {
+        long repairs = 0;
+        for (int route = 1; route < LiveViewCheckpointRepairRoute.ROUTE_COUNT; route++) {
+            repairs += stats.getRouteCount(route);
+        }
+        return repairs;
+    }
+
+    private static long jitteryResumeCount(LiveViewRefreshStats stats) {
+        return stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                + stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
     }
 
     // One row of the DST frontier or sparse publication episode on key, a comma ahead of it when
@@ -2447,6 +2555,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 // publishes sparsely and one that falls back, so the batch reaches both whatever the
                 // draws: see sparsePublicationEpisode.
                 sparsePublicationEpisode(shape);
+            }
+            if (steer == STEER_MIXED || steer == STEER_ANCHORS) {
+                jitteryStreamEpisode(rnd, knobs, shape);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward

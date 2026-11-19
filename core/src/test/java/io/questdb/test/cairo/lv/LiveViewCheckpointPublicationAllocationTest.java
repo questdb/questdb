@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -97,6 +98,43 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
     public void setUp() {
         super.setUp();
         createCheckpointLayout();
+    }
+
+    @Test
+    public void testASealThatRemovesTheSecondNewestRootAllocatesNothingPerSealOnceWarm() throws Exception {
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub(64);
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration);
+                    Path dir = new Path()
+            ) {
+                checkpointsDir(dir);
+                final ObjList<WindowFunction> functions = new ObjList<>();
+                functions.add(stub);
+                // Every seal names the second-newest root a repair root, so from the third on each
+                // removes it, releasing its references as the measured seals go.
+                final LongList repairRootIds = new LongList(1);
+                repairRootIds.add(Numbers.LONG_NULL);
+                long seq = 1;
+                for (int i = 0; i < WARMUP_SEALS; i++) {
+                    appendRemovingTheSecondNewestRoot(writer, dir, functions, seq++, repairRootIds);
+                }
+                final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                for (int i = 0; i < MEASURED_SEALS; i++) {
+                    appendRemovingTheSecondNewestRoot(writer, dir, functions, seq++, repairRootIds);
+                }
+                final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                final long perSeal = allocated / MEASURED_SEALS;
+                Assert.assertTrue(
+                        "a warmed-up seal that removes the second-newest root allocated " + perSeal
+                                + " bytes on the Java heap (" + allocated + " over " + MEASURED_SEALS + " seals)",
+                        perSeal < PER_SEAL_ALLOCATION_LIMIT_BYTES
+                );
+            }
+        });
     }
 
     @Test
@@ -323,6 +361,39 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
                 Numbers.LONG_NULL,
                 null
         );
+    }
+
+    // Seal seq takes id seq - 1 over a timeline whose two newest roots are seq - 3 and seq - 2, and
+    // names seq - 3 a repair root.
+    private void appendRemovingTheSecondNewestRoot(
+            LiveViewCheckpointTimelineStoreWriter writer,
+            Path checkpointsDir,
+            ObjList<WindowFunction> functions,
+            long seq,
+            LongList repairRootIds
+    ) {
+        repairRootIds.setQuick(0, seq - 3);
+        final long removed = writer.append(
+                checkpointsDir,
+                functions,
+                null,
+                DEFINITION_TXN,
+                0,
+                seq,
+                seq,
+                0,
+                LIFECYCLE_IDENTITY,
+                true,
+                seq * 1_000_000L,
+                seq,
+                seq * 1_000_000L,
+                Numbers.LONG_NULL,
+                null,
+                repairRootIds
+        ).getRemovedCheckpointId();
+        if (seq >= 3 && removed != seq - 3) {
+            Assert.fail("seal " + seq + " removed " + removed);
+        }
     }
 
     private void seal(LiveViewCheckpointTimelineStoreWriter writer, ObjList<WindowFunction> functions, long seq) {

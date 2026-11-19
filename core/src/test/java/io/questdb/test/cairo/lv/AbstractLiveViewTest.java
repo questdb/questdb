@@ -658,6 +658,48 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts every repair root {@code instance} tracks is one of the two newest roots of its
+     * published timeline: the store writer removes the second-newest root only when it is one,
+     * so a tracked id below them would never go, and one the timeline does not hold names a root
+     * of another history.
+     */
+    protected static void assertRepairRootsAmongTheTwoNewest(LiveViewInstance instance) {
+        final LongList repairRootIds = instance.getCheckpointRepairRootIds();
+        if (repairRootIds.size() == 0) {
+            return;
+        }
+        final LongList ids = checkpointTimelineIds(instance);
+        final int n = ids.size();
+        for (int i = 0, m = repairRootIds.size(); i < m; i++) {
+            final long id = repairRootIds.getQuick(i);
+            Assert.assertTrue(
+                    "live view '" + instance.getDefinition().getViewName() + "' tracks repair root " + id
+                            + ", which is not one of the two newest roots of " + ids,
+                    (n > 0 && ids.getQuick(n - 1) == id) || (n > 1 && ids.getQuick(n - 2) == id)
+            );
+        }
+    }
+
+    /**
+     * The checkpoint ids of {@code instance}'s published timeline, in key order.
+     */
+    protected static LongList checkpointTimelineIds(LiveViewInstance instance) {
+        final LongList ids = new LongList();
+        try (
+                Path dir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader reader = new LiveViewCheckpointTimelineReader(configuration)
+        ) {
+            store.of(dir);
+            reader.of(dir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> ids.add(entry.checkpointId));
+            }
+        }
+        return ids;
+    }
+
+    /**
      * The test hooks installed on {@code job}, installing them first if the job runs none.
      */
     protected static LiveViewTestRefreshHooks hooks(LiveViewRefreshJob job) {

@@ -944,7 +944,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             @Nullable LiveViewWindow anchorWindow,
             long baseSeqTxn,
             long batchMaxTs,
-            long seedCursorOffset
+            long seedCursorOffset,
+            boolean isRepairRoot
     ) {
         return appendCheckpointTimelineRoot(
                 instance,
@@ -954,7 +955,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 batchMaxTs,
                 instance.getLvRowsTotal(),
                 instance.getMinSeenTsSinceCheckpoint(),
-                seedCursorOffset
+                seedCursorOffset,
+                isRepairRoot
         );
     }
 
@@ -962,6 +964,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * As above, with the root's cumulative row position and the batch minimum named by the
      * caller rather than read off the instance. The corrupt-root heal seals from a runtime its
      * own replay advanced, which neither counter followed.
+     * <p>
+     * Every append hands the store writer the view's repair roots, so whichever root lands
+     * removes the second-newest root when that one is a repair root.
+     *
+     * @param isRepairRoot true for a root a repair's closing seal wrote although the checkpoint
+     *                     cadence did not call for one; the root joins the view's repair roots,
+     *                     which the append of the second root above it removes
      */
     private LiveViewCheckpointTimelineStoreWriter.Result appendCheckpointTimelineRoot(
             LiveViewInstance instance,
@@ -971,7 +980,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long batchMaxTs,
             long lvRowPosition,
             long batchMinTs,
-            long seedCursorOffset
+            long seedCursorOffset,
+            boolean isRepairRoot
     ) {
         if (instance.isCheckpointTimelineRetirePending()) {
             // The retire's in-memory half has run already, so this counts no reset of its own.
@@ -1008,10 +1018,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     lvRowPosition,
                     batchMinTs,
                     seedCursorOffset,
-                    instance.getMemoryTracker()
+                    instance.getMemoryTracker(),
+                    instance.getCheckpointRepairRootIds()
             );
         } finally {
             roleLock.unlock();
+        }
+        instance.recordCheckpointRootAppended(
+                timelineResult.getCheckpointId(),
+                timelineResult.getDroppedCheckpointId(),
+                timelineResult.getRemovedCheckpointId(),
+                isRepairRoot
+        );
+        if (timelineResult.getRemovedCheckpointId() != Numbers.LONG_NULL) {
+            stats.inc(LiveViewRefreshStats.REPAIR_ROOT_REMOVAL_COUNT);
+            // DEBUG, not INFO: a stream of overlapping commits removes a root per commit.
+            LOG.debug().$("live view seal removed the repair root below the previous root [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", removedCheckpointId=").$(timelineResult.getRemovedCheckpointId())
+                    .$(", checkpointId=").$(timelineResult.getCheckpointId()).I$();
         }
         if (timelineResult.getDroppedCheckpointId() != Numbers.LONG_NULL) {
             final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
@@ -4350,6 +4375,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     private void retireCheckpointTimeline(LiveViewInstance instance) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
+        // The fresh history restarts checkpoint ids, and its first root is a cadence root.
+        instance.clearCheckpointCadenceRoots();
         removeCheckpointTimelineFiles(instance);
         instance.recordCheckpointTimelineReset();
         instance.clearCheckpointTimelineOwnership();
@@ -4621,6 +4648,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
                     instance.recordCheckpointTimelineStats(result.getStats());
                     head.of(result.getGeneration(), result.getHeadMaxTimestamp(), result.getHeadCheckpointId());
+                    instance.forgetCheckpointRepairRootsAbove(result.getHeadCheckpointId());
                 }
             } finally {
                 roleLock.unlock();
@@ -9398,6 +9426,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // against the table, so it owes them before the seal runs.
                 final long owedRows = isKeyed ? insertedRowDelta : appendedRows;
                 instance.addLvRowsTotal(owedRows);
+                // The checkpoint cadence counts every row the replay put through the window, and
+                // the seal below is passed only the owed ones: a keyed resume's replacements count
+                // there too, so the rows cadence bounds the replay of a later deeper late row.
+                assert appendedRows >= owedRows : "a keyed resume emitted fewer rows than it inserted";
+                instance.addRowsSinceLastCadenceRoot(appendedRows - owedRows);
                 hooks.beforeResumeHeadSeal();
                 // The marker resolution below reads a landed seal over a published splice as a root
                 // at the frontier: the seal declines a boundary above the newest row the table
@@ -11483,6 +11516,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // row, and the newest timestamp a kept runtime has seen never trails it.
                         assert timelineSplice == null || isFrontierTruncated || headMaxTs >= durableMaxTsAfterRepair
                                 : "a head-miss rebuild's closing seal over a published splice stamps below the frontier";
+                        // The seal is passed no row, so the checkpoint cadence counts the replay's here.
+                        instance.addRowsSinceLastCadenceRoot(appendedRows);
                         // Take the seal's own answer: it swallows every Throwable and also declines a
                         // boundary that does not clear the head, so assuming success would clear the
                         // durable repair marker over a head that was never written.
@@ -12923,6 +12958,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (!isSealBackedByDurableOutput(instance, appendedRows, batchMaxTs)) {
             return false;
         }
+        // Whether the cadence calls for the root this seal writes. A seal the cadence did not
+        // call for - a repair's closing seal owing a root at its frontier - writes a repair root,
+        // which the append of the second root above it removes, so overlapping commits keep the
+        // cadence's roots plus the two newest rather than a root each.
+        final boolean isCadenceRoot = isCheckpointCadenceRootDue(instance, rowsCadence, durationCadence, nowUs);
 
         boolean sealed = false;
         try {
@@ -12945,10 +12985,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         anchorWindow,
                         baseSeqTxn,
                         batchMaxTs,
-                        Numbers.LONG_NULL
+                        Numbers.LONG_NULL,
+                        !isCadenceRoot
                 );
                 stateBytes = appended.getLogicalStateBytes();
                 rootCheckpointId = appended.getCheckpointId();
+                if (isCadenceRoot) {
+                    instance.recordCadenceRootWritten(nowUs);
+                }
             }
             // Advance the head only after the generation carrying this root is
             // durable. WalPurgeJob min-combines getHeadCheckpointBaseSeqTxn(), so
@@ -13312,6 +13356,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 0L,
                 nowUs
         );
+    }
+
+    /**
+     * Whether the checkpoint cadence calls for a root now, judged on the counters only a cadence
+     * root resets: no cadence root since the process started or the timeline retired, the rows
+     * cadence of window rows since the last one, or the duration cadence since it.
+     */
+    private static boolean isCheckpointCadenceRootDue(LiveViewInstance instance, long rowsCadence, long durationCadence, long nowUs) {
+        final long lastCadenceRootWrittenUs = instance.getLastCadenceRootWrittenUs();
+        return lastCadenceRootWrittenUs == Numbers.LONG_NULL
+                || instance.getRowsSinceLastCadenceRoot() >= rowsCadence
+                || nowUs - lastCadenceRootWrittenUs >= durationCadence;
     }
 
     /**
@@ -13696,7 +13752,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         durableFrontierTimestamp,
                         frontierDurableRows,
                         Numbers.LONG_NULL,
-                        Numbers.LONG_NULL
+                        Numbers.LONG_NULL,
+                        false
                 );
             }
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
@@ -17479,7 +17536,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.getAnchorWindow(),
                     sweepSeqTxn,
                     batchMaxTs,
-                    dataOffset
+                    dataOffset,
+                    false
             );
             instance.recordSeedCheckpointWritten(dataOffset, batchMaxTs, nowUs);
         } catch (LiveViewCheckpointTimelineStoreWriter.BoundaryNotAboveHeadException e) {

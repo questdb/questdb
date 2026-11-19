@@ -27,8 +27,11 @@ package org.questdb;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlException;
@@ -62,6 +65,7 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 
 /**
  * One out-of-order repair of a live view whose checkpoint ladder holds R roots above the late
@@ -84,7 +88,9 @@ import java.util.concurrent.TimeUnit;
  *     NEW_SPREAD (100,000 rows on keys the view never held, below the first root, across it, or
  *     spread over every root), OLD (100,000 rows on the existing keys), DENSE (one row, after
  *     in-order commits each as wide as the key domain, so the replay pays for the chain), JITTERY
- *     (100 commits, each 1,000 rows reaching 0.5 s below the previous frontier). The head-miss
+ *     (100 commits, each 1,000 rows reaching 0.5 s below the previous frontier, under the default
+ *     checkpoint cadence of 1,000,000 rows and 5 minutes; the iteration's tear-down prints the
+ *     timeline entries and the checkpoint files the commits left). The head-miss
  *     shapes put one row at the day's start, below every root and with no root under it, so the
  *     repair rebuilds the day and splices every root above the row: SEGMENT_START (the roots as
  *     above), SEGMENT_START_DENSE (the roots as DENSE's), CLOSED_SEGMENT (a row in the next day
@@ -123,6 +129,7 @@ public class LiveViewLateRowRepairBenchmark {
             "RANGE24H:10000:10:ONE",
             "ROWS:10000:10:DENSE",
             "ROWS:100002:1:JITTERY",
+            "ROWS:1000:1:JITTERY",
             "ROWS:1000:12:NEW_BELOW",
             "ROWS:1000:12:NEW_ACROSS",
             "ROWS:1000:12:NEW_SPREAD",
@@ -137,6 +144,8 @@ public class LiveViewLateRowRepairBenchmark {
     public String scenario;
     private CairoEngine engine;
     private LiveViewInstance instance;
+    // The ladders build under a root per commit; JITTERY measures under the default cadence.
+    private volatile boolean isProductionCadence;
     private LiveViewRefreshJob job;
     private int keys;
     private String late;
@@ -196,15 +205,16 @@ public class LiveViewLateRowRepairBenchmark {
         roots = Integer.parseInt(parts[2]);
         late = parts[3];
         root = Files.createTempDirectory("lv-late-row-repair-");
+        isProductionCadence = false;
         final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString()) {
             @Override
             public long getLiveViewCheckpointMaxDurationMicros() {
-                return 24 * Micros.HOUR_MICROS;
+                return isProductionCadence ? 5 * Micros.MINUTE_MICROS : 24 * Micros.HOUR_MICROS;
             }
 
             @Override
             public long getLiveViewCheckpointRows() {
-                return 1;
+                return isProductionCadence ? 1_000_000 : 1;
             }
 
             @Override
@@ -245,10 +255,15 @@ public class LiveViewLateRowRepairBenchmark {
             drainWal();
             drainLiveView();
         }
+        isProductionCadence = "JITTERY".equals(late);
     }
 
     @TearDown(Level.Iteration)
-    public void tearDown() throws IOException {
+    public void tearDown() throws IOException, SqlException {
+        if ("JITTERY".equals(late)) {
+            System.out.println("JITTERY " + scenario + ": timeline entries " + timelineEntries()
+                    + ", checkpoint files " + checkpointFileCount());
+        }
         job = Misc.free(job);
         engine = Misc.free(engine);
         instance = null;
@@ -331,7 +346,23 @@ public class LiveViewLateRowRepairBenchmark {
         engine.execute(sql, sqlCtx);
     }
 
+    private long checkpointFileCount() throws IOException {
+        final Path checkpoints = root.resolve(instance.getLiveViewToken().getDirName()).resolve(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+        try (Stream<Path> files = Files.walk(checkpoints)) {
+            return files.filter(Files::isRegularFile).count();
+        }
+    }
+
     private long firstRootTs() {
         return rootTs(1);
+    }
+
+    private long timelineEntries() throws SqlException {
+        try (
+                RecordCursorFactory factory = engine.select("SELECT checkpoint_timeline_entries FROM live_views() WHERE view_name = 'lv'", sqlCtx);
+                RecordCursor cursor = factory.getCursor(sqlCtx)
+        ) {
+            return cursor.hasNext() ? cursor.getRecord().getLong(0) : Numbers.LONG_NULL;
+        }
     }
 }

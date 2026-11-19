@@ -884,6 +884,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFuzzUnderTheProductionCadence() throws Exception {
+        // Unanchored runs under the production rows cadence, so a stream of late commits resumes
+        // over the repair roots its closing seals leave, and the seals remove them: the drawn
+        // unanchored arms pin a cadence of a few rows, under which nearly every root is a cadence
+        // root. Each run checks the view against the recompute, and that every repair root the
+        // view tracks is one of the two newest roots.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 4; i++) {
+                runFuzz(rnd, rnd.nextInt(variantCount()), 120 + rnd.nextInt(160), true, rnd.nextBoolean(), rnd.nextBoolean(), false);
+            }
+        });
+    }
+
+    @Test
     public void testFuzzKeptTimelineEpisodes() throws Exception {
         // A pinned seed pair whose testFuzzDedup batch fails the frontier truncate of a filtered
         // view's departure under a lock on _timeline twice, each time keeping the splice's
@@ -6645,6 +6661,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            assertRepairRootsAmongTheTwoNewest(engine.getLiveViewRegistry().getViewInstance("lv"));
             if (isDispatchedRing) {
                 assertDispatchedRingKeepsNoCheckpointDirtySet();
             }
@@ -7220,6 +7237,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     true
             );
             assertNoRefreshFaults("lv");
+            assertRepairRootsAmongTheTwoNewest(engine.getLiveViewRegistry().getViewInstance("lv"));
 
             if (inMemReadBack) {
                 // Mode B read-back cross-checks, single-threaded now that the worker
@@ -8554,6 +8572,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     true
             );
             assertNoRefreshFaults("lv");
+            assertRepairRootsAmongTheTwoNewest(engine.getLiveViewRegistry().getViewInstance("lv"));
             printSql("(lv) ORDER BY 1, 2", preRemoval);
 
             // The removal event: every targeted row is emitted (phase 1 has
@@ -9113,6 +9132,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+            assertRepairRootsAmongTheTwoNewest(engine.getLiveViewRegistry().getViewInstance("lv"));
             if (sparseDepartureShape >= 0) {
                 final long rowsCadence = beginSparseCheckpointCadence();
                 try {

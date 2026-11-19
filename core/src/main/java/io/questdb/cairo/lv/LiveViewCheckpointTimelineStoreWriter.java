@@ -372,6 +372,56 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long seedCursorOffset,
             @Nullable MemoryTracker memoryTracker
     ) {
+        return append(
+                checkpointsDir,
+                functions,
+                anchorWindow,
+                definitionTxn,
+                createdLvSeqTxn,
+                normalizedBaseSeqTxn,
+                coveredLvSeqTxn,
+                historyEpoch,
+                lifecycleIdentity,
+                primaryOwner,
+                maxTimestamp,
+                effectiveLvRowPosition,
+                batchMinTs,
+                seedCursorOffset,
+                memoryTracker,
+                null
+        );
+    }
+
+    /**
+     * As above, with the ids of the roots the caller sealed only because a repair owed a
+     * root at its frontier. When the generation's second-newest root is one of them, the
+     * appended boundary removes it in the generation it publishes:
+     * {@code [.., X, Y] + Z} publishes {@code [.., Y, Z]}. The removed root releases its
+     * segment references and logical state bytes as a replaced head does, and
+     * {@link Result#getRemovedCheckpointId()} names it. A seal that replaces the head
+     * removes nothing else; an id the timeline does not hold at that position removes
+     * nothing.
+     *
+     * @param repairRootCheckpointIds the caller's repair root ids, or null for none
+     */
+    public Result append(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            long definitionTxn,
+            long createdLvSeqTxn,
+            long normalizedBaseSeqTxn,
+            long coveredLvSeqTxn,
+            long historyEpoch,
+            long lifecycleIdentity,
+            boolean primaryOwner,
+            long maxTimestamp,
+            long effectiveLvRowPosition,
+            long batchMinTs,
+            long seedCursorOffset,
+            @Nullable MemoryTracker memoryTracker,
+            @Nullable LongList repairRootCheckpointIds
+    ) {
         if (!primaryOwner) {
             throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
         }
@@ -480,7 +530,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             orphanUpperBound,
                             liveSegmentCount,
                             obsoleteSegmentBytes,
-                            purgeState.getPendingRetirements(lifecycleIdentity)
+                            purgeState.getPendingRetirements(lifecycleIdentity),
+                            repairRootCheckpointIds
                     );
                     purgeState.clearPendingRetirements(lifecycleIdentity);
                     return result;
@@ -1999,7 +2050,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             long orphanUpperBound,
             long liveSegmentCount,
             long obsoleteSegmentBytes,
-            @Nullable LongList retirableSegmentIds
+            @Nullable LongList retirableSegmentIds,
+            @Nullable LongList repairRootCheckpointIds
     ) {
         boolean hasPriorOrphanRisk;
         if (definitionTxn < 0
@@ -2090,6 +2142,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final boolean isPreviousGroupOpen = hasPrevious
                     && batchMinTs != Numbers.LONG_NULL
                     && batchMinTs <= previousEntry.maxTimestamp;
+            // A root the caller sealed only because a repair owed one at its frontier goes once
+            // two newer roots stand above it: the append of the second one removes it, so a
+            // stream of repairs keeps the cadence's roots plus the two newest. A seal that
+            // replaces the head keeps the root below it, which waits for the next append.
+            final LiveViewCheckpointTimelineEntry secondNewestEntry = shells.secondNewestEntry;
+            final boolean isRemovingSecondNewest = !isPreviousGroupOpen
+                    && hasPrevious
+                    && repairRootCheckpointIds != null
+                    && repairRootCheckpointIds.size() > 0
+                    && timelineReader.predecessor(oldTimelineRoot, previousEntry.maxTimestamp, secondNewestEntry)
+                    && repairRootCheckpointIds.indexOf(secondNewestEntry.checkpointId) > -1;
 
             final LiveViewCheckpointPageRef oldStateRootRef = shells.oldStateRootRef;
             final LiveViewCheckpointPageRef oldFunctionDirectoryRef = shells.oldFunctionDirectoryRef;
@@ -2194,6 +2257,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPageRef newTimelineRoot = shells.newTimelineRoot;
             if (isPreviousGroupOpen) {
                 timelineWriter.replaceLast(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
+            } else if (isRemovingSecondNewest) {
+                timelineWriter.appendRemovingSecondLast(
+                        oldTimelineRoot,
+                        secondNewestEntry.maxTimestamp,
+                        secondNewestEntry.checkpointId,
+                        entry,
+                        timelineSegmentId,
+                        newTimelineRoot
+                );
             } else {
                 timelineWriter.append(oldTimelineRoot, entry, timelineSegmentId, newTimelineRoot);
             }
@@ -2234,6 +2306,26 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 droppedCheckpointId = previousEntry.checkpointId;
             }
+            long removedCheckpointId = Numbers.LONG_NULL;
+            if (isRemovingSecondNewest) {
+                // As the replaced head above: after the new root's references, so a segment the
+                // removed root shares with a surviving one never passes through zero.
+                truncateVisitor.of(
+                        checkpointsDir,
+                        oldCheckpointRoot,
+                        directoryWriter,
+                        shells.removedSegmentIds,
+                        definitionTxn,
+                        generation
+                );
+                try {
+                    truncateVisitor.onEntry(secondNewestEntry);
+                    droppedLogicalStateBytes = truncateVisitor.droppedLogicalStateBytes;
+                } finally {
+                    truncateVisitor.clearBindings();
+                }
+                removedCheckpointId = secondNewestEntry.checkpointId;
+            }
             nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
             final long directorySegmentId = nextSegmentId++;
             final LiveViewCheckpointPageRef newDirectoryRoot = shells.newDirectoryRoot;
@@ -2266,7 +2358,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     metaStore.isValid() ? superblock.logicalStateBytes : 0,
                     checkedAdd(boundary.logicalStateBytes, -droppedLogicalStateBytes)
             );
-            if (isPreviousGroupOpen) {
+            if (isPreviousGroupOpen || isRemovingSecondNewest) {
                 superblock.retiredCheckpointCount = checkedAdd(superblock.retiredCheckpointCount, 1);
             }
             // A cadence seal appends above every existing key, so it writes no
@@ -2292,6 +2384,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     generation,
                     checkpointId,
                     droppedCheckpointId,
+                    removedCheckpointId,
                     boundary.logicalStateBytes,
                     dataSegmentBytes,
                     metadataBytesAdded,
@@ -4947,6 +5040,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private long logicalStateBytes;
         private long metadataBytesAdded;
         private long obsoleteSegmentBytes;
+        private long removedCheckpointId;
         private LiveViewCheckpointTimelineStats stats;
         private long walPurgeFloor;
 
@@ -4954,6 +5048,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 long generation,
                 long checkpointId,
                 long droppedCheckpointId,
+                long removedCheckpointId,
                 long logicalStateBytes,
                 long dataBytesAdded,
                 long metadataBytesAdded,
@@ -4965,6 +5060,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.generation = generation;
             this.checkpointId = checkpointId;
             this.droppedCheckpointId = droppedCheckpointId;
+            this.removedCheckpointId = removedCheckpointId;
             this.logicalStateBytes = logicalStateBytes;
             this.dataBytesAdded = dataBytesAdded;
             this.metadataBytesAdded = metadataBytesAdded;
@@ -5021,6 +5117,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          */
         public long getObsoleteSegmentBytes() {
             return obsoleteSegmentBytes;
+        }
+
+        /**
+         * @return the id of the second-newest root this seal removed because the caller
+         * named it a repair root, or {@link Numbers#LONG_NULL} when the seal removed none
+         */
+        public long getRemovedCheckpointId() {
+            return removedCheckpointId;
         }
 
         /**
@@ -6644,6 +6748,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointRetirementQueue.State();
         private final LongList reusedSegmentIds = new LongList();
         private final RootBuilders roots = new RootBuilders();
+        private final LiveViewCheckpointTimelineEntry secondNewestEntry = new LiveViewCheckpointTimelineEntry();
         private final LiveViewCheckpointRoot seedCheckpointRoot = new LiveViewCheckpointRoot(configuration);
         private final LiveViewCheckpointFunctionDirectory seedFunctionDirectory =
                 new LiveViewCheckpointFunctionDirectory(configuration);

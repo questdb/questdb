@@ -86,7 +86,10 @@ import java.util.regex.Pattern;
 /**
  * Acceptance coverage for the retention rule the versioned timeline replaced the
  * retained checkpoint ring with: inside one history epoch a logical checkpoint
- * entry is never removed. The ring bounded retention by count and bytes, so an
+ * entry is never removed, with one exception: a repair root - one a repair's
+ * closing seal wrote only because it owed a root at its frontier, which the
+ * checkpoint cadence did not call for - goes once it falls below the two newest
+ * roots (see LiveViewCheckpointRepairRootTest). The ring bounded retention by count and bytes, so an
  * out-of-order row older than the surviving horizon fell back to a replay from
  * {@code START FROM}; the timeline instead keeps every boundary it ever sealed
  * and versions - rather than deletes - the roots a repair corrects.
