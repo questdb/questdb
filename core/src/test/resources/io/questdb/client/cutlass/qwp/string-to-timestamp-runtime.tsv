@@ -1,8 +1,11 @@
-case_id	target	input_kind	input	feature
-runtime_two_digit_year	TIMESTAMP	TEXT	24-01-02 03:04:05.006Z	reference_century
-runtime_greedy_negative_year	TIMESTAMP	TEXT	-1-01-01 00:00:00.000Z	greedy_year_reference
-runtime_zone_gap	TIMESTAMP	TEXT	2024-03-31T02:30:00Europe/Berlin	tzdb_gap
-runtime_zone_overlap	TIMESTAMP	TEXT	2024-10-27T02:30:00europe/berlin	tzdb_overlap_case
-runtime_zone_alias	TIMESTAMP	TEXT	2024-01-02T03:04:05EST	zone_alias
-runtime_historic_zone	TIMESTAMP	TEXT	1880-01-01T00:00:00Europe/Berlin	tzdb_history
-runtime_wrapped_zone	TIMESTAMP	TEXT	3509450-07-01 00:00:00.000Europe/Berlin	parsed_year_rules
+case_id	target	input_kind	input	client	feature
+runtime_two_digit_year	TIMESTAMP	TEXT	24-01-02 03:04:05.006Z	MATCHES_SERVER	reference_century
+runtime_greedy_negative_year	TIMESTAMP	TEXT	-1-01-01 00:00:00.000Z	MATCHES_SERVER	greedy_year_reference
+runtime_zone_gap	TIMESTAMP	TEXT	2024-03-31T02:30:00Europe/Berlin	REJECTS_ZONE_NAME	tzdb_gap
+runtime_zone_overlap	TIMESTAMP	TEXT	2024-10-27T02:30:00europe/berlin	REJECTS_ZONE_NAME	tzdb_overlap_case
+runtime_zone_alias	TIMESTAMP	TEXT	2024-01-02T03:04:05EST	REJECTS_ZONE_NAME	zone_alias
+runtime_historic_zone	TIMESTAMP	TEXT	1880-01-01T00:00:00Europe/Berlin	REJECTS_ZONE_NAME	tzdb_history
+runtime_wrapped_zone	TIMESTAMP	TEXT	3509450-07-01 00:00:00.000Europe/Berlin	REJECTS_ZONE_NAME	parsed_year_rules
+runtime_zone_utc_alias	TIMESTAMP	TEXT	2024-07-01T12:00:00Zulu	REJECTS_ZONE_NAME	zone_alias_zero_offset
+runtime_bare_gmt_summer	TIMESTAMP	TEXT	2024-07-01T12:00:00GMT	MATCHES_SERVER	zone_gmt
+runtime_bare_gmt_historic	TIMESTAMP	TEXT	1850-07-01T12:00:00GMT	MATCHES_SERVER	zone_gmt_history

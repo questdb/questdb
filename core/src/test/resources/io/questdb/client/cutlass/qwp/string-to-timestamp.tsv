@@ -109,3 +109,11 @@ micro_iso_week_retained_leap_1297	TIMESTAMP	TEXT	1297-W01	VALID	-212377248000000
 micro_iso_week_retained_leap_1697	TIMESTAMP	TEXT	1697-W01	VALID	-8614944000000000	iso_week_source_leap
 nano_iso_week_retained_leap_1297	TIMESTAMP_NANOS	TEXT	1297-W01	INVALID	<INVALID>	nano_overflow_after_parse
 nano_iso_week_retained_leap_1697	TIMESTAMP_NANOS	TEXT	1697-W01	VALID	-8614944000000000000	iso_week_source_leap
+micro_bare_utc	TIMESTAMP	TEXT	2024-07-01T12:00:00UTC	VALID	1719835200000000	zone_utc
+micro_bare_gmt_lower	TIMESTAMP	TEXT	2024-07-01T12:00:00.123456gmt	VALID	1719835200123456	zone_gmt
+micro_zone_abbreviation	TIMESTAMP	TEXT	2024-01-02T03:04:05EST	INVALID		zone_name_rejected
+micro_zone_region	TIMESTAMP	TEXT	2024-07-01T12:00:00.000Europe/Berlin	INVALID		zone_name_rejected
+nano_bare_utc	TIMESTAMP_NANOS	TEXT	2024-07-01T12:00:00UTC	VALID	1719835200000000000	zone_utc
+nano_bare_gmt_lower	TIMESTAMP_NANOS	TEXT	2024-07-01T12:00:00.123456gmt	VALID	1719835200123456000	zone_gmt
+nano_zone_abbreviation	TIMESTAMP_NANOS	TEXT	2024-01-02T03:04:05EST	INVALID		zone_name_rejected
+nano_zone_region	TIMESTAMP_NANOS	TEXT	2024-07-01T12:00:00.000Europe/Berlin	INVALID		zone_name_rejected

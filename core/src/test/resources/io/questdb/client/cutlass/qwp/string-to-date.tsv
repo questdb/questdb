@@ -27,10 +27,10 @@ iso_two_millis	TEXT	2020-01-01T00:00:00.12Z	INVALID		utc_format
 iso_four_millis	TEXT	2020-01-01T00:00:00.1234Z	INVALID		utc_format
 offset_datetime	TEXT	2020-01-01 00:00:00+02:00	VALID	1577829600000	numeric_zone
 offset_date	TEXT	2020-01-01 +02:00	VALID	1577829600000	numeric_zone
-berlin_winter	TEXT	2020-01-01 12:00:00Europe/Berlin	VALID	1577876400000	named_zone
-berlin_summer	TEXT	2020-07-01 12:00:00Europe/Berlin	VALID	1593597600000	named_zone
-berlin_gap	TEXT	2020-03-29 02:30:00Europe/Berlin	VALID	1585441800000	zone_transition
-berlin_overlap	TEXT	2020-10-25 02:30:00Europe/Berlin	VALID	1603589400000	zone_transition
+berlin_winter	TEXT	2020-01-01 12:00:00Europe/Berlin	INVALID		zone_name_rejected
+berlin_summer	TEXT	2020-07-01 12:00:00Europe/Berlin	INVALID		zone_name_rejected
+berlin_gap	TEXT	2020-03-29 02:30:00Europe/Berlin	INVALID		zone_name_rejected
+berlin_overlap	TEXT	2020-10-25 02:30:00Europe/Berlin	INVALID		zone_name_rejected
 hour_24	TEXT	2020-01-01 24:59:59UTC	VALID	1577840399000	hour_24_wrap
 hour_25	TEXT	2020-01-01 25:00:00UTC	INVALID		time_validation
 minute_60	TEXT	2020-01-01 00:60:00UTC	INVALID		time_validation
@@ -52,3 +52,9 @@ trailing_zone_space	TEXT	2020-01-01 UTC 	INVALID		no_tail
 raw_trailing_text	TEXT	1_000x	INVALID		no_tail
 unicode_digits	UTF16_HEX	ff11,ff12,ff13	INVALID		ascii_only
 plain_text	TEXT	not-a-date	INVALID		invalid_text
+date_bare_gmt_lower	TEXT	2020-01-01 00:00:00gmt	VALID	1577836800000	zone_gmt
+date_zone_non_ascii	UTF16_HEX	0032,0030,0032,0030,002d,0030,0031,002d,0030,0031,0020,0030,0030,003a,0030,0030,003a,0030,0030,0131,0053,0054	INVALID		zone_name_rejected
+utc_negative_year	TEXT	-0001-01-01T00:00:00.000Z	VALID	-62198755200000	signed_year
+utc_negative_year_offset	TEXT	-0001-01-01T01:30:00.000+01:30	VALID	-62198755200000	signed_year
+utc_negative_year_three_digits	TEXT	-001-01-01T00:00:00.000Z	INVALID		signed_year
+utc_nested_negative_year	TEXT	--001-01-01T00:00:00.000Z	VALID	-62135596800000	nested_fixed_year

@@ -119,7 +119,7 @@ public class QwpSchemaStringDateE2ETest extends AbstractQwpWebSocketTest {
                 vectors.add(new Vector(fields[0], input, invalid, sqlNull, expected));
             }
         }
-        Assert.assertEquals(53, vectors.size());
+        Assert.assertEquals(59, vectors.size());
         return vectors;
     }
 

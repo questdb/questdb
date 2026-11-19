@@ -331,7 +331,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                 vectors.add(new Vector(fields[0], target, input, invalid, sqlNull, expected));
             }
         }
-        Assert.assertEquals("deterministic corpus row count", 110, vectors.size());
+        Assert.assertEquals("deterministic corpus row count", 118, vectors.size());
         assertDeterministicCoverage(vectors);
         return vectors;
     }
@@ -361,18 +361,25 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
         Assert.assertNotNull(RUNTIME_VECTORS, stream);
         List<Vector> vectors = new ArrayList<>();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
-            Assert.assertEquals("case_id\ttarget\tinput_kind\tinput\tfeature", reader.readLine());
+            Assert.assertEquals("case_id\ttarget\tinput_kind\tinput\tclient\tfeature", reader.readLine());
             String line;
             while ((line = reader.readLine()) != null) {
                 String[] fields = line.split("\\t", -1);
-                Assert.assertEquals(line, 5, fields.length);
+                Assert.assertEquals(line, 6, fields.length);
                 Assert.assertEquals(line, Target.TIMESTAMP.name(), fields[1]);
                 Assert.assertEquals(line, "TEXT", fields[2]);
+                Assert.assertTrue(line, "MATCHES_SERVER".equals(fields[4]) || "REJECTS_ZONE_NAME".equals(fields[4]));
                 boolean invalid = false;
                 long expected = 0;
                 try {
                     expected = MicrosFormatUtils.parseTimestamp(fields[3]);
                 } catch (NumericException e) {
+                    invalid = true;
+                }
+                if ("REJECTS_ZONE_NAME".equals(fields[4])) {
+                    // The server resolves the zone name with its JVM's zone data. A client
+                    // JVM can hold other data, so the client rejects the name instead.
+                    Assert.assertFalse(line, invalid);
                     invalid = true;
                 }
                 vectors.add(new Vector(fields[0] + "_micro", Target.TIMESTAMP, fields[3], invalid, false, expected));
@@ -382,7 +389,7 @@ public class QwpSchemaStringTimestampE2ETest extends AbstractQwpWebSocketTest {
                         false, nanoInvalid ? 0 : expected * 1000));
             }
         }
-        Assert.assertEquals("seven runtime inputs exercise both targets", 14, vectors.size());
+        Assert.assertEquals("ten runtime inputs exercise both targets", 20, vectors.size());
         return vectors;
     }
 
