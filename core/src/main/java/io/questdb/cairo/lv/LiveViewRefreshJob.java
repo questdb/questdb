@@ -405,7 +405,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final RestoredSeedState restoredSeedState = new RestoredSeedState();
     // Prices a whole-range resume's checkpoint chain boundary by boundary, as the freeze cursor
     // reaches each one. One per worker, bound per repair; repairs never nest.
-    private final LiveViewResumeChainPrice resumeChainPrice = new LiveViewResumeChainPrice();
+    private final LiveViewCheckpointChainPrice resumeChainPrice = new LiveViewCheckpointChainPrice();
     // The names of the files a retire removes, and of the _timeline its check reads after the
     // unlink, so that neither allocates: see removeCheckpointTimelineFiles. The retire builds the
     // checkpoint directory in path, the per-call scratch.
@@ -1252,6 +1252,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *                            the repair runs to the end of the base table
      * @param isChained           whether the boundaries are frozen and published as a chain;
      *                            see {@link LiveViewCheckpointTimelineStoreWriter#beginRepair}
+     * @param isPredecessorSeeded whether a chain's first boundary stands on the root below the
+     *                            interval, which needs a runtime standing there, rather than on
+     *                            nothing
      * @param isArmingPublication whether to arm the shared publication stage machine on this
      *                            repair's descriptor. The localized rebuild walks those
      *                            stages; the resume replay has its own, shorter ordering and
@@ -1274,6 +1277,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long lowTsInclusive,
             long highTsExclusive,
             boolean isChained,
+            boolean isPredecessorSeeded,
             boolean isArmingPublication,
             @Nullable LiveViewCheckpointOutputKeyDomain keyedOutputKeys,
             ObjList<WindowFunction> functions,
@@ -1308,7 +1312,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             ? keyedOutputKeys
                             : isChained || plan.isReplayStateKeyComplete() ? null : plan.getOutputKeyDomain(),
                     instance.getMemoryTracker(),
-                    isChained
+                    isChained,
+                    isPredecessorSeeded
             );
             capture.collectBoundaries(lowTsInclusive, highTsExclusive, repairBoundaries);
             if (!capture.isKeyDomainSpliceable(repairBoundaries, functions, anchorWindow)) {
@@ -7275,7 +7280,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Whether every seal of {@code instance} images only the keys a correction touched rather
      * than a whole key map: the view has an ANCHOR window, and no window function that keeps
      * checkpoint state is one a seal walks whole (see
-     * {@link LiveViewResumeChainPrice#isCheckpointImagedWhole}). Only such a view may tighten its
+     * {@link LiveViewCheckpointChainPrice#isCheckpointImagedWhole}). Only such a view may tighten its
      * checkpoint duration cadence below the configured one (see
      * {@link LiveViewInstance#recordAdaptiveCheckpointCorrection}), because a seal that images a
      * whole map turns a tightened cadence directly into retained roots and refresh CPU. What
@@ -7303,7 +7308,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (function.isCheckpointStateless()) {
                 continue;
             }
-            if (LiveViewResumeChainPrice.isCheckpointImagedWhole(anchorWindow, anchorable, function)) {
+            if (LiveViewCheckpointChainPrice.isCheckpointImagedWhole(anchorWindow, anchorable, function)) {
                 return false;
             }
         }
@@ -8438,7 +8443,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // state costs the keys its replay touched once, whatever K is. Every other stateful
         // function - one outside the ANCHOR window, and the anchored ones a seal walks whole
         // - images all its live keys at every boundary, so the chain is kept only while
-        // LiveViewResumeChainPrice finds those images within the resume's budget, boundary
+        // LiveViewCheckpointChainPrice finds those images within the resume's budget, boundary
         // by boundary. The capture is opened before the replay reads a row - it pins the
         // generation it collects the boundaries from - and nothing it writes is reachable
         // until the splice commits, so abandoning it anywhere costs one temporary data
@@ -8520,7 +8525,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // replay never described would take the predecessor's entry instead of
                     // its own boundary's - which is exactly every key outside Q. Un-chained,
                     // each boundary is built against the old root it re-versions and keeps
-                    // that root's entry for every key Q does not name.
+                    // that root's entry for every key Q does not name. A chain stands on the
+                    // anchor root, which the restore below puts the runtime at.
+                    !isKeyed,
                     !isKeyed,
                     false,
                     isKeyed ? keyedReplay.getOutputKeys() : null,
@@ -8562,10 +8569,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     && resumeChainPrice.of(
                     instance.getAnchorWindow(),
                     windowFactory,
-                    Math.max(
-                            plan.getResumeScanRows(),
-                            LiveViewCheckpointRowsBounds.budgetOf(engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys())
-                    )
+                    // Never LONG_NULL here: a resume exists only with an anchor, and the plan
+                    // priced it against this reader.
+                    plan.getResumeScanRows(),
+                    engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()
             );
             // No repair marker yet. The splice's marker goes down at the replacement commit
             // below, the first statement that moves durable output under the roots this
@@ -9842,6 +9849,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // retire - or, for a localized repair, the prefix truncate - in place, and
             // the boundary list stays empty so the replay's segmentation is a dead
             // branch.
+            //
+            // The base rows this replay is estimated to read, taken on the first turn for a
+            // chain that reaches the end of the base table, whose price stands on it.
+            long headMissScanRows = Numbers.LONG_NULL;
             if (resuming) {
                 timelineCapture = resumed.takeCapture();
             } else if (isTimelineSpliceable) {
@@ -9856,15 +9867,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         session,
                         plan.getRetireLowTs(),
                         timelineHighTsExclusive,
-                        // Never chained, whichever bound this repair reached. A chain seeds
-                        // its first boundary from the published root below the interval and
-                        // images only the keys the runtime has marked dirty since, which
-                        // needs a runtime standing at that root. A head miss stands nowhere
-                        // near it: it wipes the accumulators and replays from L, so a key it
-                        // never touched would keep the predecessor's entry instead of the
-                        // identity the anchor reset - or the frame expiry - actually leaves
-                        // it at. The resume path is the one that restores the predecessor
-                        // first, and the one that chains.
+                        // Chained whenever the capture has no key domain, on either bound, and
+                        // never from the predecessor. A chain seeded from the published root
+                        // below the interval images only the keys the runtime has marked dirty
+                        // since, which needs a runtime standing at that root. A head miss
+                        // stands nowhere near it: it wipes the accumulators and replays from L,
+                        // so a key it never touched would keep the predecessor's entry instead
+                        // of the identity the anchor reset - or the frame expiry - actually
+                        // leaves it at. A chain standing on nothing has no such entry to fall
+                        // back on: its first boundary freezes the replay's runtime complete and
+                        // is published from empty, and every boundary above it freezes the keys
+                        // the replay touched since the one below, inside the runtime whose dirty
+                        // sets name exactly those. A keyed capture's Q leaves every other key to
+                        // the root it re-versions, which a chain cannot do.
+                        !route.isKeyedScan() && plan.isReplayStateKeyComplete(),
                         false,
                         true,
                         route.isKeyedScan() ? repairKeyedReplay.getOutputKeys() : null,
@@ -9895,6 +9911,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     timelineCapture = Misc.free(timelineCapture);
                     session.discardDescriptor();
                     session.getBoundaries().clear();
+                }
+                if (timelineCapture != null && timelineCapture.isChained() && !finiteHighBound) {
+                    // What a chain reaching the end of the base table is priced against: the
+                    // rows this replay reads, [L, +inf) of the pinned snapshot, estimated the way
+                    // the plan estimates the resume's - not the plan's own rebuild figure, which
+                    // it computes only when an anchor competed for the repair. Read now, while
+                    // the reader is still the one the plan priced against and before it is
+                    // detached for the scan.
+                    scanCost.of(reader);
+                    headMissScanRows = scanCost.estimateScanRows(scanLowTs, Long.MAX_VALUE);
                 }
                 // No repair marker yet. The splice's marker goes down at the replacement
                 // commit below, the first statement that moves durable output under the
@@ -10239,6 +10265,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // the prior turn built, and the overlay already holds what the repair
                             // took aside.
                             clearWindowState(windowFactory, anchorWindow);
+                            if (timelineCapture != null && timelineCapture.isChained() && !finiteHighBound) {
+                                // A chain reaching the end of the base table keeps the roots the
+                                // replay crosses only while the functions every chained freeze
+                                // images whole - W - fit its replay's rows, boundary by boundary,
+                                // as a resume's chain does. Bound after the wipe: the replay
+                                // rebuilds every W map from L, so the frontier's keys, which
+                                // include every key carried from below L, are no floor for what
+                                // its boundaries image. A converging repair is not priced: the
+                                // truncate a refusal falls back to would also drop the converged
+                                // roots above H.
+                                final LiveViewCheckpointChainPrice chainPrice = session.getChainPrice();
+                                if (chainPrice.of(
+                                        anchorWindow,
+                                        windowFactory,
+                                        headMissScanRows,
+                                        engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys()
+                                )) {
+                                    assert chainPrice.getFrontierKeys() == 0 : "a head miss priced its chain before the wipe";
+                                }
+                            }
                         }
                         if (!isPrimaryKept) {
                             // The runtime is now identity while the durable tier still holds
@@ -10374,6 +10420,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // than only in the row loop is what makes the position it
                                     // records the count of every row at or below it.
                                     boundaryFreezingCursor.setRowDrain(repairKeyedReplay);
+                                }
+                                if (session.getChainPrice().hasWholeImagedFunctions()) {
+                                    // Every turn: of() above dropped the budget, and a resumed
+                                    // turn continues on the price its session already holds - the
+                                    // same W, B and S its earlier turns left.
+                                    boundaryFreezingCursor.setFreezeBudget(session.getChainPrice());
                                 }
                                 source = boundaryFreezingCursor;
                             }
@@ -10553,6 +10605,33 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             replayMaxTs = mergedMaxTs;
                                         }
                                     }
+                                }
+                                if (timelineCapture != null && boundaryFreezingCursor.isFreezeDeclined()) {
+                                    // The price refused a boundary: the keys the chain would image
+                                    // whole outgrew the replay's rows. Drop back to the truncate, as
+                                    // the count guard does, here rather than at the refusal, so that
+                                    // a scan that throws on the way still finds the capture to free -
+                                    // and on a turn that yields as well, so it parks holding no
+                                    // capture and the turn that commits takes the truncate. The rows
+                                    // went through unchanged: a freeze writes checkpoint bookkeeping,
+                                    // never state a window function reads.
+                                    final LiveViewCheckpointChainPrice chainPrice = session.getChainPrice();
+                                    final int discardedRoots = boundaryFreezingCursor.getCaptured();
+                                    stats.inc(HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT);
+                                    stats.add(HEAD_MISS_SPLICE_DISCARDED_ROOT_COUNT, discardedRoots);
+                                    LOG.info().$("live view O3 head miss declined the checkpoint splice, truncating instead [view=")
+                                            .$(viewName)
+                                            .$(", boundaries=").$(repairBoundaries.size())
+                                            .$(", frozenRoots=").$(discardedRoots)
+                                            .$(", boundaryKeys=").$(chainPrice.getBoundaryKeys())
+                                            .$(", imagedKeys=").$(chainPrice.getImagedKeys())
+                                            .$(", keyBudget=").$(chainPrice.getBudgetKeys())
+                                            .$(", replayScanRows=").$(chainPrice.getReplayScanRows())
+                                            .$(", outputLowTs=").$ts(driver, emitLowTs).I$();
+                                    timelineCapture = Misc.free(timelineCapture);
+                                    session.discardDescriptor();
+                                    repairBoundaries.clear();
+                                    capturedBoundaries = 0;
                                 }
                                 if (timelineCapture != null) {
                                     capturedBoundaries = boundaryFreezingCursor.getCaptured();
@@ -11146,6 +11225,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         );
                         if (timelineSplice != null) {
                             repairPublication.timelinePublished();
+                            if (!isPrimaryKept) {
+                                // The runtime this repair promotes is the one its chain froze, so
+                                // the provisional stamp its targets carry names a real generation
+                                // now, whose newest root is the last boundary the chain froze: an
+                                // end-of-table repair re-versions every root above C. The keys
+                                // dirtied above that boundary stay, as after a resume's splice. A
+                                // capture that does not chain stamped nothing, so nothing moves.
+                                adoptSplicedCheckpointBaseline(instance, windowFactory, timelineSplice.getGeneration());
+                            }
                         }
                     }
                 }

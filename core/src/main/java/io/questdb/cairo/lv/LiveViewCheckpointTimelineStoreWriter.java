@@ -538,13 +538,44 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                      every key (so {@code outputKeys} must be null), and a
      *                      runtime standing at the predecessor root when the first
      *                      boundary is captured, so the keys it has marked dirty since
-     *                      are exactly the ones that moved
+     *                      are exactly the ones that moved. A chain whose first boundary
+     *                      stands on the predecessor root; see the overload for one that
+     *                      stands on nothing
      */
     public RepairCapture beginRepair(
             @Transient @NotNull Path checkpointsDir,
             @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
             @Nullable MemoryTracker memoryTracker,
             boolean isChained
+    ) {
+        return beginRepair(checkpointsDir, outputKeys, memoryTracker, isChained, isChained);
+    }
+
+    /**
+     * As above, with {@code isPredecessorSeeded} saying what a chain's first boundary
+     * stands on.
+     * <p>
+     * A predecessor-seeded chain freezes its first boundary against the published root
+     * immediately below the repaired interval and publishes it on top of that root, which
+     * is what the caller's runtime standing at that root licenses: a resume restored it
+     * there. A chain that is not seeded stands on nothing. Its first boundary freezes
+     * complete and is published from empty, and every boundary above it chains off the
+     * one below, inside the replay's own runtime - which is where its dirty sets are
+     * exact. It needs no runtime at the predecessor root, so a replay that wiped its
+     * runtime and rebuilt it from below the interval may chain this way; it may not chain
+     * from the predecessor, whose entry would stand for every key the wiped runtime no
+     * longer holds.
+     *
+     * @param isPredecessorSeeded whether a chain's first boundary is frozen against and
+     *                            published on top of the root immediately below the
+     *                            interval. Only a chain may be seeded
+     */
+    public RepairCapture beginRepair(
+            @Transient @NotNull Path checkpointsDir,
+            @Transient @Nullable LiveViewCheckpointOutputKeyDomain outputKeys,
+            @Nullable MemoryTracker memoryTracker,
+            boolean isChained,
+            boolean isPredecessorSeeded
     ) {
         if (isChained && outputKeys != null) {
             // A key-domain repair leaves every key outside Q to the old root, which is
@@ -553,6 +584,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // take the predecessor's entry instead of its own boundary's.
             throw CairoException.critical(0)
                     .put("live view checkpoint repair cannot chain over a partial key domain");
+        }
+        if (isPredecessorSeeded && !isChained) {
+            // A capture that does not chain re-versions each boundary out of its own
+            // pre-repair root, so there is no first link for the predecessor to seed.
+            throw CairoException.critical(0)
+                    .put("live view checkpoint repair cannot seed an unchained capture from its predecessor");
         }
         ensureDirectories(checkpointsDir);
         final LiveViewCheckpointMetaStore metaStore = identityCheckMetaStore;
@@ -574,6 +611,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         superblock.rowPositionDeltaRootRef,
                         superblock.segmentDirectoryRootRef,
                         isChained,
+                        isPredecessorSeeded,
                         scratch
                 );
             } catch (Throwable th) {
@@ -5202,6 +5240,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final long dataSegmentId;
         private final long generation;
         private final boolean isChained;
+        // Whether a chain's first boundary stands on the published root below the interval
+        // rather than on nothing; see beginRepair.
+        private final boolean isPredecessorSeeded;
         // Q, this capture's own copy, filled by adoptOutputKeys() after construction and,
         // like the heap copy it replaced, charged to no tracker. Lazy, so a capture without
         // one holds no native memory for it; see hasOutputKeys.
@@ -5235,12 +5276,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 LiveViewCheckpointPageRef rowPositionDeltaRootRef,
                 LiveViewCheckpointPageRef segmentDirectoryRootRef,
                 boolean isChained,
+                boolean isPredecessorSeeded,
                 FreezeScratch scratch
         ) {
             this.checkpointsDir.of(checkpointsDir);
             this.dataSegmentId = dataSegmentId;
             this.generation = generation;
             this.isChained = isChained;
+            this.isPredecessorSeeded = isPredecessorSeeded;
             this.scratch = scratch;
             copy(timelineRootRef, this.timelineRootRef);
             copy(rowPositionDeltaRootRef, this.rowPositionDeltaRootRef);
@@ -5499,7 +5542,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 } finally {
                     collectBoundaryVisitor.clearBindings();
                 }
-                if (isChained) {
+                if (isPredecessorSeeded) {
                     // The root below the whole repaired interval: the one boundary 0 is
                     // seeded from and frozen against, and the one every later boundary
                     // reaches through the chain for a key none of them imaged. The
@@ -5509,7 +5552,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     // A repair with no predecessor is not a fault - the interval simply
                     // starts below every boundary the timeline holds. The chain then has
                     // no incremental base, boundary 0 freezes complete, and the
-                    // boundaries above it chain off that.
+                    // boundaries above it chain off that. A chain that is not seeded
+                    // takes that shape whatever sits below the interval.
                     hasPredecessor = reader.predecessor(timelineRootRef, lowTsInclusive, predecessorEntry);
                 }
             }
@@ -5706,6 +5750,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * it, and reading that as "not staged, ask the published root" would re-admit the
          * entry the repair has just taken out.
          * <p>
+         * A complete freeze replaces its target's tree rather than adding to it: the root it
+         * publishes holds the keys it imaged and nothing else, the omitted ones removed by
+         * their absence. So once a target - the window state, or one function's root - froze
+         * complete at boundary j, the tree it stands on is boundary j's key set alone: an
+         * entry staged below j, or one the published root holds, answers for a key that root
+         * no longer has. Every staged entry records the boundary that staged it and every
+         * target the newest boundary it froze complete at, and a probe sees an entry only
+         * when it was staged at or above that point. A complete freeze stages every key it
+         * images, unchanged ones included, so what stays visible is exactly its key set.
+         * <p>
          * Shape questions - is the state root a legacy anchor, is it a window root this
          * seal's layout may build on, does the tree hold a root for this function - go to
          * the newest frozen boundary when there is one, because that is what
@@ -5726,6 +5780,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // that arena they charge no tracker. Lazy, so a constructor that throws strands
             // nothing.
             private final LiveViewCheckpointKeyIndex partitionIndex = new LiveViewCheckpointKeyIndex(scratch.frozenKeys);
+            // Per function ordinal, the newest boundary that froze the function complete, or -1
+            // while none has; a staged partition below it, and the published root, no longer
+            // answer for the function.
+            private final IntList functionReplaceBoundaries = new IntList();
+            // Index-aligned with stagedPartitions: the boundary that staged each one.
+            private final IntList stagedPartitionBoundaries = new IntList();
             private final ObjList<FrozenPartition> stagedPartitions = new ObjList<>();
             // A flyweight of its own, as the published boundary keeps: the fused entry
             // and a function's entry are asked for by different halves of one freeze, and
@@ -5744,13 +5804,19 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             private final LiveViewCheckpointRoot publishedRoot;
             private final LiveViewCheckpointPageRef publishedStateRootRef = new LiveViewCheckpointPageRef();
             private final LiveViewCheckpointKeyIndex windowPayloadIndex = new LiveViewCheckpointKeyIndex(scratch.frozenKeys);
+            // Index-aligned with windowPayloads: the boundary that staged each one.
+            private final IntList windowPayloadBoundaries = new IntList();
             // Handles into the capture scratch's payload arena, which the capture keeps leased
             // until it closes, and which every boundary it froze appended to without clearing.
             private final LongList windowPayloads = new LongList();
+            // The boundaries absorbed so far, which is the next one's index.
+            private int absorbedBoundaries;
             // Function ordinals remain stable for this chain's lifetime. The partition
             // index combines one with the state version and the key, so no joined key
             // or nested wrapper map is needed.
             private FrozenBoundary newest;
+            // The newest boundary that froze the window state complete, or -1 while none has.
+            private int windowReplaceBoundary = -1;
 
             private ChainedPreviousBoundary(
                     @Nullable LiveViewCheckpointTimelineEntry predecessor,
@@ -5809,7 +5875,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 Misc.free(entry);
                 Misc.free(windowEntry);
                 functionIdentities.clear();
+                functionReplaceBoundaries.clear();
+                stagedPartitionBoundaries.clear();
                 stagedPartitions.clear();
+                windowPayloadBoundaries.clear();
                 windowPayloads.clear();
                 newest = null;
             }
@@ -5829,11 +5898,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         // entry, and it is exactly the one that must not be seen.
                         return null;
                     }
+                    final int replaceBoundary = functionReplaceBoundaries.getQuick(functionOrdinal);
                     if (stagedIndex > 0) {
+                        if (stagedPartitionBoundaries.getQuick(stagedIndex - 1) < replaceBoundary) {
+                            // Staged below the complete freeze that omitted it, so the tree the
+                            // next boundary is built on does not hold it.
+                            return null;
+                        }
                         // The capture's own scratch, never the active one: a staged partition
                         // names its key and scalar by handles into the arenas that froze it.
                         stagedPartitions.getQuick(stagedIndex - 1).copyTo(scratch.frozenKeys, scratch.frozenPayloads, entry);
                         return entry;
+                    }
+                    if (replaceBoundary > -1) {
+                        // A complete freeze replaced the published root's tree for this
+                        // function and did not image the key.
+                        return null;
                     }
                 }
                 return published == null
@@ -5862,6 +5942,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     return null;
                 }
                 if (stagedIndex > 0) {
+                    if (windowPayloadBoundaries.getQuick(stagedIndex - 1) < windowReplaceBoundary) {
+                        // Staged below the complete freeze that omitted it.
+                        return null;
+                    }
                     // The staged key is byte for byte the probe's, so the probe names it. The
                     // payload resolves against the capture's own scratch, and the entry copies
                     // it into a buffer of its own.
@@ -5875,6 +5959,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             NO_STATE_PAGES
                     );
                     return windowEntry;
+                }
+                if (windowReplaceBoundary > -1) {
+                    // A complete freeze replaced the published root's window tree and did
+                    // not image the key.
+                    return null;
                 }
                 return published == null ? null : published.findWindowState(keyAddress, keyLength);
             }
@@ -5939,15 +6028,21 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
              * Folds one just-frozen boundary into the merged view, in the order the root
              * builder will apply it: removals first, then puts. An unchanged put is
              * absorbed like any other - the tree keeps the entry below and this carries
-             * the same bytes, so the two agree either way.
+             * the same bytes, so the two agree either way. A target the boundary froze
+             * complete moves its replace point here, which hides every entry it did not
+             * image.
              */
             private void absorb(FrozenBoundary boundary) {
+                final int boundaryIndex = absorbedBoundaries++;
                 final FrozenWindowState windowState = boundary.windowState;
                 if (windowState != null) {
                     // Every handle the boundary holds is into this capture scratch's arenas,
                     // which the indexes and the staged payloads are resolved against.
                     assert windowState.keyArena == scratch.frozenKeys;
                     assert windowState.payloadArena == scratch.frozenPayloads;
+                    if (!windowState.isIncremental) {
+                        windowReplaceBoundary = boundaryIndex;
+                    }
                     for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
                         windowPayloadIndex.put(0, 0, windowState.removedKeys.getQuick(i), 0);
                     }
@@ -5957,6 +6052,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             // No payload is a key the repair's domain excluded, whose entry
                             // the tree keeps untouched - so it is not staged either.
                             windowPayloads.add(payloadHandle);
+                            windowPayloadBoundaries.add(boundaryIndex);
                             windowPayloadIndex.put(0, 0, windowState.keys.getQuick(i), windowPayloads.size());
                         }
                     }
@@ -5965,6 +6061,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     final FrozenFunction frozen = boundary.functions.getQuick(f);
                     assert frozen.scratch == scratch;
                     final int functionOrdinal = functionOrdinal(frozen.identity, true);
+                    if (!frozen.isIncremental) {
+                        // A scalar root is complete too, and holds no key a probe could ask
+                        // for, so its replace point hides nothing.
+                        functionReplaceBoundaries.setQuick(functionOrdinal, boundaryIndex);
+                    }
                     for (int i = 0, n = frozen.removedPartitions.size(); i < n; i++) {
                         partitionIndex.put(
                                 functionOrdinal,
@@ -5976,6 +6077,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     for (int i = 0, n = frozen.partitions.size(); i < n; i++) {
                         final FrozenPartition partition = frozen.partitions.getQuick(i);
                         stagedPartitions.add(partition);
+                        stagedPartitionBoundaries.add(boundaryIndex);
                         partitionIndex.put(
                                 functionOrdinal,
                                 frozen.stateFormatVersion,
@@ -5998,6 +6100,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 }
                 if (isCreate) {
                     functionIdentities.add(functionIdentity);
+                    functionReplaceBoundaries.add(-1);
                     return functionIdentities.size() - 1;
                 }
                 return -1;

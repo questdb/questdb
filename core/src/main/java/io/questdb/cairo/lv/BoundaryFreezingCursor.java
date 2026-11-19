@@ -202,8 +202,10 @@ final class BoundaryFreezingCursor implements RecordCursor {
      * minimum, find it below the boundary it is sealing on, and freeze the live domain
      * complete.
      * <p>
-     * Null for a repair whose boundaries no seal will stand on - the localized rebuild
-     * puts the pre-repair runtime back and seals nothing above its own splice.
+     * Null for the head-miss rebuild. A converging one puts the pre-repair runtime back,
+     * so no seal stands on its boundaries. One that reaches the end of the base table
+     * leaves the minimum to span its whole replay, so the seal that closes it replaces
+     * the newest root with a complete image, as it did before its splice chained.
      */
     public void of(
             RecordCursor base,

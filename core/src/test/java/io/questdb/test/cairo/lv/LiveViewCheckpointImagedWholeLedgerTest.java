@@ -182,8 +182,8 @@ public class LiveViewCheckpointImagedWholeLedgerTest extends AbstractLiveViewTes
     // 140 views take minutes, past CI's time budget.
     private static void assumeFullMatrix() {
         Assume.assumeTrue(
-                "every view runs with -D" + LiveViewResumeChainPriceTest.FULL_MATRIX_PROPERTY + "=true",
-                LiveViewResumeChainPriceTest.IS_FULL_MATRIX
+                "every view runs with -D" + LiveViewCheckpointChainPriceTest.FULL_MATRIX_PROPERTY + "=true",
+                LiveViewCheckpointChainPriceTest.IS_FULL_MATRIX
         );
     }
 

@@ -83,6 +83,10 @@ import org.jetbrains.annotations.Nullable;
 public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(LiveViewCheckpointRepairSession.class);
     private final ObjList<LiveViewCheckpointTimelineEntry> boundaries = new ObjList<>();
+    // What an end-of-table head miss pays to keep its chain, for every turn of the repair: it
+    // may park while its worker prices another view's repair, and S, what the admitted
+    // boundaries imaged, has to survive that.
+    private final LiveViewCheckpointChainPrice chainPrice = new LiveViewCheckpointChainPrice();
     private final LiveViewCheckpointRepairState descriptor;
     // Whether the qualifying output this repair has emitted so far holds two rows with
     // the same (timestamp, projected key) pair. It travels with the loop position for the
@@ -226,6 +230,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // Closeable, and a copy that ever holds native memory again must not leak.
         failure = Misc.freeBestEffort(failure, plan);
         boundaries.clear();
+        chainPrice.clear();
         keyedBoundaryPositions.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
@@ -299,6 +304,14 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public ObjList<LiveViewCheckpointTimelineEntry> getBoundaries() {
         return boundaries;
+    }
+
+    /**
+     * @return the price an end-of-table head miss keeps its chain on, bound on the repair's
+     * first turn and re-bound to the freeze cursor on every turn after it
+     */
+    public LiveViewCheckpointChainPrice getChainPrice() {
+        return chainPrice;
     }
 
     /**

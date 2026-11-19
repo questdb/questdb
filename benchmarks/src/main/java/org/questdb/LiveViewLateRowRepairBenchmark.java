@@ -76,14 +76,21 @@ import java.util.concurrent.TimeUnit;
  * the late rows and drives the refresh job to quiescence. The scenario reads
  * {@code view:keys:roots:late}:
  * <ul>
- *     <li>view - ROWS (sum over 2 preceding rows), RANGE24H (sum over 24 hours), TWO_ROWS (a ROWS
- *     sum and a ROWS avg), ANCHOR_RANK, ANCHOR_LAG, ANCHOR_EXCLUDE_AVG (avg over an EXCLUDE CURRENT
- *     ROW frame), ANCHOR_SUM (the one family whose chain stays incremental);</li>
+ *     <li>view - ROWS (sum over 2 preceding rows), RANGE24H (sum over 24 hours), RANGE1M (sum over
+ *     one minute), TWO_ROWS (a ROWS sum and a ROWS avg), ANCHOR_RANK, ANCHOR_LAG, ANCHOR_EXCLUDE_AVG
+ *     (avg over an EXCLUDE CURRENT ROW frame), ANCHOR_SUM (the one family whose chain stays
+ *     incremental);</li>
  *     <li>late - ONE (one row on an existing key below the first root), NEW_BELOW / NEW_ACROSS /
  *     NEW_SPREAD (100,000 rows on keys the view never held, below the first root, across it, or
  *     spread over every root), OLD (100,000 rows on the existing keys), DENSE (one row, after
  *     in-order commits each as wide as the key domain, so the replay pays for the chain), JITTERY
- *     (100 commits, each 1,000 rows reaching 0.5 s below the previous frontier).</li>
+ *     (100 commits, each 1,000 rows reaching 0.5 s below the previous frontier). The head-miss
+ *     shapes put one row at the day's start, below every root and with no root under it, so the
+ *     repair rebuilds the day and splices every root above the row: SEGMENT_START (the roots as
+ *     above), SEGMENT_START_DENSE (the roots as DENSE's), CLOSED_SEGMENT (a row in the next day
+ *     closes the repaired one first, so the repair converges below the frontier), and
+ *     LATE_WITH_CURRENT (a row below the first root and one above the frontier in one commit, for
+ *     a bounded RANGE view the late row localizes behind the end of the table).</li>
  * </ul>
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests
@@ -119,7 +126,13 @@ public class LiveViewLateRowRepairBenchmark {
             "ROWS:1000:12:NEW_BELOW",
             "ROWS:1000:12:NEW_ACROSS",
             "ROWS:1000:12:NEW_SPREAD",
-            "ROWS:1000:12:OLD"
+            "ROWS:1000:12:OLD",
+            "ANCHOR_SUM:100000:13:SEGMENT_START",
+            "ANCHOR_SUM:100000:49:SEGMENT_START",
+            "ANCHOR_LAG:100000:13:SEGMENT_START",
+            "ANCHOR_LAG:1000:120:SEGMENT_START_DENSE",
+            "RANGE1M:100000:13:LATE_WITH_CURRENT",
+            "ANCHOR_SUM:100000:13:CLOSED_SEGMENT"
     })
     public String scenario;
     private CairoEngine engine;
@@ -142,6 +155,9 @@ public class LiveViewLateRowRepairBenchmark {
     public long lateRowRepair() throws SqlException {
         switch (late) {
             case "ONE", "DENSE" -> execute("INSERT INTO base VALUES (" + (firstRootTs() - 30 * Micros.SECOND_MICROS) + "::timestamp, 's2', 1.0)");
+            case "SEGMENT_START", "SEGMENT_START_DENSE", "CLOSED_SEGMENT" -> execute("INSERT INTO base VALUES (" + DAY_ZERO_MICROS + "::timestamp, 's2', 1.0)");
+            case "LATE_WITH_CURRENT" -> execute("INSERT INTO base VALUES (" + (firstRootTs() - 30 * Micros.SECOND_MICROS) + "::timestamp, 's2', 1.0), ("
+                    + (rootTs(roots) + Micros.SECOND_MICROS) + "::timestamp, 's1', 1.0)");
             case "NEW_BELOW" -> execute("INSERT INTO base SELECT (" + (firstRootTs() - 30 * Micros.SECOND_MICROS) + " + x)::timestamp, ('n' || x)::symbol, 1.0 FROM long_sequence(" + LATE_ROWS + ")");
             case "NEW_ACROSS" -> execute("INSERT INTO base SELECT CASE WHEN x = 1 THEN (" + (firstRootTs() - 30 * Micros.SECOND_MICROS) + ")::timestamp"
                     + " ELSE (" + (firstRootTs() + 30 * Micros.SECOND_MICROS) + " + x)::timestamp END, ('n' || x)::symbol, 1.0 FROM long_sequence(" + LATE_ROWS + ")");
@@ -215,12 +231,17 @@ public class LiveViewLateRowRepairBenchmark {
         drainLiveView();
         // R roots above it, one in-order commit each; DENSE makes each as wide as the key domain.
         for (int i = 1; i <= roots; i++) {
-            if ("DENSE".equals(late)) {
+            if ("DENSE".equals(late) || "SEGMENT_START_DENSE".equals(late)) {
                 execute("INSERT INTO base SELECT (" + (rootTs(i) - keys - 1) + " + x)::timestamp,"
                         + " ('s' || ((x - 1) % " + keys + " + 1))::symbol, 1.0 FROM long_sequence(" + (keys + 1) + ")");
             } else {
                 execute("INSERT INTO base VALUES (" + rootTs(i) + "::timestamp, 's1', 1.0)");
             }
+            drainWal();
+            drainLiveView();
+        }
+        if ("CLOSED_SEGMENT".equals(late)) {
+            execute("INSERT INTO base VALUES (" + (DAY_ZERO_MICROS + Micros.DAY_MICROS + Micros.MINUTE_MICROS) + "::timestamp, 's1', 1.0)");
             drainWal();
             drainLiveView();
         }
@@ -263,6 +284,7 @@ public class LiveViewLateRowRepairBenchmark {
         return switch (view) {
             case "ROWS" -> "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s FROM base";
             case "RANGE24H" -> "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '24' HOUR PRECEDING AND CURRENT ROW) s FROM base";
+            case "RANGE1M" -> "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s FROM base";
             case "TWO_ROWS" -> "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s,"
                     + " avg(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) a FROM base";
             case "ANCHOR_RANK" -> "SELECT ts, sym, x, rank() OVER w r FROM base" + anchor;

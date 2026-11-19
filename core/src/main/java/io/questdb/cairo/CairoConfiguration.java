@@ -459,7 +459,9 @@ public interface CairoConfiguration {
      * repair truncates the ladder above its floor and seals a single fresh head. A value
      * {@code <= 0} disables the chain. A repair also stops keeping the chain, at the boundary
      * where it learns it, once the keys its boundaries image whole would pass the larger of the
-     * base rows it reads and {@link #getLiveViewCheckpointRepairScanMaxKeys()}.
+     * base rows it reads and {@link #getLiveViewCheckpointRepairScanMaxKeys()}: an out-of-order
+     * resume, and a head-miss repair that reaches the end of the base table, measured against the
+     * rows its own replay reads.
      */
     int getLiveViewCheckpointRepairMaxChainedBoundaries();
 
@@ -488,9 +490,10 @@ public interface CairoConfiguration {
      * an explicit budget status and hands the repair back to the unlocalized
      * rebuild instead of planning a replacement of that width. A value
      * {@code <= 0} disables the budget. It is also the floor of what an
-     * out-of-order resume's checkpoint chain may image whole: a chain whose
-     * boundaries would image more keys whole than the larger of this and the base
-     * rows the resume reads truncates instead, and {@code <= 0} lifts that floor.
+     * out-of-order resume's checkpoint chain, and an end-of-table head-miss
+     * repair's, may image whole: a chain whose boundaries would image more keys
+     * whole than the larger of this and the base rows its own replay reads
+     * truncates instead, and {@code <= 0} lifts that floor.
      */
     long getLiveViewCheckpointRepairScanMaxKeys();
 

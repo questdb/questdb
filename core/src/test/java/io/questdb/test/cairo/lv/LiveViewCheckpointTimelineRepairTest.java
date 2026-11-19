@@ -168,6 +168,37 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnUnchainedCaptureCannotBeSeededFromItsPredecessor() throws Exception {
+        // A capture that does not chain re-versions each boundary out of its own pre-repair
+        // root, so it has no first link a predecessor could seed; beginRepair refuses the pair
+        // before it opens anything, and the 4-argument form seeds exactly the chains.
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    try {
+                        writer.beginRepair(checkpointsDir, null, null, false, true);
+                        Assert.fail("an unchained capture has no first link to seed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "live view checkpoint repair cannot seed an unchained capture from its predecessor"
+                        );
+                    }
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, true)) {
+                        Assert.assertTrue(capture.isChained());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testChainedRepairFreesItsPublishedShellsWhenTheChainCannotOpen() throws Exception {
         // A chaining capture opens the published root below the repaired interval from
         // inside the chain's constructor, which allocates four native-holding shells

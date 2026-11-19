@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
+import io.questdb.cairo.lv.LiveViewCheckpointChainPrice;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsBounds;
@@ -37,7 +38,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
-import io.questdb.cairo.lv.LiveViewResumeChainPrice;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -47,6 +47,7 @@ import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.std.Files;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -77,8 +78,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * deduplicates, so the late commit takes the whole-range resume from A, and the plan's estimate
  * is every base row of hour 1 (and of the hours above it), counted exactly. Every expected
  * decision comes from that arithmetic, by hand.
+ * <p>
+ * The same price keeps an end-of-table head miss's chain; LiveViewHeadMissChainTest drives it.
  */
-public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
+public class LiveViewCheckpointChainPriceTest extends AbstractLiveViewTest {
     // Runs what CI's time budget leaves out: the 256-root chain here, and every view of
     // LiveViewCheckpointImagedWholeLedgerTest beyond one per family.
     static final String FULL_MATRIX_PROPERTY = "questdb.lv.chain.price.full";
@@ -182,6 +185,44 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
                 Assert.assertEquals("resume from anchor", colStr("checkpoint_repair_last_disposition"));
             }
             assertMatchesRecompute(ROWS_SUM + " s");
+        });
+    }
+
+    @Test
+    public void testChainPriceRefusesAnUnpricedRowCount() throws Exception {
+        // B = max(the replay's estimated rows, budgetOf(scan.max.keys)), formed by the price
+        // itself, so both repairs share the rule. A LONG_NULL row count is a plan field that
+        // priced nothing, which the price refuses rather than pricing against the floor alone.
+        assertMemoryLeak(() -> {
+            createBaseAndView("lag(x) OVER w s" + ANCHOR_WINDOW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first refresh with rows compiles the runtime the price reads.
+                driveSeedToCompletion(job, "lv");
+                seedKeys(job, 4);
+                final LiveViewInstance instance = instance();
+                final WindowRecordCursorFactory factory = instance.getCompiledPlan().getWindowFactory();
+                final LiveViewCheckpointChainPrice price = new LiveViewCheckpointChainPrice();
+                Assert.assertTrue(price.of(instance.getAnchorWindow(), factory, 7, 3));
+                Assert.assertEquals(7, price.getBudgetKeys());
+                Assert.assertEquals(7, price.getReplayScanRows());
+                Assert.assertTrue(price.hasWholeImagedFunctions());
+                Assert.assertTrue(price.of(instance.getAnchorWindow(), factory, 3, 7));
+                Assert.assertEquals(7, price.getBudgetKeys());
+                Assert.assertEquals(3, price.getReplayScanRows());
+                Assert.assertTrue(price.of(instance.getAnchorWindow(), factory, 0, 0));
+                Assert.assertEquals(Long.MAX_VALUE, price.getBudgetKeys());
+                Assert.assertTrue(price.of(instance.getAnchorWindow(), factory, 5, -1));
+                Assert.assertEquals(Long.MAX_VALUE, price.getBudgetKeys());
+                try {
+                    price.of(instance.getAnchorWindow(), factory, Numbers.LONG_NULL, 3);
+                    Assert.fail("an unpriced row count must not reach the budget");
+                } catch (AssertionError e) {
+                    Assert.assertEquals("a chain priced against no row estimate", e.getMessage());
+                }
+                price.clear();
+                Assert.assertFalse(price.hasWholeImagedFunctions());
+                Assert.assertEquals(0, price.getReplayScanRows());
+            }
         });
     }
 
@@ -876,9 +917,9 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
             final ObjList<Function> functions = new ObjList<>();
             functions.add(new ScalarStateStub());
             try (WindowRecordCursorFactory factory = new WindowRecordCursorFactory(null, new GenericRecordMetadata(), functions, null)) {
-                final LiveViewResumeChainPrice price = new LiveViewResumeChainPrice();
-                Assert.assertTrue(LiveViewResumeChainPrice.isCheckpointImagedWhole(null, null, factory.getWindowFunctions().getQuick(0)));
-                Assert.assertFalse(price.of(null, factory, 1));
+                final LiveViewCheckpointChainPrice price = new LiveViewCheckpointChainPrice();
+                Assert.assertTrue(LiveViewCheckpointChainPrice.isCheckpointImagedWhole(null, null, factory.getWindowFunctions().getQuick(0)));
+                Assert.assertFalse(price.of(null, factory, 1, 1));
                 Assert.assertEquals(0, price.getFrontierKeys());
             }
         });
@@ -919,22 +960,22 @@ public class LiveViewResumeChainPriceTest extends AbstractLiveViewTest {
     public void testWithinBudgetAtAndAroundTheEdges() {
         // M x n > B - S <=> M > floor((B - S) / n) for non-negative integers and n >= 1, with
         // M = max(K_front, K_i). Arguments: S, K_i, K_front, n = R - i, B.
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(0, 4, 4, 3, 12));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(0, 4, 4, 3, 11));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(0, 13, 4, 3, 13));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(4, 12, 4, 2, 12));
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(13, 17, 0, 1, 30));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(13, 18, 0, 1, 30));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(0, 4, 4, 3, 12));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(0, 4, 4, 3, 11));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(0, 13, 4, 3, 13));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(4, 12, 4, 2, 12));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(13, 17, 0, 1, 30));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(13, 18, 0, 1, 30));
         // K_front floors the projection: K_i alone (4 x 3 = 12) would pass.
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(0, 4, 12, 3, 12));
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(0, 0, 0, 256, 0));
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(30, 0, 0, 1, 30));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(30, 1, 0, 1, 30));
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(0, 1_000_000_000_000L, 0, 256, Long.MAX_VALUE));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(0, 4, 12, 3, 12));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(0, 0, 0, 256, 0));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(30, 0, 0, 1, 30));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(30, 1, 0, 1, 30));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(0, 1_000_000_000_000L, 0, 256, Long.MAX_VALUE));
         // 256 x (Long.MAX_VALUE / 2) overflows a product; the division form answers it.
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(0, Long.MAX_VALUE / 2, 0, 256, Long.MAX_VALUE));
-        Assert.assertTrue(LiveViewResumeChainPrice.isWithinBudget(Long.MAX_VALUE - 256, 1, 0, 256, Long.MAX_VALUE));
-        Assert.assertFalse(LiveViewResumeChainPrice.isWithinBudget(Long.MAX_VALUE - 255, 1, 0, 256, Long.MAX_VALUE));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(0, Long.MAX_VALUE / 2, 0, 256, Long.MAX_VALUE));
+        Assert.assertTrue(LiveViewCheckpointChainPrice.isWithinBudget(Long.MAX_VALUE - 256, 1, 0, 256, Long.MAX_VALUE));
+        Assert.assertFalse(LiveViewCheckpointChainPrice.isWithinBudget(Long.MAX_VALUE - 255, 1, 0, 256, Long.MAX_VALUE));
     }
 
     @Test

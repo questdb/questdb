@@ -31,8 +31,10 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * What an out-of-order resume pays to keep its checkpoint chain, checked boundary by boundary
- * as the replay reaches each one, before it is frozen.
+ * What a chained checkpoint repair pays to keep its chain, checked boundary by boundary as
+ * the replay reaches each one, before it is frozen. Two repairs chain: the out-of-order
+ * resume, whose chain stands on the root it restored, and the end-of-table head miss, whose
+ * chain stands on nothing.
  * <p>
  * A chained boundary freezes incrementally only the state a seal keeps dirty sets for: the
  * ANCHOR window's root, its durable projections and the functions it dispatches to that track
@@ -44,15 +46,28 @@ import org.jetbrains.annotations.Nullable;
  * cursor is about to freeze boundary i: every row at or below it folded, none above it.
  * <p>
  * Boundary i of R is refused when {@code max(K_front, K_i) x (R - i) > B - S_i}: S_i is what
- * the boundaries admitted so far imaged, and B the budget, the larger of the resume's
- * estimated base rows and {@code cairo.live.view.checkpoint.repair.scan.max.keys}. Admitting
- * boundary i needs {@code S_i + (R - i) x M_i <= B} and adds {@code K_i <= M_i}, so S never
- * passes B: a kept chain images at most B keys whole, whatever keys the change brings and
- * wherever they land, and a refused one has imaged at most B before it stops.
+ * the boundaries admitted so far imaged, and B the budget, the larger of the base rows the
+ * repair's own replay is estimated to read and
+ * {@code cairo.live.view.checkpoint.repair.scan.max.keys}. Admitting boundary i needs
+ * {@code S_i + (R - i) x M_i <= B} and adds {@code K_i <= M_i}, so S never passes B: a kept
+ * chain images at most B keys whole, whatever keys the change brings and wherever they land,
+ * and a refused one has imaged at most B before it stops.
  * <p>
- * One per refresh worker, reused per repair: nothing allocates after the first.
+ * The two repairs differ in what they pass:
+ * <ul>
+ *     <li>the resume passes the rows its plan estimated above the anchor, and binds before
+ *     its restore clears the maps, so K_front is the frontier's W keys - a floor for every
+ *     boundary of a replay that restored the anchor, which holds every key live there;</li>
+ *     <li>the head miss passes the rows it estimates itself over {@code [L, +inf)} of its
+ *     pinned snapshot, and binds after its wipe, so K_front is 0: its replay rebuilds from
+ *     L, and boundary i holds the keys seen in {@code [L, B_i]} and nothing else.</li>
+ * </ul>
+ * <p>
+ * The resume uses its worker's instance and never parks; a head miss may park across turns
+ * while its worker prices other repairs, so its instance lives in its repair session. Nothing
+ * allocates after the first use.
  */
-public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.FreezeBudget {
+public final class LiveViewCheckpointChainPrice implements BoundaryFreezingCursor.FreezeBudget {
     // Per W member: whether its walk reads the anchor map (a fused runtime-only member, whose
     // own map the window owns and keeps closed) rather than its own.
     private final BoolList anchorMapWalks = new BoolList();
@@ -64,6 +79,8 @@ public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.Fr
     private long frontierKeys;
     // S: the keys the boundaries admitted so far image whole.
     private long imagedKeys;
+    // The base rows the repair's replay is estimated to read, B's first term.
+    private long replayScanRows;
 
     /**
      * Whether a seal - a cadence seal or a chained boundary - walks the whole state of
@@ -138,6 +155,7 @@ public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.Fr
         budgetKeys = 0;
         frontierKeys = 0;
         imagedKeys = 0;
+        replayScanRows = 0;
     }
 
     /**
@@ -162,6 +180,21 @@ public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.Fr
         return imagedKeys;
     }
 
+    /**
+     * @return the base rows the repair's replay is estimated to read, which {@link #of} took
+     */
+    public long getReplayScanRows() {
+        return replayScanRows;
+    }
+
+    /**
+     * @return whether the last {@link #of} found something the chain images whole, which is
+     * what a repair binding this price to its freeze cursor asks
+     */
+    public boolean hasWholeImagedFunctions() {
+        return wholeImagedFunctions.size() > 0;
+    }
+
     @Override
     public boolean isAffordable(int boundaryIndex, int boundaryCount) {
         boundaryKeys = liveKeys();
@@ -174,19 +207,27 @@ public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.Fr
 
     /**
      * Collects W out of {@code windowFactory}'s functions and reads K_front off their maps,
-     * which the caller does before anything clears them for the anchor restore.
+     * so the caller binds it where the maps hold what K_front means for its repair: the
+     * resume before anything clears them for the anchor restore, the head miss after its
+     * wipe.
      *
-     * @param anchorWindow  the primary's ANCHOR window, or null
-     * @param windowFactory the primary runtime the chain freezes
-     * @param budgetKeys    B
+     * @param anchorWindow   the ANCHOR window of the runtime the chain freezes, or null
+     * @param windowFactory  the runtime the chain freezes
+     * @param replayScanRows the base rows the repair's replay is estimated to read, a count:
+     *                       never {@code LONG_NULL}, which a plan field that priced nothing
+     *                       holds
+     * @param scanMaxKeys    {@code cairo.live.view.checkpoint.repair.scan.max.keys}, at or
+     *                       below zero for no floor
      * @return false when nothing the chain freezes images keys whole, so there is nothing to
      * price: a scalar root images no key, and every other function freezes incrementally
      */
     public boolean of(
             @Nullable LiveViewWindow anchorWindow,
             WindowRecordCursorFactory windowFactory,
-            long budgetKeys
+            long replayScanRows,
+            long scanMaxKeys
     ) {
+        assert replayScanRows >= 0 : "a chain priced against no row estimate";
         clear();
         final ObjList<WindowFunction> functions = windowFactory.getWindowFunctions();
         final ObjList<WindowFunction> anchorable = windowFactory.getAnchorableWindowFunctions();
@@ -213,7 +254,10 @@ public final class LiveViewResumeChainPrice implements BoundaryFreezingCursor.Fr
             return false;
         }
         this.anchorWindow = anchorWindow;
-        this.budgetKeys = budgetKeys;
+        this.replayScanRows = replayScanRows;
+        // The decided rule, in one place: a kept chain images at most what its own replay
+        // reads, or the configured floor for a small replay.
+        budgetKeys = Math.max(replayScanRows, LiveViewCheckpointRowsBounds.budgetOf(scanMaxKeys));
         frontierKeys = liveKeys();
         return true;
     }
