@@ -86,6 +86,8 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     // SET_DEDUP_ENABLE, which carries only the dedup key writer indexes, implies the UPSERT mode. The builder
     // keeps emitting SET_DEDUP_ENABLE for UPSERT so that versions predating the dedup mode can still apply it.
     public final static short SET_DEDUP_ENABLE_WITH_MODE = FORCE_REINDEX + 1; // 30
+    private static final int ADD_COLUMN_FLAGS_OFFSET = 3;
+    private static final int ADD_COLUMN_PARAM_COUNT = 6;
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -332,6 +334,17 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         // Any non-structural change may be force-applied directly to a hard-suspended table,
         // mirroring FORCE DROP PARTITION. Structural changes must stay versioned through the WAL.
         return !isStructural();
+    }
+
+    public boolean isIndexedColumnAdded() {
+        if (command == ADD_COLUMN) {
+            for (int i = ADD_COLUMN_FLAGS_OFFSET, n = extraInfo.size(); i < n; i += ADD_COLUMN_PARAM_COUNT) {
+                if (decodeIndexType(extraInfo.getQuick(i)) != IndexType.NONE) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override

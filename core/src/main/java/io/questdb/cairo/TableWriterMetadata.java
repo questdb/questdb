@@ -122,8 +122,9 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
 
     /**
      * The storage version stamped into {@code _meta} at {@link TableUtils#META_OFFSET_VERSION}.
-     * {@link ColumnType#VERSION} for an ordinary table, raised by {@link ColumnType#storageVersion(boolean, boolean)}
-     * while the table holds composite partitions or is downgrade-locked.
+     * {@link ColumnType#VERSION} for an ordinary table, raised by
+     * {@link ColumnType#storageVersion(boolean, boolean, boolean)} while the table holds composite or Delta
+     * partitions or is downgrade-locked.
      */
     public int getStorageVersion() {
         return storageVersion;
