@@ -7030,6 +7030,7 @@ public class CheckpointTest extends AbstractCairoTest {
             final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
+            final String partDirSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR;
             final FilesFacade failingFacade = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
@@ -7043,7 +7044,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 @Override
                 public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pk")) {
+                    if (Utf8s.endsWithAscii(name, partDirSuffix + "s.pk")) {
                         isArmed.set(true);
                     }
                     return super.removeQuiet(name);
@@ -7055,7 +7056,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
                 private boolean fails(LPSZ name) {
-                    if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + failingFile)) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, partDirSuffix + failingFile)) {
                         failures.incrementAndGet();
                         return true;
                     }
