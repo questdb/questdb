@@ -326,6 +326,21 @@ final class QwpIngressWireHarness {
         return (buf[offset] & 0xFF) | (buf[offset + 1] & 0xFF) << 8;
     }
 
+    /**
+     * The rollback control frame, as the pinned client's encoder writes it.
+     */
+    static byte[] rollbackMessage() {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder()) {
+            final int length = encoder.encodeRollbackMessage();
+            final byte[] message = new byte[length];
+            final long address = encoder.getBuffer().getBufferPtr();
+            for (int i = 0; i < length; i++) {
+                message[i] = Unsafe.getByte(address + i);
+            }
+            return message;
+        }
+    }
+
     /// A frame carrying no table blocks at all, with FLAG_DEFER_COMMIT. The
     /// client emits exactly this shape for its symbol-dictionary chunks and its
     /// reconnect catch-up, and the data frames after them reference the ids

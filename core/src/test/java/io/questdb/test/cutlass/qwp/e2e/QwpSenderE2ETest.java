@@ -815,8 +815,11 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         // server advertises X-QWP-Max-Batch-Size at handshake the default
         // sender clamps to it -- this test explicitly disables that path by
         // setting auto_flush_bytes=off so the rejection branch still fires.
+        // The interval trigger stays on, an hour long so it never fires: a
+        // sender with no auto-flush trigger is a strict transaction, which
+        // close() discards instead of flushing.
         runInContext((port) -> {
-            try (QwpWebSocketSender sender = connectWs(port, /*rows*/ 0, /*bytes*/ 0, /*intervalNanos*/ 0L)) {
+            try (QwpWebSocketSender sender = connectWs(port, /*rows*/ 0, /*bytes*/ 0, TimeUnit.HOURS.toNanos(1))) {
                 for (int i = 0; i < 1500; i++) {
                     sender.table("close_rethrow")
                             .stringColumn("payload", "x".repeat(64))

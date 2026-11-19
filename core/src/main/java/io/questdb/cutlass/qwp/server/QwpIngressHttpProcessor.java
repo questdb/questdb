@@ -78,6 +78,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // Client opt-in for STATUS_DURABLE_ACK frames. Value "true" (case-insensitive) enables.
     // Any other value, or header absent, leaves the feature disabled for this connection.
     public static final Utf8String HEADER_X_QWP_REQUEST_DURABLE_ACK = new Utf8String("X-QWP-Request-Durable-Ack");
+    // Opt-in for the rollback control frame: a client that sends "true" gets
+    // X-QWP-Rollback: enabled on the 101 upgrade.
+    public static final Utf8String HEADER_X_QWP_REQUEST_ROLLBACK = new Utf8String("X-QWP-Request-Rollback");
     // These values are NOT delivered verbatim like their header counterparts:
     // HttpHeaderParser.urlDecode re-keys a parameter on every unescaped '=', so
     // a value carrying one (qwp_accept_encoding=zstd;level=5) loses its key
@@ -551,6 +554,17 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol, null);
+    }
+
+    /**
+     * Same as the overload without {@code extraHeaderBytes}, plus
+     * {@code extraHeaderBytes}: pre-rendered header lines, each starting with
+     * CRLF and written verbatim after the others -- the transaction headers
+     * {@code X-QWP-Max-Uncommitted-Rows} and {@code X-QWP-Rollback}. Pass
+     * {@code null} for none.
+     */
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol, byte[] extraHeaderBytes) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -573,6 +587,9 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (sessionCookieValueBytes != null) {
             size += RESPONSE_SESSION_COOKIE_PREFIX.length + sessionCookieValueBytes.length;
+        }
+        if (extraHeaderBytes != null) {
+            size += extraHeaderBytes.length;
         }
         return size;
     }
@@ -767,6 +784,15 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol, null);
+    }
+
+    /**
+     * Same as the overload without {@code extraHeaderBytes}, plus
+     * {@code extraHeaderBytes} written verbatim after the other headers; see
+     * {@link #responseSize(byte[], int, byte[], Utf8Sequence, byte[], byte[], byte[], boolean, boolean, byte[])}.
+     */
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol, byte[] extraHeaderBytes) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -841,6 +867,12 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                 Unsafe.putByte(buf + offset++, b);
             }
             for (byte b : sessionCookieValueBytes) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        }
+
+        if (extraHeaderBytes != null) {
+            for (byte b : extraHeaderBytes) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }

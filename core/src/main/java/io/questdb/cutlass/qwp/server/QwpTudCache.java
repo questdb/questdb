@@ -336,6 +336,13 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
+     * The {@code qwp.max.uncommitted.rows} cap this cache force-commits a table at.
+     */
+    public long getMaxUncommittedRows() {
+        return maxUncommittedRows;
+    }
+
+    /**
      * True when {@code tud} is this cache's current entry for its table name.
      */
     public boolean isCachedEntry(WalTableUpdateDetails tud) {

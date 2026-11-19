@@ -49,6 +49,12 @@ public class QwpConstantsTest {
         // Verify flag bits are at correct positions
         Assert.assertEquals(0x04, FLAG_GORILLA);
         Assert.assertEquals(0x08, FLAG_DELTA_SYMBOL_DICT);
+        // Wire constants shared with the client's QwpConstants: the rollback bit
+        // must not collide with any bit a released client sets.
+        Assert.assertEquals(0x20, FLAG_ROLLBACK);
+        Assert.assertEquals(0x21, ROLLBACK_FRAME_FLAGS);
+        Assert.assertEquals(0, FLAG_ROLLBACK & (FLAG_DEFER_COMMIT | FLAG_DURABLE_ACK_POLL | FLAG_GORILLA
+                | FLAG_DELTA_SYMBOL_DICT | FLAG_ZSTD));
     }
 
     @Test
