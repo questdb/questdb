@@ -773,6 +773,62 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         });
     }
 
+    @Test
+    public void testCloseDropsUnfinishedRowAndSendsCompleteRows() throws Exception {
+        runInContext(port -> {
+            for (Sender.SchemaMode mode : new Sender.SchemaMode[]{Sender.SchemaMode.AUTO, Sender.SchemaMode.OFF}) {
+                final String table = "close_unfinished_" + mode.name().toLowerCase(Locale.ROOT);
+                execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final AtomicReference<SenderError> error = new AtomicReference<>();
+                try (QwpWebSocketSender sender = connectWs(port, error::set, 1, mode)) {
+                    for (int i = 0; i < 3; i++) {
+                        sender.table(table).longColumn("v", i).at(1_000_000L + i, ChronoUnit.MICROS);
+                    }
+                    // The caller starts a row and never finishes it. The row sets a
+                    // column the table lacks, which must not reach the table either.
+                    sender.table(table).longColumn("v", 99).longColumn("extra", 100);
+                }
+                Assert.assertNull(mode.name(), error.get());
+                drainWalQueue();
+                assertQuery("SELECT * FROM " + table).noLeakCheck().timestamp("ts").expectSize().returns("""
+                        v\tts
+                        0\t1970-01-01T00:00:01.000000Z
+                        1\t1970-01-01T00:00:01.000001Z
+                        2\t1970-01-01T00:00:01.000002Z
+                        """);
+            }
+        });
+    }
+
+    @Test
+    public void testCloseDropsUnfinishedRowOfAnotherTable() throws Exception {
+        runInContext(port -> {
+            for (Sender.SchemaMode mode : new Sender.SchemaMode[]{Sender.SchemaMode.AUTO, Sender.SchemaMode.OFF}) {
+                final String suffix = mode.name().toLowerCase(Locale.ROOT);
+                final String table = "close_complete_" + suffix;
+                execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final AtomicReference<SenderError> error = new AtomicReference<>();
+                try (QwpWebSocketSender sender = connectWs(port, error::set, 1, mode)) {
+                    sender.table(table).longColumn("v", 1).at(1_000_000L, ChronoUnit.MICROS);
+                    // The unfinished row belongs to a table that does not exist.
+                    sender.table("close_never_" + suffix).longColumn("v", 99);
+                }
+                // A sender that holds nothing but an unfinished row sends nothing.
+                try (QwpWebSocketSender sender = connectWs(port, error::set, 1, mode)) {
+                    sender.table("close_alone_" + suffix).longColumn("v", 99);
+                }
+                Assert.assertNull(mode.name(), error.get());
+                drainWalQueue();
+                assertQuery("SELECT * FROM " + table).noLeakCheck().timestamp("ts").expectSize().returns("""
+                        v\tts
+                        1\t1970-01-01T00:00:01.000000Z
+                        """);
+                Assert.assertNull(engine.getTableTokenIfExists("close_never_" + suffix));
+                Assert.assertNull(engine.getTableTokenIfExists("close_alone_" + suffix));
+            }
+        });
+    }
+
     /**
      * Regression coverage for the silent-loss-on-close path: when the user
      * calls only close() (no flush() afterwards) and the I/O loop has latched
