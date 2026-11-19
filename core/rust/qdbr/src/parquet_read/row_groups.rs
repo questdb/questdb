@@ -57,6 +57,18 @@ pub struct RowGroupBuffers {
     pub(super) column_bufs: AcVec<ColumnChunkBuffers>,
 }
 
+/// Primitive cross-library ABI for a non-owning decoded column. The allocation
+/// is owned by a decoder resource outside qdbr; `RowGroupBuffers` exposes it to
+/// Java but never frees it.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct ExternalColumnView {
+    pub data_ptr: *mut u8,
+    pub data_size: usize,
+    pub aux_ptr: *mut u8,
+    pub aux_size: usize,
+}
+
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
         Self {
@@ -77,6 +89,30 @@ impl RowGroupBuffers {
 
     pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
         &self.column_bufs
+    }
+
+    pub fn install_external_views(
+        &mut self,
+        column_offset: usize,
+        views: &[ExternalColumnView],
+    ) -> ParquetResult<()> {
+        let required = column_offset
+            .checked_add(views.len())
+            .ok_or_else(|| fmt_err!(InvalidLayout, "external column range overflow"))?;
+        self.ensure_n_columns(required)?;
+        for (index, view) in views.iter().enumerate() {
+            if (view.data_ptr.is_null() && view.data_size != 0)
+                || (view.aux_ptr.is_null() && view.aux_size != 0)
+            {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "external column has null pointer with non-zero size, column index: {}",
+                    column_offset + index
+                ));
+            }
+            self.column_bufs[column_offset + index].install_external(*view);
+        }
+        Ok(())
     }
 
     /// Deep-copies the first `col_count` decoded column buffers into a fresh,
@@ -1700,7 +1736,7 @@ pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
     )
 }
 
-/// Whether a `_pm` decode of a column chunk records its column-top rows
+/// Whether a decode of a column chunk records its column-top rows
 /// (`ColumnChunkBuffers::top_rows`) from the definition levels. A column of a source type without
 /// a NULL sentinel is NULL only in its column tops, which QuestDB writes at definition level 0
 /// wherever they sit: CONVERT TO PARQUET of a split or composite partition writes the folders, or
@@ -1711,8 +1747,9 @@ pub(super) fn has_no_null_sentinel(tag: ColumnTypeTag) -> bool {
 /// list.
 ///
 /// A chunk without definition levels (a Required column of QuestDB 9.4.x and older) stores its
-/// top rows as 0: the `_pm` decode takes the top from the chunk null counts. The footer decoder,
-/// which serves CONVERT TO NATIVE, records none, see [`takes_file_column_top`].
+/// top rows as 0: the `_pm` decode takes the top from the chunk null counts, and the footer decoder
+/// from the file metadata, see [`takes_file_column_top`]. The footer decoder records the rows only
+/// in its unfiltered decode of a file QuestDB wrote, which serves CONVERT TO NATIVE.
 pub(super) fn decode_records_top_rows(
     source_type: ColumnType,
     decode_type: ColumnType,
@@ -1730,11 +1767,8 @@ pub(super) fn decode_records_top_rows(
 }
 
 /// Whether the footer decoder takes the column-top rows of a chunk from the column top of the file
-/// metadata, as the leading rows it counts. It records none from the definition levels: it serves
-/// CONVERT TO NATIVE, which keeps only the leading column top, as a native column holds no later
-/// one, and the metadata top is the one the PartitionUpdater keeps as a native O3 merge does. An
-/// O3 merge that ends a top lowers it in the metadata but can leave the NULLs of the ended rows in
-/// the row groups that the update keeps, which then read as the 0 or false that native stores.
+/// metadata, as the leading rows it counts, where it records none from the definition levels, see
+/// [`decode_records_top_rows`].
 ///
 /// A source type without a NULL sentinel needs the rows for a conversion to read NULL there, see
 /// [`post_convert`], wherever the decode wrote them as 0: at the width of such a type, and at any
@@ -1947,6 +1981,12 @@ impl ParquetDecoder {
             }
 
             let col_info = QdbMetaCol { column_type, column_top, format, ascii, id: None };
+            let records_top_rows = self.qdb_meta.is_some()
+                && decode_records_top_rows(
+                    original_column_type,
+                    column_type,
+                    &self.metadata.schema_descr.columns()[column_idx].descriptor,
+                );
             match self.decode_column_chunk(
                 ctx,
                 column_chunk_bufs,
@@ -1955,6 +1995,7 @@ impl ParquetDecoder {
                 row_group_hi as usize,
                 column_idx,
                 col_info,
+                records_top_rows,
             ) {
                 Ok(column_chunk_decoded) => {
                     if decoded > 0 && decoded != column_chunk_decoded {
@@ -1970,11 +2011,13 @@ impl ParquetDecoder {
                 }
             }
 
-            if takes_file_column_top(
-                original_column_type,
-                column_type,
-                self.has_def_levels(column_idx),
-            ) {
+            if !records_top_rows
+                && takes_file_column_top(
+                    original_column_type,
+                    column_type,
+                    self.has_def_levels(column_idx),
+                )
+            {
                 // The rows of this chunk that fall in the column top of the file metadata.
                 let leading_nulls = column_top
                     .saturating_sub(accumulated_size + row_group_lo as usize)
@@ -2558,6 +2601,7 @@ impl ParquetDecoder {
         row_group_hi: usize,
         column_index: usize,
         col_info: QdbMetaCol,
+        records_top_rows: bool,
     ) -> ParquetResult<usize> {
         let columns = self.metadata.row_groups[row_group_index].columns();
         let column_metadata = &columns[column_index];
@@ -2592,6 +2636,7 @@ impl ParquetDecoder {
         } = ctx;
 
         column_chunk_bufs.reset_for_decode(varchar_slice_buf_pool);
+        let mut top_rows = records_top_rows.then(|| column_chunk_bufs.take_top_rows());
 
         // Reuse the hoisted scratch outer-vecs across calls so we don't pay an outer
         // allocation per column chunk. Defensive clear: the end-of-chunk append and the
@@ -2639,7 +2684,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2676,7 +2721,7 @@ impl ParquetDecoder {
                                 col_info,
                                 row_group_lo.saturating_sub(row_count),
                                 cmp::min(page_row_count, row_group_hi - row_count),
-                                None,
+                                top_rows.as_mut(),
                             )
                             .with_context(|_| {
                                 format!(
@@ -2710,6 +2755,9 @@ impl ParquetDecoder {
                 .append(varchar_slice_page_bufs);
         }
 
+        if let Some(top_rows) = top_rows {
+            column_chunk_bufs.restore_top_rows(top_rows);
+        }
         column_chunk_bufs.refresh_ptrs()?;
         Ok(row_count)
     }
@@ -4187,6 +4235,7 @@ impl ParquetDecoder {
             row_hi,
             timestamp_column_index,
             col_info,
+            false,
         )?;
         let data = &bufs.data_vec;
         if data.len() < std::mem::size_of::<i64>() {
