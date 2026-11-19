@@ -103,19 +103,22 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
 
     @Test
     public void testApplyDetachRenameAwayAndBackAttach() throws Exception {
-        // 2024-01-02 holds new_col_1: the ATTACH while new_col_1 is renamed away refuses the partition
+        // 2024-01-02 holds every column the operation can rename, a and new_col_1: the ATTACH while either is renamed
+        // away refuses the partition
         assertRenameAwayAndBackRoundTrip(false, RENAMED_AWAY_ATTACH_REFUSED);
     }
 
     @Test
     public void testApplyDetachRenameAwayAndBackAttachNoRows() throws Exception {
-        // new_col_1 joins the table after 2024-01-02 was written: the ATTACH while new_col_1 is renamed away attaches
-        // the partition, which reads new_col_1 as NULL, and the operation attaches nothing more
+        // a and new_col_1, the columns the operation can rename, join the table after 2024-01-02 was written: the ATTACH
+        // while either is renamed away attaches the partition, which reads both as NULL, and the operation attaches
+        // nothing more
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO t VALUES (1, '2024-01-01'), (2, '2024-01-02'), (3, '2024-01-03')");
+            execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01'), ('2024-01-02'), ('2024-01-03')");
+            execute("ALTER TABLE t ADD COLUMN a INT");
             execute("ALTER TABLE t ADD COLUMN new_col_1 INT");
-            execute("INSERT INTO t VALUES (4, '2024-01-04', 40)");
+            execute("INSERT INTO t VALUES ('2024-01-04', 4, 40)");
             final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
                     MicrosTimestampDriver.floor("2024-01-02"),
                     BETWEEN_RENAME_AWAY_AND_BACK,
@@ -124,11 +127,11 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
             apply(false, operation);
             Assert.assertEquals(RENAMED_AWAY_ATTACH_ATTACHED, operation.getRenamedAwayAttachOutcome());
             final String expected = """
-                    a\tts\tnew_col_1
-                    1\t2024-01-01T00:00:00.000000Z\tnull
-                    2\t2024-01-02T00:00:00.000000Z\tnull
-                    3\t2024-01-03T00:00:00.000000Z\tnull
-                    4\t2024-01-04T00:00:00.000000Z\t40
+                    ts\ta\tnew_col_1
+                    2024-01-01T00:00:00.000000Z\tnull\tnull
+                    2024-01-02T00:00:00.000000Z\tnull\tnull
+                    2024-01-03T00:00:00.000000Z\tnull\tnull
+                    2024-01-04T00:00:00.000000Z\t4\t40
                     """;
             assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
             engine.releaseAllReaders();
@@ -160,6 +163,38 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
                     3\t2024-01-03T00:00:00.000000Z\t30
                     4\t2024-01-04T00:00:00.000000Z\t40
                     """);
+        });
+    }
+
+    @Test
+    public void testApplyDetachRenameCreatedColumnAwayAndBackAttach() throws Exception {
+        // a, from CREATE TABLE, is the only column to rename: its files carry no column name txn. 2024-01-02 holds a, so
+        // the ATTACH while a is renamed away refuses the partition.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-01-01'), (2, '2024-01-02'), (3, '2024-01-03')");
+            final long metadataVersion = getMetadataVersion();
+            final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(
+                    MicrosTimestampDriver.floor("2024-01-02"),
+                    BETWEEN_RENAME_AWAY_AND_BACK,
+                    0
+            );
+            apply(false, operation);
+            Assert.assertEquals(RENAMED_AWAY_ATTACH_REFUSED, operation.getRenamedAwayAttachOutcome());
+            // a renamed away and back
+            Assert.assertEquals(metadataVersion + 2, getMetadataVersion());
+            execute("INSERT INTO t VALUES (5, '2024-01-02T12:00:00.000000Z')");
+            final String expected = """
+                    a\tts
+                    1\t2024-01-01T00:00:00.000000Z
+                    2\t2024-01-02T00:00:00.000000Z
+                    5\t2024-01-02T12:00:00.000000Z
+                    3\t2024-01-03T00:00:00.000000Z
+                    """;
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns(expected);
         });
     }
 
@@ -215,7 +250,7 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
             execute("ALTER TABLE t RENAME COLUMN new_col_1 TO " + RENAMED_AWAY_PREFIX + "new_col_1");
             final long metadataVersion = getMetadataVersion();
             apply(false, new FuzzDetachAttachPartitionOperation(MicrosTimestampDriver.floor("2024-01-02"), BETWEEN_RENAME_AWAY_AND_BACK, 0));
-            // the rename back, then the two of the round trip
+            // the rename back, then the two of the round trip, of a or new_col_1
             Assert.assertEquals(metadataVersion + 3, getMetadataVersion());
             assertQuery("SELECT * FROM t").noLeakCheck().timestamp("ts").expectSize().returns("""
                     a\tts\tnew_col_1
@@ -439,7 +474,7 @@ public class FuzzDetachAttachPartitionOperationTest extends AbstractCairoTest {
             final FuzzDetachAttachPartitionOperation operation = new FuzzDetachAttachPartitionOperation(day, BETWEEN_RENAME_AWAY_AND_BACK, 0);
             apply(isWal, operation);
             Assert.assertEquals(expectedRenamedAwayAttachOutcome, operation.getRenamedAwayAttachOutcome());
-            // new_col_1 renamed away and back on the non-WAL table, the WAL table left as it was
+            // a or new_col_1 renamed away and back on the non-WAL table, the WAL table left as it was
             Assert.assertEquals(metadataVersion + (isWal ? 0 : 2), getMetadataVersion());
             execute("INSERT INTO t VALUES (5, '2024-01-02T12:00:00.000000Z', 50)");
             drainWalQueue();

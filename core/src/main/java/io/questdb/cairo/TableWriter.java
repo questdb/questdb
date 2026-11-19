@@ -7577,10 +7577,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (columnTop < 0) {
                         columnTop = partitionSize;
                     }
-                    // A record cannot name the unversioned files of a column from CREATE TABLE: readers take a
-                    // name txn of -1 for the column's default.
+                    // A record of the partition names the version of the column's files there, -1 included: the files
+                    // of a column from CREATE TABLE carry no column name txn.
                     final long detachedColumnNameTxn = attachColumnVersionReader.getColumnNameTxn(partitionTimestamp, detColIdx);
-                    if (detachedColumnNameTxn > -1 && detachedColumnNameTxn != columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)) {
+                    if (detachedColumnNameTxn != columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx)) {
+                        // upsert() keeps the version of an existing record when given -1. overrideColumnVersions()
+                        // copied the partition's records, so the versions differ only where the column has none.
+                        assert detachedColumnNameTxn > -1 || columnVersionWriter.getRecordIndex(partitionTimestamp, colIdx) < 0;
                         columnVersionWriter.upsert(partitionTimestamp, colIdx, detachedColumnNameTxn, detachedColumnTop);
                     } else if (columnTop != detachedColumnTop) {
                         columnVersionWriter.upsertColumnTop(partitionTimestamp, colIdx, detachedColumnTop);
@@ -8044,10 +8047,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             || (recordIndex < 0 && columnVersions.getColumnTopPartitionTimestamp(columnIndex) > partitionTimestamp)) {
                         continue;
                     }
-                    long columnNameTxn = columnVersions.getColumnNameTxnByIndex(recordIndex);
-                    if (columnNameTxn == -1) {
-                        columnNameTxn = columnVersions.getDefaultColumnNameTxn(columnIndex);
-                    }
+                    final long columnNameTxn = recordIndex > -1
+                            ? columnVersions.getColumnNameTxnByIndex(recordIndex)
+                            : columnVersions.getDefaultColumnNameTxn(columnIndex);
                     final CharSequence columnName = metadata.getColumnName(columnIndex);
                     if (!ff.exists(dFile(path.trimTo(partitionPathLen), columnName, columnNameTxn))
                             || (ColumnType.isVarSize(columnType) && !ff.exists(iFile(path.trimTo(partitionPathLen), columnName, columnNameTxn)))) {

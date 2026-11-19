@@ -231,9 +231,9 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     }
 
     /**
-     * Renames a column the run added, or renamed, named new_col_*, away and back: its files carry a column name txn,
-     * which the detached _cv names. A column that a failed attempt of this operation left renamed away, which the run
-     * retries, takes its name back first.
+     * Renames a column other than the designated timestamp away and back. The detached _cv names the version of its
+     * files the partition holds: a column name txn, or none for a column from CREATE TABLE. A column that a failed
+     * attempt of this operation left renamed away, which the run retries, takes its name back first.
      *
      * @param attachSql the ATTACH to run while the column is renamed away, or null for none
      * @return whether that ATTACH attached the partition
@@ -254,7 +254,7 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
                 final String columnName = metadata.getColumnName(i);
                 if (columnName.startsWith(RENAMED_AWAY_PREFIX)) {
                     renamedAway.add(columnName);
-                } else if (columnName.startsWith("new_col_")) {
+                } else {
                     candidates.add(columnName);
                 }
             }

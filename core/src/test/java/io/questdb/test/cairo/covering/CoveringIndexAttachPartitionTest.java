@@ -182,6 +182,37 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
     }
 
     @Test
+    public void testAttachPartitionAfterCoveredAndIndexColumnsRenamedAwayAndBack() throws Exception {
+        // s and val come from CREATE TABLE, so their files carry no column name txn, nor do the covering files of s,
+        // which name the version of val they cover. Renamed away and back while 2024-01-01 is detached, both have their
+        // names again, with versions the partition does not hold: the attach must record the ones it holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_att (ts TIMESTAMP, val INT, s SYMBOL INDEX TYPE POSTING INCLUDE (val)) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_att VALUES
+                    ('2024-01-01T00:00:00', 10, 'A'),
+                    ('2024-01-01T01:00:00', 20, 'B'),
+                    ('2024-01-01T02:00:00', 30, 'A'),
+                    ('2024-01-02T00:00:00', 40, 'A')
+                    """);
+            execute("ALTER TABLE t_att DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE t_att RENAME COLUMN val TO val_away");
+            execute("ALTER TABLE t_att RENAME COLUMN val_away TO val");
+            execute("ALTER TABLE t_att RENAME COLUMN s TO s_away");
+            execute("ALTER TABLE t_att RENAME COLUMN s_away TO s");
+            final TableToken token = engine.verifyTableName("t_att");
+            path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            execute("ALTER TABLE t_att ATTACH PARTITION LIST '2024-01-01'");
+            assertCoveredColumnRowsAfterRenames();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertCoveredColumnRowsAfterRenames();
+        });
+    }
+
+    @Test
     public void testAttachRemovesCoveringIndexFilesOfNameTxnZeroDroppedWhileDetached() throws Exception {
         // s is the first column added to the empty table, so its column name txn is 0, and its .pc
         // files carry the token 0 that txn NONE also writes. 2024-01-01 leaves with the covering index
@@ -361,6 +392,28 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), "force_use_covering");
         }
+    }
+
+    // t_att from testAttachPartitionAfterCoveredAndIndexColumnsRenamedAwayAndBack() holds its rows, and the covering
+    // index of s finds the values of val for 'A'
+    private void assertCoveredColumnRowsAfterRenames() throws Exception {
+        assertQuery("SELECT * FROM t_att")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tval\ts
+                        2024-01-01T00:00:00.000000Z\t10\tA
+                        2024-01-01T01:00:00.000000Z\t20\tB
+                        2024-01-01T02:00:00.000000Z\t30\tA
+                        2024-01-02T00:00:00.000000Z\t40\tA
+                        """);
+        assertQuery("SELECT val FROM t_att WHERE s = 'A'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("CoveringIndex on: s")
+                .returns("val\n10\n30\n40\n");
     }
 
     // t_ren holds the rows of expected, and the covering index of sym finds the rows of expectedCovered for 'A'

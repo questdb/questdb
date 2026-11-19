@@ -170,6 +170,52 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalTornTxnRollsBackOverAttachedPartitionWithUnversionedColumn() throws Exception {
+        // s comes from CREATE TABLE, so its files carry no column name txn. Renamed away and back while 2024-01-02 is
+        // detached, s has a version the partition does not hold, and the ATTACH records the one it holds. The writer
+        // must find those files when it checks the previous transaction.
+        Assume.assumeFalse("adaptive recovery restores enrolled tables", "adaptive".equals(commitMode));
+        assertMemoryLeak(() -> {
+            configureCommitMode();
+            final String dir = createTable(false);
+            execute("alter table x detach partition list '2024-01-02'");
+            execute("alter table x rename column s to s_away");
+            execute("alter table x rename column s_away to s");
+            java.nio.file.Files.move(
+                    Paths.get(dir + "2024-01-02" + DETACHED_DIR_MARKER),
+                    Paths.get(dir + "2024-01-02" + configuration.getAttachPartitionSuffix())
+            );
+            execute("alter table x attach partition list '2024-01-02'");
+            final Commits commits = new Commits(dir);
+            // A reader on an older transaction keeps the column files each UPDATE replaces.
+            try (TableReader ignore = engine.getReader("x")) {
+                commits.updateColumnC(false, 4);
+            }
+            engine.clear();
+            final byte[] intactTxn = installTornTxn(dir, commits);
+            int n = commits.size() - 1;
+            while (!Arrays.equals(commits.txn(n), intactTxn)) {
+                n--;
+            }
+
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                // The first query cannot read the torn _txn, so the engine opens the table's writer to repair it, which
+                // rolls back to commit N-1. A non-WAL table has nothing to replay commit N from.
+                assertQuery("x").withEngine(restarted).withContext(ctx).noLeakCheck().timestamp("ts").expectSize()
+                        .returns(commits.scan(n - 1));
+                restarted.execute("insert into x values (" + NEW_ROW_TS + "::timestamp, 's9', 777, 777)", ctx);
+                // 2024-01-02 holds the row of x = 2: createTable() raised v and c by one, and each of the n - 1 UPDATEs
+                // the rollback keeps raised c once more
+                assertQuery("select s, v, c from x where ts in '2024-01-02' or ts = " + NEW_ROW_TS).withEngine(restarted).withContext(ctx)
+                        .noLeakCheck()
+                        .returns("s\tv\tc\ns2\t3\t" + (3 + n - 1) + "\ns9\t777\t777\n");
+                restarted.clear();
+            }
+        });
+    }
+
+    @Test
     public void testReplicaTableRepairsColumnVersionAheadOfTxn() throws Exception {
         // A kill between the _cv and _txn commits of an UPDATE, or a power loss that wrote back only _cv. Startup
         // must not take the instance down over it: the table writer repairs the table.
