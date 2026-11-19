@@ -25,15 +25,15 @@
 ################################################################################
 
 function read_link {
-    f=$(readlink $1)
+    f=$(readlink "$1")
     if [ "$f" != "" ]; then
 
         if [[ "$f" != /* ]]; then
-            f="$(dirname $1)/$f"
-            f="$(cd $(dirname ${f}); pwd)/$(basename ${f})"
+            f="$(dirname "$1")/$f"
+            f="$(cd "$(dirname "${f}")"; pwd)/$(basename "${f}")"
         fi
 
-        n=$(read_link ${f})
+        n=$(read_link "${f}")
         if [ "$n" != "" ]; then
              f=${n};
         fi
@@ -41,11 +41,11 @@ function read_link {
     echo "$f"
 }
 
-LINK=$(read_link $0)
+LINK=$(read_link "$0")
 if [ "$LINK" != "" ]; then
-    BASE=$(dirname ${LINK})
+    BASE=$(dirname "${LINK}")
 else
-    BASE=$(dirname $0)
+    BASE=$(dirname "$0")
 fi
 
 source "$BASE/env.sh"
@@ -170,7 +170,7 @@ function export_jemalloc() {
           echo "  - Remove or comment out 'export QDB_JEMALLOC=true' from your env.sh or shell profile"
           exit 55
       fi
-      jemalloc_so=$(ls $BASE/libjemalloc.so* 2>/dev/null | head -1)
+      jemalloc_so=$(ls "$BASE"/libjemalloc.so* 2>/dev/null | head -1)
       if [[ -r "${jemalloc_so}" ]]; then
           export QDB_JEMALLOC_LIB=${jemalloc_so}
           echo "Using jemalloc"
@@ -354,12 +354,15 @@ function start {
         PROFILER_AGENT="-agentpath:${ASYNC_PROFILER_LIB}=${AGENT_PARAMS}"
     fi
 
-    JAVA_OPTS="
-    -D$QDB_PROCESS_LABEL
-    -Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )
-    ${LIB_DIR_PROP}
+    # Arrays keep paths with spaces (root dir, install dir) as single arguments.
+    # JVM_PREPEND comes from env.sh as a space-separated string of flags.
+    read -ra JVM_PREPEND_ARGS <<< "${JVM_PREPEND}"
+    JAVA_OPTS=(
+    "-D$QDB_PROCESS_LABEL"
+    "-Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )"
+    ${LIB_DIR_PROP:+"$LIB_DIR_PROP"}
     -ea -Dnoebug
-    -XX:ErrorFile=${QDB_ROOT}/db/hs_err_pid+%p.log
+    "-XX:ErrorFile=${QDB_ROOT}/db/hs_err_pid+%p.log"
     -XX:+UnlockExperimentalVMOptions
     -XX:+AlwaysPreTouch
     -XX:+UseParallelGC
@@ -370,9 +373,9 @@ function start {
     --add-opens=java.base/java.nio=io.questdb
     --add-opens=java.base/java.time.zone=io.questdb
     --add-exports=java.base/jdk.internal.vm=io.questdb
-    ${PROFILER_AGENT}
-    ${JVM_PREPEND}
-    "
+    ${PROFILER_AGENT:+"$PROFILER_AGENT"}
+    "${JVM_PREPEND_ARGS[@]}"
+    )
 
     if [ "$QDB_OS" == "Darwin" ]; then
         # JVM on MacOS has its own max open files limit, set to 10240
@@ -380,31 +383,31 @@ function start {
         # However, if this built-in limit is removed, the JVM starts to use the soft limit as if it was the hard limit,
         # so we should set the soft limit to the same value as the hard limit
         ulimit -n $(ulimit -H -n)
-        JAVA_OPTS="$JAVA_OPTS 
-        -XX:-MaxFDLimit
-        "
+        JAVA_OPTS+=(-XX:-MaxFDLimit)
     fi
 
     DATE=`date +%Y-%m-%dT%H-%M-%S`
-    HELLO_FILE=${QDB_ROOT}/hello.txt
-    rm ${HELLO_FILE} 2> /dev/null
+    HELLO_FILE="${QDB_ROOT}/hello.txt"
+    rm "${HELLO_FILE}" 2> /dev/null
 
     # Set LD_PRELOAD only for the Java process, not the shell
-    JAVA_CMD="${JAVA}"
+    JAVA_CMD=("${JAVA}")
     if [ -n "${QDB_JEMALLOC_LIB}" ]; then
-        JAVA_CMD="env LD_PRELOAD=${QDB_JEMALLOC_LIB} ${JAVA}"
+        JAVA_CMD=(env "LD_PRELOAD=${QDB_JEMALLOC_LIB}" "${JAVA}")
     fi
+
+    JAVA_ARGS=("${JAVA_CMD[@]}" "${JAVA_OPTS[@]}" -p "${JAVA_LIB}" -m "${JAVA_MAIN}" -d "${QDB_ROOT}" ${QDB_OVERWRITE_PUBLIC:+"$QDB_OVERWRITE_PUBLIC"} ${QDB_DISABLE_HUP_HANDLER:+"$QDB_DISABLE_HUP_HANDLER"})
 
     if [ "${QDB_CONTAINER_MODE}" != "" ]; then
         # Container mode logs to stdout; leave it to the supervisor (Docker, systemd)
         # rather than an unrotated file, and exec so the JVM gets its signals directly.
-        exec ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC}
+        exec "${JAVA_ARGS[@]}"
     elif [ "${QDB_DISABLE_HUP_HANDLER}" = "" ]; then
-        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
-        $BASE/print-hello.sh ${HELLO_FILE}
+        "${JAVA_ARGS[@]}" > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1 &
+        "$BASE/print-hello.sh" "${HELLO_FILE}"
     else
-        $BASE/print-hello.sh ${HELLO_FILE} &
-        ${JAVA_CMD} ${JAVA_OPTS} -p ${JAVA_LIB} -m ${JAVA_MAIN} -d ${QDB_ROOT} ${QDB_OVERWRITE_PUBLIC} ${QDB_DISABLE_HUP_HANDLER} > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
+        "$BASE/print-hello.sh" "${HELLO_FILE}" &
+        "${JAVA_ARGS[@]}" > "${QDB_LOG}/stdout-${DATE}.txt" 2>&1
     fi
 }
 
