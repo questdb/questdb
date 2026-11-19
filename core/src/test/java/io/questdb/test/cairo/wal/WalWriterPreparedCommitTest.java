@@ -181,8 +181,10 @@ public class WalWriterPreparedCommitTest extends AbstractCairoTest {
                     walId = w.getWalId();
                     final TableWriter.Row row = w.newRow(DAY_MICROS);
                     row.putLong(0, 1);
-                    // a new symbol goes into the event record, which then outgrows the first page
-                    row.putSym(1, "x".repeat(10_000));
+                    // A new symbol goes into the event record, two bytes a character, so the record
+                    // outgrows the first page: 4 KiB, or the platform's mapping granularity where
+                    // that is larger, as on Windows (64 KiB).
+                    row.putSym(1, "x".repeat((int) engine.getConfiguration().getWalEventAppendPageSize()));
                     row.append();
                     ff.isMapFailureArmed = true;
                     try {

@@ -53,6 +53,7 @@ import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.ServerDisconnectException;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -130,6 +131,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     private static final int FUZZ_TWO_BLOCKS = 4;
     // The index of fuzz table fc, which takes v as a VARCHAR of digits in every frame.
     private static final int FUZZ_VARCHAR_TABLE = 2;
+    // The receive buffer of a connection that takes a frame of PAGED_ROWS rows.
+    private static final int PAGED_RECV_BUFFER_SIZE;
+    // Rows of a LONG column that fill its first page of pagedConfiguration() and start its second.
+    private static final int PAGED_ROWS;
+    // The WAL column page of pagedConfiguration(): 16 KiB, or the platform's mapping granularity
+    // where that is larger, as on Windows (64 KiB), since a page must start at a multiple of it.
+    private static final long PAGED_WAL_PAGE_SIZE = Files.ceilPageSize(16 * 1024);
     // assertQuery's output for column v of the first ten frames of oneRowFramesThen().
     private static final String V_100_TO_109 = """
             v
@@ -144,6 +152,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             108
             109
             """;
+
+    static {
+        PAGED_ROWS = (int) (PAGED_WAL_PAGE_SIZE / Long.BYTES) + 1;
+        // A row of such a frame takes about 16 bytes.
+        PAGED_RECV_BUFFER_SIZE = (int) (4 * PAGED_WAL_PAGE_SIZE);
+    }
+
     private final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
 
     @Test
@@ -1352,18 +1367,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
             };
             final AtomicInteger readOnlyChecks = new AtomicInteger();
             final AtomicReference<QwpIngressProcessorState> stateRef = new AtomicReference<>();
-            final DefaultTestCairoConfiguration hookConfiguration = new DefaultTestCairoConfiguration(root) {
-                @Override
-                public @NotNull FilesFacade getFilesFacade() {
-                    return ff;
-                }
-
-                @Override
-                public long getWalDataAppendPageSize() {
-                    return 16 * 1024;
-                }
-            };
-            try (CairoEngine hookEngine = new CairoEngine(hookConfiguration) {
+            try (CairoEngine hookEngine = new CairoEngine(pagedConfiguration(ff)) {
                 @Override
                 public boolean isReadOnlyMode() {
                     // Frame 0 checks at its preparation and before it opens the batch (1, 2),
@@ -1383,12 +1387,13 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                             oneRowVarcharMessage("a", Long.toString(100L + i), (i + 1) * 1_000_000L)
                     );
                 }
-                // The batch holds 10 rows, 80 bytes of v. The failing frame's 2,049 rows reach
-                // v's second 16 KiB page at its row 2,038, and its last value is not a number.
+                // The batch holds 10 rows, 80 bytes of v. The failing frame's PAGED_ROWS rows reach
+                // v's second page at their row PAGED_ROWS - 11 (2,038 of 2,049 with 16 KiB pages),
+                // and the last value is not a number.
                 try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder(); QwpTableBuffer table = new QwpTableBuffer("a")) {
                     final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_VARCHAR, false);
                     final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    final int rows = 2_049;
+                    final int rows = PAGED_ROWS;
                     for (int row = 0; row < rows; row++) {
                         value.addString(row < rows - 1 ? Long.toString(1_000L + row) : "not-a-long");
                         timestamp.addLong(11_000_000L + row);
@@ -1409,7 +1414,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         state,
                         AllowAllSecurityContext.INSTANCE,
                         false,
-                        64 * 1024,
+                        PAGED_RECV_BUFFER_SIZE,
                         frames
                 )) {
                     stateRef.set(connection.getState());
@@ -1985,9 +1990,10 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 for (int i = 0; i < batchFrames; i++) {
                     frames[i + 1] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
                 }
-                // b holds one row, 8 bytes of v. The failing frame's rows reach v's second 16 KiB
-                // page at its row 2,047, and its last value is not a number.
-                frames[batchFrames + 1] = varcharRowsFrame("b", 2_049, 11_000_000L);
+                // b holds one row, 8 bytes of v. The failing frame's PAGED_ROWS rows reach v's second
+                // page at their row PAGED_ROWS - 2 (2,047 of 2,049 with 16 KiB pages), and the last
+                // value is not a number.
+                frames[batchFrames + 1] = varcharRowsFrame("b", PAGED_ROWS, 11_000_000L);
                 final long aBefore = lastTxn(hookEngine, "a");
                 final long bAfterFirstPass;
                 final ObjList<byte[]> sent;
@@ -1997,7 +2003,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         hookEngine,
                         httpConfig.getLineHttpProcessorConfiguration()
                 );
-                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, 64 * 1024, frames)) {
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, PAGED_RECV_BUFFER_SIZE, frames)) {
                     connection.deliverFrames(1);
                     bAfterFirstPass = lastTxn(hookEngine, "b");
                     isArmable.set(true);
@@ -2852,7 +2858,8 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     }
 
     /**
-     * Rewinding 2,049 rows of a cannot remap a's first page: the batch is lost, and the replay commits once.
+     * Rewinding a frame's rows of a that reach a's second page cannot remap the first: the batch is lost, and the
+     * replay commits once.
      */
     @Test
     public void testRewindFailureLosesBatchAndReplayCommitsItOnce() throws Exception {
@@ -2892,14 +2899,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     replayFrames[i] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
                 }
                 // The batch holds 10 rows of a, 80 bytes of v and 160 of the designated
-                // timestamp. The failing frame's 2,049 rows of a move both columns onto later
-                // 16 KiB pages.
+                // timestamp. The failing frame's PAGED_ROWS rows of a move both columns onto later
+                // pages.
                 try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer("a");
                      QwpTableBuffer bad = new QwpTableBuffer("b")) {
                     final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false);
                     final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    for (int row = 0; row < 2_049; row++) {
+                    for (int row = 0; row < PAGED_ROWS; row++) {
                         value.addLong(1_000L + row);
                         timestamp.addLong(11_000_000L + row);
                         table.nextRow();
@@ -2925,7 +2932,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         hookEngine,
                         httpConfig.getLineHttpProcessorConfiguration()
                 );
-                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, 64 * 1024, frames)) {
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, armingContext, false, PAGED_RECV_BUFFER_SIZE, frames)) {
                     stateRef.set(connection.getState());
                     connection.deliverFrames(1);
                     bAfterFirstPass = lastTxn(hookEngine, "b");
@@ -2950,7 +2957,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         httpConfig,
                         AllowAllSecurityContext.INSTANCE,
                         false,
-                        64 * 1024,
+                        PAGED_RECV_BUFFER_SIZE,
                         sentAfter,
                         replayFrames
                 );
@@ -3009,14 +3016,14 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 for (int i = 0; i < batchFrames; i++) {
                     frames[i + 1] = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage("a", 100L + i, (i + 1) * 1_000_000L));
                 }
-                // The batch holds 10 rows of a. The frame's 2,049 rows of a move both of a's
-                // columns onto later 16 KiB pages.
+                // The batch holds 10 rows of a. The frame's PAGED_ROWS rows of a move both of a's
+                // columns onto later pages.
                 try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                      QwpTableBuffer table = new QwpTableBuffer("a");
                      QwpTableBuffer other = new QwpTableBuffer("b")) {
                     final QwpTableBuffer.ColumnBuffer value = table.getOrCreateColumn("v", QwpConstants.TYPE_LONG, false);
                     final QwpTableBuffer.ColumnBuffer timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                    for (int row = 0; row < 2_049; row++) {
+                    for (int row = 0; row < PAGED_ROWS; row++) {
                         value.addLong(1_000L + row);
                         timestamp.addLong(11_000_000L + row);
                         table.nextRow();
@@ -3039,7 +3046,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                         hookEngine,
                         httpConfig.getLineHttpProcessorConfiguration()
                 );
-                try (Connection connection = new Connection(hookEngine, httpConfig, state, AllowAllSecurityContext.INSTANCE, false, 64 * 1024, frames)) {
+                try (Connection connection = new Connection(hookEngine, httpConfig, state, AllowAllSecurityContext.INSTANCE, false, PAGED_RECV_BUFFER_SIZE, frames)) {
                     stateRef.set(connection.getState());
                     connection.deliverFrames(frames.length);
                     sent = connection.sentFrames();
@@ -3897,7 +3904,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         return header;
     }
 
-    // A configuration of the shared root whose WAL columns map 16 KiB pages through ff.
+    // A configuration of the shared root whose WAL columns map pages of PAGED_WAL_PAGE_SIZE through ff.
     private static DefaultTestCairoConfiguration pagedConfiguration(FilesFacade ff) {
         return new DefaultTestCairoConfiguration(root) {
             @Override
@@ -3907,7 +3914,7 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
 
             @Override
             public long getWalDataAppendPageSize() {
-                return 16 * 1024;
+                return PAGED_WAL_PAGE_SIZE;
             }
         };
     }

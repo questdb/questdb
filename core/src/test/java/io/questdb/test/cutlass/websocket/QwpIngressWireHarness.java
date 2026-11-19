@@ -104,18 +104,22 @@ final class QwpIngressWireHarness {
     }
 
     static byte[] createMaskedFrame(int opcode, byte[] payload, boolean isFin) {
-        // test frames are small: a single-byte or a 16-bit payload length is sufficient
-        assert payload.length < 65_536;
-        final boolean isShort = payload.length <= 125;
-        byte[] frame = new byte[(isShort ? 2 : 4) + 4 + payload.length];
+        // The payload length takes 7 bits, or 16 or 64 bits after a 126 or 127 marker.
+        final int lengthBytes = payload.length <= 125 ? 0 : payload.length < 65_536 ? 2 : 8;
+        byte[] frame = new byte[2 + lengthBytes + 4 + payload.length];
         int offset = 0;
         frame[offset++] = (byte) ((isFin ? 0x80 : 0) | (opcode & 0x0F));
-        if (isShort) {
+        if (lengthBytes == 0) {
             frame[offset++] = (byte) (0x80 | payload.length);
-        } else {
+        } else if (lengthBytes == 2) {
             frame[offset++] = (byte) (0x80 | 126);
             frame[offset++] = (byte) (payload.length >>> 8);
             frame[offset++] = (byte) payload.length;
+        } else {
+            frame[offset++] = (byte) (0x80 | 127);
+            for (int shift = 56; shift >= 0; shift -= 8) {
+                frame[offset++] = (byte) ((long) payload.length >>> shift);
+            }
         }
         System.arraycopy(DEFAULT_MASK_KEY, 0, frame, offset, 4);
         offset += 4;
