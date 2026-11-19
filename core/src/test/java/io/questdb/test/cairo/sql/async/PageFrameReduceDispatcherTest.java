@@ -5075,7 +5075,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     private static PageFrameSequence<StatefulAtom> newOrderedStealSequence(AtomicReference<Boolean> fiberMode) {
-        return new PageFrameSequence<>(
+        return new SyntheticPageFrameSequence<>(
                 engine,
                 configuration,
                 engine.getMessageBus(),
