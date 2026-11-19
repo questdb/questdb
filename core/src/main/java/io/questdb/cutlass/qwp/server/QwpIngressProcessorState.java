@@ -668,7 +668,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         preparedTableBlock = null;
         final long lastSeqTxn = commitBatchWriter.getLastSeqTxn();
         try {
-            walAppender.appendToWalStreaming(securityContext, tableBlock, commitBatchTud, false);
+            walAppender.appendToWalStreaming(securityContext, tableBlock, commitBatchTud, false, schemaEnabled);
             messageAppendedRows = true;
             frameRowTud = commitBatchTud;
         } catch (Throwable e) {
@@ -1763,7 +1763,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
                 try {
-                    walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                    // Only a sender that negotiated schema support encodes a column's type, so
+                    // only its frames carry the old type of a column that changed type.
+                    walAppender.appendToWalStreaming(securityContext, tableBlock, tud, true, schemaEnabled);
                 } finally {
                     captureSchemaFeedback(tud);
                 }

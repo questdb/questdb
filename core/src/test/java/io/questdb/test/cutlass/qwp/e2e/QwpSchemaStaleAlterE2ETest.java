@@ -63,6 +63,10 @@ import static io.questdb.test.cutlass.qwp.e2e.QwpSchemaE2ETestUtils.receiveRespo
  * converts such a value to the new column type the way the ALTER converted the rows
  * already in the table, and rejects a value the new type cannot hold, as it rejects
  * one a sender writes in that type.
+ * <p>
+ * Only a connection that negotiated schema support gets these conversions. A sender
+ * without it encodes each setter's own type, which is not the column's old type; see
+ * {@link QwpWireTypeMatrixE2ETest}.
  */
 public class QwpSchemaStaleAlterE2ETest extends AbstractQwpWebSocketTest {
     private static final String DATE_TEXT_0 = "1970-01-02T00:00:00.000Z";
@@ -379,6 +383,48 @@ public class QwpSchemaStaleAlterE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testLegacyTimestampIsRejectedAfterTimestampColumnBecomesLong() throws Exception {
+        // A sender without schema support encodes timestampColumn(Instant) in microseconds
+        // whatever the column's precision. The server scales the value into a TIMESTAMP_NS
+        // column, and ALTER keeps those nanoseconds in the LONG column. The sender's next
+        // frame still carries microseconds, and storing them would mix the two units in
+        // one column. Such a sender did not encode the column's old type, so the server
+        // rejects its frame as it did before it converted stale wire types.
+        final long micros = 1_709_210_096_789_123L;
+        execute("CREATE TABLE legacy_unit (k LONG, c TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        runInContext(port -> {
+            try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                 QwpTableBuffer table = new QwpTableBuffer("legacy_unit")) {
+                byte[][] frames = new byte[2][];
+                for (int k = 0; k < frames.length; k++) {
+                    table.getOrCreateColumn("k", QwpConstants.TYPE_LONG, true).addLong(k);
+                    table.getOrCreateColumn("c", QwpConstants.TYPE_TIMESTAMP, true).addLong(micros);
+                    table.nextRow();
+                    frames[k] = encode(encoder, table);
+                }
+                try (WebSocketClient client = QwpSchemaE2ETestUtils.connectLegacyClient(port)) {
+                    send(client, frames[0]);
+                    WebSocketResponse response = receiveResponse(client);
+                    Assert.assertTrue(response.getErrorMessage(), response.isSuccess());
+                }
+                execute("ALTER TABLE legacy_unit ALTER COLUMN c TYPE LONG");
+                try (WebSocketClient client = QwpSchemaE2ETestUtils.connectLegacyClient(port)) {
+                    send(client, frames[1]);
+                    WebSocketResponse response = receiveResponse(client);
+                    Assert.assertFalse(response.isSuccess());
+                    Assert.assertEquals(WebSocketResponse.STATUS_SCHEMA_MISMATCH, response.getStatus());
+                    TestUtils.assertContains(response.getErrorMessage(), "cannot write TIMESTAMP to column [column=c, type=LONG]");
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT k, c FROM legacy_unit ORDER BY k").noLeakCheck().expectSize().returns("""
+                    k\tc
+                    0\t1709210096789123000
+                    """);
+        });
+    }
+
+    @Test
     public void testLegacyWireTypesNoColumnTypeChangeProducesStillFail() throws Exception {
         // ALTER COLUMN TYPE converts none of these pairs, so only a sender that encodes
         // its own types sends them, and the server keeps rejecting them.
@@ -412,10 +458,12 @@ public class QwpSchemaStaleAlterE2ETest extends AbstractQwpWebSocketTest {
 
     @Test
     public void testLegacyNaNToBoolean() throws Exception {
-        // A NULL row gives the column a null bitmap, so the NaN travels as a value.
+        // A schema-aware sender writes a NaN as NULL, so only a frame it encoded without
+        // a schema carries one. A NULL row gives the column a null bitmap, so the NaN
+        // travels as a value.
         execute("CREATE TABLE legacy_nan (k LONG, d BOOLEAN, f BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         runInContext(port -> {
-            try (WebSocketClient client = QwpSchemaE2ETestUtils.connectLegacyClient(port);
+            try (WebSocketClient client = connectSchemaClient(port);
                  QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
                  QwpTableBuffer table = new QwpTableBuffer("legacy_nan")) {
                 table.getOrCreateColumn("k", QwpConstants.TYPE_LONG, true).addLong(0);

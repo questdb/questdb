@@ -998,6 +998,42 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                 clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"), clientEncodedFrame(1, "a"));
     }
 
+    /**
+     * A schema-aware sender pipelines the frames it encoded before ALTER COLUMN TYPE,
+     * so the server converts the column's old wire type in a frame that joins a commit
+     * batch as it does in the frame that opens the batch.
+     */
+    @Test
+    public void testStaleWireTypeFramesShareOneCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            // The frames carry v as LONG, the type the column had when the sender encoded them.
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE tab ALTER COLUMN v TYPE BOOLEAN");
+            final TableToken token = engine.verifyTableName("tab");
+            final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
+            try (Connection connection = new Connection(
+                    engine,
+                    httpConfig,
+                    AllowAllSecurityContext.INSTANCE,
+                    false,
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L)),
+                    createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(0L, 2_000_000L))
+            )) {
+                connection.getState().setSchemaEnabled(true);
+                connection.deliverFrames(2);
+                Assert.assertEquals("both frames share one commit", 1, engine.getTableSequencerAPI().lastTxn(token) - txnBefore);
+                final ObjList<WebSocketResponse> responses = readResponses(connection.sentFrames());
+                Assert.assertEquals("one ack covers the batch", 1, responses.size());
+                Assert.assertTrue(responses.getQuick(0).isSuccess());
+                Assert.assertEquals(1, responses.getQuick(0).getSequence());
+            }
+            drainWalQueue();
+            // ALTER turns a non-zero LONG into true.
+            assertQuery("SELECT v FROM tab").noLeakCheck().expectSize().returns("v\ntrue\nfalse\n");
+        });
+    }
+
     @Test
     public void testStandaloneFrameCapFailureIsNackedAfterBoundaryAck() throws Exception {
         assertStandaloneFrameCapFailure(false);
