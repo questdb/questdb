@@ -43,22 +43,26 @@ import org.jetbrains.annotations.NotNull;
  * an unflushed lead is outside this comparison.
  * <p>
  * Abstain for disabled checking, empty output, older-format upgrades, dedup-restore
- * mismatch, or a materialized-view backlog that legitimately removes output. Unreadable
+ * mismatch, a backlog REPLACE_RANGE whose band covers the view's earliest row, or a
+ * materialized view's TRUNCATE. A band only changes base rows inside its range, so one
+ * above the view's earliest row limits every check to the view's rows below it. Unreadable
  * backlog weakens checks only when the base can hide such removals. Filtered dedup
  * replacement disables shortfall alone: timestamps and partitions remain protected.
  * Use the snapshot dedup flag and subsequent DEDUP changes; other schema changes do
  * not prove replacement. Earlier dedup state may be unknowable after a later change.
  * <p>
  * These checks detect loss but cannot prove equivalence. Equal-count loss, surplus
- * backlog masking removed rows, recreated partitions with shortfall disabled, and
- * abstained rebuilds can still restate output. One worker arms this guard per rebuild
- * and retains the evidence afterward for the refusal reason.
+ * backlog masking removed rows, recreated partitions with shortfall disabled, rows at
+ * or above a backlog band, and abstained rebuilds - a band over the view's earliest row
+ * included - can still restate output. One worker arms this guard per rebuild and
+ * retains the evidence afterward for the refusal reason.
  */
 public final class LiveViewRebuildRestatementGuard implements Mutable {
     /**
-     * A backlog transaction can legitimately lower the output at or below the frontier. When it
-     * is a dedup replacement, only the row shortfall stands down, and the history floor and the
-     * lost partition check still compare.
+     * A backlog transaction can legitimately lower the output at or below the frontier: a
+     * REPLACE_RANGE whose band covers the view's earliest row, or a materialized view's TRUNCATE.
+     * When it is a dedup replacement, only the row shortfall stands down, and the history floor
+     * and the lost partition check still compare.
      */
     public static final int ABSTAIN_BACKLOG_MAY_REMOVE = 3;
     /**
@@ -115,7 +119,8 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     public static final int BACKLOG_MAY_DEDUP_REPLACE = 3;
     /**
      * Returned by the job's backlog walk: a transaction in the backlog can legitimately remove
-     * an output row at or below the durable frontier, and may move the base's earliest row.
+     * every output row up to the durable frontier: a REPLACE_RANGE whose band covers the view's
+     * earliest row, or a materialized view's TRUNCATE.
      */
     public static final int BACKLOG_MAY_REMOVE = 1;
     /**

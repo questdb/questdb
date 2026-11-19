@@ -128,6 +128,46 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     // The line an out-of-order repair logs when the restore of the root it resumes from fails on
     // a fault a retry may get past, and the repair hands the fault to the flush-retry accounting.
     private static final String ANCHOR_RESTORE_RETRY_LINE = "could not restore live view O3 resume anchor, retrying [view=lv, ";
+    // The line a rebuild logs when a backlog REPLACE_RANGE above the view's earliest row limits the
+    // restatement guard to the view's rows below it.
+    private static final String BAND_NARROWING_LINE = "live view rebuild from the applied base checks the restatement "
+            + "guard only below a range its backlog replaces";
+    // The evidence the history floor reads over the REPLACE_RANGE cases' view once its base lost
+    // the view's earliest row.
+    private static final String BAND_VIEW_LOST_DAY_EVIDENCE = "the view holds rows from 2025-12-31T12:00:00.000000Z "
+            + "but the base table's earliest row is at 2026-01-01T00:01:00.000000Z";
+    // The view's earliest row in the REPLACE_RANGE cases, on the day its base lost.
+    private static final long BAND_VIEW_MIN_TS = ts("2025-12-31T12:00:00.000000Z");
+    // What that view holds once a rebuild followed its base: the two rows of 2026-01-01.
+    private static final String BAND_VIEW_REBUILT_ROWS = """
+            ts\tsym\tx\ts
+            2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+            2026-01-01T00:05:00.000000Z\ta\t2.5\t4.0
+            """;
+    // What the REPLACE_RANGE cases' view holds over its base's three rows, each summed with the
+    // two before it. The base then loses the day of the first, and the view keeps its row.
+    private static final String BAND_VIEW_ROWS = """
+            ts\tsym\tx\ts
+            2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+            2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+            2026-01-01T00:05:00.000000Z\ta\t2.5\t4.5
+            """;
+    private static final String BAND_VIEW_ROWS_INSERT = """
+            INSERT INTO base (ts, sym, x) VALUES
+                ('2025-12-31T12:00:00.000000Z', 'a', 0.5),
+                ('2026-01-01T00:01:00.000000Z', 'a', 1.5),
+                ('2026-01-01T00:05:00.000000Z', 'a', 2.5)""";
+    private static final String BAND_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+            + "ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s FROM ";
+    // What the REPLACE_RANGE cases' view holds over a row a day for three days and a second row on
+    // the third. The base then loses the middle day, and the view keeps its row.
+    private static final String BAND_VIEW_THREE_DAY_ROWS = """
+            ts\tsym\tx\ts
+            2026-01-01T00:01:00.000000Z\ta\t1.0\t1.0
+            2026-01-02T00:01:00.000000Z\ta\t2.0\t3.0
+            2026-01-03T00:01:00.000000Z\ta\t4.0\t7.0
+            2026-01-03T00:05:00.000000Z\ta\t8.0\t14.0
+            """;
     // What the view holds once the late day-two row the parked-repair cases commit has been
     // repaired in. The correction re-accumulates day two alone - ANCHOR DAILY resets acct-1
     // at midnight - so the rows are the same whether or not the base still holds its oldest
@@ -3316,6 +3356,266 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testABacklogBandAtTheViewsEarliestRowStandsTheGuardDown() throws Exception {
+        // A pure delete over the view's earliest timestamp alone. A band that covers the view's
+        // earliest row leaves no row the view holds whose base row no backlog commit can have
+        // touched, so the guard has nothing left to compare, and the rebuild follows the base.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(BAND_VIEW_MIN_TS, BAND_VIEW_MIN_TS + 1, Double.NaN);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildFollowsTheBase(guard, BAND_VIEW_REBUILT_ROWS);
+        });
+    }
+
+    @Test
+    public void testABacklogBandJustAboveTheViewsEarliestRowRefusesOverTheDayTheBaseLost() throws Exception {
+        // One microsecond higher, the band reaches the view's newest row but can change no base row
+        // at the view's earliest timestamp: the base lost that row some other way, and the history
+        // floor over the one row the view holds below the band refuses the rebuild.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(BAND_VIEW_MIN_TS + 1, ts("2026-01-01T00:00:00.000000Z"), Double.NaN);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildRefusedOnTheFloor(guard, 1);
+            capture.assertLogged(BAND_NARROWING_LINE + " [view=lv, replaceLo=2025-12-31T12:00:00.000001Z, rows=1]");
+        });
+    }
+
+    @Test
+    public void testABacklogBandEndingAtTheViewsEarliestRowRefusesOverTheDayTheBaseLost() throws Exception {
+        // A pure delete that ends where the view's rows begin removes no base row the view holds
+        // output of: from the view's side it is a commit below every row it holds, and the guard
+        // compares all three of them.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(ts("2025-12-31T00:00:00.000000Z"), BAND_VIEW_MIN_TS, Double.NaN);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildRefusedOnTheFloor(guard, 3);
+            capture.assertNotLogged(BAND_NARROWING_LINE);
+        });
+    }
+
+    @Test
+    public void testABacklogBandEndingJustPastTheViewsEarliestRowStandsTheGuardDown() throws Exception {
+        // One microsecond longer, the same band covers the view's earliest row.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(ts("2025-12-31T00:00:00.000000Z"), BAND_VIEW_MIN_TS + 1, Double.NaN);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildFollowsTheBase(guard, BAND_VIEW_REBUILT_ROWS);
+        });
+    }
+
+    @Test
+    public void testTheLowestOfSeveralBacklogBandsBoundsTheComparison() throws Exception {
+        assertLowestBacklogBandBoundsTheComparison(false);
+    }
+
+    @Test
+    public void testTheLowestOfSeveralBacklogBandsBoundsTheComparisonWhenItComesFirst() throws Exception {
+        assertLowestBacklogBandBoundsTheComparison(true);
+    }
+
+    @Test
+    public void testALaterBacklogBandCoveringTheViewsEarliestRowStandsTheGuardDown() throws Exception {
+        // The walk goes on past a band above the view's earliest row, and a later band that covers
+        // that row leaves nothing to compare: the rebuild follows the base.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(ts("2026-01-01T00:05:00.000000Z"), ts("2026-01-01T00:06:00.000000Z"), 3.0);
+            commitUnconsumedBand(BAND_VIEW_MIN_TS, BAND_VIEW_MIN_TS + 1, Double.NaN);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildFollowsTheBase(guard, """
+                    ts\tsym\tx\ts
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+                    2026-01-01T00:05:00.000000Z\ta\t3.0\t4.5
+                    """);
+        });
+    }
+
+    @Test
+    public void testABacklogBandAboveALostMiddleDayRefusesOnTheRowsBelowIt() throws Exception {
+        // The base lost the middle day, which leaves its earliest row where it was, and the backlog
+        // replaces the view's newest row. The row shortfall over the three rows below the band sees
+        // the lost day: the rebuild reproduces two of them.
+        assertMemoryLeak(() -> {
+            seedBandViewOverThreeDays("WAL", "");
+            commitUnconsumedBand(ts("2026-01-03T00:05:00.000000Z"), ts("2026-01-03T00:06:00.000000Z"), 16.0);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "timeline is absent");
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "the rebuild reproduces 2 of the 3 rows the view holds up to 2026-01-03T00:01:00.000000Z"
+            );
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL, guard.getVerdict());
+            capture.drain();
+            capture.assertLogged(BAND_NARROWING_LINE + " [view=lv, replaceLo=2026-01-03T00:05:00.000000Z, rows=3]");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            assertBandViewRows(BAND_VIEW_THREE_DAY_ROWS);
+            assertLiveViewsReportsTheBlock();
+        });
+    }
+
+    @Test
+    public void testADeduplicatingBacklogWithABandAboveALostDayRefusesOnItsPartition() throws Exception {
+        // The backlog replaces a row with one the filter rejects, which stands the row shortfall
+        // down, and replaces the view's newest row with a band. The lost partition check over the
+        // rows below the band still sees the day the base lost.
+        assertMemoryLeak(() -> {
+            seedBandViewOverThreeDays("WAL DEDUP UPSERT KEYS(ts, sym)", " WHERE x > 0");
+            final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+            execute("INSERT INTO base (ts, sym, x) VALUES ('2026-01-03T00:01:00.000000Z', 'a', -4.0)");
+            drainWalQueue();
+            Assert.assertEquals("the view must not consume the backlog", processedBefore, instance("lv").getLastProcessedSeqTxn());
+            commitUnconsumedBand(ts("2026-01-03T00:05:00.000000Z"), ts("2026-01-03T00:06:00.000000Z"), 16.0);
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "timeline is absent");
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "the view holds a row at 2026-01-02T00:01:00.000000Z but the base table holds no partition "
+                            + "between 2026-01-02T00:00:00.000000Z and 2026-01-03T00:00:00.000000Z"
+            );
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION, guard.getVerdict());
+            capture.drain();
+            capture.assertLogged(BAND_NARROWING_LINE + " [view=lv, replaceLo=2026-01-03T00:05:00.000000Z, rows=3]");
+            capture.assertLogged(ROW_SHORTFALL_STAND_DOWN_LINE + " [view=lv, reason=backlog may remove rows]");
+            capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+            assertBandViewRows(BAND_VIEW_THREE_DAY_ROWS);
+            assertLiveViewsReportsTheBlock();
+        });
+    }
+
+    @Test
+    public void testAnUnreadableCommitAfterABacklogBandStandsTheGuardDownAsTheBandDid() throws Exception {
+        // The walk reads a band above the view's earliest row, then fails on a commit whose WAL is
+        // gone. A base that writes REPLACE_RANGE commits may have written that one too, so the
+        // guard reads it as a materialized view's unreadable commit, and compares nothing.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(BAND_VIEW_MIN_TS + 1, ts("2026-01-01T00:00:00.000000Z"), Double.NaN);
+            commitThroughASecondBaseWal("('2026-01-01T00:09:00.000000Z', 'a', 3.5)");
+            shutdown();
+            removeTimeline();
+            removeSecondWal("base");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertUnreadableBandBacklogRebuildFollowsTheBase(guard);
+        });
+    }
+
+    @Test
+    public void testAnUnreadableCommitAfterABacklogBandBelowTheViewsEarliestRowStandsTheGuardDownAsTheBandDid() throws Exception {
+        // The same behind a band that ends where the view's rows begin. It removes nothing the view
+        // holds output of, but it shows the base writes REPLACE_RANGE commits.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(ts("2025-12-31T00:00:00.000000Z"), BAND_VIEW_MIN_TS, Double.NaN);
+            commitThroughASecondBaseWal("('2026-01-01T00:09:00.000000Z', 'a', 3.5)");
+            shutdown();
+            removeTimeline();
+            removeSecondWal("base");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertUnreadableBandBacklogRebuildFollowsTheBase(guard);
+        });
+    }
+
+    @Test
+    public void testABacklogBandCoveringTheViewsEarliestRowEndsTheWalk() throws Exception {
+        // A band that covers the view's earliest row stands the guard down where the walk meets it:
+        // the walk never reaches the commit behind it whose WAL is gone.
+        assertMemoryLeak(() -> {
+            seedBandView();
+            commitUnconsumedBand(BAND_VIEW_MIN_TS, BAND_VIEW_MIN_TS + 1, Double.NaN);
+            commitThroughASecondBaseWal("('2026-01-01T00:09:00.000000Z', 'a', 3.5)");
+            shutdown();
+            removeTimeline();
+            removeSecondWal("base");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            assertBandRebuildFollowsTheBase(guard, BAND_VIEW_REBUILT_ROWS + "2026-01-01T00:09:00.000000Z\ta\t3.5\t7.5\n");
+        });
+    }
+
+    @Test
+    public void testAJobReusedForAViewWithoutABandComparesItsWholeFrontier() throws Exception {
+        // One refresh job rebuilds two views on one restart. The first one's backlog holds a band,
+        // which limits its guard to the row below it. The second one's backlog is empty, and its
+        // guard compares every row it holds: the band the job read for the first view says nothing
+        // about the second one's base.
+        assertMemoryLeak(() -> {
+            createBandView("lv_band", "base", "WAL", "");
+            refreshIntoBandView(
+                    "lv_band",
+                    "INSERT INTO base (ts, sym, x) VALUES ('2026-01-03T00:01:00.000000Z', 'a', 1.0), ('2026-01-03T00:05:00.000000Z', 'a', 2.0)"
+            );
+            createBandView("lv", "base_b", "WAL", "");
+            refreshIntoBandView("lv", threeDayRowsInsert("base_b"), "ALTER TABLE base_b DROP PARTITION LIST '2026-01-02'");
+            assertBandViewRows(BAND_VIEW_THREE_DAY_ROWS);
+            final long processedBefore = instance("lv_band").getLastProcessedSeqTxn();
+            replaceBaseRange(ts("2026-01-03T00:03:00.000000Z"), ts("2026-01-03T00:04:00.000000Z"), Double.NaN);
+            drainWalQueue();
+            Assert.assertEquals("the view must not consume the band", processedBefore, instance("lv_band").getLastProcessedSeqTxn());
+            shutdown();
+            removeTimeline("lv_band");
+            removeTimeline("lv");
+
+            final LiveViewRebuildRestatementGuard guard = restart();
+
+            capture.drain();
+            final String bandViewRebuildLine = "live view restart rebuilding from applied base [view=lv_band,";
+            final String viewRebuildLine = "live view restart rebuilding from applied base [view=lv,";
+            capture.assertLogged(bandViewRebuildLine);
+            capture.assertLogged(viewRebuildLine);
+            capture.assertNotLoggedAfter(viewRebuildLine, bandViewRebuildLine);
+            capture.assertLogged(BAND_NARROWING_LINE + " [view=lv_band, replaceLo=2026-01-03T00:03:00.000000Z, rows=1]");
+            capture.assertNotLogged(BAND_NARROWING_LINE + " [view=lv,");
+            Assert.assertFalse(instance("lv_band").isCheckpointRecoveryBlocked());
+            assertQuery("SELECT ts, sym, x, s FROM lv_band")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\ts
+                            2026-01-03T00:01:00.000000Z\ta\t1.0\t1.0
+                            2026-01-03T00:05:00.000000Z\ta\t2.0\t3.0
+                            """);
+
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "timeline is absent");
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "the rebuild reproduces 3 of the 4 rows the view holds up to 2026-01-03T00:05:00.000000Z"
+            );
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL, guard.getVerdict());
+            Assert.assertEquals(4, guard.getDurableRows());
+            assertBandViewRows(BAND_VIEW_THREE_DAY_ROWS);
+        });
+    }
+
+    @Test
     public void testABacklogThatReplacesARowAfterTheBaseLostADayOfRowsTheFilterRejectedIsNotRefused() throws Exception {
         // The base loses a day the view holds no row of, then replaces a row the view holds with
         // one the filter rejects. Neither is a loss of the view's rows: the day took only rows the
@@ -4449,6 +4749,17 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * The rows {@link #BAND_VIEW_THREE_DAY_ROWS} holds the output of, committed to {@code baseName}.
+     */
+    private static String threeDayRowsInsert(String baseName) {
+        return "INSERT INTO " + baseName + " (ts, sym, x) VALUES "
+                + "('2026-01-01T00:01:00.000000Z', 'a', 1.0), "
+                + "('2026-01-02T00:01:00.000000Z', 'a', 2.0), "
+                + "('2026-01-03T00:01:00.000000Z', 'a', 4.0), "
+                + "('2026-01-03T00:05:00.000000Z', 'a', 8.0)";
+    }
+
+    /**
      * Applies each of {@code backlog} to the base, one apply at a time, without refreshing the
      * view.
      */
@@ -5100,12 +5411,152 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         assertLiveViewsReportsNoRecovery(instance);
     }
 
+    /**
+     * Asserts the rebuild of the REPLACE_RANGE cases' view stood the whole guard down for a backlog
+     * band that covers the view's earliest row, and followed the base to {@code rows}.
+     */
+    private void assertBandRebuildFollowsTheBase(LiveViewRebuildRestatementGuard guard, String rows) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertFalse(
+                "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                instance.isCheckpointRecoveryBlocked()
+        );
+        assertRebuiltFromAppliedBase("lv");
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
+        capture.drain();
+        capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv, reason=backlog may remove rows]");
+        capture.assertNotLogged(BAND_NARROWING_LINE);
+        capture.assertNotLogged("live view could not read the rebuild's base backlog");
+        assertBandViewRows(rows);
+        assertBandViewMatchesRecompute();
+        assertLiveViewsReportsNoRecovery(instance);
+    }
+
+    /**
+     * Asserts the rebuild of the REPLACE_RANGE cases' view was refused on the history floor over the
+     * {@code comparedRows} rows the view holds below every backlog band, and kept
+     * {@link #BAND_VIEW_ROWS}.
+     */
+    private void assertBandRebuildRefusedOnTheFloor(LiveViewRebuildRestatementGuard guard, long comparedRows) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        assertRebuildBlocked(instance, "timeline is absent");
+        TestUtils.assertContains(instance.getCheckpointRecoveryReason(), BAND_VIEW_LOST_DAY_EVIDENCE);
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+        Assert.assertEquals(comparedRows, guard.getDurableRows());
+        capture.drain();
+        capture.assertNotLogged("live view rebuild from the applied base runs without the restatement guard");
+        assertBandViewRows(BAND_VIEW_ROWS);
+        assertLiveViewsReportsTheBlock();
+    }
+
+    private void assertBandViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                BAND_VIEW_SQL + "base",
+                "SELECT ts, sym, x, s FROM lv",
+                LOG,
+                true
+        );
+    }
+
+    private void assertBandViewRows(String expected) throws Exception {
+        assertQuery("SELECT ts, sym, x, s FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+    }
+
+    /**
+     * Commits two bands above the view's earliest row, each replacing a row the base still holds,
+     * the lower one first when {@code isLowestFirst}, and restarts with no timeline. Whichever came
+     * first, the guard compares the one row below the lower band, and the history floor refuses.
+     */
+    private void assertLowestBacklogBandBoundsTheComparison(boolean isLowestFirst) throws Exception {
+        assertMemoryLeak(() -> {
+            seedBandView();
+            if (isLowestFirst) {
+                commitUnconsumedBand(ts("2026-01-01T00:01:00.000000Z"), ts("2026-01-01T00:02:00.000000Z"), 2.0);
+                commitUnconsumedBand(ts("2026-01-01T00:05:00.000000Z"), ts("2026-01-01T00:06:00.000000Z"), 3.0);
+            } else {
+                commitUnconsumedBand(ts("2026-01-01T00:05:00.000000Z"), ts("2026-01-01T00:06:00.000000Z"), 3.0);
+                commitUnconsumedBand(ts("2026-01-01T00:01:00.000000Z"), ts("2026-01-01T00:02:00.000000Z"), 2.0);
+            }
+
+            final LiveViewRebuildRestatementGuard guard = restartWithNoTimeline();
+
+            assertBandRebuildRefusedOnTheFloor(guard, 1);
+            capture.assertLogged(BAND_NARROWING_LINE + " [view=lv, replaceLo=2026-01-01T00:01:00.000000Z, rows=1]");
+        });
+    }
+
+    /**
+     * Asserts the rebuild over a backlog whose walk read a band and then failed on a commit whose
+     * WAL is gone compared nothing, as a materialized view's unreadable backlog does, and followed
+     * the base: the two rows of 2026-01-01 and the row the lost commit added.
+     */
+    private void assertUnreadableBandBacklogRebuildFollowsTheBase(LiveViewRebuildRestatementGuard guard) throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertFalse(
+                "the rebuild must follow the base, not stop the view: " + instance.getCheckpointRecoveryReason(),
+                instance.isCheckpointRecoveryBlocked()
+        );
+        assertRebuiltFromAppliedBase("lv");
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE, guard.getAbstention());
+        capture.drain();
+        capture.assertLogged("live view could not read the rebuild's base backlog [view=lv,");
+        capture.assertLogged("guardChecks=none,");
+        capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv, reason=backlog unreadable]");
+        capture.assertNotLogged(BAND_NARROWING_LINE);
+        assertBandViewRows(BAND_VIEW_REBUILT_ROWS + "2026-01-01T00:09:00.000000Z\ta\t3.5\t7.5\n");
+        assertBandViewMatchesRecompute();
+        assertLiveViewsReportsNoRecovery(instance);
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery(VIEW_ROWS_QUERY)
                 .noLeakCheck()
                 .timestamp("created_at")
                 .expectSize()
                 .returns(expected);
+    }
+
+    /**
+     * Commits {@code values} to {@code base} through a WAL of its own - the insert takes a second
+     * WAL writer while the test holds the first - and applies it without the view consuming it.
+     * {@link #removeSecondWal} then loses that WAL alone, after the base applied the commit.
+     */
+    private void commitThroughASecondBaseWal(String values) throws Exception {
+        final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+        try (WalWriter held = engine.getWalWriter(engine.verifyTableName("base"))) {
+            Assert.assertEquals("every earlier commit must sit in the first WAL", 1, held.getWalId());
+            execute("INSERT INTO base VALUES " + values);
+        }
+        drainWalQueue();
+        Assert.assertEquals("the view must not consume the backlog", processedBefore, instance("lv").getLastProcessedSeqTxn());
+    }
+
+    /**
+     * Commits a REPLACE_RANGE over {@code [lo, hi)} to the base, holding one row at {@code lo} of
+     * {@code keptX}, or none for a NaN, and applies it without the view consuming it.
+     */
+    private void commitUnconsumedBand(long lo, long hi, double keptX) {
+        final long processedBefore = instance("lv").getLastProcessedSeqTxn();
+        replaceBaseRange(lo, hi, keptX);
+        drainWalQueue();
+        Assert.assertEquals("the view must not consume the band", processedBefore, instance("lv").getLastProcessedSeqTxn());
+    }
+
+    /**
+     * The REPLACE_RANGE cases' view {@code viewName} over a base {@code baseName} with the columns
+     * {@link #replaceBaseRange} writes, created with {@code tableOptions}, filtered by
+     * {@code whereClause} unless it is empty.
+     */
+    private void createBandView(String viewName, String baseName, String tableOptions, String whereClause) throws Exception {
+        execute("CREATE TABLE " + baseName + " (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY " + tableOptions);
+        execute("CREATE LIVE VIEW " + viewName + " FLUSH EVERY 100ms START FROM BEGINNING AS " + BAND_VIEW_SQL + baseName + whereClause);
     }
 
     /**
@@ -5805,12 +6256,59 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Drives the seed of {@code viewName} and then each of {@code statements} through the base
+     * and the view, one at a time.
+     */
+    private void refreshIntoBandView(String viewName, String... statements) throws Exception {
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, viewName);
+            for (String statement : statements) {
+                execute(statement);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+        }
+        Assert.assertFalse(instance(viewName).isCheckpointRecoveryBlocked());
+        assertNoRefreshFaults(viewName);
+    }
+
+    /**
      * Removes the view's {@code _timeline}, leaving the segments under it for the catalogue
      * load's orphan sweep. The restart then finds no timeline and asks for the rebuild.
      */
     private void removeTimeline() {
-        final File timeline = new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
+        removeTimeline("lv");
+    }
+
+    private void removeTimeline(String viewName) {
+        final File timeline = new File(checkpointsRootByDirName(viewName), LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
         Assert.assertTrue("the fixture must have published a timeline to remove", timeline.delete());
+    }
+
+    /**
+     * Removes the second WAL of {@code tableName}, which {@link #commitThroughASecondBaseWal} wrote.
+     */
+    private void removeSecondWal(String tableName) {
+        final TableToken token = engine.verifyTableName(tableName);
+        final File secondWal = new File(
+                new File(engine.getConfiguration().getDbRoot(), token.getDirName()),
+                WalUtils.WAL_NAME_BASE + 2
+        );
+        Assert.assertTrue("the insert must have taken a second WAL", secondWal.isDirectory());
+        try (Path p = new Path()) {
+            p.of(secondWal.getAbsolutePath());
+            Assert.assertTrue("could not remove " + secondWal, engine.getConfiguration().getFilesFacade().rmdir(p));
+        }
+    }
+
+    /**
+     * Stops the view the way a process stop does, removes its {@code _timeline}, and restarts it:
+     * the restart rebuilds from the applied base.
+     */
+    private LiveViewRebuildRestatementGuard restartWithNoTimeline() {
+        shutdown();
+        removeTimeline();
+        return restart();
     }
 
     private int countBaseWalDirs(String baseTableName) {
@@ -5822,7 +6320,11 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     private File checkpointsRootByDirName() {
-        final TableToken viewToken = engine.verifyTableName("lv");
+        return checkpointsRootByDirName("lv");
+    }
+
+    private File checkpointsRootByDirName(String viewName) {
+        final TableToken viewToken = engine.verifyTableName(viewName);
         return new File(
                 new File(engine.getConfiguration().getDbRoot(), viewToken.getDirName()),
                 LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
@@ -6075,6 +6577,29 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                         min\tcount
                         2026-01-01T00:01:00.000000Z\t4
                         """);
+    }
+
+    /**
+     * Refreshes {@link #BAND_VIEW_ROWS_INSERT} into the REPLACE_RANGE cases' view, then drops the
+     * base's oldest day, which the view walks past keeping its row: the view's earliest row sits
+     * below the base's.
+     */
+    private void seedBandView() throws Exception {
+        createBandView("lv", "base", "WAL", "");
+        refreshIntoBandView("lv", BAND_VIEW_ROWS_INSERT, "ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        assertBandViewRows(BAND_VIEW_ROWS);
+    }
+
+    /**
+     * Refreshes a row a day for three days and a second row on the third into the REPLACE_RANGE
+     * cases' view over a base created with {@code tableOptions}, filtered by {@code whereClause}
+     * unless it is empty, then drops the base's middle day, which the view walks past keeping its
+     * row. The base's earliest row stays where the view's is.
+     */
+    private void seedBandViewOverThreeDays(String tableOptions, String whereClause) throws Exception {
+        createBandView("lv", "base", tableOptions, whereClause);
+        refreshIntoBandView("lv", threeDayRowsInsert("base"), "ALTER TABLE base DROP PARTITION LIST '2026-01-02'");
+        assertBandViewRows(BAND_VIEW_THREE_DAY_ROWS);
     }
 
     /**
