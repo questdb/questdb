@@ -94,10 +94,9 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
             Assert.assertEquals("the append must update the parquet partition in place", nameTxn, getPartitionNameTxn("ascii_flipped"));
 
             assertSqlCursors(QUERY + "y", QUERY + "ascii_flipped");
-            // The update cannot vouch for the header: v2 holds non-ASCII values. The v1 chunks it wrote
-            // carry their own flag; it does not scan new values of a column the parquet footer already
-            // calls non-ASCII.
-            assertAsciiFlaggedValueCounts("ascii_flipped", 40, 0);
+            // The update cannot vouch for the header: v2 holds non-ASCII values. The chunks it wrote
+            // carry their own flags, and its values of v2 are ASCII too.
+            assertAsciiFlaggedValueCounts("ascii_flipped", 40, 40);
         });
     }
 
@@ -111,8 +110,10 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
             Assert.assertNotEquals("the append must rewrite the parquet partition", nameTxn, getPartitionNameTxn("ascii_flipped"));
 
             assertSqlCursors(QUERY + "y", QUERY + "ascii_flipped");
-            // the rewrite builds _pm from the parquet footer, where 10.2.0 kept the flags right
-            assertAsciiFlaggedValueCounts("ascii_flipped", 125, 0);
+            // The rewrite builds _pm from the parquet footer, where 10.2.0 kept the flags right: v1 is ASCII
+            // in the whole file. The old _pm proves no chunk of v2 ASCII, so only the rows the rewrite
+            // wrote are flagged.
+            assertAsciiFlaggedValueCounts("ascii_flipped", 125, 40);
         });
     }
 

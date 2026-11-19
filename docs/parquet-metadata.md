@@ -317,8 +317,10 @@ that an update does write keep the flag true afterwards:
 
 - the `IS_ASCII` flag of a column chunk (see "Column chunk"): every value of that chunk is ASCII. A
   row group block never changes, so the flag holds in every snapshot that refers to the block. A
-  writer that creates a file sets it on every chunk of a column the header flags; an update may set
-  it on the chunks it adds when the values it wrote for the column are ASCII.
+  writer sets it on each chunk whose values it wrote and found ASCII, whatever the rest of the
+  column holds, and on every chunk of a column the header flags. A writer that copies a row group
+  into a new file copies the flags of its chunks from the `_pm` of the old file; the parquet footer
+  keeps one flag per column, and without the old `_pm` a copied chunk has only that.
 - the `HEADER_ASCII_VALID` footer flag: every column the header flags is still ASCII in all row
   groups of the snapshot. An update that adds or replaces row groups sets it only when it knows
   that. A footer that keeps the row groups of the previous one inherits its answer.
