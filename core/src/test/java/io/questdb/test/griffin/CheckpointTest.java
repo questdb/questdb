@@ -7026,7 +7026,9 @@ public class CheckpointTest extends AbstractCairoTest {
             final File markerFile = new File(partDir, "s.pk.rebuild");
 
             // The marker is created before the rebuild starts; every other failure waits for the rebuild
-            // to remove the old .pk
+            // to remove the old .pk. Only partDir arms and fails: the restore checks the other partition's
+            // index in parallel and opens its .pk too.
+            final String partDirSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR;
             final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
@@ -7043,7 +7045,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 @Override
                 public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pk")) {
+                    if (Utf8s.endsWithAscii(name, partDirSuffix + "s.pk")) {
                         isArmed.set(true);
                     }
                     return super.removeQuiet(name);
@@ -7055,7 +7057,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
                 private boolean fails(LPSZ name) {
-                    if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + failingFile)) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, partDirSuffix + failingFile)) {
                         failures.incrementAndGet();
                         return true;
                     }
