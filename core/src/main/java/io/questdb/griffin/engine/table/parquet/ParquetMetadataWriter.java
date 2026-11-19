@@ -52,4 +52,16 @@ public class ParquetMetadataWriter {
      * @throws io.questdb.cairo.CairoException on error
      */
     public static native long generate(long allocator, int parquetFd, long parquetFileSize, int parquetMetaFd);
+
+    /**
+     * Stamps {@code seqTxn} as the base seqTxn of the {@code _pm} footer that describes a parquet
+     * file of {@code parquetFileSize} bytes. It appends a footer, fsyncs it and commits it through
+     * the header; a replay that finds the stamp already in place changes nothing.
+     *
+     * @param parquetMetaFd   file descriptor of the {@code _pm} file (read-write)
+     * @param parquetFileSize size of the parquet file the footer describes
+     * @param seqTxn          the base seqTxn, at least 0
+     * @throws io.questdb.cairo.CairoException on error
+     */
+    public static native void setBaseSeqTxn(int parquetMetaFd, long parquetFileSize, long seqTxn);
 }
