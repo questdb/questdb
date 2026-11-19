@@ -81,6 +81,7 @@ import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.griffin.bind.BindScopeStack;
+import io.questdb.griffin.bind.ExpiryPolicyBinder;
 import io.questdb.griffin.bind.JoinGraphBuilder;
 import io.questdb.griffin.bind.SqlBinder;
 import io.questdb.griffin.bind.UpdateTarget;
@@ -107,7 +108,6 @@ import io.questdb.griffin.engine.ops.InsertOperationImpl;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.griffin.model.CompileViewModel;
-import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExplainModel;
 import io.questdb.griffin.model.ExportModel;
@@ -153,10 +153,8 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.RetainedCapacity;
 import io.questdb.std.Transient;
-import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -191,11 +189,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return true;
         }
     };
-    // Operators and functions whose result depends only on their arguments. A row-expiry predicate built
-    // only from these, the table's columns and constants gives each row the same result in every
-    // execution and every session, so the cleanup job may reclaim under it. Any other operator or
-    // function leaves the policy FILTER_ONLY: that costs disk, while the read filter keeps results correct.
-    private static final LowerCaseCharSequenceHashSet EXPIRY_ROW_ONLY_FUNCTIONS = new LowerCaseCharSequenceHashSet();
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
     // Raised from two places: once before binding, where it has to win over the more general
     // cross-table rejection, and once in generateUpdate(). Shared so the two cannot drift apart.
@@ -364,7 +357,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // Lets a test put a hook function of its own into a predicate that has to reclaim.
     @TestOnly
     public static void addExpiryRowOnlyFunctionForTesting(CharSequence name) {
-        EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
+        ExpiryPolicyBinder.addRowOnlyFunctionForTesting(name);
     }
 
     public static long copyOrderedBatched(
@@ -456,6 +449,73 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
+     * Binds a stand-alone expression of a statement over a schema built from {@code metadata}, optimises its
+     * sub-queries and returns the function it instantiates, owned by the caller, or null for no expression. No plan
+     * is created. What the binding prepared and the function did not adopt closes before this returns.
+     */
+    public Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext)
+            throws SqlException {
+        assert root == null;
+        if (expression == null) {
+            return null;
+        }
+        expressionScope.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            expressionScope.addColumnFrom(metadata, i, i);
+        }
+        Function function = null;
+        try {
+            final BoundExpression bound = binder.bindExpression(expression, expressionScope, preferredType, executionContext);
+            optimiseSubqueries(executionContext);
+            function = functionInstantiator.instantiate(bound, expressionScope, metadata, executionContext);
+            clearExpressions();
+            return function;
+        } catch (Throwable th) {
+            Misc.free(function, th);
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
+        } finally {
+            expressionScope.clear();
+        }
+    }
+
+    /**
+     * Binds a stand-alone expression of a statement over a schema built from {@code metadata}, as
+     * {@link #bindStatementExpression} does, and returns its type, or {@link ColumnType#UNDEFINED} for no expression.
+     * The root binds as the overload it selects: an aggregate root fails, since the statement evaluates the expression
+     * as an argument of a row filter, where an aggregate is illegal, while a scalar call that shares its name with an
+     * aggregate binds as the scalar it is. Nothing instantiates the bound expression; what its binding prepared closes
+     * before this returns.
+     */
+    public int bindStatementExpressionType(ExpressionNode expression, RecordMetadata metadata, SqlExecutionContext executionContext)
+            throws SqlException {
+        assert root == null;
+        if (expression == null) {
+            return ColumnType.UNDEFINED;
+        }
+        expressionScope.clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            expressionScope.addColumnFrom(metadata, i, i);
+        }
+        try {
+            final BoundExpression bound = binder.bindExpressionClassifyingRoot(expression, expressionScope, executionContext);
+            if (bound instanceof FunctionExpression call && call.isAggregate()) {
+                throw SqlException.$(bound.getPosition(), "aggregate functions are not supported");
+            }
+            final int type = bound.getDataType();
+            clearExpressions();
+            return type;
+        } catch (Throwable th) {
+            final Throwable failure = closePrepared(th);
+            assert failure == th;
+            throw th;
+        } finally {
+            expressionScope.clear();
+        }
+    }
+
+    /**
      * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
      * optimises it, in the order binding finished, before the statement itself.
      */
@@ -478,7 +538,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     public static void removeExpiryRowOnlyFunctionForTesting(CharSequence name) {
-        EXPIRY_ROW_ONLY_FUNCTIONS.remove(name);
+        ExpiryPolicyBinder.removeRowOnlyFunctionForTesting(name);
     }
 
     @TestOnly
@@ -685,21 +745,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Fast-path support for the row-expiry cleanup job. If {@code predicate} is {@code <ts> < T},
-     * {@code <ts> <= T}, or one of the symmetric shapes {@code T > <ts>} and {@code T >= <ts>} on the
-     * designated timestamp, and {@code T} references no column, this method returns {@code T} in the unit of
-     * that column. The cleanup then classifies a whole partition from its {@code [floor, nextFloor)} bounds,
-     * with no survivor scan: a partition fully below T has only expired rows (DROP), and a partition fully
-     * above T has none (SKIP). Returns
-     * {@link Numbers#LONG_NULL} for any other shape (custom or compound predicate, a {@code T < ts} /
-     * {@code ts > T} "keep-old" shape, non-constant T) or on any parse/bind/eval issue, which makes the
-     * caller fall back to the scan — so this is purely an optimisation and never affects correctness.
-     * <p>
-     * Both designated timestamp types use the fast path. A partition floor uses the unit of the column, but
-     * a {@code now()}-based T is in micros, so {@link #toTimestampUnit} converts T into the unit of the
-     * column. That conversion rounds T DOWN. A smaller T can only make the set of fully expired partitions
-     * smaller, so the job never drops a partition that holds a live row. A conversion that overflows gives
-     * LONG_NULL, and the caller then scans.
+     * Fast-path support for the row-expiry cleanup job: the threshold {@code T} of {@code <ts> < T}, {@code <ts> <= T},
+     * {@code T > <ts>} or {@code T >= <ts>} on the designated timestamp, in the unit of that column, when {@code T}
+     * references no column, see {@link ExpiryPolicyBinder#timestampThreshold}. The cleanup then classifies a whole
+     * partition from its {@code [floor, nextFloor)} bounds, with no survivor scan: a partition fully below T has only
+     * expired rows (DROP), and a partition fully above T has none (SKIP). Returns {@link Numbers#LONG_NULL} for any other
+     * shape (custom or compound predicate, a {@code T < ts} / {@code ts > T} "keep-old" shape, non-constant T) or on any
+     * parse/bind/eval issue, which makes the caller fall back to the scan, so this is purely an optimisation and never
+     * affects correctness.
      */
     @Override
     public long expiryTimestampThreshold(
@@ -708,66 +761,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             CharSequence predicate,
             CharSequence timestampColumn
     ) {
-        if (timestampColumn == null) {
-            return Numbers.LONG_NULL;
-        }
-        final int tsIndex = metadata.getColumnIndexQuiet(timestampColumn);
-        if (tsIndex < 0) {
-            return Numbers.LONG_NULL;
-        }
-        final int tsType = metadata.getColumnType(tsIndex);
-        if (!ColumnType.isTimestamp(tsType)) {
-            return Numbers.LONG_NULL;
-        }
-        Function f = null;
         try {
             clear();
-            lexer.of(predicate);
-            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
-            if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
-                    || node.lhs == null || node.rhs == null) {
-                return Numbers.LONG_NULL;
-            }
-            // Accept both the canonical "<ts> < T | <ts> <= T" (timestamp on the left) and the equivalent
-            // symmetric "T > <ts> | T >= <ts>" (timestamp on the right). Both mean "expire everything below
-            // T"; the threshold node is the side that is NOT the timestamp column. A "T < <ts>" / "<ts> > T"
-            // ("expire recent, keep old") shape is deliberately NOT accepted here: its DROP direction is the
-            // opposite of the partition-bounds fast path.
-            // Resolve the operand by column index (unquote, strip qualifier, case-insensitive), the same way
-            // the monotonicity classifier does in expiryTimestampThresholdNode. A case- or quote-mismatched
-            // spelling of the timestamp column must take the same bounds fast path; otherwise the classifier
-            // proves the policy monotonic while this method returns LONG_NULL, and the cleanup job falls to
-            // the survivor scan with the SKIP generation cache on.
-            final boolean tsOnLeft = node.lhs.type == ExpressionNode.LITERAL
-                    && resolvePredicateColumnIndex(metadata, node.lhs.token) == tsIndex;
-            final boolean tsOnRight = node.rhs.type == ExpressionNode.LITERAL
-                    && resolvePredicateColumnIndex(metadata, node.rhs.token) == tsIndex;
-            final ExpressionNode thresholdNode;
-            if (tsOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
-                thresholdNode = node.rhs;
-            } else if (tsOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
-                thresholdNode = node.lhs;
-            } else {
-                return Numbers.LONG_NULL;
-            }
-            if (exprReferencesColumn(thresholdNode)) {
-                return Numbers.LONG_NULL;
-            }
-            f = bindStatementExpression(thresholdNode, metadata, ColumnType.UNDEFINED, executionContext);
-            if (f == null || !ColumnType.isTimestamp(f.getType()) || !(f.isConstant() || f.isRuntimeConstant())) {
-                return Numbers.LONG_NULL;
-            }
-            f.init(null, executionContext);
-            final long threshold = f.getTimestamp(null);
-            if (threshold == Numbers.LONG_NULL) {
-                return Numbers.LONG_NULL; // a NULL T expires no row, and the survivor scan gives the same result
-            }
-            // Math.multiplyExact throws on overflow, and the catch below turns that into "no fast path".
-            return toTimestampUnit(threshold, f.getType(), tsType);
+            return binder.getExpiryPolicyBinder().timestampThreshold(metadata, predicate, timestampColumn, this, executionContext);
         } catch (Exception e) {
             return Numbers.LONG_NULL; // any issue -> no fast path; the caller scans (still correct)
-        } finally {
-            Misc.free(f);
         }
     }
 
@@ -846,6 +844,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return functionParser.getFunctionFactoryCache();
     }
 
+    /**
+     * The binder of this compiler's EXPIRE ROWS policies; its parses use this compiler as their callback and live
+     * until the compiler clears.
+     */
+    @TestOnly
+    public ExpiryPolicyBinder getExpiryPolicyBinderForTesting() {
+        return binder.getExpiryPolicyBinder();
+    }
+
     @TestOnly
     public int getGenerationFrameCount() {
         return codeGenerator.getGenerationFrameCount();
@@ -870,7 +877,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // as microsecond `ts < T`; the numeric micros threshold remains a separate partition-bounds fast path.
         try {
             final ExpiryValidationResult classification =
-                    validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, 0);
+                    validateExpiryPolicy(executionContext, null, metadata, predicate, 0);
             return RowExpiryUtil.isReclaimingPolicy(predicate, classification.isMonotonic());
         } catch (SqlException e) {
             return false;
@@ -1011,117 +1018,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Validates the scalar policy DDL gives a materialized view: {@link #validateExpiryPredicateOnMetadata}, and then
-     * the keep-filter bound through the read path itself, see {@link #validateExpiryKeepFilterReads}. The classifying
-     * callers, the cleanup job and {@code materialized_views()}, read a stored policy and skip that last bind.
+     * Validates and classifies a scalar EXPIRE ROWS policy, see {@link SqlCompiler#validateExpiryPolicy}. The
+     * {@link ExpiryPolicyBinder} parses the policy once and binds it; the compiler clears its statement state before,
+     * and keeps the parse until the keep-filter of a DDL validation binds it.
      */
     @Override
     public ExpiryValidationResult validateExpiryPolicy(
             SqlExecutionContext executionContext,
-            TableToken viewToken,
+            @Nullable CharSequence viewName,
             RecordMetadata viewMetadata,
             CharSequence predicate,
             int position
     ) throws SqlException {
-        final ExpiryValidationResult result = validateExpiryPredicateOnMetadata(executionContext, viewMetadata, predicate, position);
-        // Last, because it clears this compiler, which every check above reads.
-        validateExpiryKeepFilterReads(executionContext, viewToken, viewMetadata, predicate, position);
-        return result;
-    }
-
-    /**
-     * Parses + binds {@code predicate} against {@code metadata} and asserts the result is a boolean
-     * expression consuming the ENTIRE text, with no root-level aggregate and no bind variables. The
-     * stored text is embedded verbatim into every read's generated SQL, so anything that read-path
-     * parse would choke on must be rejected here. Any parse/bind error is rewritten as a clear
-     * "invalid EXPIRE ROWS predicate" positioned at {@code position}. Runs on a freshly-borrowed
-     * compiler (its own lexer, parser and binder). It binds with the planner's binder, as reads and the
-     * cleanup sweep do.
-     * <p>
-     * The bare predicate is not what a read binds: a read binds its keep-filter, {@code NOT (<predicate>)} with the
-     * negation pushed down, which DDL binds through the read path itself, see {@link #validateExpiryPolicy}. This
-     * binds the shape the cleanup sweep compiles, see {@link #validateExpiryKeepFilterBinds}.
-     */
-    @Override
-    public ExpiryValidationResult validateExpiryPredicateOnMetadata(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            CharSequence predicate,
-            int position
-    ) throws SqlException {
-        final ExpressionNode node;
-        final int predicateType;
-        try {
-            clear();
-            lexer.of(predicate);
-            node = parser.expr(lexer, (QueryModel) null, this);
-            // The expression parser stops at the first token it cannot absorb (e.g. `x > 5 oops`
-            // parses as `x > 5`), but the FULL text is what gets stored and embedded into every
-            // read's generated SQL, where the leftover token fails the parse. Require the whole
-            // predicate to be one expression, so what validates is exactly what reads execute.
-            final CharSequence trailingTok = SqlUtil.fetchNext(lexer);
-            if (trailingTok != null) {
-                throw SqlException.$(position, "unexpected token after expression: ").put(trailingTok);
+        final ExpiryPolicyBinder policyBinder = binder.getExpiryPolicyBinder();
+        clear();
+        final ExpiryValidationResult result = policyBinder.validate(viewMetadata, predicate, position, this, executionContext);
+        if (viewName != null) {
+            // Last, because it rewrites the parsed policy. It binds in a fresh scope, as a read binds its scan.
+            clearExpressions();
+            scopes.clearCurrent();
+            final SqlCompilerImpl previous = functionParser.swapCompiler(this);
+            try {
+                policyBinder.bindKeepFilter(viewMetadata, viewName, position, this, executionContext);
+            } finally {
+                functionParser.swapCompiler(previous);
+                // Nothing generates the bound filter, so the functions its binding prepared close here.
+                CairoException.rethrowCleanupFailure(closePrepared(null));
             }
-            predicateType = bindExpiryPredicate(node, metadata, position, executionContext);
-        } catch (SqlException | CairoException | ImplicitCastException e) {
-            // ImplicitCastException extends RuntimeException, not CairoException. A constant the bind
-            // folds - `i = 'abc'` against an INT column - raises one here, and it has to read as an
-            // invalid policy rather than escaping the DDL as a bare cast error.
-            final String reason = reasonOf(e);
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
         }
-        if (!ColumnType.isBoolean(predicateType)) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: expected a boolean expression");
-        }
-        // A stored predicate has no statement to supply bind values, so `v > $1` would fail on
-        // every read with "undefined bind variable"; reject it at definition time instead.
-        if (expiryExpressionHasBindVariable(node)) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: bind variables are not supported");
-        }
-        final IntList referencedColumnIndexes = new IntList();
-        collectExpiryReferencedColumns(node, metadata, referencedColumnIndexes);
-        // A date variable in a string constant (`ts IN '$now - 1h..$now'`) reads the clock too. The
-        // function that evaluates such a string reads it in init() but reports neither
-        // isNonDeterministic() nor isRuntimeConstant(), so only the AST shows the clock read.
-        final boolean hasClock = expiryExpressionHasClock(node) || expiryExpressionHasDateVariable(node);
-        // The predicate counts as depending only on the row (isDeterministic) only when its AST proves
-        // that every node gives each row the same value in every execution and session. The cleanup job
-        // evaluates the predicate once per sweep under the root context, so a clock read, a session
-        // value such as current_user(), or any other function whose value can change could make it
-        // delete a row that a later read, or a reader in another session, keeps. The proof works on the
-        // AST rather than on the bound functions: a function reports isNonDeterministic(),
-        // isRuntimeConstant() or isRandom() reliably only when the answer is true, and some functions
-        // keep an operand, such as the IN list of a SYMBOL column, where no walk of the bound tree
-        // reaches it.
-        // A subquery (e.g. `sym IN (SELECT s FROM blacklist)`) reads other tables whose contents can
-        // change between evaluations, so a row expired now can un-expire later - physical cleanup
-        // under such a predicate could delete rows the read filter must show again. The expression
-        // parse above already rejects subqueries ("query is not allowed here": parser.expr runs with
-        // no query model), so none can be stored via DDL. The QUERY-node check is a second layer of
-        // protection: if a subquery ever does reach classification, the predicate is classified
-        // non-monotonic and the cleanup job skips physical deletion for it.
-        final boolean isDeterministic = !hasClock
-                && !expiryExpressionHasQuery(node)
-                && isExpiryRowOnlyExpression(node, metadata);
-        final int timestampIndex = metadata.getTimestampIndex();
-        final CharSequence timestampColumn = timestampIndex >= 0 ? metadata.getColumnName(timestampIndex) : null;
-        final ExpressionNode thresholdNode = expiryTimestampThresholdNode(node, metadata, timestampColumn);
-        final boolean isMonotonic = isDeterministic
-                || isProvenAdvancingClockExpression(thresholdNode);
-        final ExpiryValidationResult result =
-                new ExpiryValidationResult(hasClock, isDeterministic, isMonotonic, referencedColumnIndexes);
-        // Last, because it reuses this compiler's lexer and parser and so invalidates `node`.
-        validateExpiryKeepFilterBinds(executionContext, metadata, predicate, position);
-        // Also re-lexes, so it has to follow everything that reads `node`.
-        rejectUnusableConstantExpiryThreshold(executionContext, metadata, predicate, timestampColumn, position);
         return result;
-    }
-
-    private static void addExpiryRowOnlyFunctions(String... names) {
-        for (String name : names) {
-            EXPIRY_ROW_ONLY_FUNCTIONS.add(name);
-        }
     }
 
     private static void addSupportedConversion(short fromType, short... toTypes) {
@@ -1425,21 +1350,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return -1;
-    }
-
-    private static void checkTextConvertsToColumnType(CharSequence value, int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE -> SqlUtil.implicitCastStrAsByte(value);
-            case ColumnType.SHORT -> SqlUtil.implicitCastStrAsShort(value);
-            case ColumnType.INT -> SqlUtil.implicitCastStrAsInt(value);
-            case ColumnType.LONG -> SqlUtil.implicitCastStrAsLong(value);
-            case ColumnType.FLOAT -> SqlUtil.implicitCastStrAsFloat(value);
-            case ColumnType.DOUBLE -> SqlUtil.implicitCastStrAsDouble(value);
-            case ColumnType.CHAR -> SqlUtil.implicitCastStrAsChar(value);
-            case ColumnType.UUID -> SqlUtil.implicitCastStrAsUuid(value, new Uuid());
-            default -> {
-            }
-        }
     }
 
     private static CharSequence formatPartitionName(TableReader reader, long partitionTimestamp) {
@@ -3293,66 +3203,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         } finally {
             functionParser.swapCompiler(previous);
-        }
-    }
-
-    /**
-     * Binds an EXPIRE ROWS predicate on its own over a schema built from {@code metadata} and returns its type, or
-     * {@link ColumnType#UNDEFINED} for a predicate with no expression. The binder classifies the root from the overload
-     * it selects: an aggregate root fails with the policy's own rule, since every read and the cleanup sweep embed the
-     * predicate as an argument, where an aggregate is illegal, while a scalar call that shares its name with an
-     * aggregate binds as the scalar it is. Nothing instantiates the bound predicate.
-     */
-    private int bindExpiryPredicate(ExpressionNode predicate, RecordMetadata metadata, int position, SqlExecutionContext executionContext)
-            throws SqlException {
-        assert root == null;
-        if (predicate == null) {
-            return ColumnType.UNDEFINED;
-        }
-        expressionScope.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            expressionScope.addColumnFrom(metadata, i, i);
-        }
-        try {
-            final BoundExpression bound = binder.bindExpressionClassifyingRoot(predicate, expressionScope, executionContext);
-            if (bound instanceof FunctionExpression call && call.isAggregate()) {
-                throw SqlException.$(position, "aggregate functions are not supported");
-            }
-            final int type = bound.getDataType();
-            clearExpressions();
-            return type;
-        } catch (Throwable th) {
-            final Throwable failure = closePrepared(th);
-            assert failure == th;
-            throw th;
-        } finally {
-            expressionScope.clear();
-        }
-    }
-
-    private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
-        assert root == null;
-        if (expression == null) {
-            return null;
-        }
-        expressionScope.clear();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            expressionScope.addColumnFrom(metadata, i, i);
-        }
-        Function function = null;
-        try {
-            final BoundExpression bound = binder.bindExpression(expression, expressionScope, preferredType, executionContext);
-            optimiseSubqueries(executionContext);
-            function = functionInstantiator.instantiate(bound, expressionScope, metadata, executionContext);
-            clearExpressions();
-            return function;
-        } catch (Throwable th) {
-            Misc.free(function, th);
-            final Throwable failure = closePrepared(th);
-            assert failure == th;
-            throw th;
-        } finally {
-            expressionScope.clear();
         }
     }
 
@@ -7849,7 +7699,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int predicatePos
     ) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compiler.validateExpiryPolicy(executionContext, viewToken, metadata, predicate, predicatePos);
+            return compiler.validateExpiryPolicy(executionContext, viewToken.getTableName(), metadata, predicate, predicatePos);
         }
     }
 
@@ -7877,15 +7727,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // cleanup job bind the policy over the view's metadata, so validation does too.
         final GenericRecordMetadata viewMetadata = GenericRecordMetadata.copyOfSansTimestamp(selectMetadata);
         viewMetadata.setTimestampIndex(createTableOp.getTimestampIndex());
-        // The view does not exist yet, so its token names it for the scan of its reads and stands for no table.
-        final String viewName = Chars.toString(createTableOp.getTableName());
-        final TableToken viewToken = new TableToken(viewName, viewName, null, 0, TableToken.Type.MAT_VIEW, true, false, false, false);
         // Borrow a separate compiler so we don't disturb this one's in-flight CREATE (lexer/parser state).
         // The error caret points at the table name rather than the predicate: the predicate's source
         // position is not threaded through CreateTableOperation, and the message already names the cause.
+        // The view does not exist yet, so its name alone qualifies the columns of its reads.
         try (SqlCompiler validationCompiler = engine.getSqlCompiler()) {
             return validationCompiler.validateExpiryPolicy(
-                    executionContext, viewToken, viewMetadata, predicate, createTableOp.getTableNamePosition());
+                    executionContext, createTableOp.getTableName(), viewMetadata, predicate, createTableOp.getTableNamePosition());
         }
     }
 
@@ -8002,174 +7850,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } finally {
             executionContext.setExpiryRawReadTable(previousExpiryRawReadTable);
-        }
-    }
-
-    /**
-     * Binds {@link RowExpiryUtil#appendKeepCase} and refuses the policy when that fails. The
-     * strict form's type rules refuse a cross-type equality such as {@code s = 12345} on a {@code STRING}
-     * column, which binds on its own but casts every value to {@code INT} once rows are evaluated: every
-     * read and every sweep of the view would fail on the first non-numeric value, with an error that names
-     * neither the view's policy nor EXPIRE ROWS. They also refuse cross-type equalities that only match
-     * nothing, such as {@code k = 12345} on a {@code SYMBOL} column, because telling the two apart would
-     * mean evaluating rows.
-     * <p>
-     * The sweep compiles {@link RowExpiryUtil#buildRowExpiryKeepFilter}, which binds whenever the strict
-     * form does, so every policy this method accepts also sweeps.
-     * <p>
-     * A predicate whose implicit cast only fails once a row is evaluated and that is not a bare
-     * {@code <column> = <constant>} - {@code v < 'abc'} on a {@code DOUBLE} column - still gets through,
-     * here and in the bare bind above. Catching it would mean evaluating a row at DDL time, which makes
-     * acceptance depend on whether the view happens to hold data. Such a predicate fails as a plain
-     * {@code WHERE} clause too, so it is wrong in a way the author sees immediately.
-     */
-    private void validateExpiryKeepFilterBinds(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            CharSequence predicate,
-            int position
-    ) throws SqlException {
-        Function f = null;
-        try {
-            clear();
-            expiryPolicySql.clear();
-            RowExpiryUtil.appendKeepCase(expiryPolicySql, predicate);
-            lexer.of(expiryPolicySql);
-            f = bindStatementExpression(parser.expr(lexer, (QueryModel) null, this), metadata, ColumnType.UNDEFINED, executionContext);
-            f = Misc.free(f);
-            // A bare <column> = <constant> has to compare values of one kind. A number compared with a text column
-            // reads each value as a number, which fails on the first non-numeric value of a read or a sweep. Text
-            // compared with a numeric, CHAR or UUID column has to be a value of the column: otherwise it matches no
-            // row, or fails every read, as v = 'abc' does on a DOUBLE column.
-            clear();
-            lexer.of(predicate);
-            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
-            if (node != null && node.type == ExpressionNode.OPERATION && node.paramCount == 2 && Chars.equals(node.token, "=")
-                    && (node.lhs.type == ExpressionNode.LITERAL) != (node.rhs.type == ExpressionNode.LITERAL)
-                    && (node.lhs.type == ExpressionNode.CONSTANT || node.rhs.type == ExpressionNode.CONSTANT)) {
-                final ExpressionNode column = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
-                final ExpressionNode constant = node.lhs.type == ExpressionNode.CONSTANT ? node.lhs : node.rhs;
-                final int columnIndex = metadata.getColumnIndexQuiet(GenericLexer.unquote(column.token));
-                if (columnIndex > -1) {
-                    final int columnType = metadata.getColumnType(columnIndex);
-                    f = bindStatementExpression(constant, metadata, ColumnType.UNDEFINED, executionContext);
-                    final int constantType = f.getType();
-                    f = Misc.free(f);
-                    final boolean isTextConstant = ColumnType.isStringyType(constantType) || ColumnType.isSymbol(constantType) || constantType == ColumnType.CHAR;
-                    if (ColumnType.isSymbol(columnType) || ColumnType.isVarcharOrString(columnType)) {
-                        if (!isTextConstant && constantType != ColumnType.NULL) {
-                            throw SqlException.position(constant.position)
-                                    .put("type mismatch [expected=").put(ColumnType.nameOf(columnType))
-                                    .put(", actual=").put(ColumnType.nameOf(constantType))
-                                    .put(']');
-                        }
-                    } else if (isTextConstant) {
-                        checkTextConvertsToColumnType(GenericLexer.unquote(constant.token), columnType);
-                    }
-                }
-            }
-        } catch (SqlException | CairoException | ImplicitCastException e) {
-            final String reason = reasonOf(e);
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reason);
-        } finally {
-            Misc.free(f);
-        }
-    }
-
-    /**
-     * Binds the keep-filter of the policy through the read path itself, {@link SqlBinder#bindExpiryKeepFilter}, the
-     * call every read of the view binds the policy with, over a scan of {@code viewMetadata}, and refuses the policy
-     * when that fails, with the read's error. No text spells the read's shape here: the read parses the stored
-     * predicate into {@code NOT (<predicate>)}, pushes the negation down and binds the result as a filter of the scan,
-     * whose rules a bind of the bare predicate does not apply. A negation that cancels another leaves its operand at
-     * the root, where a NULL constant is no boolean expression, so {@code NOT NULL} binds on its own and fails every
-     * read.
-     * <p>
-     * It runs when the user submits the statement, and not when WAL apply replays the stored SET EXPIRE, see
-     * {@link #alterTableSetExpire}.
-     */
-    private void validateExpiryKeepFilterReads(
-            SqlExecutionContext executionContext,
-            TableToken viewToken,
-            RecordMetadata viewMetadata,
-            CharSequence predicate,
-            int position
-    ) throws SqlException {
-        try {
-            clear();
-            final SqlCompilerImpl previous = functionParser.swapCompiler(this);
-            try {
-                binder.bindExpiryKeepFilter(viewToken, viewMetadata, predicate, this, executionContext);
-            } finally {
-                functionParser.swapCompiler(previous);
-            }
-        } catch (SqlException | CairoException | ImplicitCastException e) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: ").put(reasonOf(e));
-        } finally {
-            // Nothing generates the bound filter, so the functions its binding prepared close here.
-            CairoException.rethrowCleanupFailure(closePrepared(null));
-        }
-    }
-
-    /**
-     * Rejects a policy whose threshold is a compile-time constant NULL, such as
-     * {@code ts < cast(null as timestamp)}, or an arithmetic expression that overflows onto the NULL
-     * sentinel, {@code ts < 4611686018427387904 * 2}. Such a policy expires nothing, which is always a
-     * mistake, and it is one the author cannot see: the source text reads as an ordinary timestamp.
-     * <p>
-     * The threshold comes from {@link #expiryOrderingThresholdNode}, which spans all four ordering
-     * operators with the timestamp on either side. A check that saw only {@code ts < T} would leave
-     * {@code ts > T} storing a NULL threshold that reads as an empty view while every row stays on disk.
-     * <p>
-     * Binding the threshold answers this with the engine's own arithmetic. QuestDB types integer literals
-     * and promotes products by rules that are not evident from the source text - {@code 86400*1000000}
-     * comes out LONG and correct, {@code 1073741824*2} comes out INT and NULL - so a check that folded the
-     * expression itself would have to reproduce those rules to stay in step with what reads compute.
-     * <p>
-     * Only {@link Function#isConstant()} counts. A runtime constant such as {@code now() - c} evaluates
-     * against whatever clock this DDL happens to see, so a non-NULL answer now says nothing about a read
-     * a month later; a NULL there reads as a comparison that holds for no row, so the read keeps every row.
-     * <p>
-     * {@link #expiryTimestampThreshold} evaluates a threshold too but cannot stand in for this: it
-     * returns {@code LONG_NULL} for a dozen unrelated reasons - no designated timestamp, the opposite
-     * comparison direction, a non-timestamp threshold type - so it cannot tell a NULL threshold from a
-     * shape it simply does not handle.
-     */
-    private void rejectUnusableConstantExpiryThreshold(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
-            CharSequence predicate,
-            CharSequence timestampColumn,
-            int position
-    ) throws SqlException {
-        final boolean isNullThreshold;
-        Function t = null;
-        try {
-            clear();
-            lexer.of(predicate);
-            final ExpressionNode node = parser.expr(lexer, (QueryModel) null, this);
-            final ExpressionNode thresholdNode = expiryOrderingThresholdNode(node, metadata, timestampColumn);
-            if (thresholdNode == null) {
-                return;
-            }
-            t = bindStatementExpression(thresholdNode, metadata, ColumnType.UNDEFINED, executionContext);
-            if (t == null || !t.isConstant()) {
-                return;
-            }
-            t.init(null, executionContext);
-            isNullThreshold = isNullConstant(t);
-        } catch (SqlException | CairoException | ImplicitCastException e) {
-            // The whole-predicate bind above already reported anything that matters; a failure here only
-            // means the threshold could not be evaluated, which is not itself a reason to reject.
-            return;
-        } finally {
-            Misc.free(t);
-        }
-        // The caret carries the caller's position, as every other error here does: this lexes the predicate
-        // on its own, so a node position from it would be an offset into the predicate text rather than into
-        // the statement the user wrote.
-        if (isNullThreshold) {
-            throw SqlException.$(position, "invalid EXPIRE ROWS predicate: the threshold is NULL, so no row can ever expire");
         }
     }
 
@@ -8428,430 +8108,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             hi--;
         }
         return s.subSequence(lo, hi);
-    }
-
-    private static void collectExpiryReferencedColumns(
-            ExpressionNode node,
-            RecordMetadata metadata,
-            IntList referencedColumnIndexes
-    ) {
-        if (node == null) {
-            return;
-        }
-        if (node.type == ExpressionNode.LITERAL) {
-            final int columnIndex = resolvePredicateColumnIndex(metadata, node.token);
-            if (columnIndex >= 0 && referencedColumnIndexes.indexOf(columnIndex, 0, referencedColumnIndexes.size()) < 0) {
-                referencedColumnIndexes.add(columnIndex);
-            }
-        }
-        collectExpiryReferencedColumns(node.lhs, metadata, referencedColumnIndexes);
-        collectExpiryReferencedColumns(node.rhs, metadata, referencedColumnIndexes);
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            collectExpiryReferencedColumns(node.args.getQuick(i), metadata, referencedColumnIndexes);
-        }
-    }
-
-    // True if the sub-tree contains a bind variable ($1 / :name). A stored predicate has no statement
-    // to supply bind values, so one would fail on every read.
-    private static boolean expiryExpressionHasBindVariable(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.BIND_VARIABLE) {
-            return true;
-        }
-        if (expiryExpressionHasBindVariable(node.lhs) || expiryExpressionHasBindVariable(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (expiryExpressionHasBindVariable(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean expiryExpressionHasClock(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.FUNCTION && SqlKeywords.isClockFunctionKeyword(node.token)) {
-            return true;
-        }
-        if (expiryExpressionHasClock(node.lhs) || expiryExpressionHasClock(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (expiryExpressionHasClock(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // True if a string constant in the sub-tree contains a date variable. The function that
-    // evaluates such a string reads the clock in init() but reports neither isNonDeterministic()
-    // nor isRuntimeConstant(), so only the AST shows the clock read.
-    private static boolean expiryExpressionHasDateVariable(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.CONSTANT && DateExpressionEvaluator.hasDateVariable(node.token)) {
-            return true;
-        }
-        if (expiryExpressionHasDateVariable(node.lhs) || expiryExpressionHasDateVariable(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (expiryExpressionHasDateVariable(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // True if the sub-tree contains a subquery (QUERY node). A subquery's result depends on another
-    // table's current contents, so a predicate containing one is not stable across evaluations.
-    private static boolean expiryExpressionHasQuery(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.QUERY) {
-            return true;
-        }
-        if (expiryExpressionHasQuery(node.lhs) || expiryExpressionHasQuery(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (expiryExpressionHasQuery(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // True if the sub-tree references any column (LITERAL) or bind variable, i.e. it cannot be evaluated to
-    // a single constant threshold independent of the row.
-    private static boolean exprReferencesColumn(ExpressionNode node) {
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.LITERAL || node.type == ExpressionNode.BIND_VARIABLE) {
-            return true;
-        }
-        if (exprReferencesColumn(node.lhs) || exprReferencesColumn(node.rhs)) {
-            return true;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (exprReferencesColumn(node.args.getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * The threshold operand of a designated-timestamp ordering comparison, in either direction and with the
-     * timestamp on either side, or null when the predicate is not that shape or the other operand references
-     * a column.
-     * <p>
-     * {@link #expiryTimestampThresholdNode} recognises only the expire-old direction, because that is the one
-     * whose threshold drives the partition-bounds fast path. A NULL check has to span every shape
-     * {@code SqlParser.isNullSafeOrderingFlip} will flip, which is all four ordering operators with the
-     * timestamp on either side: a NULL threshold makes the comparison false for every row whichever way it
-     * points, and the flip then turns the keep-filter into a predicate that hides every row.
-     */
-    private static ExpressionNode expiryOrderingThresholdNode(
-            ExpressionNode node,
-            RecordMetadata metadata,
-            CharSequence timestampColumn
-    ) {
-        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
-                || node.lhs == null || node.rhs == null) {
-            return null;
-        }
-        if (!Chars.equals(node.token, "<") && !Chars.equals(node.token, "<=")
-                && !Chars.equals(node.token, ">") && !Chars.equals(node.token, ">=")) {
-            return null;
-        }
-        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
-        if (node.lhs.type == ExpressionNode.LITERAL
-                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex) {
-            return exprReferencesColumn(node.rhs) ? null : node.rhs;
-        }
-        if (node.rhs.type == ExpressionNode.LITERAL
-                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex) {
-            return exprReferencesColumn(node.lhs) ? null : node.lhs;
-        }
-        return null;
-    }
-
-    private static ExpressionNode expiryTimestampThresholdNode(
-            ExpressionNode node,
-            RecordMetadata metadata,
-            CharSequence timestampColumn
-    ) {
-        if (node == null || timestampColumn == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2
-                || node.lhs == null || node.rhs == null) {
-            return null;
-        }
-        final int timestampIndex = metadata.getColumnIndexQuiet(timestampColumn);
-        final boolean isTimestampOnLeft = node.lhs.type == ExpressionNode.LITERAL
-                && resolvePredicateColumnIndex(metadata, node.lhs.token) == timestampIndex;
-        final boolean isTimestampOnRight = node.rhs.type == ExpressionNode.LITERAL
-                && resolvePredicateColumnIndex(metadata, node.rhs.token) == timestampIndex;
-        if (isTimestampOnLeft && (Chars.equals(node.token, "<") || Chars.equals(node.token, "<="))) {
-            return exprReferencesColumn(node.rhs) ? null : node.rhs;
-        }
-        if (isTimestampOnRight && (Chars.equals(node.token, ">") || Chars.equals(node.token, ">="))) {
-            return exprReferencesColumn(node.lhs) ? null : node.lhs;
-        }
-        return null;
-    }
-
-    // True when the sub-tree proves that it gives each row the same value in every execution and session:
-    // every node is a column of the table, a constant, or an operator or function on the
-    // EXPIRY_ROW_ONLY_FUNCTIONS list. An unknown column name counts as not proven too, because the
-    // function parser could resolve it to something other than a column. Date variables inside string
-    // constants are the caller's separate check.
-    private static boolean isExpiryRowOnlyExpression(ExpressionNode node, RecordMetadata metadata) {
-        if (node == null) {
-            return true;
-        }
-        final boolean isNodeRowOnly = switch (node.type) {
-            case ExpressionNode.CONSTANT -> true;
-            case ExpressionNode.LITERAL -> resolvePredicateColumnIndex(metadata, node.token) >= 0;
-            case ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION, ExpressionNode.FUNCTION ->
-                    EXPIRY_ROW_ONLY_FUNCTIONS.contains(node.token);
-            default -> false;
-        };
-        if (isNodeRowOnly
-                && (node.type == ExpressionNode.FUNCTION || node.type == ExpressionNode.SET_OPERATION)
-                && SqlKeywords.isInKeyword(node.token)) {
-            return isExpiryRowOnlyInExpression(node, metadata);
-        }
-        if (!isNodeRowOnly
-                || !isExpiryRowOnlyExpression(node.lhs, metadata)
-                || !isExpiryRowOnlyExpression(node.rhs, metadata)) {
-            return false;
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (!isExpiryRowOnlyExpression(node.args.getQuick(i), metadata)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // An IN over the designated timestamp parses a string value as an interval at runtime, and that parse
-    // expands date variables such as $today. A date variable can reach it through concat() or from a column,
-    // where the scan of string constants does not see it, so an IN counts as proven only when each of its
-    // values is a constant. Its left operand follows the general rule.
-    private static boolean isExpiryRowOnlyInExpression(ExpressionNode node, RecordMetadata metadata) {
-        final ObjList<ExpressionNode> args = node.args;
-        final int argCount = args.size();
-        if (argCount == 0) {
-            return node.rhs != null
-                    && node.rhs.type == ExpressionNode.CONSTANT
-                    && isExpiryRowOnlyExpression(node.lhs, metadata);
-        }
-        // Function args are stored reversed: the left operand comes last.
-        for (int i = 0; i < argCount - 1; i++) {
-            if (args.getQuick(i).type != ExpressionNode.CONSTANT) {
-                return false;
-            }
-        }
-        return isExpiryRowOnlyExpression(args.getQuick(argCount - 1), metadata);
-    }
-
-    /**
-     * Whether this constant evaluates to NULL, across every type a {@code ts < T} threshold can bind to.
-     * The timestamp family, DATE, LONG and INT each carry an in-band sentinel; DOUBLE and FLOAT spell
-     * NULL as NaN (the way {@code 0.0/0.0} folds); a bare NULL literal binds to {@link ColumnType#NULL};
-     * a string threshold is NULL by reference.
-     * <p>
-     * NaN is the whole of the DOUBLE/FLOAT case. {@code TIMESTAMP < DOUBLE} resolves to the {@code <(DD)}
-     * overload, which widens the timestamp instead of casting the threshold, so a double outside long
-     * range compares as the extreme bound it is and never lands on the sentinel: {@code ts < -9.3e18} is
-     * an always-false bound in double space, the same kind of legal-but-inert policy as a threshold set
-     * before the epoch, not a NULL. A double literal that would need converting does not get this far -
-     * the constant fold reports "Invalid date" during the whole-predicate bind.
-     * <p>
-     * SHORT, BYTE, CHAR and BOOLEAN have no arm because none of them has a null sentinel to test:
-     * {@code cast(null as short)} is the value 0, which is an ordinary threshold.
-     */
-    private static boolean isNullConstant(Function t) {
-        final int type = t.getType();
-        if (ColumnType.isTimestamp(type)) {
-            return t.getTimestamp(null) == Numbers.LONG_NULL;
-        }
-        return switch (ColumnType.tagOf(type)) {
-            case ColumnType.NULL -> true;
-            case ColumnType.DATE -> t.getDate(null) == Numbers.LONG_NULL;
-            case ColumnType.LONG -> t.getLong(null) == Numbers.LONG_NULL;
-            case ColumnType.INT -> t.getInt(null) == Numbers.INT_NULL;
-            case ColumnType.DOUBLE -> Numbers.isNull(t.getDouble(null));
-            case ColumnType.FLOAT -> Numbers.isNull(t.getFloat(null));
-            case ColumnType.STRING -> t.getStrA(null) == null;
-            case ColumnType.VARCHAR -> t.getVarcharA(null) == null;
-            default -> false;
-        };
-    }
-
-    // True for a bare zero-arg wall-time clock: now(), now_ns(), sysdate(), systimestamp(), systimestamp_ns().
-    private static boolean isBareClockFunction(ExpressionNode node) {
-        return node != null
-                && node.type == ExpressionNode.FUNCTION
-                && node.paramCount == 0
-                && SqlKeywords.isClockFunctionKeyword(node.token);
-    }
-
-    /**
-     * True when {@code node} is structurally proven to be a non-decreasing function of wall-clock
-     * time, so a {@code ts < node} threshold only ever moves forward and physical cleanup under it is
-     * safe. Three shapes carry a proof:
-     * <ul>
-     *     <li>a bare clock ({@code now()} / {@code now_ns()} / {@code sysdate()} / {@code systimestamp()} /
-     *         {@code systimestamp_ns()});</li>
-     *     <li>{@code <clock> - c} for a constant {@code c >= 0}: with {@code t >= 0} and
-     *         {@code c in [0, Long.MAX_VALUE]}, {@code t - c} can neither overflow nor underflow and
-     *         advances exactly as {@code t} does;</li>
-     *     <li>{@code dateadd('<fixed unit>', k, <clock>)} for a constant {@code k <= 0} and a
-     *         fixed-duration unit (n/u/T/s/m/h/d/w), which is {@code <clock> - c} with
-     *         {@code c = -k * unit}; the amount is bounded so the scaled offset cannot overflow even
-     *         on a nanosecond timeline.</li>
-     * </ul>
-     * Everything else stays a conservative false — calendar units (M/y) shift by a variable amount,
-     * a look-forward offset expires rows the passage of time un-expires, and arbitrary clock
-     * arithmetic (e.g. {@code now() - now()::long * 2}) can decrease. Skipping reclamation is safe;
-     * accepting one decreasing transform is not.
-     */
-    private static boolean isProvenAdvancingClockExpression(ExpressionNode node) {
-        if (isBareClockFunction(node)) {
-            return true;
-        }
-        if (node == null) {
-            return false;
-        }
-        if (node.type == ExpressionNode.OPERATION
-                && node.paramCount == 2
-                && Chars.equals(node.token, "-")
-                && isBareClockFunction(node.lhs)) {
-            try {
-                return parseExpiryConstantLong(node.rhs) >= 0;
-            } catch (NumericException e) {
-                return false;
-            }
-        }
-        if (node.type == ExpressionNode.FUNCTION
-                && node.paramCount == 3
-                && SqlKeywords.isDateaddKeyword(node.token)) {
-            // function args are stored reversed: [timestamp, amount, unit]
-            final ExpressionNode clockArg = node.args.getQuick(0);
-            final ExpressionNode amountArg = node.args.getQuick(1);
-            final ExpressionNode unitArg = node.args.getQuick(2);
-            if (!isBareClockFunction(clockArg)) {
-                return false;
-            }
-            final long unitNanos = fixedDateaddUnitNanos(unitArg.token);
-            if (unitNanos <= 0) {
-                return false;
-            }
-            try {
-                final long amount = parseExpiryConstantLong(amountArg);
-                // look-back only, with the offset provably in range on a nanosecond timeline
-                return amount <= 0 && amount != Long.MIN_VALUE && -amount <= Long.MAX_VALUE / unitNanos;
-            } catch (NumericException e) {
-                return false;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * The duration of a {@code dateadd} unit in nanoseconds (the finest timestamp resolution, so the
-     * overflow bound derived from it holds for micro timelines too), or 0 for a calendar unit (M/y)
-     * or an unrecognized token. Accepts the quoted ({@code 'd'}) and bare ({@code d}) forms.
-     */
-    private static long fixedDateaddUnitNanos(CharSequence unitToken) {
-        if (unitToken == null) {
-            return 0;
-        }
-        final int len = unitToken.length();
-        final char unit;
-        if (len == 3 && unitToken.charAt(0) == '\'' && unitToken.charAt(2) == '\'') {
-            unit = unitToken.charAt(1);
-        } else if (len == 1) {
-            unit = unitToken.charAt(0);
-        } else {
-            return 0;
-        }
-        return switch (unit) {
-            case 'n' -> 1L;
-            case 'u' -> 1_000L;
-            case 'T' -> 1_000_000L;
-            case 's' -> 1_000_000_000L;
-            case 'm' -> 60_000_000_000L;
-            case 'h' -> 3_600_000_000_000L;
-            case 'd' -> 86_400_000_000_000L;
-            case 'w' -> 604_800_000_000_000L;
-            default -> 0;
-        };
-    }
-
-    // Long value of a constant expression node: a plain CONSTANT (with an optional L suffix) or a
-    // unary-minus over one. Throws NumericException for any other shape.
-    private static long parseExpiryConstantLong(ExpressionNode node) throws NumericException {
-        if (node == null) {
-            throw NumericException.INSTANCE;
-        }
-        if (node.type == ExpressionNode.CONSTANT) {
-            final CharSequence token = node.token;
-            final int len = token.length();
-            final int hi = len > 1 && (token.charAt(len - 1) == 'L' || token.charAt(len - 1) == 'l') ? len - 1 : len;
-            return Numbers.parseLong(token, 0, hi);
-        }
-        if (node.type == ExpressionNode.OPERATION && node.paramCount == 1 && Chars.equals(node.token, "-")) {
-            final long value = parseExpiryConstantLong(node.rhs);
-            if (value == Long.MIN_VALUE) {
-                throw NumericException.INSTANCE;
-            }
-            return -value;
-        }
-        throw NumericException.INSTANCE;
-    }
-
-    // Resolves a predicate LITERAL token to a column index in metadata. Handles a plain (possibly quoted)
-    // column name AND a table/alias-qualified reference such as t.v or "t"."v": EXPIRE predicates are
-    // single-table, so a qualifier is the table name — the column is the segment after the last unquoted
-    // dot. Returns -1 when the token names no column. Without the qualified-name handling a predicate like
-    // `t.v < 2` would be seen as referencing no column, and dropping v would silently brick every read.
-    private static int resolvePredicateColumnIndex(RecordMetadata metadata, CharSequence token) {
-        int idx = metadata.getColumnIndexQuiet(unquote(token));
-        if (idx >= 0) {
-            return idx;
-        }
-        final int dot = Chars.indexOfLastUnquoted(token, '.');
-        if (dot >= 0 && dot + 1 < token.length()) {
-            return metadata.getColumnIndexQuiet(unquote(token.subSequence(dot + 1, token.length())));
-        }
-        return -1;
-    }
-
-    // Converts an expiry threshold from the unit of the expression that produced it into the unit of the
-    // designated timestamp column, so the caller can compare it against a partition floor. Rounds DOWN, so
-    // the result is never above the exact threshold. A smaller threshold can only make the set of fully
-    // expired partitions smaller, so the job never drops a partition that holds a live row. The remainder
-    // that the rounding discards is smaller than one unit of the column, so at most one partition takes the
-    // survivor scan, or waits for a later sweep. Math.multiplyExact throws on overflow, and the caller reads
-    // that as "no fast path".
-    private static long toTimestampUnit(long timestamp, int fromType, int toType) {
-        if (fromType == toType) {
-            return timestamp;
-        }
-        return ColumnType.isTimestampNano(toType)
-                ? Math.multiplyExact(timestamp, Micros.MICRO_NANOS)
-                : Math.floorDiv(timestamp, Micros.MICRO_NANOS);
     }
 
     /**
@@ -9316,19 +8572,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         sqlControlSymbols.add("--");
         sqlControlSymbols.add("[");
         sqlControlSymbols.add("]");
-
-        // operators
-        addExpiryRowOnlyFunctions(
-                "=", "!=", "<>", "<", "<=", ">", ">=", "+", "-", "*", "/", "%", "&", "|", "^", "::",
-                "and", "or", "not", "in", "between", "like", "ilike", "~", "!~"
-        );
-        // functions
-        addExpiryRowOnlyFunctions(
-                "abs", "case", "cast", "ceil", "ceiling", "coalesce", "concat", "dateadd", "datediff", "day",
-                "day_of_week", "floor", "hour", "left", "length", "lower", "minute", "month", "right", "round",
-                "second", "starts_with", "substring", "timestamp_ceil", "timestamp_floor", "to_lowercase",
-                "to_uppercase", "trim", "upper", "year"
-        );
 
         short[] numericTypes = {ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.DATE, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL};
         addSupportedConversion(ColumnType.BYTE, numericTypes);

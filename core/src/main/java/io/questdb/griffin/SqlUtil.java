@@ -1883,6 +1883,19 @@ public class SqlUtil {
     }
 
     /**
+     * Wraps {@code node} in a {@code not} operation, which {@link #optimiseBooleanNot} pushes down as it pushes down the
+     * {@code NOT} the expression parser builds.
+     */
+    public static ExpressionNode negate(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
+        final ExpressionNode n = pool.next();
+        n.token = "not";
+        n.paramCount = 1;
+        n.rhs = node;
+        n.type = ExpressionNode.OPERATION;
+        return n;
+    }
+
+    /**
      * Normalizes an owned predicate before overload resolution and join/interval analysis. NOT stays above an
      * ordering comparison: a NULL operand makes both the comparison and its complement false.
      */
@@ -2617,15 +2630,6 @@ public class SqlUtil {
             return takenAliases.excludes(alias, 1, alias.length() - 1);
         }
         return bareQuotedSibling == null || takenAliases.excludes(bareQuotedSibling);
-    }
-
-    private static ExpressionNode negate(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
-        final ExpressionNode n = pool.next();
-        n.token = "not";
-        n.paramCount = 1;
-        n.rhs = node;
-        n.type = ExpressionNode.OPERATION;
-        return n;
     }
 
     private static ExpressionNode optimiseBooleanNot(ExpressionNode node, boolean reverse, ObjectPool<ExpressionNode> pool) {

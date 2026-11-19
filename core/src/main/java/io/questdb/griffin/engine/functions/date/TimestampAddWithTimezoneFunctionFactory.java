@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
@@ -69,8 +70,8 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
-        return TimestampAddFunctionFactory.periodPrecisionUse(firstConstant);
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
+        return TimestampAddFunctionFactory.periodPrecisionUse(firstArgument);
     }
 
     @Override

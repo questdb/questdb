@@ -77,6 +77,7 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
@@ -660,7 +661,13 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return expression instanceof ConstantExpression constant ? constant.getText() : null;
     }
 
+    /**
+     * Marks the constant a fold made of {@code source}: it keeps the administrative fact of the first call the fold
+     * evaluated, and a literal stays a literal over the operator call it folds, see
+     * {@link ConstantExpression#getSource()}.
+     */
     private static ConstantExpression markSource(ConstantExpression folded, BoundExpression source) {
+        folded.withAdministrativeFact(RequirementFact.firstAdministrative(source));
         if (source instanceof ConstantExpression constant) {
             if (constant.isLiteral()) {
                 return folded.markLiteral(constant.getSource());
@@ -1131,7 +1138,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private Function captureImplicitConversion(int index, Function function, int position, Class<? extends FunctionFactory> factoryClass) {
         if (function.isConstant()) {
             final Function folded = resolver.functionToConstant(function, position);
-            arguments.setQuick(index, constant(folded, position));
+            final RequirementFact administrativeFact = RequirementFact.firstAdministrative(arguments.getQuick(index));
+            arguments.setQuick(index, constant(folded, position).withAdministrativeFact(administrativeFact));
             return folded;
         }
         final ObjList<FunctionFactoryDescriptor> casts = resolver.getFunctionFactoryCache().getOverloadList("cast");
@@ -1286,7 +1294,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             if (folded != null) {
                 Misc.freeObjList(args);
                 dropLeaves(callLeafMark(), leafMark());
-                push(ctx.planNodes.constants.next().ofBoolean(folded.getBool(null), position).markLiteral(), leafMark());
+                push(ctx.planNodes.constants.next().ofBoolean(folded.getBool(null), position).markLiteral()
+                        .withAdministrativeFact(firstAdministrativeArgument()), leafMark());
                 return folded;
             }
             final int count = args == null ? 0 : args.size();
@@ -1370,8 +1379,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 expression = markSource(constant(function, position),
                         describeCall(overload, name, function.getType(), BoundExpression.functionFlags(function), position));
                 dropLeaves(callLeafMark(), leafMark());
-            } else if (first != null && isConnective(name) && (function == first || function == second)) {
-                // A connective with a constant operand returns its other operand.
+            } else if (first != null && isConnective(name) && (function == first || function == second)
+                    && RequirementFact.firstAdministrative(arguments.getQuick(function == first ? 1 : 0)) == null) {
+                // A connective with a constant operand returns its other operand. One whose constant operand a fold
+                // made of an administrative call keeps its description, which shows the call master builds, as a call
+                // a factory folds into its constant result keeps it, see ConstantExpression.getAdministrativeFact().
                 arguments.getQuick(function == first ? 1 : 0).walk(foldedReferenceRecorder);
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
@@ -1422,16 +1434,16 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     /**
      * Describes the call the binder resolves now over its bound arguments. A call whose factory needs the Enterprise
-     * security context of the caller records it, as the resolver admitted it, on its description and on the root
-     * being bound, whose built function holds the call or what a fold took from it: binding admits such a call in a
-     * sub-query nested in a view's PIVOT IN subquery, see {@link #bindSubquery}, and code generation rejects it where
-     * it adopts or builds it while it generates that subquery, see {@link FunctionInstantiator}.
+     * security context of the caller records the fact, as the resolver admitted it, on its description, and every
+     * fold that evaluates the call records it on the constant it makes, see
+     * {@link ConstantExpression#getAdministrativeFact()}: binding admits such a call in a sub-query nested in a view's
+     * PIVOT IN subquery, see {@link #bindSubquery}, and code generation rejects it where it adopts or builds the
+     * description while it generates that subquery, see {@link RequirementFact#firstAdministrative}.
      */
     private FunctionExpression describeCall(FunctionFactoryDescriptor overload, CharSequence name, int type, int flags, int position) {
         final FunctionExpression call = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position);
         if ((overload.getFactory().getExecutionRequirements() & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            call.setAdministrativeCall(Chars.toString(name), resolver.getRequirementPosition(position));
-            ctx.scope().currentPreparation.recordAdministrativeCall(call);
+            call.setAdministrativeFact(RequirementFact.administrative(name, resolver.getRequirementPosition(position), false));
         }
         return call;
     }
@@ -1479,6 +1491,20 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             dropLeaves(expressionLeafMarks.getQuick(index), leafMark());
         }
         expressionStack.setQuick(index, normalized);
+    }
+
+    /**
+     * The administrative fact of the first call code generation builds for the arguments of the call the binder
+     * resolves now, see {@link RequirementFact#firstAdministrative}, or null.
+     */
+    private RequirementFact firstAdministrativeArgument() {
+        for (int i = arguments.size() - 1; i > -1; i--) {
+            final RequirementFact fact = RequirementFact.firstAdministrative(arguments.getQuick(i));
+            if (fact != null) {
+                return fact;
+            }
+        }
+        return null;
     }
 
     private Function foldArgument(int index, Function function, int position) {
@@ -1599,7 +1625,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 }
                 return ctx.planNodes.functions.next().of(call.getOverload(), ctx.tmpArguments, ctx.tmpPositions,
                                 function.getType(), callFlags(function, ctx.tmpArguments), call.getPosition())
-                        .setAdministrativeCall(call.getAdministrativeCallName(), call.getAdministrativeCallPosition());
+                        .setAdministrativeFact(call.getAdministrativeFact());
             } finally {
                 ctx.tmpArguments.clear();
                 ctx.tmpPositions.clear();
@@ -1755,7 +1781,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         args.setQuick(index, replacement);
         final BoundExpression argument = arguments.getQuick(index);
         if (!isExact || literalText(argument) == null) {
-            arguments.setQuick(index, constant(replacement, argument.getPosition()).markLiteral());
+            arguments.setQuick(index, constant(replacement, argument.getPosition()).markLiteral()
+                    .withAdministrativeFact(RequirementFact.firstAdministrative(argument)));
         }
     }
 
@@ -1837,7 +1864,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case FunctionExpression call -> ctx.planNodes.functions.next().of(call, position);
                 // a scalar sub-query reports its row-count errors at its own position
                 case CursorExpression cursor -> ctx.planNodes.cursors.next().of(cursor);
-                default -> constant(function, position);
+                default -> constant(function, position).withAdministrativeFact(RequirementFact.firstAdministrative(argument));
             };
             if (!unconstructedIndex.excludes(argument)) {
                 addUnconstructed(repositioned);

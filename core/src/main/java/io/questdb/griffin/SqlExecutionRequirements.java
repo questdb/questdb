@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -96,28 +97,21 @@ public final class SqlExecutionRequirements implements Mutable {
     }
 
     /**
-     * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use a function, or a
-     * SHOW statement, with the given requirements: one that needs the Enterprise security context of the
-     * caller, see {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery
-     * again, detached from any caller, whenever it recompiles the view. Other requirements pass. A sub-query
-     * nested in that subquery runs only the calls, table functions and SHOW statements its generated plan
-     * keeps, so code generation checks those where it adopts, builds or takes them, see
-     * {@link FunctionInstantiator} and {@link TableFunctionSources}.
+     * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use the function, or the
+     * SHOW statement, the fact records: one that needs the Enterprise security context of the caller, see
+     * {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery again, detached from
+     * any caller, whenever it recompiles the view. No fact, or a fact of another requirement, passes. Binding
+     * checks the calls and SHOW statements of the subquery itself as it admits them, see
+     * {@link FunctionResolver}. A sub-query nested in that subquery runs only the calls, table functions and
+     * SHOW statements its generated plan keeps, so code generation checks those where it adopts, builds or takes
+     * them, see {@link FunctionInstantiator} and {@link TableFunctionSources}.
      *
-     * @param requirements the requirements of the function or statement
-     * @param position     where the requirements surface in the compiled SQL
-     * @param name         the name of the function, or the SHOW statement
-     * @param isStatement  whether name is a SHOW statement rather than a function
+     * @param fact the call or statement, or null
      * @throws SqlException when the subquery may not use the function or statement
      */
-    public static void checkViewMetadataSubquery(
-            int requirements,
-            int position,
-            CharSequence name,
-            boolean isStatement
-    ) throws SqlException {
-        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-            throw administrativeCallRejected(position, isStatement).put("view PIVOT IN subquery: ").put(name);
+    public static void checkViewMetadataSubquery(@Nullable RequirementFact fact) throws SqlException {
+        if (fact != null && fact.isAdministrative()) {
+            throw administrativeCallRejected(fact.getPosition(), fact.isStatement()).put("view PIVOT IN subquery: ").put(fact.getName());
         }
     }
 
@@ -134,16 +128,14 @@ public final class SqlExecutionRequirements implements Mutable {
      * other function the view may not store, in the order binding created them, unless binding created a
      * non-deterministic function before it, which the materialized view rejects instead.
      *
-     * @param nonDeterministicCallIndex    the number of functions and SHOW statements recorded before binding created
-     *                                     its first non-deterministic function, or -1 when it created none
-     * @param nonDeterministicCallPosition the position of that non-deterministic function
-     * @param nonDeterministicCallName     the name of that non-deterministic function
+     * @param nonDeterministicCallIndex the number of functions and SHOW statements recorded before binding created
+     *                                  its first non-deterministic function, or -1 when it created none
+     * @param nonDeterministicCall      the fact of that non-deterministic function, or null when binding created none
      * @throws SqlException when the materialized view may not store the result of a recorded function or statement
      */
     public void checkDeferred(
             int nonDeterministicCallIndex,
-            int nonDeterministicCallPosition,
-            @Nullable CharSequence nonDeterministicCallName,
+            @Nullable RequirementFact nonDeterministicCall,
             SqlExecutionContext executionContext
     ) throws SqlException {
         int alterableSource = -1;
@@ -170,8 +162,9 @@ public final class SqlExecutionRequirements implements Mutable {
                 try {
                     checkDeferredAt(i, executionContext);
                 } catch (SqlException e) {
-                    if (nonDeterministicCallIndex > -1 && nonDeterministicCallIndex <= i) {
-                        throw SqlException.nonDeterministicColumn(nonDeterministicCallPosition, nonDeterministicCallName, objectKind(executionContext));
+                    if (nonDeterministicCall != null && nonDeterministicCallIndex <= i) {
+                        throw SqlException.nonDeterministicColumn(nonDeterministicCall.getPosition(), nonDeterministicCall.getName(),
+                                objectKind(executionContext));
                     }
                     throw e;
                 }

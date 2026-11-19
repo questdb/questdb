@@ -34,17 +34,14 @@ public final class FunctionSourcePlan extends LogicalPlan {
     public static final ObjectFactory<FunctionSourcePlan> FACTORY = FunctionSourcePlan::new;
     private final OutputSchema recordSchema = new OutputSchema();
     private final IntList sourceColumnIndexes = new IntList();
-    private String administrativeCallName;
-    private int administrativeCallPosition = -1;
+    private RequirementFact administrativeFact;
     private boolean hasExternalDataSource;
-    private boolean isAdministrativeStatement;
     private boolean isDeterministic;
     private boolean isLongSequence;
     private boolean isPageFrameSupported;
     private boolean isProjectable;
     private boolean isRandomAccess;
-    private String nonDeterministicCallName;
-    private int nonDeterministicCallPosition = -1;
+    private RequirementFact nonDeterministicFact;
     private CharSequence recordName;
     private PhysicalProperties.ScanDirection scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
 
@@ -53,17 +50,14 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.clear();
         recordSchema.clear();
         sourceColumnIndexes.clear();
-        administrativeCallName = null;
-        administrativeCallPosition = -1;
+        administrativeFact = null;
         hasExternalDataSource = false;
-        isAdministrativeStatement = false;
         isDeterministic = false;
         isLongSequence = false;
         isPageFrameSupported = false;
         isProjectable = false;
         isRandomAccess = false;
-        nonDeterministicCallName = null;
-        nonDeterministicCallPosition = -1;
+        nonDeterministicFact = null;
         recordName = null;
         scanDirection = PhysicalProperties.ScanDirection.UNKNOWN;
     }
@@ -79,37 +73,22 @@ public final class FunctionSourcePlan extends LogicalPlan {
     }
 
     /**
-     * The name of the first call or SHOW statement binding admitted for the source that needs the Enterprise security
+     * The fact of the first call or SHOW statement binding admitted for the source that needs the Enterprise security
      * context of the caller, or null, see
      * {@link io.questdb.griffin.SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. Binding admits such a
      * source in a sub-query nested in a view's PIVOT IN subquery, and code generation rejects it where it takes the
      * source while it generates that subquery, see {@link io.questdb.griffin.TableFunctionSources}.
      */
-    public String getAdministrativeCallName() {
-        return administrativeCallName;
+    public RequirementFact getAdministrativeFact() {
+        return administrativeFact;
     }
 
     /**
-     * The position where the requirements of the call or statement {@link #getAdministrativeCallName()} names surface
-     * in the compiled SQL, or -1.
+     * The fact of the first non-deterministic function binding created for the source, the call or its arguments,
+     * for a context that refuses them, or null, see {@link io.questdb.griffin.NonDeterministicCalls}.
      */
-    public int getAdministrativeCallPosition() {
-        return administrativeCallPosition;
-    }
-
-    /**
-     * The name of the first non-deterministic function the call of the source created as its argument for a context
-     * that refuses them, or null.
-     */
-    public String getNonDeterministicCallName() {
-        return nonDeterministicCallName;
-    }
-
-    /**
-     * The position of the function {@link #getNonDeterministicCallName()} names, or -1.
-     */
-    public int getNonDeterministicCallPosition() {
-        return nonDeterministicCallPosition;
+    public RequirementFact getNonDeterministicFact() {
+        return nonDeterministicFact;
     }
 
     /**
@@ -149,13 +128,6 @@ public final class FunctionSourcePlan extends LogicalPlan {
     @Override
     public int inputCount() {
         return 0;
-    }
-
-    /**
-     * Whether {@link #getAdministrativeCallName()} names a SHOW statement rather than a function.
-     */
-    public boolean isAdministrativeStatement() {
-        return isAdministrativeStatement;
     }
 
     /**
@@ -203,10 +175,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
         throw new IndexOutOfBoundsException("function source has no input: " + index);
     }
 
-    public void setAdministrativeCall(String name, int position, boolean isStatement) {
-        administrativeCallName = name;
-        administrativeCallPosition = position;
-        isAdministrativeStatement = isStatement;
+    public void setAdministrativeFact(RequirementFact fact) {
+        administrativeFact = fact;
     }
 
     public void setDeterministic(boolean isDeterministic) {
@@ -217,9 +187,8 @@ public final class FunctionSourcePlan extends LogicalPlan {
         this.hasExternalDataSource = hasExternalDataSource;
     }
 
-    public void setNonDeterministicCall(String name, int position) {
-        nonDeterministicCallName = name;
-        nonDeterministicCallPosition = position;
+    public void setNonDeterministicFact(RequirementFact fact) {
+        nonDeterministicFact = fact;
     }
 
     /**
@@ -246,17 +215,14 @@ public final class FunctionSourcePlan extends LogicalPlan {
         super.visitFacts(visitor);
         visitor.recordFields("recordSchema", recordSchema);
         visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
-        visitor.fact("administrativeCallName", administrativeCallName);
-        visitor.fact("administrativeCallPosition", administrativeCallPosition);
+        visitor.fact("administrativeFact", administrativeFact);
         visitor.fact("hasExternalDataSource", hasExternalDataSource);
-        visitor.fact("isAdministrativeStatement", isAdministrativeStatement);
         visitor.fact("isDeterministic", isDeterministic);
         visitor.fact("isLongSequence", isLongSequence);
         visitor.fact("isPageFrameSupported", isPageFrameSupported);
         visitor.fact("isProjectable", isProjectable);
         visitor.fact("isRandomAccess", isRandomAccess);
-        visitor.fact("nonDeterministicCallName", nonDeterministicCallName);
-        visitor.fact("nonDeterministicCallPosition", nonDeterministicCallPosition);
+        visitor.fact("nonDeterministicFact", nonDeterministicFact);
         visitor.fact("recordName", recordName);
         visitor.fact("scanDirection", scanDirection);
     }

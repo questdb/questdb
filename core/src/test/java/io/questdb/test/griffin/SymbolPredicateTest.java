@@ -55,6 +55,34 @@ public class SymbolPredicateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualityWithExclusionOfAnotherSpelling() throws Exception {
+        // The key extractor reads the right conjunct first, so each query excludes a key before it requires one. A key
+        // that the exclusion names, as text, a CHAR, an integer or the same bind variable, leaves no row; NULL is no
+        // excluded key, as s != NULL keeps the rows that are not NULL, and so is a key the exclusion does not name.
+        assertMemoryLeak(() -> {
+            createRows();
+            execute("INSERT INTO lp_symbol VALUES (87,7,'42','42')");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 'alpha' AND s != 'alpha'").sizeMayVary().returns("id\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 'a' AND s != 'a'").sizeMayVary().returns("id\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 'a'::CHAR AND s != 'a'::VARCHAR").sizeMayVary().returns("id\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 42 AND s != '42'").sizeMayVary().returns("id\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = NULL AND s != NULL").sizeMayVary().returns("id\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = NULL AND s != 'alpha'").sizeMayVary().returns("id\n4\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 'alpha' AND s != 'Alpha'").sizeMayVary().returns("id\n1\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = '中' AND s != NULL").sizeMayVary().returns("id\n3\n");
+            // a CHAR key reads the index by its character, a CHAR NULL by the NULL key
+            assertQuery("SELECT id FROM lp_symbol WHERE s = 'a'").sizeMayVary().returns("id\n5\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = NULL::CHAR").sizeMayVary().returns("id\n4\n");
+            assertQuery("SELECT id FROM lp_symbol WHERE s IN ('a', NULL::CHAR) ORDER BY id").sizeMayVary().returns("id\n4\n5\n");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "alpha");
+            assertQuery("SELECT id FROM lp_symbol WHERE s = $1 AND s != $1").sizeMayVary().returns("id\n");
+            bindVariableService.setStr(0, null);
+            assertQuery("SELECT id FROM lp_symbol WHERE s = $1 AND s != $1").sizeMayVary().returns("id\n");
+        });
+    }
+
+    @Test
     public void testMixedTypeSymbolExclusions() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

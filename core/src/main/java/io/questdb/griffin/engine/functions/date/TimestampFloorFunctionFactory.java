@@ -33,8 +33,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -60,12 +61,9 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
-        if (firstConstant == null || firstConstant.length() < 3 || !Chars.isQuoted(firstConstant)) {
-            return TimestampPrecisionUse.DEPENDENT;
-        }
-        final int hi = firstConstant.length() - 1;
-        return TimestampPrecisionUse.ofFloor(stride(firstConstant, 1, hi), firstConstant.charAt(hi - 1));
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
+        final CharSequence unit = firstArgument instanceof ConstantExpression constant ? constant.getChars() : null;
+        return unit == null || unit.isEmpty() ? TimestampPrecisionUse.DEPENDENT : TimestampPrecisionUse.ofFloor(stride(unit), unit(unit));
     }
 
     @Override
@@ -118,20 +116,16 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
                 : SqlException.position(position).put("invalid unit '").put(str).put('\'');
     }
 
-    private static int stride(CharSequence str) {
-        return str == null ? 1 : stride(str, 0, str.length());
-    }
-
     /**
-     * The stride of the unit spelling {@code str[lo, hi)}: the number before its unit letter, 1 without one and 0 for
-     * an invalid one.
+     * The stride of a unit spelling: the number before its unit letter, 1 without one or for a null spelling, and 0
+     * for an invalid one.
      */
-    private static int stride(CharSequence str, int lo, int hi) {
-        if (hi - lo < 2) {
+    private static int stride(CharSequence str) {
+        if (str == null || str.length() < 2) {
             return 1;
         }
         try {
-            return Numbers.parseInt(str, lo, hi - 1);
+            return Numbers.parseInt(str, 0, str.length() - 1);
         } catch (NumericException e) {
             return 0;
         }

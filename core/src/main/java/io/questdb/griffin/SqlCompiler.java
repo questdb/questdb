@@ -26,7 +26,6 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.ops.Operation;
@@ -39,6 +38,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
@@ -142,29 +142,23 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
     void releaseRetainedCapacity();
 
     /**
-     * Validates the scalar EXPIRE ROWS predicate a CREATE or ALTER of a materialized view gives it: every check of
-     * {@link #validateExpiryPredicateOnMetadata}, and then the keep-filter of the policy bound exactly as every read of
-     * the view binds it, over a scan of {@code viewMetadata}, so a policy this accepts binds in every read. At CREATE
-     * the view does not exist yet: {@code viewToken} only names it, and {@code viewMetadata} lists the columns the view
-     * is created with. Any error is rewritten as a clear SqlException at {@code position}.
+     * Validates and classifies the scalar EXPIRE ROWS predicate of a materialized view, binding it against
+     * {@code viewMetadata}, the columns of the view, without touching any table. The predicate has to be one boolean
+     * expression consuming the whole text, with no root-level aggregate and no bind variables, whose cleanup-sweep
+     * keep-filter binds and whose ordering threshold on the designated timestamp is not a constant NULL. Any error is
+     * rewritten as a clear SqlException at {@code position}.
+     * <p>
+     * A CREATE or ALTER gives {@code viewName}, the name of the view: the keep-filter of the policy then binds exactly
+     * as every read of the view binds it, with qualified names resolved against the view's name, so a policy this
+     * accepts binds in every read. At CREATE the view does not exist yet, and {@code viewMetadata} lists the columns
+     * it is created with. The cleanup job and {@code materialized_views()} classify a stored policy with a null
+     * {@code viewName}: a policy an older version stored may fail the read's rules, and refusing to classify it would
+     * change what they do with it.
      */
     ExpiryValidationResult validateExpiryPolicy(
             SqlExecutionContext executionContext,
-            TableToken viewToken,
+            @Nullable CharSequence viewName,
             RecordMetadata viewMetadata,
-            CharSequence predicate,
-            int position
-    ) throws SqlException;
-
-    /**
-     * Validates an EXPIRE ROWS predicate structurally by parsing and binding it against {@code metadata}
-     * (the columns the object will have) and checking the result is a boolean expression, without touching
-     * any table. Used by CREATE TABLE / CREATE MATERIALIZED VIEW to reject a bad predicate before the
-     * object is created. Any parse/bind error is rewritten as a clear SqlException at {@code position}.
-     */
-    ExpiryValidationResult validateExpiryPredicateOnMetadata(
-            SqlExecutionContext executionContext,
-            RecordMetadata metadata,
             CharSequence predicate,
             int position
     ) throws SqlException;

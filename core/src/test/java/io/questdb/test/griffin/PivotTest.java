@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Chars;
@@ -66,6 +67,7 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntSupplier;
+import java.util.function.Supplier;
 
 public class PivotTest extends AbstractSqlParserTest {
 
@@ -2520,6 +2522,82 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedCastFold() throws Exception {
+        // Binding folds the call to its constant value and the CAST of that value to another type to a constant, which
+        // keeps the call. Master's FunctionParser constructs the call before it folds the CAST, so it rejects the call.
+        assertViewPivotRejectsOnlyKeptAdministrativeScalar(
+                null,
+                null,
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (SELECT max(x) FROM (SELECT 1 x, admin_scalar()::string y FROM long_sequence(1)))
+                        ))""",
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE cat = (SELECT y FROM (SELECT 1 x, admin_scalar()::string y FROM long_sequence(1)))
+                        ))""",
+                null
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedConnective() throws Exception {
+        // The comparison of the call's constant value folds to TRUE, so AND returns its other operand; master's
+        // FunctionParser constructs both operands first, so the description that code generation builds still shows
+        // the call.
+        assertViewPivotRejectsOnlyKeptAdministrativeScalar(
+                null,
+                null,
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE val > (
+                                SELECT max(x) FROM (SELECT x, CASE WHEN x > 0 AND admin_scalar() = 'a' THEN 'a' END y FROM long_sequence(1))
+                            )
+                        ))""",
+                """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT cat FROM data WHERE cat = (
+                                SELECT y FROM (SELECT x, CASE WHEN x > 0 AND admin_scalar() = 'a' THEN 'a' END y FROM long_sequence(1))
+                            )
+                        ))""",
+                null
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeConstantInNestedImplicitConversion() throws Exception {
+        // admin_int() returns the constant 1, which binding converts to the DECIMAL parameter of + and folds; the
+        // converted constant keeps the call
+        assertViewPivotRejectsOnlyKeptAdministrativeConstant(
+                "admin_int",
+                () -> IntConstant.newInstance(1),
+                "CASE WHEN 1.5m + admin_int() > 2 THEN 'a' END"
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeConstantInNestedTimestampEquality() throws Exception {
+        // A TIMESTAMP cannot hold the nanosecond value admin_text() spells, so binding folds = to FALSE, a constant that
+        // keeps the call
+        assertViewPivotRejectsOnlyKeptAdministrativeConstant(
+                "admin_text",
+                () -> new VarcharConstant("2020-01-01T00:00:00.000000001"),
+                "CASE WHEN x::timestamp = admin_text() THEN 'b' ELSE 'a' END"
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeConstantInNestedTimestampRange() throws Exception {
+        // Binding replaces the nanosecond bound admin_text() spells with its value at the precision of the TIMESTAMP
+        // operand; the replacement keeps the call
+        assertViewPivotRejectsOnlyKeptAdministrativeConstant(
+                "admin_text",
+                () -> new VarcharConstant("2020-01-01T00:00:00.000000001"),
+                "CASE WHEN x::timestamp < admin_text() THEN 'a' END"
+        );
+    }
+
+    @Test
     public void testPivotSubqueryRejectsOnlyKeptAdministrativeScalarInNestedCte() throws Exception {
         // the nested sub-query reads its own WITH clause
         assertViewPivotRejectsOnlyKeptAdministrativeScalar(
@@ -2824,6 +2902,47 @@ public class PivotTest extends AbstractSqlParserTest {
                 Assert.assertTrue(cursorCount(factories) > cursorCount);
             } finally {
                 TableFunctionTestUtils.unregister(engine, "admin_cursor");
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsOnlyKeptAdministrativeTableFunctionInTableFunctionArgument() throws Exception {
+        // Binding compiles the sub-query argument of pass_cursor(), and with it admin_cursor(), while it binds the
+        // nested sub-query, where it admits the function. The source of pass_cursor() records what binding its call
+        // admitted, so code generation rejects it where it takes that source while it generates the PIVOT IN subquery.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    "admin_cursor",
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            registerPassCursor();
+            try {
+                final String source = "(SELECT count() FROM pass_cursor((SELECT permission FROM admin_cursor())))";
+                assertViewPivotRejectsOnlyKeptCall(
+                        "admin_cursor",
+                        """
+                                SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                                    SELECT cat FROM data WHERE val > (
+                                        SELECT max(x) FROM (SELECT 1 x, CASE WHEN %s >= 0 THEN 1 ELSE 0 END y FROM long_sequence(1))
+                                    )
+                                ))""".formatted(source),
+                        """
+                                SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                                    SELECT cat FROM data WHERE val > %s
+                                ))""".formatted(source),
+                        "admin_cursor",
+                        null
+                );
+                assertClosedOnce(factories, 0);
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_cursor");
+                TableFunctionTestUtils.unregister(engine, "pass_cursor");
             }
         });
     }
@@ -6479,6 +6598,41 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     /**
+     * Registers the administrative function {@code functionName()}, whose constant value {@code constant} makes, and
+     * runs {@link #assertViewPivotRejectsOnlyKeptCall} with the column y, which {@code expression} computes from it
+     * and the column x of long_sequence(1) and which is 'a' for that row: in the accepted query the nested sub-query
+     * prunes y, in the rejected one the PIVOT IN subquery compares cat with it.
+     */
+    private void assertViewPivotRejectsOnlyKeptAdministrativeConstant(
+            String functionName,
+            Supplier<Function> constant,
+            String expression
+    ) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            registerAdminConstant(functionName, constant);
+            try {
+                assertViewPivotRejectsOnlyKeptCall(
+                        functionName,
+                        """
+                                SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                                    SELECT cat FROM data WHERE val > (SELECT max(x) FROM (SELECT x, %s y FROM long_sequence(1)))
+                                ))""".formatted(expression),
+                        """
+                                SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                                    SELECT cat FROM data WHERE cat = (SELECT y FROM (SELECT x, %s y FROM long_sequence(1)))
+                                ))""".formatted(expression),
+                        functionName,
+                        null
+                );
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    /**
      * CREATE VIEW rejects the query, whose PIVOT IN subquery keeps the call admin_scalar() in a nested sub-query, at
      * the call, for admin_scalar(), whose constant value binding folds, and for admin_varchar(), a call binding keeps,
      * written where the query writes admin_scalar(); the query runs ad hoc, as its caller, and returns the pivot of data
@@ -6640,6 +6794,66 @@ public class PivotTest extends AbstractSqlParserTest {
             cursorCount += factories.getQuick(i).getCursorCount();
         }
         return cursorCount;
+    }
+
+    // functionName() returns the constant the supplier makes and needs the Enterprise security context of its caller
+    private static void registerAdminConstant(String functionName, Supplier<Function> constant) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+        descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            }
+
+            @Override
+            public String getSignature() {
+                return functionName + "()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext executionContext
+            ) {
+                return constant.get();
+            }
+        }));
+        final var functionFactories = engine.getFunctionFactoryCache().getFactories();
+        Assert.assertNull(functionFactories.get(functionName));
+        functionFactories.put(functionName, descriptors);
+    }
+
+    // pass_cursor(C) is a table function that returns the rows of its cursor argument, a sub-query binding compiles
+    private static void registerPassCursor() throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+        descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public String getSignature() {
+                return "pass_cursor(C)";
+            }
+
+            @Override
+            public boolean isCursor() {
+                return true;
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext executionContext
+            ) {
+                return args.getQuick(0);
+            }
+        }));
+        final var functionFactories = engine.getFunctionFactoryCache().getFactories();
+        Assert.assertNull(functionFactories.get("pass_cursor"));
+        functionFactories.put("pass_cursor", descriptors);
     }
 
     // admin_scalar() returns 'a' and declares the given requirements, as an Enterprise administrative function such as

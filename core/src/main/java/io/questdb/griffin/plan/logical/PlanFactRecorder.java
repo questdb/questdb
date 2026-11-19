@@ -76,6 +76,19 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
         add(fact, 0, value);
     }
 
+    /**
+     * A requirement fact compared by content, or null: a copy that drops or alters the fact records otherwise.
+     */
+    public void fact(String fact, RequirementFact value) {
+        if (value == null) {
+            add(fact, -1, null);
+            add(fact, -1, null);
+        } else {
+            add(fact, value.getPosition(), value.getName());
+            add(fact, value.getKind().ordinal() << 1 | (value.isStatement() ? 1 : 0), null);
+        }
+    }
+
     public void facts(String fact, IntList values) {
         add(fact, values.size(), null);
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -195,10 +208,14 @@ public final class PlanFactRecorder implements PlanExpressionVisitor, Expression
             case FunctionExpression call -> {
                 add(READ, call.getFunctionFlags(), call.getOverload());
                 add(READ, (call.isProjectedOffset() ? 1 : 0) | (call.isSetOperation() ? 2 : 0) | (call.isPolicyPredicate() ? 4 : 0), null);
-                add(READ, call.getAdministrativeCallPosition(), call.getAdministrativeCallName());
+                fact(READ, call.getAdministrativeFact());
                 for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
                     add(READ, call.getArgumentPosition(i), null);
                 }
+            }
+            case ConstantExpression constant -> {
+                add(READ, 0, constant);
+                fact(READ, constant.getAdministrativeFact());
             }
             default -> add(READ, 0, expression);
         }

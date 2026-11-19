@@ -41,9 +41,9 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -87,8 +87,8 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
-        return periodPrecisionUse(firstConstant);
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
+        return periodPrecisionUse(firstArgument);
     }
 
     @Override
@@ -147,12 +147,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     }
 
     /**
-     * The use of the parsed call by the constant period it adds, see {@link TimestampPrecisionUse#ofShift}, and
-     * {@link TimestampPrecisionUse#DEPENDENT} when no one-letter literal spells the period.
+     * The use of the bound call by the constant period it adds, see {@link TimestampPrecisionUse#ofShift}, and
+     * {@link TimestampPrecisionUse#DEPENDENT} when the period is not a text or CHAR constant of one character.
      */
-    static TimestampPrecisionUse periodPrecisionUse(CharSequence period) {
-        return period != null && period.length() == 3 && Chars.isQuoted(period)
-                ? TimestampPrecisionUse.ofShift(period.charAt(1)) : TimestampPrecisionUse.DEPENDENT;
+    static TimestampPrecisionUse periodPrecisionUse(BoundExpression period) {
+        final CharSequence letter = period instanceof ConstantExpression constant ? constant.getChars() : null;
+        return letter != null && letter.length() == 1 ? TimestampPrecisionUse.ofShift(letter.charAt(0)) : TimestampPrecisionUse.DEPENDENT;
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

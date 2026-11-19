@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanVisitor;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.TreeWalk;
 
 /**
@@ -65,9 +66,9 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
      * precedence over the binding error.
      */
     public void rejectCreated(FunctionResolver resolver, SqlExecutionContext executionContext) throws SqlException {
-        if (resolver.getNonDeterministicCallCount() > 0) {
-            throw SqlException.nonDeterministicColumn(resolver.getNonDeterministicCallPosition(0), resolver.getNonDeterministicCallName(0),
-                    objectKind(executionContext));
+        final RequirementFact call = resolver.getFirstNonDeterministicCall();
+        if (call != null) {
+            throw SqlException.nonDeterministicColumn(call.getPosition(), call.getName(), objectKind(executionContext));
         }
     }
 
@@ -82,9 +83,10 @@ public final class NonDeterministicCalls implements PlanExpressionVisitor, PlanV
 
     @Override
     public int visit(LogicalPlan plan) {
-        if (plan instanceof FunctionSourcePlan source && source.getNonDeterministicCallName() != null) {
-            offenderName = source.getNonDeterministicCallName();
-            offenderPosition = source.getNonDeterministicCallPosition();
+        final RequirementFact sourceCall = plan instanceof FunctionSourcePlan source ? source.getNonDeterministicFact() : null;
+        if (sourceCall != null) {
+            offenderName = sourceCall.getName();
+            offenderPosition = sourceCall.getPosition();
             return TreeWalk.STOP;
         }
         plan.visitReads(this);

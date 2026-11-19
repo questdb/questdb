@@ -125,9 +125,9 @@ import io.questdb.griffin.engine.functions.constants.UuidConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -157,15 +157,15 @@ import static io.questdb.griffin.SqlKeywords.*;
  */
 public class FunctionResolver implements Mutable, SwitchFunctionFactory.EqualityFactory {
     private static final boolean ASSERTIONS_ENABLED = FunctionResolver.class.desiredAssertionStatus();
+    private static final int CAPTURED_ADMINISTRATIVE = 0;
+    private static final int CAPTURED_NON_DETERMINISTIC = 1;
     private static final Log LOG = LogFactory.getLog(FunctionResolver.class);
-    // the administrative calls and SHOW statements admitted, at the positions their requirements surface at
-    private final ObjList<String> administrativeCallNames = new ObjList<>();
-    private final IntList administrativeCallPositions = new IntList();
-    private final BoolList administrativeCallStatements = new BoolList();
     private final IntList argDistancesA = new IntList();
     private final IntList argDistancesB = new IntList();
     private final IntList argTraits = new IntList();
     private final IntList argTypes = new IntList();
+    // two slots per open capture, see beginRequirementCapture(): its administrative fact, then its non-deterministic one
+    private final ObjList<RequirementFact> capturedFacts = new ObjList<>();
     private final CairoConfiguration configuration;
     private final ObjList<Function> equalityArgs = new ObjList<>();
     private final IntList equalityPositions = new IntList();
@@ -173,11 +173,10 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<Class<? extends FunctionFactory>> implicitConversions = new ObjList<>();
     private final Long256Impl long256Sink = new Long256Impl();
-    private final ObjList<String> nonDeterministicCallNames = new ObjList<>();
-    private final IntList nonDeterministicCallPositions = new IntList();
     private boolean cursorFunctionInstantiated;
     private FunctionResolver equalityResolver;
     private int executionRequirementPosition = -1;
+    private RequirementFact firstNonDeterministicCall;
     private int nonDeterministicCallIndex = -1;
     private FunctionFactoryDescriptor selectedOverload;
 
@@ -496,6 +495,21 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
+     * Begins a capture of the first call or SHOW statement this resolver admits that needs the Enterprise security
+     * context of the caller, and of the first non-deterministic function it creates for a context that refuses them,
+     * until {@link #endRequirementCapture} ends it; returns its mark, which the getters of the captured facts take.
+     * Captures nest, and every capture sees what the captures it encloses see, so a table function reads the facts of
+     * its arguments, a sub-query among them and a table function in that sub-query included, see
+     * {@link TableFunctionSources}.
+     */
+    public int beginRequirementCapture() {
+        final int mark = capturedFacts.size();
+        capturedFacts.add(null);
+        capturedFacts.add(null);
+        return mark;
+    }
+
+    /**
      * Decides the functions and SHOW statements deferred while CREATE MATERIALIZED VIEW bound its SQL, see
      * {@link SqlExecutionRequirements#checkDeferred}.
      *
@@ -503,21 +517,16 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      *                      or for the first non-deterministic function binding created before it
      */
     public void checkDeferred(SqlExecutionContext executionContext) throws SqlException {
-        final boolean hasCall = nonDeterministicCallIndex > -1;
-        executionRequirements.checkDeferred(nonDeterministicCallIndex, hasCall ? nonDeterministicCallPositions.getQuick(0) : -1,
-                hasCall ? nonDeterministicCallNames.getQuick(0) : null, executionContext);
+        executionRequirements.checkDeferred(nonDeterministicCallIndex, firstNonDeterministicCall, executionContext);
     }
 
     @Override
     public void clear() {
-        administrativeCallNames.clear();
-        administrativeCallPositions.clear();
-        administrativeCallStatements.clear();
+        capturedFacts.clear();
         executionRequirements.clear();
         executionRequirementPosition = -1;
+        firstNonDeterministicCall = null;
         nonDeterministicCallIndex = -1;
-        nonDeterministicCallNames.clear();
-        nonDeterministicCallPositions.clear();
         cursorFunctionInstantiated = false;
         selectedOverload = null;
         if (equalityResolver != null) {
@@ -918,11 +927,14 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         }
         assert declaredType == ColumnType.UNDEFINED || declaredType == function.getType() : "function type differs from the result type its factory declares";
         if (!executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            RequirementFact fact = null;
             if (nonDeterministicCallIndex < 0) {
                 nonDeterministicCallIndex = executionRequirements.getDeferredCount();
+                fact = firstNonDeterministicCall = RequirementFact.nonDeterministic(name, position);
             }
-            nonDeterministicCallNames.add(Chars.toString(name));
-            nonDeterministicCallPositions.add(position);
+            if (isCapturing(CAPTURED_NON_DETERMINISTIC)) {
+                capture(CAPTURED_NON_DETERMINISTIC, fact != null ? fact : RequirementFact.nonDeterministic(name, position));
+            }
         }
         executionRequirements.add(factory.getExecutionRequirements(), getRequirementPosition(position));
         if (args != null) {
@@ -966,6 +978,13 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
         }
         return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
+    }
+
+    /**
+     * Ends the capture {@code mark} began and the captures it encloses, see {@link #beginRequirementCapture()}.
+     */
+    public void endRequirementCapture(int mark) {
+        capturedFacts.setPos(mark);
     }
 
     public int enterExecutionRequirementPosition(int position) {
@@ -1035,6 +1054,22 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         return newFunction;
     }
 
+    /**
+     * The first call or SHOW statement admitted since the capture {@code mark} began that needs the Enterprise
+     * security context of the caller, see {@link #beginRequirementCapture()}, or null.
+     */
+    public @Nullable RequirementFact getCapturedAdministrativeFact(int mark) {
+        return capturedFacts.getQuick(mark + CAPTURED_ADMINISTRATIVE);
+    }
+
+    /**
+     * The first non-deterministic function created for a context that refuses them since the capture {@code mark}
+     * began, see {@link #beginRequirementCapture()}, or null.
+     */
+    public @Nullable RequirementFact getCapturedNonDeterministicFact(int mark) {
+        return capturedFacts.getQuick(mark + CAPTURED_NON_DETERMINISTIC);
+    }
+
     public CairoConfiguration getConfiguration() {
         return configuration;
     }
@@ -1055,38 +1090,11 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     }
 
     /**
-     * The number of calls and SHOW statements admitted that need the Enterprise security context of the caller, see
-     * {@link SqlExecutionRequirements#REQUIRES_ENTERPRISE_SECURITY_CONTEXT}, in the order they were admitted.
+     * The first non-deterministic function created for a context that refuses them since the last {@link #clear()},
+     * or null.
      */
-    public int getAdministrativeCallCount() {
-        return administrativeCallPositions.size();
-    }
-
-    public String getAdministrativeCallName(int index) {
-        return administrativeCallNames.getQuick(index);
-    }
-
-    /**
-     * The position where the requirements of the call or statement surface in the compiled SQL.
-     */
-    public int getAdministrativeCallPosition(int index) {
-        return administrativeCallPositions.getQuick(index);
-    }
-
-    /**
-     * The number of non-deterministic functions created for a context that refuses them, in the order they were
-     * created.
-     */
-    public int getNonDeterministicCallCount() {
-        return nonDeterministicCallPositions.size();
-    }
-
-    public String getNonDeterministicCallName(int index) {
-        return nonDeterministicCallNames.getQuick(index);
-    }
-
-    public int getNonDeterministicCallPosition(int index) {
-        return nonDeterministicCallPositions.getQuick(index);
+    public @Nullable RequirementFact getFirstNonDeterministicCall() {
+        return firstNonDeterministicCall;
     }
 
     /**
@@ -1103,13 +1111,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      */
     public FunctionFactoryDescriptor getSelectedOverload() {
         return selectedOverload;
-    }
-
-    /**
-     * Whether the administrative call at the index is a SHOW statement rather than a function.
-     */
-    public boolean isAdministrativeStatement(int index) {
-        return administrativeCallStatements.get(index);
     }
 
     /**
@@ -1688,11 +1689,11 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         if ((requirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             final int requirementPosition = getRequirementPosition(position);
             if (executionContext.isViewMetadataSubquery()) {
-                SqlExecutionRequirements.checkViewMetadataSubquery(requirements, requirementPosition, name, isStatement);
+                SqlExecutionRequirements.checkViewMetadataSubquery(RequirementFact.administrative(name, requirementPosition, isStatement));
             }
-            administrativeCallNames.add(Chars.toString(name));
-            administrativeCallPositions.add(requirementPosition);
-            administrativeCallStatements.add(isStatement);
+            if (isCapturing(CAPTURED_ADMINISTRATIVE)) {
+                capture(CAPTURED_ADMINISTRATIVE, RequirementFact.administrative(name, requirementPosition, isStatement));
+            }
         }
         if (executionContext.allowNonDeterministicFunctions()) {
             return;
@@ -1702,6 +1703,14 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         } else {
             SqlExecutionRequirements.checkStoredView(requirements, getRequirementPosition(position), name, isStatement,
                     executionContext.getTableFunctionView(), executionContext);
+        }
+    }
+
+    // Records the fact in the slot at the offset of every open capture that has none yet, innermost first. Every
+    // capture that encloses one holding a fact holds one too, so the walk stops at the first capture that holds one.
+    private void capture(int offset, RequirementFact fact) {
+        for (int i = capturedFacts.size() - 2 + offset; i > -1 && capturedFacts.getQuick(i) == null; i -= 2) {
+            capturedFacts.setQuick(i, fact);
         }
     }
 
@@ -1985,6 +1994,12 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             default:
                 return function;
         }
+    }
+
+    // Whether the innermost open capture has no fact at the offset yet; the captures enclosing it then may lack one too.
+    private boolean isCapturing(int offset) {
+        final int size = capturedFacts.size();
+        return size > 0 && capturedFacts.getQuick(size - 2 + offset) == null;
     }
 
     /**

@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -62,7 +63,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicT
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
         return TimestampPrecisionUse.PRESERVING;
     }
 

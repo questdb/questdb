@@ -406,7 +406,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
                     // One classification pass yields both the monotonicity gate and the row-only flag.
                     final ExpiryValidationResult classification =
-                            compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, predicate, 0);
+                            compiler.validateExpiryPolicy(sqlExecutionContext, null, metadata, predicate, 0);
                     isCleanupMonotonic = classification.isMonotonic();
                     isPredicateDeterministic = classification.isDeterministic();
                     timestampThreshold = compiler.expiryTimestampThreshold(

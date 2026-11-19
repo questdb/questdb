@@ -47,11 +47,8 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
-import io.questdb.std.str.SingleCharCharSequence;
-import io.questdb.std.str.StringSink;
 
 /**
  * Symbol key intrinsics of one native scan occurrence: the included and excluded key sets of a
@@ -65,9 +62,7 @@ public final class SymbolKeyExtractor implements Mutable {
     private final KeySet included = new KeySet();
     private final ObjList<BoundExpression> includedConjuncts;
     private final ObjHashSet<BoundExpression> intrinsics = new ObjHashSet<>();
-    private final StringSink keyText = new StringSink();
     private final KeySet merged = new KeySet();
-    private final StringSink otherKeyText = new StringSink();
     private final KeySet pending = new KeySet();
     private int columnId = -1;
     private boolean hasKey;
@@ -89,9 +84,8 @@ public final class SymbolKeyExtractor implements Mutable {
                                             FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
         if (value instanceof ConstantExpression constant && ColumnType.tagOf(constant.getDataType()) != ColumnType.STRING) {
             return switch (ColumnType.tagOf(constant.getDataType())) {
-                case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
-                        : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));
-                default -> StrConstant.fromValue(textOf(constant, Misc.getThreadLocalSink()));
+                case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL : StrConstant.fromValue(constant.getChars());
+                default -> StrConstant.fromValue(constant.getSymbolKeyText());
             };
         }
         final Function parameter = instantiator.instantiate(value, input, metadata, executionContext);
@@ -258,23 +252,9 @@ public final class SymbolKeyExtractor implements Mutable {
         return (ColumnExpression) list.argumentAt(0);
     }
 
-    /**
-     * The UTF-16 text a STRING, VARCHAR, SYMBOL or integer constant matches a SYMBOL by, the decimal text of an
-     * integer as {@code =} formats it; null for a NULL value or any other type. An integer formats into {@code sink}.
-     */
-    public static CharSequence textOf(BoundExpression value, StringSink sink) {
-        final ConstantExpression constant = (ConstantExpression) value;
-        final int type = ColumnType.tagOf(constant.getDataType());
-        if (isIntegerKey(type)) {
-            final long key = type == ColumnType.INT ? Numbers.intToLong((int) constant.getLongValue()) : constant.getLongValue();
-            if (key == Numbers.LONG_NULL) {
-                return null;
-            }
-            sink.clear();
-            sink.put(key);
-            return sink;
-        }
-        return constant.getText();
+    // the text of a key constant, see ConstantExpression.getSymbolKeyText()
+    private static CharSequence textOf(BoundExpression value) {
+        return ((ConstantExpression) value).getSymbolKeyText();
     }
 
     private void addExcluded(FunctionExpression call, BoundExpression value) {
@@ -484,7 +464,7 @@ public final class SymbolKeyExtractor implements Mutable {
         if (ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR) {
             return constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
         }
-        final CharSequence text = textOf(constant, keyText);
+        final CharSequence text = constant.getSymbolKeyText();
         return text != null && text.length() == 1 ? text.charAt(0) : -1;
     }
 
@@ -523,7 +503,7 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     private boolean isNullKey(BoundExpression value) {
-        return !isBind(value) && charCodeOf(value) < 0 && textOf(value, keyText) == null;
+        return !isBind(value) && charCodeOf(value) < 0 && textOf(value) == null;
     }
 
     private boolean isSameKey(BoundExpression left, BoundExpression right) {
@@ -538,8 +518,8 @@ public final class SymbolKeyExtractor implements Mutable {
         if (code >= 0) {
             return true;
         }
-        final CharSequence leftText = textOf(left, keyText);
-        final CharSequence rightText = textOf(right, otherKeyText);
+        final CharSequence leftText = textOf(left);
+        final CharSequence rightText = textOf(right);
         return leftText == null ? rightText == null : rightText != null && Chars.equals(leftText, rightText);
     }
 
@@ -650,7 +630,7 @@ public final class SymbolKeyExtractor implements Mutable {
                 isAdded = addText(binds, parameter.getName());
             } else {
                 final int code = charCodeOf(value);
-                isAdded = code >= 0 ? chars.add(code) : addText(constants, textOf(value, keyText));
+                isAdded = code >= 0 ? chars.add(code) : addText(constants, textOf(value));
             }
             if (isAdded) {
                 values.add(value);
@@ -677,7 +657,7 @@ public final class SymbolKeyExtractor implements Mutable {
                 return binds.contains(parameter.getName());
             }
             final int code = charCodeOf(value);
-            return code >= 0 ? chars.contains(code) : constants.contains(textOf(value, keyText));
+            return code >= 0 ? chars.contains(code) : constants.contains(textOf(value));
         }
 
         void remove(BoundExpression value) {
@@ -693,7 +673,7 @@ public final class SymbolKeyExtractor implements Mutable {
                         if (code >= 0) {
                             chars.remove(code);
                         } else {
-                            constants.remove(textOf(value, keyText));
+                            constants.remove(textOf(value));
                         }
                     }
                     values.remove(i);
@@ -707,7 +687,8 @@ public final class SymbolKeyExtractor implements Mutable {
         }
 
         /**
-         * Adds the text, a copy when it is the decoding sink; any other text lives as long as the plan.
+         * Adds the text without copying it: a bind variable's name, or the text of a constant, which the constant
+         * holds or formats into a sink it owns, lives as long as the plan.
          */
         private boolean addText(CharSequenceHashSet set, CharSequence text) {
             if (text == null) {
@@ -717,11 +698,7 @@ public final class SymbolKeyExtractor implements Mutable {
             if (index < 0) {
                 return false;
             }
-            if (text == keyText) {
-                set.addAt(index, text);
-            } else {
-                set.addAtWithBorrowed(index, text);
-            }
+            set.addAtWithBorrowed(index, text);
             return true;
         }
     }

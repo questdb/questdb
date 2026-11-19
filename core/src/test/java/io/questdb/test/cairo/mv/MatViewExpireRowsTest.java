@@ -1797,7 +1797,7 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             ) {
                 for (String text : new String[]{"", "   ", "/* no expression */"}) {
                     try {
-                        compiler.validateExpiryPredicateOnMetadata(sqlExecutionContext, metadata, text, 7);
+                        compiler.validateExpiryPolicy(sqlExecutionContext, null, metadata, text, 7);
                         Assert.fail("expected a rejection of '" + text + "'");
                     } catch (SqlException e) {
                         assertEquals(7, e.getPosition());
@@ -1819,13 +1819,13 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("x"));
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                final ExpiryValidationResult clockThreshold = compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "t < dateadd('d', -1, now())", 0);
+                final ExpiryValidationResult clockThreshold = compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "t < dateadd('d', -1, now())", 0);
                 assertTrue(clockThreshold.hasClock());
                 assertFalse(clockThreshold.isDeterministic());
                 assertFalse(clockThreshold.isMonotonic());
-                final ExpiryValidationResult clockFree = compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "v < 0", 0);
+                final ExpiryValidationResult clockFree = compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "v < 0", 0);
                 assertFalse(clockFree.hasClock());
                 assertTrue(clockFree.isMonotonic());
             }

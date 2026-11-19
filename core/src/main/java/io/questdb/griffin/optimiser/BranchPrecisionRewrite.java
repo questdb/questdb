@@ -41,7 +41,6 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.str.StringSink;
 
 /**
  * Rewrites a conjunct over the designated timestamp of a set operation into the conjunct a branch evaluates over its
@@ -76,7 +75,6 @@ final class BranchPrecisionRewrite {
     private final ObjList<BoundExpression> callArguments = new ObjList<>();
     private final ObjectPool<ColumnExpression> columns;
     private final OptimiserContext context;
-    private final StringSink firstConstant = new StringSink();
     // the rebuilt arguments of the calls being rebuilt, a stack
     private final ObjList<BoundExpression> rebuiltArguments = new ObjList<>();
     private int branchColumnId;
@@ -120,6 +118,14 @@ final class BranchPrecisionRewrite {
     private static boolean isTemporalCast(FunctionExpression call) {
         final int target = call.getDataType();
         return SqlKeywords.isCastKeyword(call.getName()) && (target == ColumnType.DATE || ColumnType.isTimestamp(target));
+    }
+
+    /**
+     * How the call's value depends on the precision of its TIMESTAMP argument, as its overload's factory answers for
+     * its bound first argument. The call reads an instant, so it has an argument.
+     */
+    private static TimestampPrecisionUse precisionUse(FunctionExpression call) {
+        return call.getOverload().getFactory().getTimestampPrecisionUse(call.argumentAt(0));
     }
 
     private int classify(BoundExpression expression) {
@@ -185,26 +191,6 @@ final class BranchPrecisionRewrite {
         final short tag = ColumnType.tagOf(type);
         return (tag == ColumnType.STRING || tag == ColumnType.VARCHAR)
                 && (!isDateBranch || value instanceof ConstantExpression constant && constant.isLiteral());
-    }
-
-    /**
-     * How the call's value depends on the precision of its TIMESTAMP argument, as its overload's factory answers for
-     * the SQL spelling of its first argument when that is a text or character constant. The call reads an instant, so
-     * it has an argument.
-     */
-    private TimestampPrecisionUse precisionUse(FunctionExpression call) {
-        CharSequence spelling = null;
-        if (call.argumentAt(0) instanceof ConstantExpression constant) {
-            firstConstant.clear();
-            if (constant.getDataType() == ColumnType.CHAR) {
-                firstConstant.put('\'').put((char) constant.getLongValue()).put('\'');
-                spelling = firstConstant;
-            } else if (constant.getText() != null) {
-                firstConstant.put('\'').put(constant.getText()).put('\'');
-                spelling = firstConstant;
-            }
-        }
-        return call.getOverload().getFactory().getTimestampPrecisionUse(spelling);
     }
 
     /**

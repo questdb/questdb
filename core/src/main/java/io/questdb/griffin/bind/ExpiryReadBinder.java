@@ -41,11 +41,13 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.LogicalPlans;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Binds the read of a materialized view under an EXPIRE ROWS policy, so that expired rows are invisible to every read
@@ -98,21 +100,39 @@ final class ExpiryReadBinder implements Mutable {
 
     /**
      * Binds the keep-filter of a policy on a value over the scan of its table: the predicate every read of the table
-     * filters the scan with, the rows the policy has not expired, see {@link RowExpiryUtil#appendKeepFilter}. Reads
-     * and DDL bind the policy through this one method, so a policy DDL accepts binds in every read, see
-     * {@link SqlBinder#bindExpiryKeepFilter}. What the policy reads binds without the policy of the table.
+     * filters the scan with, the rows the policy has not expired, see {@link RowExpiryUtil#appendKeepFilter}. A read
+     * parses the stored policy into the keep-filter, and DDL negates the policy it parsed, see
+     * {@link #bindKeepFilter(ExpressionNode, OutputSchema, CharSequence, SqlExecutionContext)}; both bind it through
+     * {@link #bindParsedKeepFilter}, so a policy DDL accepts binds in every read. What the policy reads binds without
+     * the policy of the table.
      */
     BoundExpression bindKeepFilter(ScanPlan scan, CharSequence predicate, SqlExecutionContext executionContext) throws SqlException {
         final String tableName = scan.getTableToken().getTableName();
         tablesBound.add(tableName);
         try {
-            final ExpressionNode keepFilter = SqlUtil.optimiseBooleanNot(
-                    policyParser.parseKeepFilter(predicate, binder.getParserCallback()), ctx.bindingExpressions);
-            final BoundExpression bound = binder.bindPredicate(keepFilter, scan, tableName, executionContext);
-            bound.walk(POLICY_CALLS);
-            return bound;
+            final ExpressionNode keepFilter = policyParser.parseKeepFilter(predicate, binder.getParserCallback());
+            return bindParsedKeepFilter(keepFilter, scan.getOutput(), scan, tableName, executionContext);
         } finally {
             tablesBound.remove(tableName);
+        }
+    }
+
+    /**
+     * Binds the keep-filter of the parsed scalar policy {@code predicate} over {@code input}, the columns of the table
+     * the policy belongs to, as every read of the table binds it, see {@link #bindKeepFilter(ScanPlan, CharSequence,
+     * SqlExecutionContext)}, with qualified names resolved against {@code alias}, the name of the table. DDL binds a
+     * policy with it before any read does, at CREATE before the table exists, so no scan reads the table: every column
+     * of {@code input} comes from the one table. The keep-filter is the negation of {@code predicate}, as the parse of
+     * the stored text a read binds spells it, see {@link RowExpiryUtil#appendKeepFilter}; pushing the negation down
+     * rewrites {@code predicate} in place.
+     */
+    BoundExpression bindKeepFilter(ExpressionNode predicate, OutputSchema input, CharSequence alias, SqlExecutionContext executionContext)
+            throws SqlException {
+        tablesBound.add(alias);
+        try {
+            return bindParsedKeepFilter(SqlUtil.negate(predicate, ctx.bindingExpressions), input, null, alias, executionContext);
+        } finally {
+            tablesBound.remove(alias);
         }
     }
 
@@ -184,6 +204,23 @@ final class ExpiryReadBinder implements Mutable {
     public void clear() {
         policyParser.clear();
         tablesBound.clear();
+    }
+
+    /**
+     * Pushes the negation of a parsed keep-filter down and binds the result as a filter over {@code input}, the output
+     * of {@code source}, or of a table no plan reads when {@code source} is null.
+     */
+    private BoundExpression bindParsedKeepFilter(
+            ExpressionNode keepFilter,
+            OutputSchema input,
+            @Nullable LogicalPlan source,
+            CharSequence alias,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final BoundExpression bound = binder.bindPredicate(
+                SqlUtil.optimiseBooleanNot(keepFilter, ctx.bindingExpressions), input, source, alias, executionContext);
+        bound.walk(POLICY_CALLS);
+        return bound;
     }
 
     /**

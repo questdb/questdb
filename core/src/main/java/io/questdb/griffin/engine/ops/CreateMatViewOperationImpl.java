@@ -500,7 +500,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
             }
             final ConstantExpression interval = (ConstantExpression) floor.argumentAt(0);
-            intervalExpr = constantText(interval);
+            intervalExpr = Chars.toString(interval.getChars());
             intervalPos = interval.getPosition();
         }
 
@@ -648,14 +648,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private static BoundExpression bucketKey(GroupingPlan sampleBy) {
         final int index = sampleBy.getBucketKeyIndex();
         return index < 0 ? null : sampleBy.getGroupingExpressions().getQuick(index);
-    }
-
-    /**
-     * The text of a STRING, VARCHAR or CHAR constant; null for a NULL value.
-     */
-    private static String constantText(ConstantExpression constant) {
-        return ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR
-                ? String.valueOf((char) constant.getLongValue()) : Chars.toString(constant.getText());
     }
 
     /**
@@ -924,7 +916,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             throw SqlException.position(selectTextPosition + floor.argumentAt(index).getPosition()).put(floor.getName())
                     .put("() in a materialized view requires a constant offset and time zone");
         }
-        return constantText(constant);
+        return Chars.toString(constant.getChars());
     }
 
     /**
@@ -1286,7 +1278,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      */
     private String sampleByAlignmentText(BoundExpression value, int selectTextPosition) {
         if (value instanceof ConstantExpression constant) {
-            return constantText(constant);
+            return Chars.toString(constant.getChars());
         }
         if (value != null && nonConstantAlignmentPosition < 0) {
             nonConstantAlignmentPosition = selectTextPosition + value.getPosition();

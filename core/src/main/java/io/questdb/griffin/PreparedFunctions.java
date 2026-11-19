@@ -31,7 +31,6 @@ import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.BoundExpressionRewriter;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlans;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -306,7 +305,6 @@ public final class PreparedFunctions implements Mutable {
         public final ObjList<BindableColumn> leaves = new ObjList<>();
         public boolean isRebuildRequired;
         public int updateTargetType = -1;
-        FunctionExpression administrativeCall;
         BoundExpression expression;
         int index = -1;
         int nextIndex = -1;
@@ -328,22 +326,12 @@ public final class PreparedFunctions implements Mutable {
         @Override
         public void clear() {
             leaves.clear();
-            administrativeCall = null;
             expression = null;
             index = -1;
             isRebuildRequired = false;
             nextIndex = -1;
             slot = -1;
             updateTargetType = -1;
-        }
-
-        /**
-         * The first call binding admitted while it built the root that needs the Enterprise security context of the
-         * caller, see {@link FunctionExpression#getAdministrativeCallName()}, or null. The root holds the call, or
-         * the value a fold took from it, whatever its description still shows.
-         */
-        public FunctionExpression getAdministrativeCall() {
-            return administrativeCall;
         }
 
         public BoundExpression getExpression() {
@@ -375,16 +363,6 @@ public final class PreparedFunctions implements Mutable {
                 }
             }
             return true;
-        }
-
-        /**
-         * Records an administrative call binding admitted while it built the root, see {@link #getAdministrativeCall()};
-         * the first one recorded stays.
-         */
-        public void recordAdministrativeCall(FunctionExpression call) {
-            if (administrativeCall == null) {
-                administrativeCall = call;
-            }
         }
 
         /**

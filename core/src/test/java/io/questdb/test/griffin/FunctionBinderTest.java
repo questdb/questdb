@@ -39,6 +39,7 @@ import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
@@ -50,6 +51,7 @@ import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.functions.lt.LtLongFunctionFactory;
 import io.questdb.griffin.engine.functions.math.AddIntFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ConcatFunctionFactory;
@@ -64,6 +66,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.std.IntIntHashMap;
@@ -623,6 +626,73 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     second.init(null, sqlExecutionContext);
                     Assert.assertFalse(first.getBool(null));
                     Assert.assertFalse(second.getBool(null));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConnectiveKeepsDescriptionOfDroppedAdministrativeCall() throws Exception {
+        // OR returns its other operand when one operand is the constant FALSE. When a fold made that constant of an
+        // administrative call, the description keeps the connective, so it still shows the call master constructs;
+        // otherwise it is the other operand. Either way the built function is the other operand.
+        assertMemoryLeak(() -> {
+            final java.util.ArrayList<FunctionFactory> factories = new java.util.ArrayList<>();
+            factories.add(new OrFunctionFactory());
+            factories.add(new LtLongFunctionFactory());
+            for (String name : new String[]{"admin_false", "plain_false"}) {
+                final int requirements = name.startsWith("admin") ? SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                        : SqlExecutionRequirements.NONE;
+                factories.add(new FunctionFactory() {
+                    @Override
+                    public int getExecutionRequirements() {
+                        return requirements;
+                    }
+
+                    @Override
+                    public String getSignature() {
+                        return name + "()";
+                    }
+
+                    @Override
+                    public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                                io.questdb.cairo.CairoConfiguration configuration, SqlExecutionContext context) {
+                        return BooleanConstant.FALSE;
+                    }
+                });
+            }
+            final FunctionParser parser = new FunctionParser(configuration, new FunctionFactoryCache(configuration, factories));
+            final OutputSchema input = new OutputSchema().add(7, "v", ColumnType.LONG, true);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                for (boolean isConstantLeft : new boolean[]{true, false}) {
+                    for (String name : new String[]{"admin_false", "plain_false"}) {
+                        final ExpressionNode call = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, name, 0, 3);
+                        final ExpressionNode comparison = binary("<", 22, literal("v", 20), constant("5", 24));
+                        final BoundExpression predicate = binder.bindPredicate(isConstantLeft ? binary("or", 17, call, comparison)
+                                : binary("or", 17, comparison, call), input, "t", sqlExecutionContext);
+                        if (name.startsWith("admin")) {
+                            final FunctionExpression or = (FunctionExpression) predicate;
+                            Assert.assertEquals("or", or.getName());
+                            final ConstantExpression dropped = (ConstantExpression) or.argumentAt(isConstantLeft ? 0 : 1);
+                            Assert.assertEquals(ColumnType.BOOLEAN, dropped.getDataType());
+                            Assert.assertEquals(0, dropped.getLongValue());
+                            final RequirementFact fact = RequirementFact.firstAdministrative(predicate);
+                            Assert.assertNotNull(fact);
+                            Assert.assertSame(fact, dropped.getAdministrativeFact());
+                            Assert.assertTrue(fact.isAdministrative());
+                            Assert.assertEquals("admin_false", fact.getName());
+                            Assert.assertEquals(3, fact.getPosition());
+                            Assert.assertFalse(fact.isStatement());
+                        } else {
+                            Assert.assertTrue(predicate instanceof FunctionExpression lt && "<".contentEquals(lt.getName()));
+                            Assert.assertNull(RequirementFact.firstAdministrative(predicate));
+                        }
+                        try (Function function = binder.instantiate(predicate, input)) {
+                            Assert.assertTrue(function.getBool(numericRecord(ColumnType.LONG, 0, 4)));
+                            Assert.assertFalse(function.getBool(numericRecord(ColumnType.LONG, 0, 6)));
+                        }
+                        binder.clear();
+                    }
                 }
             }
         });
@@ -2001,6 +2071,60 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     Assert.assertEquals(2, first.getInt(record));
                     Assert.assertEquals(2, second.getInt(record));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTemporalComparisonFoldKeepsAdministrativeFact() throws Exception {
+        // A TIMESTAMP cannot hold a nanosecond value, so binding folds = to FALSE. The constant keeps the fact of the
+        // administrative call that spelled the value, and has none when a literal spelled it.
+        assertMemoryLeak(() -> {
+            final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+            descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+                @Override
+                public int getExecutionRequirements() {
+                    return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+                }
+
+                @Override
+                public String getSignature() {
+                    return "admin_text()";
+                }
+
+                @Override
+                public Function newInstance(int position, ObjList<Function> args, IntList argPositions,
+                                            io.questdb.cairo.CairoConfiguration configuration, SqlExecutionContext context) {
+                    return new VarcharConstant("2020-01-01T00:00:00.000000001");
+                }
+            }));
+            engine.getFunctionFactoryCache().getFactories().put("admin_text", descriptors);
+            try {
+                final FunctionParser parser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+                final OutputSchema input = new OutputSchema().add(7, "ts", ColumnType.TIMESTAMP, true);
+                try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                    final ExpressionNode call = ExpressionNode.FACTORY.newInstance().of(ExpressionNode.FUNCTION, "admin_text", 0, 5);
+                    final ExpressionNode[] values = {call, constant("'2020-01-01T00:00:00.000000001'", 5)};
+                    for (ExpressionNode value : values) {
+                        final BoundExpression predicate = binder.bindPredicate(binary("=", 3, literal("ts", 0), value), input, "t",
+                                sqlExecutionContext);
+                        Assert.assertTrue(predicate instanceof ConstantExpression);
+                        final ConstantExpression folded = (ConstantExpression) predicate;
+                        Assert.assertEquals(ColumnType.BOOLEAN, folded.getDataType());
+                        Assert.assertEquals(0, folded.getLongValue());
+                        final RequirementFact fact = RequirementFact.firstAdministrative(predicate);
+                        if (value == call) {
+                            Assert.assertNotNull(fact);
+                            Assert.assertEquals("admin_text", fact.getName());
+                            Assert.assertEquals(5, fact.getPosition());
+                        } else {
+                            Assert.assertNull(fact);
+                        }
+                        binder.clear();
+                    }
+                }
+            } finally {
+                engine.getFunctionFactoryCache().getFactories().remove("admin_text");
             }
         });
     }

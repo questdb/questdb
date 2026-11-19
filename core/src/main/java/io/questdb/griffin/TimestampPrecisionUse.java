@@ -27,8 +27,11 @@ package io.questdb.griffin;
 import io.questdb.std.datetime.microtime.Micros;
 
 /**
- * How a function's value depends on the precision of its TIMESTAMP argument, see
- * {@link FunctionFactory#getTimestampPrecisionUse}.
+ * How a function's value depends on the precision of its TIMESTAMP argument, which the function's factory answers for
+ * the call's bound first argument, see {@link FunctionFactory#getTimestampPrecisionUse}. A factory whose answer
+ * depends on a constant unit, such as the period of {@code dateadd()} or the stride and unit of
+ * {@code timestamp_floor()}, reads the unit from the characters of a text or CHAR constant and answers through
+ * {@link #ofShift} or {@link #ofFloor}.
  */
 public enum TimestampPrecisionUse {
     /**

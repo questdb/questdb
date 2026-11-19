@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -56,7 +57,7 @@ public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimes
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
         return TimestampPrecisionUse.PRESERVING;
     }
 

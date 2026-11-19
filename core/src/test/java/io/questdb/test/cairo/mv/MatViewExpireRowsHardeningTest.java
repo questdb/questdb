@@ -664,50 +664,50 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     TableMetadata metadata = engine.getTableMetadata(token);
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                final ExpiryValidationResult clockFree = compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "v < 0", 0);
+                final ExpiryValidationResult clockFree = compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "v < 0", 0);
                 Assert.assertFalse(clockFree.hasClock());
                 Assert.assertTrue(clockFree.isDeterministic());
                 Assert.assertTrue(clockFree.isMonotonic());
                 Assert.assertEquals(1, clockFree.getReferencedColumnIndexes().size());
                 Assert.assertEquals(metadata.getColumnIndexQuiet("v"), clockFree.getReferencedColumnIndexes().getQuick(0));
 
-                final ExpiryValidationResult advancingThreshold = compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now()", 0);
+                final ExpiryValidationResult advancingThreshold = compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < now()", 0);
                 Assert.assertTrue(advancingThreshold.hasClock());
                 Assert.assertFalse(advancingThreshold.isDeterministic());
                 Assert.assertTrue(advancingThreshold.isMonotonic());
                 Assert.assertEquals(metadata.getTimestampIndex(), advancingThreshold.getReferencedColumnIndexes().getQuick(0));
 
-                final ExpiryValidationResult reversingThreshold = compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts > now()", 0);
+                final ExpiryValidationResult reversingThreshold = compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts > now()", 0);
                 Assert.assertTrue(reversingThreshold.hasClock());
                 Assert.assertFalse(reversingThreshold.isMonotonic());
 
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now() + rnd_long()", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < dateadd('u', rnd_int(), now())", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now() - (now()::long * 2)", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < (now() - (now()::long * 2)) - 1_000_000L", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < now() + rnd_long()", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < dateadd('u', rnd_int(), now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < now() - (now()::long * 2)", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < (now() - (now()::long * 2)) - 1_000_000L", 0).isMonotonic());
 
                 // Look-back offsets on a bare clock are proven advancing: the canonical retention
                 // predicates reclaim disk. Look-forward offsets, calendar units (a variable shift),
                 // and non-constant offsets stay unproven.
-                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
-                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < dateadd('d', -1, now())", 0).isMonotonic());
-                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < dateadd('h', -36, now())", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < dateadd('u', 1, now())", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < dateadd('M', -1, now())", 0).isMonotonic());
-                Assert.assertFalse(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "ts < now() + 1_000_000L", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < now() - 1_000_000L", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < dateadd('d', -1, now())", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < dateadd('h', -36, now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < dateadd('u', 1, now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < dateadd('M', -1, now())", 0).isMonotonic());
+                Assert.assertFalse(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "ts < now() + 1_000_000L", 0).isMonotonic());
 
                 // A date variable in an interval string reads the clock, although the function that
                 // evaluates it reports neither isNonDeterministic() nor isRuntimeConstant().
@@ -773,8 +773,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
                 try {
-                    compiler.validateExpiryPredicateOnMetadata(
-                            sqlExecutionContext, metadata, "s IN (SELECT s FROM blk)", 0);
+                    compiler.validateExpiryPolicy(
+                            sqlExecutionContext, null, metadata, "s IN (SELECT s FROM blk)", 0);
                     Assert.fail("subquery predicate must be rejected");
                 } catch (SqlException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
@@ -788,8 +788,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("xns"));
                     SqlCompiler compiler = engine.getSqlCompiler()
             ) {
-                Assert.assertTrue(compiler.validateExpiryPredicateOnMetadata(
-                        sqlExecutionContext, metadata, "now() > ts", 0).isMonotonic());
+                Assert.assertTrue(compiler.validateExpiryPolicy(
+                        sqlExecutionContext, null, metadata, "now() > ts", 0).isMonotonic());
                 Assert.assertTrue(compiler.isExpiryCleanupReclaiming(
                         sqlExecutionContext, metadata, "now() > ts"));
             }
@@ -3611,15 +3611,18 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     @Test
     public void testPolicyReadsAskSelectOnTheColumnsTheyRead() throws Exception {
         // Policy, then the columns of: setting it, a read of sym, a read through a sub-query, a filter on another
-        // column, a read through a view that reads only sym, and a bare count(). A count reads every column of an
-        // input that computes one, which the keep column of a window read does.
+        // column, a read through a view that reads only sym, a bare count() over the table, and a bare count() over
+        // that view. A count reads no column of its input, so a bare count asks only for the columns the policy's
+        // keep computation reads: a window policy's keep query reads its partition and order columns, not the
+        // columns it merely carries, such as the timestamp that designates its rows for an ordered read. KEEP N
+        // HIGHEST orders by the designated timestamp too, to break ties, so its count still reads ts.
         final String[][] policies = {
-                {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]", "[k,ts]"},
-                {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]", "[v]"},
-                {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]", "[ts]"},
-                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
-                {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]", "[k,v,ts,sym,secret]"},
-                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k,sym,secret,ts]"},
+                {"KEEP LATEST PARTITION BY k", "[k,ts]", "[sym,k,ts]", "[ts,k]", "[sym,secret,k,ts]", "[k]", "[k,ts]", "[k]"},
+                {"WHEN v < 2.0", "[v]", "[v,sym]", "[v,ts]", "[v,sym,secret]", "[v]", "[v]", "[v]"},
+                {"WHEN ts < '2025-01-01T00:00:01.000000Z'", "[ts]", "[ts,sym]", "[ts]", "[ts,sym,secret]", "[ts]", "[ts]", "[ts]"},
+                {"KEEP HIGHEST ON v PARTITION BY k", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k]", "[k,v]"},
+                {"KEEP 1 HIGHEST ON v PARTITION BY k", "[k,v,ts]", "[sym,k,v,ts]", "[ts,k,v]", "[sym,secret,k,v,ts]", "[k,v,ts]", "[k,v,ts]", "[k,v,ts]"},
+                {"WHEN v < max(v) OVER (PARTITION BY k)", "[v,k]", "[sym,v,k,ts]", "[v,ts,k]", "[sym,v,secret,k,ts]", "[k,v,ts]", "[v,k]", "[k,v]"},
         };
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (sym SYMBOL, k SYMBOL, v DOUBLE, secret INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3647,7 +3650,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     assertSelectAsked(security, context, "SELECT count() FROM (SELECT ts FROM mv)", policy[3]);
                     assertSelectAsked(security, context, "SELECT sym FROM mv WHERE secret > 0", policy[4]);
                     assertSelectAsked(security, context, "SELECT sym FROM exposed ORDER BY sym", policy[5]);
-                    assertSelectAsked(security, context, "SELECT count() FROM exposed", policy[5]);
+                    assertSelectAsked(security, context, "SELECT count() FROM exposed", policy[7]);
                     assertSelectAsked(security, context, "SELECT count() FROM mv", policy[6]);
 
                     for (String source : new String[]{"mv", "'*!*mv'", "exposed"}) {
@@ -3831,8 +3834,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             boolean isDeterministic,
             boolean isMonotonic
     ) throws SqlException {
-        final ExpiryValidationResult result = compiler.validateExpiryPredicateOnMetadata(
-                sqlExecutionContext, metadata, predicate, 0);
+        final ExpiryValidationResult result = compiler.validateExpiryPolicy(
+                sqlExecutionContext, null, metadata, predicate, 0);
         Assert.assertEquals("hasClock [predicate=" + predicate + ']', hasClock, result.hasClock());
         Assert.assertEquals("isDeterministic [predicate=" + predicate + ']', isDeterministic, result.isDeterministic());
         Assert.assertEquals("isMonotonic [predicate=" + predicate + ']', isMonotonic, result.isMonotonic());

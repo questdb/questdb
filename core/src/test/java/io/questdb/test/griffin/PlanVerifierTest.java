@@ -59,6 +59,7 @@ import io.questdb.griffin.plan.logical.PlanFactRecorder;
 import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
@@ -333,6 +334,56 @@ public class PlanVerifierTest extends AbstractCairoTest {
         PlanVerifier.verifyCopy(read, readCopy, sourceFacts, copiedFacts);
         readCopy.setProducer(producer);
         assertCopyFails(read, readCopy, sourceFacts, copiedFacts, "producer", "DomainReadPlan");
+    }
+
+    @Test
+    public void testCopyRequirementFact() throws Exception {
+        // A copy of a source or a call that drops or alters a requirement fact fails; one whose fact is equal passes.
+        assertMemoryLeak(() -> {
+            final PlanFactRecorder sourceFacts = new PlanFactRecorder();
+            final PlanFactRecorder copiedFacts = new PlanFactRecorder();
+            final FunctionSourcePlan original = source();
+            final FunctionSourcePlan copy = source();
+            original.setAdministrativeFact(RequirementFact.administrative("admin_cursor", 7, false));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "administrativeFact", "FunctionSourcePlan");
+            copy.setAdministrativeFact(RequirementFact.administrative("admin_cursor", 7, true));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "administrativeFact", "FunctionSourcePlan");
+            copy.setAdministrativeFact(RequirementFact.administrative("admin_cursor", 8, false));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "administrativeFact", "FunctionSourcePlan");
+            copy.setAdministrativeFact(RequirementFact.administrative("admin_other", 7, false));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "administrativeFact", "FunctionSourcePlan");
+            copy.setAdministrativeFact(RequirementFact.nonDeterministic("admin_cursor", 7));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "administrativeFact", "FunctionSourcePlan");
+            copy.setAdministrativeFact(RequirementFact.administrative("admin_cursor", 7, false));
+            PlanVerifier.verifyCopy(original, copy, sourceFacts, copiedFacts);
+
+            original.setNonDeterministicFact(RequirementFact.nonDeterministic("now", 3));
+            assertCopyFails(original, copy, sourceFacts, copiedFacts, "nonDeterministicFact", "FunctionSourcePlan");
+            copy.setNonDeterministicFact(original.getNonDeterministicFact());
+            PlanVerifier.verifyCopy(original, copy, sourceFacts, copiedFacts);
+
+            execute("CREATE TABLE fact_predicate (a INT, b INT)");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT a FROM fact_predicate WHERE a = b", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final FunctionExpression comparison = (FunctionExpression) find(compiler.getPlanForTesting(), FilterPlan.class).getPredicate();
+                final FunctionExpression call = FunctionExpression.FACTORY.newInstance().of(comparison, comparison.getPosition())
+                        .setAdministrativeFact(RequirementFact.administrative("admin_scalar", 5, false));
+                final FunctionExpression callCopy = FunctionExpression.FACTORY.newInstance().of(call, call.getPosition());
+                Assert.assertSame(call.getAdministrativeFact(), callCopy.getAdministrativeFact());
+                PlanVerifier.verifyCopy(filter(original, call), filter(copy, callCopy), sourceFacts, copiedFacts);
+                callCopy.setAdministrativeFact(null);
+                assertCopyFails(filter(original, call), filter(copy, callCopy), sourceFacts, copiedFacts, "read", "FilterPlan");
+
+                final ConstantExpression folded = ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0)
+                        .withAdministrativeFact(call.getAdministrativeFact());
+                final ConstantExpression foldedCopy = ConstantExpression.FACTORY.newInstance().of(folded, null);
+                Assert.assertSame(folded.getAdministrativeFact(), foldedCopy.getAdministrativeFact());
+                Assert.assertNull(RequirementFact.firstAdministrative(ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0)));
+                Assert.assertSame(folded.getAdministrativeFact(), RequirementFact.firstAdministrative(foldedCopy));
+            }
+        });
     }
 
     @Test

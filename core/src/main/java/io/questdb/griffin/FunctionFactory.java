@@ -32,7 +32,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
-import org.jetbrains.annotations.Nullable;
 
 public interface FunctionFactory {
     default int getExecutionRequirements() {
@@ -110,12 +109,15 @@ public interface FunctionFactory {
     /**
      * How the value of the call depends on the precision of its TIMESTAMP argument, so a filter over a set column
      * whose branches differ in precision may make the call at each branch's precision when it does not depend on it,
-     * see {@code BranchPrecisionRewrite}. The default answers {@link TimestampPrecisionUse#DEPENDENT}.
+     * see {@code BranchPrecisionRewrite}. A factory whose answer depends on a constant unit reads the unit from the
+     * bound first argument, as the characters of a text or CHAR constant
+     * ({@link io.questdb.griffin.plan.logical.ConstantExpression#getChars()}), and answers
+     * {@link TimestampPrecisionUse#DEPENDENT} for any other argument. The default answers
+     * {@link TimestampPrecisionUse#DEPENDENT}.
      *
-     * @param firstConstant the SQL spelling of the call's first argument when that is a text or character constant,
-     *                      quoted as in SQL, otherwise null
+     * @param firstArgument the call's first argument, never modified
      */
-    default TimestampPrecisionUse getTimestampPrecisionUse(@Nullable CharSequence firstConstant) {
+    default TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
         return TimestampPrecisionUse.DEPENDENT;
     }
 

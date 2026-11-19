@@ -9785,6 +9785,23 @@ public class SqlParser {
     }
 
     /**
+     * Parses a scalar EXPIRE ROWS predicate that DDL validates, or the cleanup job classifies, as one expression that
+     * consumes the whole text, with no declaration in scope, see {@link #parseExpiryExpression}. The expression parser
+     * stops at the first token it cannot absorb ({@code x > 5 oops} parses as {@code x > 5}), while every read embeds
+     * the whole stored text, where the leftover token fails the parse, so this rejects a token after the expression.
+     */
+    ExpressionNode parseExpiryPredicate(CharSequence text, SqlParserCallback sqlParserCallback) throws SqlException {
+        final GenericLexer expiryLexer = viewLexers.next();
+        expiryLexer.of(text);
+        final ExpressionNode node = expr(expiryLexer, (QueryModel) null, sqlParserCallback);
+        final CharSequence trailingTok = SqlUtil.fetchNext(expiryLexer);
+        if (trailingTok != null) {
+            throw SqlException.$(expiryLexer.lastTokenPosition(), "unexpected token after expression: ").put(trailingTok);
+        }
+        return node;
+    }
+
+    /**
      * Parses the query {@link ExpiryPolicyParser} composes for a stored window policy, with no declaration in scope, see
      * {@link #parseExpiryExpression}.
      */

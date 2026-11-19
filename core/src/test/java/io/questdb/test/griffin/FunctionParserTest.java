@@ -42,6 +42,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -124,6 +125,7 @@ import io.questdb.griffin.engine.functions.str.LengthStrFunctionFactory;
 import io.questdb.griffin.engine.functions.str.LengthSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.str.ToCharBinFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
@@ -2032,6 +2034,71 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
     }
 
     @Test
+    public void testRequirementCaptures() throws Exception {
+        // A capture holds the first administrative call or SHOW statement, and the first non-deterministic function,
+        // its resolver records while the capture is open. Every capture sees what the captures it encloses see and keeps
+        // what it saw first; an enclosing capture that saw nothing takes what an enclosed one saw first.
+        assertMemoryLeak(() -> {
+            final FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            final FunctionResolver resolver = functionParser.getFunctionResolver();
+            final int administrative = SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            resolver.addStatementRequirements(1, "SHOW BEFORE", administrative, sqlExecutionContext);
+
+            final int outer = resolver.beginRequirementCapture();
+            assertNull(resolver.getCapturedAdministrativeFact(outer));
+            assertNull(resolver.getCapturedNonDeterministicFact(outer));
+            resolver.addStatementRequirements(3, "SHOW TABLES", SqlExecutionRequirements.DISCLOSES_OBJECTS, sqlExecutionContext);
+            assertNull(resolver.getCapturedAdministrativeFact(outer));
+            resolver.addStatementRequirements(5, "SHOW OUTER", administrative, sqlExecutionContext);
+            final int inner = resolver.beginRequirementCapture();
+            assertNull(resolver.getCapturedAdministrativeFact(inner));
+            resolver.addStatementRequirements(7, "SHOW INNER", administrative, sqlExecutionContext);
+            resolver.addStatementRequirements(9, "SHOW LATER", administrative, sqlExecutionContext);
+            assertRequirementFact(resolver.getCapturedAdministrativeFact(inner), RequirementFact.Kind.ADMINISTRATIVE, "SHOW INNER", 7, true);
+            assertRequirementFact(resolver.getCapturedAdministrativeFact(outer), RequirementFact.Kind.ADMINISTRATIVE, "SHOW OUTER", 5, true);
+
+            sqlExecutionContext.setAllowNonDeterministicFunction(false);
+            try {
+                // the right operand of + constructs first
+                try (Function ignored = parseFunction("rnd_int() + rnd_long()", new GenericRecordMetadata(), functionParser)) {
+                    assertRequirementFact(resolver.getCapturedNonDeterministicFact(inner), RequirementFact.Kind.NON_DETERMINISTIC, "rnd_long", 12, false);
+                    assertSame(resolver.getCapturedNonDeterministicFact(inner), resolver.getCapturedNonDeterministicFact(outer));
+                    assertSame(resolver.getCapturedNonDeterministicFact(inner), resolver.getFirstNonDeterministicCall());
+                }
+                resolver.endRequirementCapture(inner);
+                final int empty = resolver.beginRequirementCapture();
+                assertNull(resolver.getCapturedNonDeterministicFact(empty));
+                try (Function ignored = parseFunction("rnd_double()", new GenericRecordMetadata(), functionParser)) {
+                    assertRequirementFact(resolver.getCapturedNonDeterministicFact(empty), RequirementFact.Kind.NON_DETERMINISTIC, "rnd_double", 0, false);
+                    assertRequirementFact(resolver.getCapturedNonDeterministicFact(outer), RequirementFact.Kind.NON_DETERMINISTIC, "rnd_long", 12, false);
+                    assertRequirementFact(resolver.getFirstNonDeterministicCall(), RequirementFact.Kind.NON_DETERMINISTIC, "rnd_long", 12, false);
+                }
+                resolver.endRequirementCapture(empty);
+            } finally {
+                sqlExecutionContext.setAllowNonDeterministicFunction(true);
+            }
+            resolver.endRequirementCapture(outer);
+
+            final int enclosing = resolver.beginRequirementCapture();
+            final int enclosed = resolver.beginRequirementCapture();
+            resolver.addStatementRequirements(11, "SHOW NESTED", administrative, sqlExecutionContext);
+            assertSame(resolver.getCapturedAdministrativeFact(enclosed), resolver.getCapturedAdministrativeFact(enclosing));
+            assertRequirementFact(resolver.getCapturedAdministrativeFact(enclosing), RequirementFact.Kind.ADMINISTRATIVE, "SHOW NESTED", 11, true);
+            // ending a capture ends the captures it encloses
+            resolver.endRequirementCapture(enclosing);
+            final int next = resolver.beginRequirementCapture();
+            assertEquals(enclosing, next);
+            assertNull(resolver.getCapturedAdministrativeFact(next));
+            assertNull(resolver.getCapturedNonDeterministicFact(next));
+
+            resolver.clear();
+            assertNull(resolver.getFirstNonDeterministicCall());
+            assertEquals(0, resolver.beginRequirementCapture());
+            resolver.clear();
+        });
+    }
+
+    @Test
     public void testSelectedFunctionConstructsWithoutParsingOrOverloadLookup() throws SqlException {
         final AtomicInteger constructionCount = new AtomicInteger();
         final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new AddIntFunctionFactory() {
@@ -2630,6 +2697,28 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         }
     }
 
+    @Test
+    public void testViewMetadataSubqueryRejectsAdministrativeFactOnly() throws SqlException {
+        // the one check of a view's PIVOT IN subquery rejects an administrative call or SHOW statement at the position
+        // its fact records, and passes no fact and a fact of another requirement
+        SqlExecutionRequirements.checkViewMetadataSubquery(null);
+        SqlExecutionRequirements.checkViewMetadataSubquery(RequirementFact.nonDeterministic("now", 4));
+        try {
+            SqlExecutionRequirements.checkViewMetadataSubquery(RequirementFact.administrative("backup_instance_name", 9, false));
+            fail();
+        } catch (SqlException e) {
+            assertEquals(9, e.getPosition());
+            TestUtils.assertEquals("administrative function cannot be used in view PIVOT IN subquery: backup_instance_name", e.getFlyweightMessage());
+        }
+        try {
+            SqlExecutionRequirements.checkViewMetadataSubquery(RequirementFact.administrative("SHOW TABLES", 12, true));
+            fail();
+        } catch (SqlException e) {
+            assertEquals(12, e.getPosition());
+            TestUtils.assertEquals("administrative statement cannot be used in view PIVOT IN subquery: SHOW TABLES", e.getFlyweightMessage());
+        }
+    }
+
     private void assertBindVariableTypes(
             String expr,
             FunctionFactory factory,
@@ -2809,6 +2898,15 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
             }
         });
         return closeCount;
+    }
+
+    private static void assertRequirementFact(RequirementFact fact, RequirementFact.Kind kind, String name, int position, boolean isStatement) {
+        assertNotNull(fact);
+        assertEquals(kind, fact.getKind());
+        assertEquals(kind == RequirementFact.Kind.ADMINISTRATIVE, fact.isAdministrative());
+        assertEquals(name, fact.getName());
+        assertEquals(position, fact.getPosition());
+        assertEquals(isStatement, fact.isStatement());
     }
 
     // A factory with the given execution requirements that counts the functions it constructs.

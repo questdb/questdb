@@ -258,13 +258,8 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
-        public ExpiryValidationResult validateExpiryPolicy(SqlExecutionContext executionContext, TableToken viewToken, RecordMetadata viewMetadata, CharSequence predicate, int position) throws SqlException {
-            return delegate.validateExpiryPolicy(executionContext, viewToken, viewMetadata, predicate, position);
-        }
-
-        @Override
-        public ExpiryValidationResult validateExpiryPredicateOnMetadata(SqlExecutionContext executionContext, RecordMetadata metadata, CharSequence predicate, int position) throws SqlException {
-            return delegate.validateExpiryPredicateOnMetadata(executionContext, metadata, predicate, position);
+        public ExpiryValidationResult validateExpiryPolicy(SqlExecutionContext executionContext, @Nullable CharSequence viewName, RecordMetadata viewMetadata, CharSequence predicate, int position) throws SqlException {
+            return delegate.validateExpiryPolicy(executionContext, viewName, viewMetadata, predicate, position);
         }
 
         @Override

@@ -28,8 +28,10 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.std.Chars;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf16Sink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -41,6 +43,7 @@ public final class ConstantExpression extends BoundExpression {
     public static final ObjectFactory<ConstantExpression> FACTORY = ConstantExpression::new;
     private final StringSink decodedText = new StringSink();
     private final Long256Impl long256 = new Long256Impl();
+    private RequirementFact administrativeFact;
     private long hh;
     private long hl;
     private boolean isLiteral;
@@ -49,9 +52,25 @@ public final class ConstantExpression extends BoundExpression {
     private FunctionExpression source;
     private Object value;
 
+    /**
+     * Puts the SQL string literal that spells {@code text}: the text in single quotes, each single quote doubled.
+     */
+    public static void putSqlLiteral(Utf16Sink sink, CharSequence text) {
+        sink.put('\'');
+        for (int i = 0, n = text.length(); i < n; i++) {
+            final char c = text.charAt(i);
+            if (c == '\'') {
+                sink.put('\'');
+            }
+            sink.put(c);
+        }
+        sink.put('\'');
+    }
+
     @Override
     public void clear() {
         super.clear();
+        administrativeFact = null;
         hh = 0;
         hl = 0;
         lh = 0;
@@ -59,6 +78,33 @@ public final class ConstantExpression extends BoundExpression {
         source = null;
         longValue = 0;
         value = null;
+    }
+
+    /**
+     * The administrative fact of the first call the fold that made the constant evaluated, in the order code
+     * generation builds calls, see {@link RequirementFact#firstAdministrative}, or null. Master's code generation
+     * builds that call before it folds it, so the PIVOT IN check of a view rejects it as it rejects the calls a
+     * description still shows. The fact has no part in the value or the spelling of the constant: unlike
+     * {@link #getSource()}, which interval extraction, filter pushdown and the JIT read, a fold that keeps no source
+     * keeps the fact all the same.
+     */
+    public RequirementFact getAdministrativeFact() {
+        return administrativeFact;
+    }
+
+    /**
+     * The characters of a STRING, SYMBOL, VARCHAR or CHAR constant: the text {@link #getText()} returns, or the one
+     * character of a CHAR constant, which the constant puts into a sink it owns; null for a NULL text value or any
+     * other type. A CHAR constant holds one character even when that is the NULL character, so a caller that reads a
+     * CHAR NULL as NULL checks the value first.
+     */
+    public CharSequence getChars() {
+        if (ColumnType.tagOf(getDataType()) == ColumnType.CHAR) {
+            decodedText.clear();
+            decodedText.put((char) longValue);
+            return decodedText;
+        }
+        return getText();
     }
 
     public long getDecimalHh() {
@@ -118,6 +164,29 @@ public final class ConstantExpression extends BoundExpression {
 
     public String getStrValue() {
         return (String) value;
+    }
+
+    /**
+     * The text {@code =} compares with a SYMBOL by: the text {@link #getText()} returns for a STRING, SYMBOL or
+     * VARCHAR constant, or the decimal text of a BYTE, SHORT, INT or LONG constant as {@code =} formats it, which the
+     * constant puts into a sink it owns; null for a NULL value or any other type, CHAR included.
+     */
+    public CharSequence getSymbolKeyText() {
+        final int tag = ColumnType.tagOf(getDataType());
+        switch (tag) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> {
+                final long key = tag == ColumnType.INT ? Numbers.intToLong((int) longValue) : longValue;
+                if (key == Numbers.LONG_NULL) {
+                    return null;
+                }
+                decodedText.clear();
+                decodedText.put(key);
+                return decodedText;
+            }
+            default -> {
+                return getText();
+            }
+        }
     }
 
     /**
@@ -194,8 +263,8 @@ public final class ConstantExpression extends BoundExpression {
     }
 
     /**
-     * Copies the value of the constant; the copy reads the given folded expression, which is the caller's copy
-     * of the original's source.
+     * Copies the value of the constant and its administrative fact; the copy reads the given folded expression,
+     * which is the caller's copy of the original's source.
      */
     public ConstantExpression of(ConstantExpression that, FunctionExpression source) {
         configure(that.getDataType(), that.getPosition(), that.getFunctionFlags());
@@ -204,6 +273,7 @@ public final class ConstantExpression extends BoundExpression {
         lh = that.lh;
         longValue = that.longValue;
         isLiteral = that.isLiteral;
+        administrativeFact = that.administrativeFact;
         if (that.value == that.long256) {
             long256.copyFrom(that.long256);
             value = long256;
@@ -353,6 +423,15 @@ public final class ConstantExpression extends BoundExpression {
     public ConstantExpression ofVarchar(Utf8Sequence value, int position) {
         configure(ColumnType.VARCHAR, position, CONSTANT | STABLE_WITHIN_EXECUTION);
         this.value = value != null ? Utf8String.newInstance(value) : null;
+        return this;
+    }
+
+    /**
+     * Records the administrative fact of the first call the fold that made the constant evaluated, see
+     * {@link #getAdministrativeFact()}; null records that it evaluated none.
+     */
+    public ConstantExpression withAdministrativeFact(RequirementFact fact) {
+        administrativeFact = fact;
         return this;
     }
 

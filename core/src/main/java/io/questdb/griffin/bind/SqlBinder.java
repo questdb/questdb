@@ -30,7 +30,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -101,6 +100,7 @@ public final class SqlBinder implements Mutable {
     final BindContext ctx;
     private final AggregateBinder aggregateBinder;
     private final CairoConfiguration configuration;
+    private final ExpiryPolicyBinder expiryPolicyBinder;
     private final ExpiryReadBinder expiryReadBinder;
     private final FunctionParser functionParser;
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<CharSequence>> hintScopes;
@@ -155,6 +155,7 @@ public final class SqlBinder implements Mutable {
         this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, emptySchema, planNodePools, planTables,
                 preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, planReadIds, temporaries);
         this.expiryReadBinder = new ExpiryReadBinder(ctx, this, expiryPolicyParser);
+        this.expiryPolicyBinder = new ExpiryPolicyBinder(ctx, this, expiryReadBinder, expiryPolicyParser, compiler);
         this.windowBinder = new WindowBinder(ctx, temporaries);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
         this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder, temporaries);
@@ -190,32 +191,6 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
-     * Binds the keep-filter of the scalar EXPIRE ROWS policy {@code predicate} of the table exactly as every read of
-     * the table binds it, see {@link ExpiryReadBinder#bindKeepFilter}, in the current scope, which the caller cleared.
-     * The scan it binds over lists the columns of {@code metadata} as a read's scan lists the columns of the table,
-     * and reads its designated timestamp natively. DDL validates a policy with it before the policy reaches any read:
-     * over the view's metadata at ALTER, and at CREATE over the metadata the view is created with, while {@code token}
-     * names a view that does not exist yet.
-     */
-    public BoundExpression bindExpiryKeepFilter(
-            TableToken token,
-            RecordMetadata metadata,
-            CharSequence predicate,
-            SqlParserCallback parserCallback,
-            SqlExecutionContext executionContext
-    ) throws SqlException {
-        this.parserCallback = parserCallback;
-        final ScanPlan scan = ctx.planNodes.scans.next().of(token, 0, 0);
-        final int timestampIndex = metadata.getTimestampIndex();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            bindScanColumn(scan, i, metadata.getColumnName(i), metadata.getColumnType(i), metadata.isSymbolTableStatic(i),
-                    metadata.isColumnIndexed(i), i == timestampIndex);
-        }
-        scan.markExpiringRead();
-        return expiryReadBinder.bindKeepFilter(scan, predicate, executionContext);
-    }
-
-    /**
      * Binds a stand-alone expression of a statement over the scope, which no alias qualifies.
      */
     public BoundExpression bindExpression(ExpressionNode expression, OutputSchema scope, int preferredType, SqlExecutionContext executionContext)
@@ -242,6 +217,7 @@ public final class SqlBinder implements Mutable {
     public void clear() {
         ctx.clear();
         expiryReadBinder.clear();
+        expiryPolicyBinder.clear();
         aggregateBinder.clear();
         pivotBinder.clear();
         orderBinder.clear();
@@ -287,6 +263,13 @@ public final class SqlBinder implements Mutable {
             tmpOutputColumns.add(getOutputColumnPosition(root, i));
         }
         return tmpOutputColumns;
+    }
+
+    /**
+     * The binder of scalar EXPIRE ROWS policies, which DDL and the cleanup job validate and classify a policy with.
+     */
+    public ExpiryPolicyBinder getExpiryPolicyBinder() {
+        return expiryPolicyBinder;
     }
 
     public SqlParserCallback getParserCallback() {
@@ -436,19 +419,23 @@ public final class SqlBinder implements Mutable {
         return join;
     }
 
-    private BoundExpression bindFilterConjunct(ExpressionNode expression, LogicalPlan input, CharSequence alias,
-                                               boolean isAndArgument, SqlExecutionContext executionContext) throws SqlException {
+    /**
+     * Binds a filter conjunct over {@code output}, the output of {@code source}; a null source stands for a schema whose
+     * columns all come from one source, see {@link #hasSinglePredicateSource(ExpressionNode, OutputSchema, LogicalPlan, CharSequence)}.
+     */
+    private BoundExpression bindFilterConjunct(ExpressionNode expression, OutputSchema output, @Nullable LogicalPlan source,
+                                               CharSequence alias, boolean isAndArgument, SqlExecutionContext executionContext) throws SqlException {
         if (expression.isAnd()) {
-            final BoundExpression left = bindFilterConjunct(expression.lhs, input, alias, true, executionContext);
-            final BoundExpression right = bindFilterConjunct(expression.rhs, input, alias, true, executionContext);
+            final BoundExpression left = bindFilterConjunct(expression.lhs, output, source, alias, true, executionContext);
+            final BoundExpression right = bindFilterConjunct(expression.rhs, output, source, alias, true, executionContext);
             return ctx.expressionRewriter.combineConjunction(left, right, expression.position);
         }
         final IntHashSet nativeTimestampIds = ctx.scope().joinNativeTimestampIds;
         nativeTimestampIds.clear();
-        if (hasSinglePredicateSource(expression, input, alias)) {
-            ctx.copyTimestampScope(input.getOutput());
+        if (hasSinglePredicateSource(expression, output, source, alias)) {
+            ctx.copyTimestampScope(output);
         }
-        final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, input.getOutput(), alias,
+        final BoundExpression bound = ctx.functionBinder.bindPredicate(expression, output, alias,
                 nativeTimestampIds, isAndArgument ? ColumnType.BOOLEAN : ColumnType.UNDEFINED, executionContext);
         if (!isAndArgument) {
             return bound;
@@ -996,27 +983,31 @@ public final class SqlBinder implements Mutable {
         }
     }
 
-    private boolean collectPredicateSource(ExpressionNode expression, LogicalPlan input, CharSequence alias) throws SqlException {
+    private boolean collectPredicateSource(ExpressionNode expression, OutputSchema output, @Nullable LogicalPlan source, CharSequence alias)
+            throws SqlException {
         if (expression == null) {
             return true;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            final OutputSchema output = input.getOutput();
             if (ctx.functionBinder.isOuterColumn(expression, output, alias)) {
                 return true;
             }
+            // Resolves the name over a schema of one source too, so an unknown name fails here as it does over a plan.
             final int id = output.getColumnId(ctx.bindColumnIndex(expression, output, alias));
-            final LogicalPlan origin = LogicalPlans.columnSource(input, id);
+            if (source == null) {
+                return true;
+            }
+            final LogicalPlan origin = LogicalPlans.columnSource(source, id);
             if (predicateSource == null) {
                 predicateSource = origin;
             }
             return predicateSource == origin;
         }
-        if (!collectPredicateSource(expression.rhs, input, alias) || !collectPredicateSource(expression.lhs, input, alias)) {
+        if (!collectPredicateSource(expression.rhs, output, source, alias) || !collectPredicateSource(expression.lhs, output, source, alias)) {
             return false;
         }
         for (int i = 0, n = expression.args.size(); i < n; i++) {
-            if (!collectPredicateSource(expression.args.getQuick(i), input, alias)) {
+            if (!collectPredicateSource(expression.args.getQuick(i), output, source, alias)) {
                 return false;
             }
         }
@@ -1284,7 +1275,7 @@ public final class SqlBinder implements Mutable {
      * other conjuncts.
      */
     BoundExpression bindConjuncts(ExpressionNode expression, LogicalPlan input, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
-        return bindFilterConjunct(expression, input, sourceAlias(source), true, executionContext);
+        return bindFilterConjunct(expression, input.getOutput(), input, sourceAlias(source), true, executionContext);
     }
 
     LatestByPlan bindLatestBy(LogicalPlan input, QueryModel source) throws SqlException {
@@ -1335,7 +1326,17 @@ public final class SqlBinder implements Mutable {
     BoundExpression bindPredicate(
             ExpressionNode expression, LogicalPlan input, CharSequence alias, SqlExecutionContext executionContext
     ) throws SqlException {
-        final OutputSchema metadata = input.getOutput();
+        return bindPredicate(expression, input.getOutput(), input, alias, executionContext);
+    }
+
+    /**
+     * Binds a predicate over {@code metadata}, the output of {@code source}, as a filter of that source. A null source
+     * stands for a schema whose columns all come from one source, such as the columns of a table that DDL binds a
+     * filter over before any plan reads the table.
+     */
+    BoundExpression bindPredicate(
+            ExpressionNode expression, OutputSchema metadata, @Nullable LogicalPlan source, CharSequence alias, SqlExecutionContext executionContext
+    ) throws SqlException {
         if (expression.type == ExpressionNode.CONSTANT) {
             if (SqlKeywords.isTrueKeyword(expression.token)) {
                 return ctx.planNodes.constants.next().ofBoolean(true, expression.position);
@@ -1347,7 +1348,7 @@ public final class SqlBinder implements Mutable {
         if (expression.type != ExpressionNode.LITERAL
                 || ctx.functionBinder.isOuterColumn(expression, metadata, alias)) {
             final BoundExpression bound = ctx.functionBinder.toBooleanSubquery(
-                    bindFilterConjunct(expression, input, alias, false, executionContext));
+                    bindFilterConjunct(expression, metadata, source, alias, false, executionContext));
             if (bound.getDataType() != ColumnType.BOOLEAN) {
                 throw BindContext.nonBooleanConjunct(bound.getDataType(), expression.position, false);
             }
@@ -1382,15 +1383,26 @@ public final class SqlBinder implements Mutable {
     void bindScanColumn(ScanPlan scan, int columnIndex, CharSequence name, int type, boolean isSymbolTableStatic, boolean isIndexed,
                         boolean isTimestamp) {
         final OutputSchema output = scan.getOutput();
-        output.add(ctx.planNodes.nextColumnId(), name, type, true);
-        output.setSymbolTableStatic(output.getColumnCount() - 1, isSymbolTableStatic);
+        bindTableColumn(output, name, type, isSymbolTableStatic, isTimestamp);
         scan.getSourceColumnIndexes().add(columnIndex);
         if (isIndexed) {
             scan.getIndexedColumnIds().add(output.getColumnId(output.getColumnCount() - 1));
         }
         if (isTimestamp) {
-            output.setTimestampIndex(output.getColumnCount() - 1);
             scan.setNativeTimestamp(output.getTimestampColumnId(), type);
+        }
+    }
+
+    /**
+     * Adds a column of a table to {@code output}, as a read of the table lists it: a new column id, the symbol table
+     * capability of the column and, for the designated timestamp, the designation and the native timestamp provenance
+     * a filter of the read parses timestamp literals at.
+     */
+    void bindTableColumn(OutputSchema output, CharSequence name, int type, boolean isSymbolTableStatic, boolean isTimestamp) {
+        output.add(ctx.planNodes.nextColumnId(), name, type, true);
+        output.setSymbolTableStatic(output.getColumnCount() - 1, isSymbolTableStatic);
+        if (isTimestamp) {
+            output.setTimestampIndex(output.getColumnCount() - 1);
             ctx.scope().intrinsicTimestampColumnIds.add(output.getTimestampColumnId());
         }
     }
@@ -1514,12 +1526,28 @@ public final class SqlBinder implements Mutable {
     }
 
     boolean hasSinglePredicateSource(ExpressionNode expression, LogicalPlan input, CharSequence alias) throws SqlException {
+        return hasSinglePredicateSource(expression, input.getOutput(), input, alias);
+    }
+
+    /**
+     * Whether every column the expression names comes from one source of {@code output}, the output of {@code source};
+     * true over a null source, a schema of one source, once every name resolves.
+     */
+    boolean hasSinglePredicateSource(ExpressionNode expression, OutputSchema output, @Nullable LogicalPlan source, CharSequence alias)
+            throws SqlException {
         assert predicateSource == null;
         try {
-            return collectPredicateSource(expression, input, alias);
+            return collectPredicateSource(expression, output, source, alias);
         } finally {
             predicateSource = null;
         }
+    }
+
+    /**
+     * Sets the callback that the parses of a binding outside {@link #bind} report to, such as the keep-filter DDL binds.
+     */
+    void setParserCallback(SqlParserCallback parserCallback) {
+        this.parserCallback = parserCallback;
     }
 
     /**

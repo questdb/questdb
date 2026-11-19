@@ -73,8 +73,6 @@ import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -850,17 +848,11 @@ public class CompiledFilterIRSerializer implements Mutable {
                 }
                 yield token.toImmutable();
             }
-            case ColumnType.CHAR -> {
-                if (longValue == 0) {
-                    yield null;
-                }
-                sink.clear();
-                sink.put((char) longValue);
-                yield quoted(sink);
+            case ColumnType.CHAR -> longValue == 0 ? null : quoted(constant.getChars());
+            case ColumnType.STRING, ColumnType.VARCHAR -> {
+                final CharSequence text = constant.getText();
+                yield text == null ? "null" : quoted(text);
             }
-            case ColumnType.STRING -> constant.getStrValue() == null ? "null" : quoted(constant.getStrValue());
-            case ColumnType.VARCHAR ->
-                    constant.getVarcharValue() == null ? "null" : quoted(utf16(constant.getVarcharValue()));
             case ColumnType.DATE -> {
                 if (longValue == Numbers.LONG_NULL) {
                     yield "null";
@@ -907,8 +899,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         final int count = call.getArgumentCount();
         if (isIntervalIn(call)) {
             final ConstantExpression interval = (ConstantExpression) call.argumentAt(1);
-            final CharSequence intervalText = ColumnType.isVarchar(interval.getDataType())
-                    ? (interval.getVarcharValue() == null ? null : utf16(interval.getVarcharValue())) : interval.getStrValue();
+            final CharSequence intervalText = interval.getText();
             if (intervalText == null) {
                 return false;
             }
@@ -974,15 +965,7 @@ public class CompiledFilterIRSerializer implements Mutable {
 
     private CharSequence quoted(CharSequence value) {
         final CharacterStoreEntry token = characterStore.newEntry();
-        token.put('\'');
-        for (int i = 0, n = value.length(); i < n; i++) {
-            final char c = value.charAt(i);
-            if (c == '\'') {
-                token.put('\'');
-            }
-            token.put(c);
-        }
-        token.put('\'');
+        ConstantExpression.putSqlLiteral(token, value);
         return token.toImmutable();
     }
 
@@ -997,12 +980,6 @@ public class CompiledFilterIRSerializer implements Mutable {
             return parameter.getName();
         }
         return constantTokens.get(node);
-    }
-
-    private CharSequence utf16(Utf8Sequence value) {
-        sink.clear();
-        Utf8s.utf8ToUtf16(value, sink);
-        return sink;
     }
 
     /**
@@ -2310,7 +2287,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     }
 
     private void backfillSymbolFoldedConstant(long offset, final BoundExpression node) throws SqlException {
-        serializeSymbol(offset, node.getPosition(), token(node), SymbolKeyExtractor.textOf(foldedConstants.get(node), sink));
+        serializeSymbol(offset, node.getPosition(), token(node), foldedConstants.get(node).getSymbolKeyText());
     }
 
     /**

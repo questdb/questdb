@@ -3630,6 +3630,36 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicTableFunctionArgumentFolded() throws Exception {
+        // The source of a table function records the first non-deterministic function binding created for its call, as
+        // master's FunctionParser constructed it, one that a fold removes from the argument included: binding builds the
+        // last argument first, and rnd_int() in it first of all.
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now(), now(), "
+                            + "CASE WHEN typeof(rnd_int()) = 'INT' THEN 1 ELSE 2 END) g SAMPLE BY 1h",
+                    "rnd_int()",
+                    "rnd_int"
+            );
+            // A binding error yields to the first non-deterministic function binding created, as master's generation
+            // created the functions of a statement before it validated what consumes them: long_sequence() takes only a
+            // constant, and the first function is one a fold removes, or one in a column a sub-query argument prunes.
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(t.x) m FROM t CROSS JOIN long_sequence(rnd_boolean() AND typeof(rnd_int()) = 'INT') g SAMPLE BY 1h",
+                    "rnd_int()",
+                    "rnd_int"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(t.x) m FROM t CROSS JOIN long_sequence((SELECT count() FROM (SELECT x, now() n FROM long_sequence(1)))) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

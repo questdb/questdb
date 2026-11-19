@@ -35,7 +35,8 @@ import io.questdb.std.str.StringSink;
 
 /**
  * Turns the stored text of an EXPIRE ROWS policy into what binding reads: a filter expression, a LATEST ON, or the query
- * that computes the keep column of a window policy. Binding builds plan nodes from these and never handles the text.
+ * that computes the keep column of a window policy, and the predicate of a scalar policy that DDL validates and the
+ * cleanup job classifies. Binding builds plan nodes from these and never handles the text.
  */
 public final class ExpiryPolicyParser implements Mutable {
     private final SqlParser parser;
@@ -50,6 +51,24 @@ public final class ExpiryPolicyParser implements Mutable {
     @Override
     public void clear() {
         texts.clear();
+    }
+
+    /**
+     * Parses the predicate of a scalar policy as an expression, which may leave text after it unparsed; the cleanup job
+     * reads its threshold from it.
+     */
+    public ExpressionNode parseExpression(CharSequence predicate, SqlParserCallback parserCallback) throws SqlException {
+        return parser.parseExpiryExpression(predicate, parserCallback);
+    }
+
+    /**
+     * Parses the strict form of the keep-rows expression of a scalar policy that the cleanup sweep compiles, see
+     * {@link RowExpiryUtil#appendKeepCase}.
+     */
+    public ExpressionNode parseKeepCase(CharSequence predicate, SqlParserCallback parserCallback) throws SqlException {
+        final StringSink text = texts.next();
+        RowExpiryUtil.appendKeepCase(text, predicate);
+        return parser.parseExpiryExpression(text, parserCallback);
     }
 
     /**
@@ -70,6 +89,14 @@ public final class ExpiryPolicyParser implements Mutable {
         text.putAscii(" PARTITION BY ");
         RowExpiryUtil.appendKeepLatestKeys(text, policy.getPredicate());
         return parser.parseExpiryLatestBy(text, position);
+    }
+
+    /**
+     * Parses the predicate of a scalar policy as one expression that consumes the whole text, which DDL validates and
+     * the cleanup job classifies; text left after the expression fails the parse, as it fails every read.
+     */
+    public ExpressionNode parsePredicate(CharSequence predicate, SqlParserCallback parserCallback) throws SqlException {
+        return parser.parseExpiryPredicate(predicate, parserCallback);
     }
 
     /**

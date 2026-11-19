@@ -34,6 +34,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -51,7 +52,7 @@ public class IsEndOfMonthFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public TimestampPrecisionUse getTimestampPrecisionUse(CharSequence firstConstant) {
+    public TimestampPrecisionUse getTimestampPrecisionUse(BoundExpression firstArgument) {
         return TimestampPrecisionUse.INVARIANT;
     }
 

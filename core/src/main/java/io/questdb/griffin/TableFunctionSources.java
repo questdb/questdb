@@ -55,6 +55,7 @@ import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanNodePools;
+import io.questdb.griffin.plan.logical.RequirementFact;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -134,11 +135,13 @@ public final class TableFunctionSources implements Closeable, Mutable {
             final CharSequence statement = objectDisclosingStatement(model.getShowKind());
             if (statement != null) {
                 final FunctionResolver resolver = parser.getFunctionResolver();
-                final int administrativeCount = resolver.getAdministrativeCallCount();
                 // the callback adds what its own factory for the statement requires
-                resolver.addStatementRequirements(model.getModelPosition(), statement,
-                        SqlExecutionRequirements.DISCLOSES_OBJECTS | callback.getShowExecutionRequirements(model), executionContext);
-                recordAdministrativeCall(plan, resolver, administrativeCount);
+                final int requirements = SqlExecutionRequirements.DISCLOSES_OBJECTS | callback.getShowExecutionRequirements(model);
+                resolver.addStatementRequirements(model.getModelPosition(), statement, requirements, executionContext);
+                if ((requirements & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+                    plan.setAdministrativeFact(RequirementFact.administrative(statement,
+                            resolver.getRequirementPosition(model.getModelPosition()), true));
+                }
             }
             resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
             parser.getFunctionResolver().markCursorFunctionInstantiated();
@@ -190,8 +193,8 @@ public final class TableFunctionSources implements Closeable, Mutable {
         copy.setProjectable(plan.isProjectable());
         copy.copyPhysicalProperties(plan);
         copy.setRecordName(plan.getRecordName());
-        copy.setNonDeterministicCall(plan.getNonDeterministicCallName(), plan.getNonDeterministicCallPosition());
-        copy.setAdministrativeCall(plan.getAdministrativeCallName(), plan.getAdministrativeCallPosition(), plan.isAdministrativeStatement());
+        copy.setNonDeterministicFact(plan.getNonDeterministicFact());
+        copy.setAdministrativeFact(plan.getAdministrativeFact());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));
         views.add(views.getQuick(index));
@@ -275,15 +278,6 @@ public final class TableFunctionSources implements Closeable, Mutable {
         };
     }
 
-    // records on the source the first call or SHOW statement the resolver admitted for it that needs the Enterprise
-    // security context of the caller, see FunctionSourcePlan.getAdministrativeCallName()
-    private static void recordAdministrativeCall(FunctionSourcePlan plan, FunctionResolver resolver, int administrativeCount) {
-        if (resolver.getAdministrativeCallCount() > administrativeCount) {
-            plan.setAdministrativeCall(resolver.getAdministrativeCallName(administrativeCount),
-                    resolver.getAdministrativeCallPosition(administrativeCount), resolver.isAdministrativeStatement(administrativeCount));
-        }
-    }
-
     private void closeSlot(int slot, Throwable primary) {
         if (resources.isOwned(slot)) {
             Misc.free(resources.detach(slot), primary);
@@ -344,19 +338,26 @@ public final class TableFunctionSources implements Closeable, Mutable {
         return function.getRecordCursorFactory();
     }
 
+    /**
+     * Builds the call of the source and records on the source the first call or SHOW statement building it admitted
+     * that needs the Enterprise security context of the caller, and the first non-deterministic function it created
+     * for a context that refuses them: in the call, its arguments, a sub-query among them, which binding compiles
+     * through the same resolver, and a table function or SHOW statement in that sub-query.
+     */
     private Function parseSource(FunctionSourcePlan plan, ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
         final FunctionResolver resolver = parser.getFunctionResolver();
         final SqlExecutionRequirements requirements = resolver.getExecutionRequirements();
         final int deferredCount = requirements.getDeferredCount();
-        final int callCount = resolver.getNonDeterministicCallCount();
-        final int administrativeCount = resolver.getAdministrativeCallCount();
-        final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
-        requirements.markSources(deferredCount);
-        if (resolver.getNonDeterministicCallCount() > callCount) {
-            plan.setNonDeterministicCall(resolver.getNonDeterministicCallName(callCount), resolver.getNonDeterministicCallPosition(callCount));
+        final int capture = resolver.beginRequirementCapture();
+        try {
+            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+            requirements.markSources(deferredCount);
+            plan.setNonDeterministicFact(resolver.getCapturedNonDeterministicFact(capture));
+            plan.setAdministrativeFact(resolver.getCapturedAdministrativeFact(capture));
+            return function;
+        } finally {
+            resolver.endRequirementCapture(capture);
         }
-        recordAdministrativeCall(plan, resolver, administrativeCount);
-        return function;
     }
 
     private Path path() {
@@ -385,12 +386,11 @@ public final class TableFunctionSources implements Closeable, Mutable {
         if (index < 0) {
             throw new IllegalStateException("table-function source was not prepared");
         }
-        if (plan.getAdministrativeCallName() != null && executionContext.isViewMetadataSubquery()) {
+        if (executionContext.isViewMetadataSubquery()) {
             // Binding admitted the source in a sub-query nested in a view's PIVOT IN subquery, which runs only the
             // sources its generated plan takes, as master's SqlOptimiser.checkDeferredViewMetadataRequirements()
             // rejects only those (cd8749a10a); see FunctionBinder.bindSubquery(). Reject it before its cursor opens.
-            SqlExecutionRequirements.checkViewMetadataSubquery(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
-                    plan.getAdministrativeCallPosition(), plan.getAdministrativeCallName(), plan.isAdministrativeStatement());
+            SqlExecutionRequirements.checkViewMetadataSubquery(plan.getAdministrativeFact());
         }
         final int slot = slots.getQuick(index);
         if (!resources.isOwned(slot)) {
