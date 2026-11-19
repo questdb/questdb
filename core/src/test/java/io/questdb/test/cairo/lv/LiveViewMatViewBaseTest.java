@@ -343,6 +343,26 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAFilteredViewOverAMatViewRefusesBelowTheNewestBucket() throws Exception {
+        // A filtering view over a deduplicating mat view, whose backlog commit at the frontier
+        // could be a replacement the filter rejects - but a REPLACE_RANGE replaces rows inside its
+        // range only, so it stands nothing down for the rows below it, and the history floor still
+        // refuses the rebuild that would drop 2026-01-01.
+        assertMemoryLeak(() -> {
+            seedViewOverTtlMatView(" WHERE sv > 0");
+            refreshMatViewWithoutTheView("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T05:20:00.000000Z', 'a', 16.0)");
+            shutdown();
+            removeTimeline();
+
+            final LogCapture capture = new LogCapture();
+            final LiveViewRebuildRestatementGuard guard = restartCapturing(capture);
+
+            assertTtlViewRebuildRefusedBelowTheNewestBucket(guard, capture, "2026-01-02T00:00:00.000000Z", TTL_VIEW_ROWS);
+            capture.assertNotLogged("live view rebuild from the applied base checks only the restatement guard's history floor");
+        });
+    }
+
+    @Test
     public void testANewestBucketRefreshDuringABlockKeepsTheBlockOverTheDayTtlEvicted() throws Exception {
         // The first restart with no timeline refuses on the history floor over every row the view
         // holds. During the block a late base row makes the mat view refresh the view's newest
@@ -1111,11 +1131,18 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
      * the mat view summing the twenty rows up to each, created with the clock at the epoch.
      */
     private void createViewOverTtlMatView() throws Exception {
+        createViewOverTtlMatView("");
+    }
+
+    /**
+     * The same, with the view filtered by {@code whereClause} unless it is empty.
+     */
+    private void createViewOverTtlMatView(String whereClause) throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base SAMPLE BY 1h) PARTITION BY DAY TTL 1 DAY");
         drainWalAndMatViewQueues(engine);
         setCurrentMicros(0L);
-        execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + TTL_VIEW_SQL);
+        execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + TTL_VIEW_SQL + whereClause);
     }
 
     private void createMinuteRangeViewOverMatView() throws Exception {
@@ -1295,8 +1322,16 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
      * the mat view's TTL evicts 2026-01-01 on it, and the view keeps that day's row.
      */
     private void seedViewOverTtlMatView() throws Exception {
+        seedViewOverTtlMatView("");
+    }
+
+    /**
+     * The same, with the view filtered by {@code whereClause} unless it is empty. Every row the
+     * cases commit passes the filters they use.
+     */
+    private void seedViewOverTtlMatView(String whereClause) throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
-        createViewOverTtlMatView();
+        createViewOverTtlMatView(whereClause);
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
             refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-02T00:10:00.000000Z', 'a', 2.0)");
