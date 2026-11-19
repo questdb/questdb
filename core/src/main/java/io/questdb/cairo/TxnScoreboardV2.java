@@ -126,6 +126,33 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         seqTxnEntriesMem = 0;
     }
 
+    @Override
+    public int copyReaderSeqTxns(long currentTableTxn, long address, int capacity) {
+        // Afterwards the max is at or above the caller's txn either way, so readers admitted
+        // later start at or above the caller's current seqTxn.
+        updateMax(currentTableTxn);
+        int count = 0;
+        for (int i = 0; i < bitmapCount; i++) {
+            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
+            int base = i * Long.SIZE;
+            while (bitmap != 0) {
+                final long lowestBit = Long.lowestOneBit(bitmap);
+                final long seqTxn = readSeqTxn(base + Long.numberOfTrailingZeros(lowestBit));
+                if (seqTxn == UNKNOWN_SEQ_TXN) {
+                    return -1;
+                }
+                if (seqTxn != NO_SEQ_TXN_FLOOR) {
+                    if (count < capacity) {
+                        Unsafe.getUnsafe().putLong(address + (long) count * Long.BYTES, seqTxn);
+                    }
+                    count++;
+                }
+                bitmap ^= lowestBit;
+            }
+        }
+        return count;
+    }
+
     @TestOnly
     public long getActiveReaderCount(long txn) {
         if (getActiveReaderCount() == 0) {
@@ -196,7 +223,9 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         // _txn publishes tableTxn and seqTxn in one stable view, and seqTxn does not decrease
         // as tableTxn advances. A reader admitted after updateMax() therefore cannot lower this
         // floor. Reader-pool copies keep their source reader at the copied snapshot until they close.
-        // Callers must defer reclamation during a checkpoint, which may close its source reader.
+        // A checkpoint takes the CHECKPOINT_ID slot at its seqTxn before it closes its source reader.
+        // A caller that deletes files also checks that no checkpoint is in progress, after the scan: a
+        // checkpoint may take the slot and close its source reader during the scan.
         long min = currentSeqTxn;
         for (int i = 0; i < bitmapCount; i++) {
             long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
