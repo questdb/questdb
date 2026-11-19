@@ -365,6 +365,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             rowCount = copyOrderedBatchedStrTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
         } else if (ColumnType.isVarchar(metadata.getColumnType(cursorTimestampIndex))) {
             rowCount = copyOrderedBatchedVarcharTimestamp(context, writer, cursor, copier, cursorTimestampIndex, batchSize, o3MaxLag, reporter);
+        } else if (ColumnType.isNull(timestampColumnType)) {
+            rowCount = copyOrderedBatchedNullTimestamp(cursor, reporter);
         } else {
             rowCount = copyOrderedBatched0(context, writer, cursor, copier, timestampColumnType, cursorTimestampIndex, batchSize, o3MaxLag, reporter, reportFrequency);
         }
@@ -1033,6 +1035,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         reporter.onProgress(CopyDataProgressReporter.Stage.Finish, rowCount);
 
         return rowCount;
+    }
+
+    // A NULL-typed column holds no value, and records that materialize rows, such as map records and
+    // sort chains, keep no bytes for it to read. Every row would get a NULL designated timestamp, which
+    // the writers reject, so the first row fails without reading it.
+    private static long copyOrderedBatchedNullTimestamp(RecordCursor cursor, CopyDataProgressReporter reporter) {
+        reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
+        if (cursor.hasNext()) {
+            throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+        }
+        reporter.onProgress(CopyDataProgressReporter.Stage.Finish, 0);
+        return 0;
     }
 
     // returns number of copied rows
@@ -2697,6 +2711,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // so it reaches the caller unchanged: a failed flush keeps its data-sync classification and carries
         // no position in the view SQL.
         boolean isWritingDefinition = false;
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             int remainingRetries = maxRecompileAttempts;
             for (; ; ) {
@@ -2803,6 +2819,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             // position is reported from the view SQL, we have to adjust it
             throw SqlException.$(viewSqlPosition + e.getPosition(), e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewCompile(wasViewCompile);
         }
     }
 
@@ -2890,15 +2908,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
-    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) {
+    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
         final CharSequence tableName = unquote(model.getTableName());
-        final TableToken tt = engine.verifyTableName(tableName);
-        if (tt != null) {
+        for (int retries = 0; ; retries++) {
+            final TableToken tt = engine.verifyTableName(tableName);
             // a table the principal may not see fails exactly like a missing one does in verifyTableName()
             if (!executionContext.getSecurityContext().isTableVisible(tt)) {
                 throw CairoException.tableDoesNotExist(tableName);
             }
-            executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
+            // COPY <table> TO exports every column, so every column must be readable
+            try (TableMetadata metadata = engine.getTableMetadata(tt)) {
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                executionContext.getSecurityContext().authorizeSelect(tt, columnNames);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= maxRecompileAttempts) {
+                    throw SqlException.position(model.getTableNameExpr().position)
+                            .put("table schema changed too many times [table=").put(tableName).put(']');
+                }
+                // DROP/CREATE can replace the token before metadata opens. Resolve the name and
+                // check visibility again rather than authorize the replacement with the old token.
+            }
         }
     }
 
@@ -6370,6 +6403,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long sqlId = queryRegistry.register(createViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createViewOp.getSqlText(), executionContext, false);
+        final boolean wasViewCompile = executionContext.isViewCompile();
+        executionContext.setViewCompile(true);
         try {
             final int status = executionContext.getTableStatus(path, createViewOp.getTableName());
             if (status == TableUtils.TABLE_EXISTS) {
@@ -6477,6 +6512,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, sqlId, createViewOp.getSqlText(), executionContext, beginNanos);
             throw th;
         } finally {
+            executionContext.setViewCompile(wasViewCompile);
             queryRegistry.unregister(sqlId, executionContext);
         }
     }

@@ -45,4 +45,9 @@ public class ViewCompilerExecutionContext extends SqlExecutionContextImpl {
     public boolean isBackgroundJob() {
         return true;
     }
+
+    @Override
+    public boolean isViewCompile() {
+        return true;
+    }
 }

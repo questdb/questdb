@@ -51,6 +51,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -581,6 +582,27 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testScrapeBeforeWorkersStartExportsNaNJobStartMetrics() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final Metrics metrics = new Metrics(true, new MetricsRegistryImpl());
+            final WorkerPoolManager workerPoolManager = createMetricsWorkerPoolManager(metrics, null);
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(1024)) {
+                // the registry renders gauges before the manager target updates them, so the second scrape sees the update
+                metrics.scrapeIntoPrometheus(sink);
+                sink.clear();
+                metrics.scrapeIntoPrometheus(sink);
+                final String scraped = sink.toString();
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_min NaN\n");
+                TestUtils.assertContains(scraped, "questdb_workers_job_start_micros_max NaN\n");
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMinElapsedMicros());
+                Assert.assertEquals(Numbers.LONG_NULL, metrics.workerMetrics().getMaxElapsedMicros());
+            } finally {
+                workerPoolManager.halt();
+            }
+        });
+    }
+
+    @Test
     public void testScrapeWorkerMetrics() {
         int events = 20;
         AtomicInteger count = new AtomicInteger();
@@ -794,17 +816,17 @@ public class WorkerPoolManagerTest {
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolNetworkConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolQueryConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
             public WorkerPoolConfiguration getSharedWorkerPoolWriteConfiguration() {
-                return TestWorkerPool.withRandomMode(rnd, () -> workerCount);
+                return TestWorkerPool.withRandomMode(rnd, poolConfiguration(workerCount, metrics));
             }
 
             @Override
@@ -864,6 +886,20 @@ public class WorkerPoolManagerTest {
                 throw new RuntimeException(END_MESSAGE);
             }
             return false; // not eager
+        };
+    }
+
+    private static WorkerPoolConfiguration poolConfiguration(int workerCount, Metrics metrics) {
+        return new WorkerPoolConfiguration() {
+            @Override
+            public Metrics getMetrics() {
+                return metrics;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workerCount;
+            }
         };
     }
 

@@ -16,5 +16,6 @@ steps:
     displayName: "Set git low-speed abort thresholds"
   - checkout: self
     fetchDepth: 1
+    fetchTags: false
     lfs: false
     submodules: false
