@@ -84,7 +84,8 @@ public final class SymbolKeyExtractor implements Mutable {
                                             FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
         if (value instanceof ConstantExpression constant && ColumnType.tagOf(constant.getDataType()) != ColumnType.STRING) {
             return switch (ColumnType.tagOf(constant.getDataType())) {
-                case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL : StrConstant.fromValue(constant.getChars());
+                case ColumnType.CHAR ->
+                        constant.getLongValue() == 0 ? StrConstant.NULL : StrConstant.fromValue(constant.getChars());
                 default -> StrConstant.fromValue(constant.getSymbolKeyText());
             };
         }
@@ -624,6 +625,22 @@ public final class SymbolKeyExtractor implements Mutable {
         private final ObjList<BoundExpression> values = new ObjList<>();
         private boolean isKnown = true;
 
+        /**
+         * Adds the text without copying it: a bind variable's name, or the text of a constant, which the constant
+         * holds or formats into a sink it owns, lives as long as the plan.
+         */
+        private boolean addText(CharSequenceHashSet set, CharSequence text) {
+            if (text == null) {
+                return set.addNull();
+            }
+            final int index = set.keyIndex(text);
+            if (index < 0) {
+                return false;
+            }
+            set.addAtWithBorrowed(index, text);
+            return true;
+        }
+
         void add(BoundExpression value) {
             final boolean isAdded;
             if (value instanceof BindVariableExpression parameter) {
@@ -684,22 +701,6 @@ public final class SymbolKeyExtractor implements Mutable {
 
         int size() {
             return values.size();
-        }
-
-        /**
-         * Adds the text without copying it: a bind variable's name, or the text of a constant, which the constant
-         * holds or formats into a sink it owns, lives as long as the plan.
-         */
-        private boolean addText(CharSequenceHashSet set, CharSequence text) {
-            if (text == null) {
-                return set.addNull();
-            }
-            final int index = set.keyIndex(text);
-            if (index < 0) {
-                return false;
-            }
-            set.addAtWithBorrowed(index, text);
-            return true;
         }
     }
 }

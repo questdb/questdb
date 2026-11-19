@@ -1864,7 +1864,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case FunctionExpression call -> ctx.planNodes.functions.next().of(call, position);
                 // a scalar sub-query reports its row-count errors at its own position
                 case CursorExpression cursor -> ctx.planNodes.cursors.next().of(cursor);
-                default -> constant(function, position).withAdministrativeFact(RequirementFact.firstAdministrative(argument));
+                default ->
+                        constant(function, position).withAdministrativeFact(RequirementFact.firstAdministrative(argument));
             };
             if (!unconstructedIndex.excludes(argument)) {
                 addUnconstructed(repositioned);
