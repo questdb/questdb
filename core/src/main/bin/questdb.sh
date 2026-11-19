@@ -94,7 +94,7 @@ function usage {
     echo ""
     echo "Options:"
     echo "  -f    Force overwrite public directory"
-    echo "  -c    Container mode: run in the foreground, logging to stdout"
+    echo "  -c    Container mode: run in the foreground with output on stdout"
     echo "  -n    Disable HUP handler"
     echo "  -p    Enable async profiler at startup - continuous profiling"
     echo "  -d    Set QuestDB root directory"
@@ -154,7 +154,7 @@ function export_jemalloc() {
     # auto-enable jemalloc on Linux x86_64 for open source edition with bundled JRE
     # if QDB_JEMALLOC is not explicitly set
     if [[ -z "${QDB_JEMALLOC+x}" ]]; then
-        if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && "$QDB_PACKAGE" == "withjre" ]]; then
+        if [[ "$QDB_OS" == "Linux" && "$arch" == "x86_64" && "$JAVA_MAIN" == *"io.questdb"* && -f "$BASE/java" ]]; then
             QDB_JEMALLOC="true"
         fi
     fi
