@@ -154,20 +154,11 @@ public class MicrosFormatUtils {
     }
 
     public static void appendYear0(@NotNull CharSink<?> sink, int val) {
-        if (Math.abs(val) < 10) {
-            sink.putAscii('0');
-        }
-        appendYear(sink, val);
+        append0(sink, (val != 0 ? val : 1) % 100);
     }
 
     public static void appendYear00(@NotNull CharSink<?> sink, int val) {
-        int v = Math.abs(val);
-        if (v < 10) {
-            sink.putAscii('0').putAscii('0');
-        } else if (v < 100) {
-            sink.putAscii('0');
-        }
-        appendYear(sink, val);
+        append00(sink, (val != 0 ? val : 1) % 1000);
     }
 
     public static void appendYear000(@NotNull CharSink<?> sink, int val) {

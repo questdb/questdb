@@ -563,15 +563,11 @@ public class NanosFormatCompiler {
                 case OP_YEAR_TWO_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.iconst(100);
-                    asm.irem();
                     asm.invokeStatic(appendYear0Index);
                     break;
                 case OP_YEAR_THREE_DIGITS:
                     asm.aload(FA_LOCAL_SINK);
                     asm.iload(fmtAttributeIndex[FA_YEAR]);
-                    asm.iconst(1000);
-                    asm.irem();
                     asm.invokeStatic(appendYear00Index);
                     break;
                 case OP_YEAR_FOUR_DIGITS:
