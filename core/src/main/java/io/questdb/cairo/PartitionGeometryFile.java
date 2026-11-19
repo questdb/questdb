@@ -41,12 +41,34 @@ import java.io.Closeable;
  * partition's own directory.
  */
 public class PartitionGeometryFile implements Closeable, Mutable {
+    /**
+     * Piece field value meaning "no claim": the piece's rows with equal designated timestamps are not known to be in
+     * dedup key order. See {@link #PIECE_OFFSET_DEDUP_SORT_VERSION_64}.
+     */
+    public static final long DEDUP_SORT_VERSION_UNSET = -1;
     public static final int HEADER_SIZE = 56;
-    public static final int MAGIC = 0x4D4F4547; // 'G','E','O','M'
+    /**
+     * Record format with 48-byte pieces, written before the dedup sort version existed. Read only: {@link #read}
+     * widens its pieces in memory to the current layout with {@link #DEDUP_SORT_VERSION_UNSET}; {@link #append}
+     * always writes {@link #MAGIC}.
+     */
+    public static final int LEGACY_MAGIC = 0x4D4F4547; // 'G','E','O','M'
+    public static final int LEGACY_PIECE_SIZE = 48;
+    public static final int MAGIC = 0x324F4547; // 'G','E','O','2'
     // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on purpose:
     // PartitionGeometry.publish rotates to a fresh generation once a record would cross this, leaving headroom under
     public static final long MAX_FILE_SIZE = 100L * 1024 * 1024;
-    public static final int PIECE_SIZE = 48;
+    /**
+     * The smallest record a geometry file can hold, in either layout: a header and one legacy piece. A file shorter
+     * than this holds no record a reader could name.
+     */
+    public static final int MIN_RECORD_SIZE = HEADER_SIZE + LEGACY_PIECE_SIZE;
+    public static final int PIECE_SIZE = 56;
+    /**
+     * The table dedup version ({@code _meta} offset 64) whose keys sort the piece's rows within each designated
+     * timestamp, in column id order with WAL apply's physical comparisons, or {@link #DEDUP_SORT_VERSION_UNSET}.
+     */
+    public static final int PIECE_OFFSET_DEDUP_SORT_VERSION_64 = 48;
     public static final int HEADER_OFFSET_CHECKSUM_64 = 32;
     public static final int HEADER_OFFSET_LAST_WRITE_MICROS_64 = 40;
     public static final int HEADER_OFFSET_LIVE_ROWS_64 = 24;
@@ -68,6 +90,8 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     private long buf;
     private long bufCapacity;
     private int pieceCount;
+    // On-disk size of the record read last: a legacy record is narrower than the in-memory layout.
+    private long readRecordSize;
 
     /**
      * {@code memoryTag} should name the owning subsystem - {@code TableReader}, {@code TableWriter} or an
@@ -109,7 +133,15 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         Unsafe.putLong(buf + HEADER_OFFSET_LAST_WRITE_MICROS_64, 0);
     }
 
-    public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
+    public void addPiece(
+            long tsLo,
+            long tsHi,
+            long rowOffset,
+            long rowCount,
+            long writerTxn,
+            long lastWriteMicros,
+            long dedupSortVersion
+    ) {
         ensureCapacity(recordSize(pieceCount + 1));
         final long p = buf + HEADER_SIZE + (long) PIECE_SIZE * pieceCount;
         Unsafe.putLong(p + PIECE_OFFSET_TS_LO_64, tsLo);
@@ -119,6 +151,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         // Which commit last moved this piece's bytes, and when. A KEEP carries the old pair forward.
         Unsafe.putLong(p + PIECE_OFFSET_WRITER_TXN_64, writerTxn);
         Unsafe.putLong(p + PIECE_OFFSET_LAST_WRITE_MICROS_64, lastWriteMicros);
+        Unsafe.putLong(p + PIECE_OFFSET_DEDUP_SORT_VERSION_64, dedupSortVersion);
         pieceCount++;
     }
 
@@ -129,8 +162,9 @@ public class PartitionGeometryFile implements Closeable, Mutable {
      */
     public long append(FilesFacade ff, Path partitionDir, int generation, long offset, int commitMode) {
         final long size = recordSize(pieceCount);
+        Unsafe.putInt(buf + HEADER_OFFSET_MAGIC_32, MAGIC);
         Unsafe.putInt(buf + HEADER_OFFSET_PIECE_COUNT_32, pieceCount);
-        Unsafe.putLong(buf + HEADER_OFFSET_CHECKSUM_64, checksum(buf, pieceCount));
+        Unsafe.putLong(buf + HEADER_OFFSET_CHECKSUM_64, checksum(buf, pieceCount, PIECE_SIZE));
 
         final int dirLen = partitionDir.size();
         long fd = -1;
@@ -186,6 +220,10 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         return pieceCount;
     }
 
+    public long getPieceDedupSortVersion(int index) {
+        return getPieceLong(index, PIECE_OFFSET_DEDUP_SORT_VERSION_64);
+    }
+
     public long getPieceRowCount(int index) {
         return getPieceLong(index, PIECE_OFFSET_ROW_COUNT_64);
     }
@@ -210,6 +248,17 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         return getPieceLong(index, PIECE_OFFSET_TS_LO_64);
     }
 
+    /**
+     * The on-disk size of the record {@link #read} loaded last: a legacy record is narrower than
+     * {@link #recordSize(int)} of its piece count.
+     */
+    public long getReadRecordSize() {
+        return readRecordSize;
+    }
+
+    /**
+     * The size the record built since {@link #beginRecord} takes on disk.
+     */
     public long getRecordSize() {
         return recordSize(pieceCount);
     }
@@ -236,7 +285,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             }
             final int magic = Unsafe.getInt(buf + HEADER_OFFSET_MAGIC_32);
             final int count = Unsafe.getInt(buf + HEADER_OFFSET_PIECE_COUNT_32);
-            if (magic != MAGIC || count < 1 || count > MAX_PIECE_COUNT) {
+            if (pieceSizeOf(magic) < 0 || count < 1 || count > MAX_PIECE_COUNT) {
                 throw CairoException.critical(0)
                         .put("invalid partition geometry record [path=").put(partitionDir)
                         .put(", offset=").put(offset)
@@ -272,7 +321,8 @@ public class PartitionGeometryFile implements Closeable, Mutable {
             }
             final int magic = Unsafe.getInt(buf + HEADER_OFFSET_MAGIC_32);
             final int count = Unsafe.getInt(buf + HEADER_OFFSET_PIECE_COUNT_32);
-            if (magic != MAGIC || count < 1 || count > MAX_PIECE_COUNT) {
+            final int pieceSize = pieceSizeOf(magic);
+            if (pieceSize < 0 || count < 1 || count > MAX_PIECE_COUNT) {
                 throw CairoException.critical(0)
                         .put("invalid partition geometry record [path=").put(partitionDir)
                         .put(", offset=").put(offset)
@@ -280,8 +330,9 @@ public class PartitionGeometryFile implements Closeable, Mutable {
                         .put(", pieceCount=").put(count)
                         .put(']');
             }
-            final long size = recordSize(count);
-            ensureCapacity(size);
+            final long size = HEADER_SIZE + (long) pieceSize * count;
+            // Room for the widened in-memory layout of a legacy record too.
+            ensureCapacity(recordSize(count));
             final long tail = size - HEADER_SIZE;
             if (ff.read(fd, buf + HEADER_SIZE, tail, offset + HEADER_SIZE) != tail) {
                 final long fileSize = ff.length(fd);
@@ -293,13 +344,17 @@ public class PartitionGeometryFile implements Closeable, Mutable {
                         .put(']');
             }
             final long stored = Unsafe.getLong(buf + HEADER_OFFSET_CHECKSUM_64);
-            if (stored != checksum(buf, count)) {
+            if (stored != checksum(buf, count, pieceSize)) {
                 throw CairoException.critical(0)
                         .put("partition geometry checksum mismatch [path=").put(partitionDir)
                         .put(", offset=").put(offset)
                         .put(']');
             }
+            if (pieceSize == LEGACY_PIECE_SIZE) {
+                widenLegacyPieces(count);
+            }
             pieceCount = count;
+            readRecordSize = size;
         } finally {
             if (fd > -1) {
                 ff.close(fd);
@@ -320,7 +375,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         Unsafe.putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, physicalRows);
     }
 
-    private static long checksum(long addr, int pieceCount) {
+    private static long checksum(long addr, int pieceCount, int pieceSize) {
         // Deliberately skips HEADER_OFFSET_CHECKSUM_64 itself.
         long h = 0xcbf29ce484222325L;
         h = mix(h, Unsafe.getInt(addr + HEADER_OFFSET_MAGIC_32));
@@ -332,10 +387,21 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         // covered by it and has to be mixed in by hand.
         h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_LAST_WRITE_MICROS_64));
         h = mix(h, Unsafe.getLong(addr + HEADER_OFFSET_SEQ_TXN_64));
-        for (long p = addr + HEADER_SIZE, lim = p + (long) PIECE_SIZE * pieceCount; p < lim; p += Long.BYTES) {
+        for (long p = addr + HEADER_SIZE, lim = p + (long) pieceSize * pieceCount; p < lim; p += Long.BYTES) {
             h = mix(h, Unsafe.getLong(p));
         }
         return h;
+    }
+
+    /**
+     * The piece entry size of a record with this magic, or -1 for an unknown magic.
+     */
+    private static int pieceSizeOf(int magic) {
+        return switch (magic) {
+            case MAGIC -> PIECE_SIZE;
+            case LEGACY_MAGIC -> LEGACY_PIECE_SIZE;
+            default -> -1;
+        };
     }
 
     /**
@@ -378,5 +444,22 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     private long getPieceLong(int index, int fieldOffset) {
         assert index > -1 && index < pieceCount;
         return Unsafe.getLong(buf + HEADER_SIZE + (long) PIECE_SIZE * index + fieldOffset);
+    }
+
+    /**
+     * Spreads {@code count} legacy 48-byte pieces, read back to back after the header, into the current layout,
+     * last piece first so no source bytes are overwritten before they are moved. The buffer already has room for the
+     * widened record.
+     */
+    private void widenLegacyPieces(int count) {
+        for (int p = count - 1; p >= 0; p--) {
+            final long src = buf + HEADER_SIZE + (long) LEGACY_PIECE_SIZE * p;
+            final long dst = buf + HEADER_SIZE + (long) PIECE_SIZE * p;
+            if (dst != src) {
+                Vect.memmove(dst, src, LEGACY_PIECE_SIZE);
+            }
+            Unsafe.putLong(dst + PIECE_OFFSET_DEDUP_SORT_VERSION_64, DEDUP_SORT_VERSION_UNSET);
+        }
+        Unsafe.putInt(buf + HEADER_OFFSET_MAGIC_32, MAGIC);
     }
 }

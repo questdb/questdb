@@ -892,6 +892,181 @@ bool is_array_column_merge_identical(
     }
 }
 
+// Key comparison of two rows named by merge index entries: an entry's row id carries bit 63 for a row of the
+// partition column, which reads NULL below the column top, and no bit for a row of the O3 data. The order is the
+// one the dedup of the O3 data sorts by and the merge above searches in: keys in the order of the key list,
+// fixed-size values as signed integers of their width, variable-size values by length and then by bytes.
+constexpr uint64_t merge_index_column_bit = 1ull << 63;
+
+template<typename T>
+inline T read_merge_index_fixed(const dedup_column *col, uint64_t i) {
+    if (i & merge_index_column_bit) {
+        const auto row = static_cast<int64_t>(i & ~merge_index_column_bit);
+        return row >= col->get_column_top() ? col->get_column_data<T>()[row] : col->get_null_value<T>();
+    }
+    return col->get_o3_data<T>()[i];
+}
+
+template<typename T>
+inline int compare_merge_index_fixed(const dedup_column *col, uint64_t l, uint64_t r) {
+    const T l_val = read_merge_index_fixed<T>(col, l);
+    const T r_val = read_merge_index_fixed<T>(col, r);
+    // One of the values can be MIN of the type (null value)
+    // and subtraction can result in type overflow
+    return (l_val > r_val) - (l_val < r_val);
+}
+
+inline int compare_merge_index_varchar(const dedup_column *col, uint64_t l, uint64_t r) {
+    const auto cols = col->get_column_data_pointers();
+    const column_pointer *l_col = &cols[(l & merge_index_column_bit) ? 0 : 1];
+    const column_pointer *r_col = &cols[(r & merge_index_column_bit) ? 0 : 1];
+    const auto l_row = static_cast<int64_t>(l & ~merge_index_column_bit);
+    const auto r_row = static_cast<int64_t>(r & ~merge_index_column_bit);
+    const bool l_top = (l & merge_index_column_bit) && l_row < col->get_column_top();
+    const bool r_top = (r & merge_index_column_bit) && r_row < col->get_column_top();
+    if (l_top || r_top) {
+        // A row below the column top is NULL, which compares as size -1: equal to a stored NULL, below the rest.
+        const int32_t l_size = l_top ? -1 : read_varchar_size(l_col->aux_data + l_row * sizeof(VarcharAuxEntrySplit));
+        const int32_t r_size = r_top ? -1 : read_varchar_size(r_col->aux_data + r_row * sizeof(VarcharAuxEntrySplit));
+        return (l_size > r_size) - (l_size < r_size);
+    }
+    return compare_varchar(l_col, l_row, r_col, r_row);
+}
+
+inline const uint8_t *read_merge_index_str_bin(const dedup_column *col, uint64_t i) {
+    if (i & merge_index_column_bit) {
+        const auto row = static_cast<int64_t>(i & ~merge_index_column_bit);
+        if (row < col->get_column_top()) {
+            return col->get_null_value_ptr();
+        }
+        // Var-data offsets are always 64-bit, for STRING as for BINARY.
+        return col->get_column_var_data<uint8_t>() + col->get_column_data<int64_t>()[row];
+    }
+    return col->get_o3_var_data<uint8_t>() + col->get_o3_data<int64_t>()[i];
+}
+
+inline int compare_merge_index_rows(const dedup_column *keys, int32_t key_count, uint64_t l, uint64_t r) {
+    for (int32_t c = 0; c < key_count; c++) {
+        const dedup_column *col = &keys[c];
+        int diff;
+        switch (col->value_size_bytes) {
+            case 1:
+                diff = compare_merge_index_fixed<int8_t>(col, l, r);
+                break;
+            case 2:
+                diff = compare_merge_index_fixed<int16_t>(col, l, r);
+                break;
+            case 4:
+                diff = compare_merge_index_fixed<int32_t>(col, l, r);
+                break;
+            case 8:
+                diff = compare_merge_index_fixed<int64_t>(col, l, r);
+                break;
+            case 16:
+                diff = compare_merge_index_fixed<__int128>(col, l, r);
+                break;
+            case 32:
+                diff = compare_merge_index_fixed<int256>(col, l, r);
+                break;
+            case -1:
+                switch ((ColumnType) (col->column_type)) {
+                    case ColumnType::VARCHAR:
+                        diff = compare_merge_index_varchar(col, l, r);
+                        break;
+                    case ColumnType::STRING:
+                        diff = compare_str_bin<int32_t, 2>(
+                                read_merge_index_str_bin(col, l),
+                                read_merge_index_str_bin(col, r)
+                        );
+                        break;
+                    case ColumnType::BINARY:
+                        diff = compare_str_bin<int64_t, 1>(
+                                read_merge_index_str_bin(col, l),
+                                read_merge_index_str_bin(col, r)
+                        );
+                        break;
+                    default:
+                        assertm(false, "unsupported column type");
+                        return 0;
+                }
+                break;
+            default:
+                assertm(false, "unsupported column value_size_bytes for comparison");
+                return 0;
+        }
+        if (diff != 0) {
+            return diff;
+        }
+    }
+    return 0;
+}
+
+// Counts the runs of equal timestamps of a dedup merge index whose rows are not in key order and, when sort is
+// set, puts each of them in key order. Rows with equal keys keep the order the merge gave them: after the merge
+// they are either copies of one O3 row or partition rows, which the merge emits in ascending row order, so the
+// row id breaks the tie and no stable sort is needed.
+inline int64_t dedup_merge_index_key_order(
+        index_t *index,
+        const int64_t count,
+        const dedup_column *keys,
+        const int32_t key_count,
+        const bool sort
+) {
+    int64_t unordered = 0;
+    int64_t lo = 0;
+    while (lo < count) {
+        int64_t hi = lo + 1;
+        while (hi < count && index[hi].ts == index[lo].ts) {
+            hi++;
+        }
+        if (hi - lo > 1) {
+            bool ordered = true;
+            for (int64_t k = lo + 1; k < hi; k++) {
+                if (compare_merge_index_rows(keys, key_count, index[k - 1].i, index[k].i) > 0) {
+                    ordered = false;
+                    break;
+                }
+            }
+            if (!ordered) {
+                unordered++;
+                if (sort) {
+                    std::sort(
+                            index + lo, index + hi,
+                            [&](const index_t &l, const index_t &r) -> bool {
+                                const int diff = compare_merge_index_rows(keys, key_count, l.i, r.i);
+                                return diff != 0 ? diff < 0 : l.i < r.i;
+                            }
+                    );
+                }
+            }
+        }
+        lo = hi;
+    }
+    return unordered;
+}
+
+// Finds the first partition row in (row_lo, row_hi_incl] that has the timestamp of the row before it and a
+// smaller key, or -1 when the rows of every timestamp in [row_lo, row_hi_incl] are in key order.
+inline int64_t dedup_column_find_key_disorder(
+        const uint64_t *src,
+        const int64_t row_lo,
+        const int64_t row_hi_incl,
+        const dedup_column *keys,
+        const int32_t key_count
+) {
+    for (int64_t row = row_lo + 1; row <= row_hi_incl; row++) {
+        if (src[row - 1] == src[row]
+            && compare_merge_index_rows(
+                keys, key_count,
+                static_cast<uint64_t>(row - 1) | merge_index_column_bit,
+                static_cast<uint64_t>(row) | merge_index_column_bit
+        ) > 0) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 extern "C" {
 JNIEXPORT jlong JNICALL
 Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
@@ -1596,6 +1771,42 @@ Java_io_questdb_cairo_frm_FrameAlgebra_isDesignatedTimestampColumnReplaceIdentic
         }
     }
     return true;
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupMergeIndexSortKeys(
+        JAVA_STATIC,
+        jlong mergeIndexAddr,
+        jlong mergeIndexCount,
+        jint dedupKeyCount,
+        jlong dedupColBuffs,
+        jboolean sort
+) {
+    return dedup_merge_index_key_order(
+            reinterpret_cast<index_t *>(mergeIndexAddr),
+            __JLONG_REINTERPRET_CAST__(int64_t, mergeIndexCount),
+            reinterpret_cast<const dedup_column *>(dedupColBuffs),
+            dedupKeyCount,
+            sort
+    );
+}
+
+JNIEXPORT jlong JNICALL
+Java_io_questdb_std_Vect_dedupColumnFindKeyDisorder(
+        JAVA_STATIC,
+        jlong srcTimestampAddr,
+        jlong rowLo,
+        jlong rowHi,
+        jint dedupKeyCount,
+        jlong dedupColBuffs
+) {
+    return dedup_column_find_key_disorder(
+            reinterpret_cast<const uint64_t *>(srcTimestampAddr),
+            __JLONG_REINTERPRET_CAST__(int64_t, rowLo),
+            __JLONG_REINTERPRET_CAST__(int64_t, rowHi),
+            reinterpret_cast<const dedup_column *>(dedupColBuffs),
+            dedupKeyCount
+    );
 }
 
 } // extern C

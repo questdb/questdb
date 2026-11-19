@@ -184,8 +184,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int O3_BLOCK_DATA = 2;
     public static final int O3_BLOCK_MERGE = 3;
     public static final int O3_BLOCK_NONE = -1;
-    // Stride of compactionPieceScratch: a piece's four longs, then the txn and time it last moved.
-    private static final int PIECE_SCRATCH_STRIDE = 6;
+    // Stride of compactionPieceScratch: a piece's four longs, the txn and time it last moved, then its dedup sort
+    // version; the same stride as O3CompositeMergeStrategy.LONGS_PER_BOUND and O3PartitionJob's piece list.
+    private static final int PIECE_SCRATCH_STRIDE = 7;
     public static final int O3_BLOCK_O3 = 1;
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
@@ -198,9 +199,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // 7. parquet partition file size
     // 8. geometry ref: the _txn slot-3 word a COMPOSITE write published, or NO_GEOMETRY_REF when the
     //    partition's geometry did not change.
+    // 9. dedup sort flags: whether the write kept the dedup key order, see PARTITION_SINK_DEDUP_SORT_OFFSET
     // ... column top for every column
-    public static final int PARTITION_SINK_SIZE_LONGS = 9;
+    public static final int PARTITION_SINK_SIZE_LONGS = 10;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    // Slot 9 of the O3 partition update sink: what the write did to the dedup key order of the partition's rows,
+    // see TxReader.PARTITION_DEDUP_SORTED_BIT. No flag: the order is not known to hold, the bit is cleared.
+    public static final int PARTITION_SINK_DEDUP_SORT_OFFSET = 9 * Long.BYTES;
+    // The partition keeps the bit it had: the write added rows above its last timestamp, or left its rows alone.
+    public static final long PARTITION_SINK_DEDUP_SORT_KEEP = 1;
+    // The rows of every timestamp of the partition are in key order now, whatever the bit was.
+    public static final long PARTITION_SINK_DEDUP_SORT_SET = 2;
+    // The same for the partition this write split off the partition.
+    public static final long PARTITION_SINK_DEDUP_SORT_SPLIT_SET = 4;
     // The high int of a partition update sink block's flags word (the low int is partitionMutates): what
     // the post-commit seal sweep must do about the partition's COVERING posting indexes. Here: rebuild the
     // covered sidecar, because the O3 write indexed the rows without their covered values.
@@ -1858,6 +1869,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", to=").$(ColumnType.nameOf(newType)).I$();
 
             boolean isDedupKey = metadata.isDedupKey(existingColIndex);
+            if (isDedupKey) {
+                // The key keeps its id but compares as the new type, and its writer index moves to the end: rows
+                // sorted by the old keys are not sorted by the new ones. A new dedup version makes every stored
+                // dedup sort claim stale, as enabling dedup or changing its keys does.
+                bumpDedupVersion();
+            }
             int columnIndex = columnCount;
             long columnNameTxn = getTxn();
 
@@ -3262,7 +3279,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert txWriter.getLagRowCount() == 0;
         checkDistressed();
         LOG.info().$("disabling row deduplication [table=").$(tableToken).I$();
-        metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
+        bumpDedupVersion();
         for (int i = 0; i < columnCount; i++) {
             metadata.getColumnMetadata(i).setDedupKeyFlag(false);
         }
@@ -3415,7 +3432,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             logRec.I$();
         }
 
-        metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
+        bumpDedupVersion();
         columnsIndexes.sort();
         for (int i = 0, j = 0; i < columnCount; i++) {
             boolean isNewDedupCol = j < columnsIndexes.size() && i == columnsIndexes.getQuick(j);
@@ -3776,6 +3793,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public long getDedupRowsRemovedSinceLastCommit() {
         return dedupRowsRemovedSinceLastCommit.sum();
+    }
+
+    /**
+     * The dedup version this commit's rows are sorted under: WAL apply sorts the rows of each timestamp by the dedup
+     * keys before they reach a partition. A piece that holds only such rows takes it as its dedup sort version
+     * ({@link PartitionGeometry#addPiece}), a plain partition as {@link TxReader#PARTITION_DEDUP_SORTED_BIT}.
+     * {@link PartitionGeometryFile#DEDUP_SORT_VERSION_UNSET} when this commit does not deduplicate, or when the order
+     * it sorts in is not the one the claim promises: dedup compares keys in writer index order, while the claim
+     * promises column id order, and a key whose type changed sits at a later writer index than its id.
+     */
+    public long getCommitDedupSortVersion() {
+        if (!isCommitDedupMode()) {
+            return PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET;
+        }
+        int lastColumnId = -1;
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (i != metadata.getTimestampIndex() && metadata.getColumnType(i) > 0 && metadata.isDedupKey(i)) {
+                final int columnId = metadata.getColumnMetadata(i).getOriginalWriterIndex();
+                if (columnId < lastColumnId) {
+                    return PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET;
+                }
+                lastColumnId = columnId;
+            }
+        }
+        return metadata.getDedupVersion();
     }
 
     public long getDedupVersion() {
@@ -4313,10 +4355,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", aroundOpenTransaction=").$(isInTransaction)
                 .I$();
 
-        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (tableToken.isWal() && seqTxn > 0 && nativePartitionSeqTxn(partitionIndex) <= 0) {
             // A legacy partition takes the footer's version. The stamp clears parquet_generated, so it goes first.
-            txWriter.setPartitionSeqTxnByRawIndex(rawIndex, seqTxn);
+            txWriter.setPartitionSeqTxnOfSameRows(partitionIndex, seqTxn);
         }
         txWriter.setPartitionParquetGenerated(partitionIndex, true);
         txWriter.bumpPartitionTableVersion();
@@ -4452,6 +4493,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * Whether the rows of each timestamp of the plain native partition at {@code partitionTimestamp} are in the
+     * order of the current dedup keys, see {@link TxReader#PARTITION_DEDUP_SORTED_BIT}. False when it is absent.
+     */
+    public boolean isPartitionDedupSorted(long partitionTimestamp) {
+        final int indexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+        return indexRaw > -1 && txWriter.isPartitionDedupSortedByRawIndex(indexRaw);
     }
 
     /**
@@ -4946,7 +4996,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         tombstoneCoveredColumnInOtherIndexes(metadata.getColumnMetadata(index).getWriterIndex());
 
         if (metadata.isDedupKey(index)) {
-            metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
+            bumpDedupVersion();
         }
         metadata.removeColumn(index);
         if (timestamp) {
@@ -7666,6 +7716,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             cancelRowAndBump();
         }
+    }
+
+    // Every stored dedup sort claim names the dedup setting it was written under. The version moves with each
+    // change of the setting, which makes the versioned claims (composite pieces, parquet row groups) stale; the
+    // partition bits in _txn carry no version, so they are cleared here, for the commit that publishes the change.
+    private void bumpDedupVersion() {
+        metadata.setDedupVersion(metadata.getMetadataVersion() + 1);
+        txWriter.clearPartitionsDedupSorted();
     }
 
     private void bumpMetadataAndColumnStructureVersion() {
@@ -11071,7 +11129,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 pieces.getQuick(at + 2),
                 pieces.getQuick(at + 3),
                 pieces.getQuick(at + 4),
-                pieces.getQuick(at + 5)
+                pieces.getQuick(at + 5),
+                pieces.getQuick(at + 6)
         );
     }
 
@@ -11128,6 +11187,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     geometry.getPieceWriterTxn(partitionIndex, p),
                     geometry.getPieceLastWriteMicros(partitionIndex, p)
             );
+            pieces.add(geometry.getPieceDedupSortVersion(partitionIndex, p));
         }
 
         int bestLo = -1;
@@ -11167,8 +11227,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // JOIN moves no bytes; the survivor takes the freshest pair in the run.
         long survivorWriterTxn = -1;
         long survivorLastWriteMicros = Numbers.LONG_NULL;
+        long survivorDedupSortVersion = PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET;
         for (int p = bestLo; p < bestLo + bestLen; p++) {
             final long size = pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 3);
+            // The joined rows stay in key order only when every piece sorts them the same way and no two share
+            // a timestamp; the survivor's tsHi so far is the last non-empty piece's.
+            survivorDedupSortVersion = PartitionGeometry.foldedDedupSortVersion(
+                    survivorDedupSortVersion,
+                    rowCount,
+                    timestampHi,
+                    pieces.getQuick(p * PIECE_SCRATCH_STRIDE + 6),
+                    size,
+                    pieces.getQuick(p * PIECE_SCRATCH_STRIDE)
+            );
             rowCount += size;
             if (size > 0) {
                 // Must not fall back to an earlier piece's value: unset means unknown, and a tsHi that
@@ -11196,7 +11267,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int p = 0; p < bestLo; p++) {
             addScratchPiece(geometry, pieces, p);
         }
-        geometry.addPiece(survivorTsLo, timestampHi, survivorRowOffset, rowCount, survivorWriterTxn, survivorLastWriteMicros);
+        geometry.addPiece(survivorTsLo, timestampHi, survivorRowOffset, rowCount, survivorWriterTxn, survivorLastWriteMicros, survivorDedupSortVersion);
         for (int p = bestLo + bestLen; p < pieceCount; p++) {
             addScratchPiece(geometry, pieces, p);
         }
@@ -13524,7 +13595,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             O3CompositeMergeStrategy.addPieceBounds(compactionForecastBounds,
                     geometry.getPieceTimestampLo(partitionIndex, p), geometry.getPieceTimestampHi(partitionIndex, p),
                     geometry.getPieceRowOffset(partitionIndex, p), geometry.getPieceRowCount(partitionIndex, p),
-                    geometry.getPieceWriterTxn(partitionIndex, p), geometry.getPieceLastWriteMicros(partitionIndex, p));
+                    geometry.getPieceWriterTxn(partitionIndex, p), geometry.getPieceLastWriteMicros(partitionIndex, p),
+                    geometry.getPieceDedupSortVersion(partitionIndex, p));
         }
         return moveTailToFreshPartition(partitionIndex, compactionForecastBounds, cut, true);
     }
@@ -13622,7 +13694,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             O3CompositeMergeStrategy.addPieceBounds(compactionPieceScratch,
                     O3CompositeMergeStrategy.getTsLo(bounds, p), O3CompositeMergeStrategy.getTsHi(bounds, p),
                     O3CompositeMergeStrategy.getRowOffset(bounds, p), O3CompositeMergeStrategy.getRowCount(bounds, p),
-                    O3CompositeMergeStrategy.getWriterTxn(bounds, p), O3CompositeMergeStrategy.getLastWriteMicros(bounds, p));
+                    O3CompositeMergeStrategy.getWriterTxn(bounds, p), O3CompositeMergeStrategy.getLastWriteMicros(bounds, p),
+                    O3CompositeMergeStrategy.getDedupSortVersion(bounds, p));
         }
         O3PartitionJob.foldAdjacentPieces(compactionPieceScratch);
         txWriter.updatePartitionSizeByTimestamp(partitionTs, prefixRows);
@@ -14089,6 +14162,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
                 }
 
+                // Read before the updates below: a seqTxn stamp clears the bit.
+                final boolean wasDedupSorted = partitionIndexRaw > -1 && txWriter.isPartitionDedupSortedByRawIndex(partitionIndexRaw);
+
                 // Read the reference off the sink, not txWriter, which does not learn it until further
                 // down this loop - so a partition that BECAME composite in this commit is not missed.
                 final boolean isComposite = geometryRef != NO_GEOMETRY_REF
@@ -14338,6 +14414,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.bumpPartitionTableVersion();
                         }
                     }
+                }
+
+                // After the stamps above, which clear the bit: the write tells whether the dedup key order holds.
+                final long dedupSortFlags = Unsafe.getLong(blockAddress + PARTITION_SINK_DEDUP_SORT_OFFSET);
+                txWriter.setPartitionDedupSorted(
+                        partitionTimestamp,
+                        (dedupSortFlags & PARTITION_SINK_DEDUP_SORT_SET) != 0
+                                || ((dedupSortFlags & PARTITION_SINK_DEDUP_SORT_KEEP) != 0 && wasDedupSorted)
+                );
+                if (newPartitionTimestamp != partitionTimestamp) {
+                    txWriter.setPartitionDedupSorted(newPartitionTimestamp, (dedupSortFlags & PARTITION_SINK_DEDUP_SORT_SPLIT_SET) != 0);
                 }
 
                 // Last, so it survives whichever size update ran above - several of those rewrite slot 3,
@@ -15764,6 +15851,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Only the composite write path writes slot 8, so a reused block would carry the
                     // previous partition's geometry pointer into this one's _txn record.
                     Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, NO_GEOMETRY_REF);
+                    // Only the writes that keep the dedup key order write slot 9: an append straight onto the
+                    // last partition lands above its last timestamp, in the key order dedup gave the rows.
+                    Unsafe.putLong(
+                            partitionUpdateSinkAddr + PARTITION_SINK_DEDUP_SORT_OFFSET,
+                            append && getCommitDedupSortVersion() != PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET
+                                    ? (srcDataMax == 0 ? PARTITION_SINK_DEDUP_SORT_SET : PARTITION_SINK_DEDUP_SORT_KEEP)
+                                    : 0
+                    );
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
                     // original partition timestamp
                     Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
@@ -17987,10 +18082,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The plain partition's implicit piece: no writer txn or write time recorded, same as the O3 path reads it.
         final long writerTxn = geometry.getPieceWriterTxn(partitionIndex, 0);
         final long lastWriteMicros = geometry.getPieceLastWriteMicros(partitionIndex, 0);
+        final long dedupSortVersion = geometry.getPieceDedupSortVersion(partitionIndex, 0);
         // The implicit piece's tsLo is the directory timestamp, a routing floor rather than a row; publish the data's.
         final long minTimestamp = readMinTimestamp(partitionIndex);
         geometry.beginUpdate(partitionIndex);
-        geometry.addPiece(minTimestamp, maxTimestamp, 0, liveRows, writerTxn, lastWriteMicros);
+        geometry.addPiece(minTimestamp, maxTimestamp, 0, liveRows, writerTxn, lastWriteMicros, dedupSortVersion);
         geometry.commitUpdate(partitionIndex, fileRows);
         final long geometryRef = geometry.publish(
                 partitionIndex,
@@ -21481,12 +21577,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
         // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
+        // The squash appends the rows of the split partitions after the target's, and a split starts above the last
+        // timestamp of the partition before it: the result is in dedup key order when every part is.
+        final boolean wasTargetDedupSorted = txWriter.isPartitionDedupSorted(targetPartitionIndex);
         if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)) {
             final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
             // Maintenance must not make an old accumulator look like it took the last data commit.
             if (!force) {
                 txWriter.setPartitionSeqTxn(targetPartitionIndex, targetSeqTxn);
+                // The stamp cleared the bit of a plain target, whose rows did not move.
+                txWriter.setPartitionDedupSortedByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, wasTargetDedupSorted);
             }
         }
         // A composite target's rows stop short of its files: the appends have to start past the dead space,
@@ -21568,6 +21669,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 reservedSquashCount++;
             }
             squashCount = reservedSquashCount;
+            boolean isSquashDedupSorted = wasTargetDedupSorted;
+            for (int i = 0; i < squashCount && isSquashDedupSorted; i++) {
+                isSquashDedupSorted = txWriter.isPartitionDedupSorted(targetPartitionIndex + 1 + i);
+            }
 
             if (copyTargetFrame) {
                 try {
@@ -21733,7 +21838,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 geometry.getPieceRowOffset(targetPartitionIndex, p),
                                 geometry.getPieceRowCount(targetPartitionIndex, p),
                                 geometry.getPieceWriterTxn(targetPartitionIndex, p),
-                                geometry.getPieceLastWriteMicros(targetPartitionIndex, p)
+                                geometry.getPieceLastWriteMicros(targetPartitionIndex, p),
+                                geometry.getPieceDedupSortVersion(targetPartitionIndex, p)
                         );
                     }
                     geometry.addPiece(
@@ -21742,7 +21848,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             targetExtent,
                             appendedRows - lagRows,
                             txWriter.getTxn() + 1,
-                            configuration.getMicrosecondClock().getTicks()
+                            configuration.getMicrosecondClock().getTicks(),
+                            // The run joins rows of several source pieces, whose key order nothing tracked here.
+                            PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET
                     );
                     // The appended run starts at the extent E; when the target's own last piece also ends
                     // at E, that new piece is file-adjacent to it and carries the SAME shift. Fold the pair,
@@ -21766,6 +21874,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     setGeometryRefRetiringGenerations(targetPartition, NO_GEOMETRY_REF);
                 }
                 txWriter.setPartitionSeqTxn(targetPartitionIndex, squashedSeqTxn);
+                txWriter.setPartitionDedupSortedByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isSquashDedupSorted);
                 if (!txWriter.incrementPartitionSquashCounter(targetPartitionIndex)) {
                     // The squash counter overflew its 16 bits
                     // To help back to detect partition changes we will save a file inside the partition with the current timestamp
@@ -22848,7 +22957,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     geometry.getPieceRowOffset(partitionIndex, p),
                     rowCount,
                     geometry.getPieceWriterTxn(partitionIndex, p),
-                    geometry.getPieceLastWriteMicros(partitionIndex, p)
+                    geometry.getPieceLastWriteMicros(partitionIndex, p),
+                    // A prefix of a sorted piece is sorted.
+                    geometry.getPieceDedupSortVersion(partitionIndex, p)
             );
         }
         geometry.commitUpdate(partitionIndex, e);

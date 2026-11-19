@@ -49,6 +49,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int dedupMode;
+    private long dedupVersion;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
     private boolean isCopy;
@@ -177,6 +178,14 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     @Override
     public int getDedupMode() {
         return dedupMode;
+    }
+
+    /**
+     * The metadata version of the last dedup-setting change ({@code _meta} offset 64): enabling or disabling dedup,
+     * changing its keys, dropping a key or changing a key's type. Stored dedup sort claims name this version.
+     */
+    public long getDedupVersion() {
+        return dedupVersion;
     }
 
     public int getDenseSymbolIndex(int columnIndex) {
@@ -381,6 +390,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(mem);
         this.dedupMode = TableUtils.getDedupMode(mem);
+        this.dedupVersion = mem.getLong(TableUtils.META_OFFSET_DEDUP_VERSION);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -454,6 +464,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
         this.dedupMode = TableUtils.getDedupMode(newMetaMem);
+        this.dedupVersion = newMetaMem.getLong(TableUtils.META_OFFSET_DEDUP_VERSION);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

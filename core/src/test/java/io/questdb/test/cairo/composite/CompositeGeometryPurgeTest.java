@@ -917,14 +917,14 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 if (isTornInsideTheHeader) {
                     Assert.assertTrue(
                             "a header tear must leave a file too short to occupy its generation",
-                            tornLength < PartitionGeometryFile.recordSize(1)
+                            tornLength < PartitionGeometryFile.MIN_RECORD_SIZE
                     );
                 } else {
                     // The case that costs a generation: long enough that firstFreeGeneration still counts it as
                     // occupied, so the purge is the only thing that can ever reclaim it.
                     Assert.assertTrue(
                             "a mid-record tear must leave a file long enough to occupy its generation",
-                            tornLength >= PartitionGeometryFile.recordSize(1)
+                            tornLength >= PartitionGeometryFile.MIN_RECORD_SIZE
                     );
                 }
 
@@ -1261,7 +1261,7 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
         }
         Assert.assertTrue(
                 "planted generation " + generation + " holds no record",
-                geometryFileOf(partitionTs, generation).length() >= PartitionGeometryFile.recordSize(1)
+                geometryFileOf(partitionTs, generation).length() >= PartitionGeometryFile.MIN_RECORD_SIZE
         );
     }
 
@@ -1319,7 +1319,8 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                                 geometry.getPieceRowOffset(partitionIndex, p),
                                 geometry.getPieceRowCount(partitionIndex, p),
                                 geometry.getPieceWriterTxn(partitionIndex, p),
-                                geometry.getPieceLastWriteMicros(partitionIndex, p)
+                                geometry.getPieceLastWriteMicros(partitionIndex, p),
+                                geometry.getPieceDedupSortVersion(partitionIndex, p)
                         );
                     }
                     geometry.commitUpdate(partitionIndex, geometry.getE(partitionIndex));

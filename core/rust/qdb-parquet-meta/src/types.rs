@@ -72,7 +72,11 @@ pub const FOOTER_FEATURE_FLAGS_OFF: usize = 32;
 /// Number of footer-flag-gated section offsets `Footer` tracks. Indexed by
 /// the gating flag's bit position; grow when adding sections at higher
 /// bit positions.
-pub const SUPPORTED_FOOTER_SECTIONS: usize = 3;
+pub const SUPPORTED_FOOTER_SECTIONS: usize = 4;
+
+/// Per-row-group dedup sort version meaning "no claim": the row group's rows with equal
+/// designated timestamps are not known to be in dedup key order.
+pub const DEDUP_SORT_VERSION_UNSET: i64 = -1;
 
 /// Hard cap on the total scratchpad payload (4-byte count + 8 bytes per entry
 /// header + entry contents) per footer. Real entries are tens to hundreds of
@@ -258,6 +262,12 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
+    /// Per-row-group dedup sort versions: `[i64; row_group_count]`. Entry `i` is the table's
+    /// dedup version (`_meta` offset 64) whose keys sort the rows of row group `i` within
+    /// each designated timestamp, in column id order with WAL apply's physical comparisons.
+    /// [`DEDUP_SORT_VERSION_UNSET`] makes no claim. Absent means every entry is unset.
+    pub const DEDUP_SORT_VERSION_BIT: u64 = 1 << 2;
+
     /// Required: row group `i` occupies `num_rows[i]` index rows from `index_row_lo[i]`.
     /// Section: `[u64 index_row_count][u64 index_row_lo; row_group_count]`. Absent means the
     /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
@@ -291,6 +301,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_dedup_sort_version(self) -> bool {
+        self.0 & Self::DEDUP_SORT_VERSION_BIT != 0
+    }
+
+    pub const fn with_dedup_sort_version(self) -> Self {
+        Self(self.0 | Self::DEDUP_SORT_VERSION_BIT)
     }
 
     pub const fn has_index_row_map(self) -> bool {

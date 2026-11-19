@@ -107,6 +107,8 @@ import org.jetbrains.annotations.TestOnly;
  */
 public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
 
+    // No claim about dedup key order within equal designated timestamps; see getRowGroupDedupSortVersion.
+    public static final long DEDUP_SORT_VERSION_UNSET = -1;
     public static final int HEADER_FIXED_SIZE = 32;
     // Header offsets (layout: parquet_meta_file_size(8) + feature_flags(8) + dts(4) + sorting(4) + col_count(4) + reserved(4))
     public static final int HEADER_PARQUET_META_FILE_SIZE_OFF = 0;
@@ -119,6 +121,9 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
+    // Optional footer flag, section [i64 dedupSortVersion; rowGroupCount]: the dedup version whose keys sort
+    // each row group within equal designated timestamps, DEDUP_SORT_VERSION_UNSET for no claim.
+    private static final long DEDUP_SORT_VERSION_FOOTER_FLAG = 1L << 2;
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
     private static final int COL_DESC_ID_OFF = 8;
@@ -177,6 +182,8 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Lazily built because most readers never resolve stable ids. Reused across
     // bindings so repeated sidecar scans do not allocate a map per partition.
     private IntIntHashMap columnIdToIndex;
+    // The resolved footer's dedup sort version section, 0 when absent.
+    private long dedupSortVersionsAddr;
     private long fileSize;
     private long footerAddr;
     // The resolved footer's index row map section, 0 for the identity map.
@@ -343,6 +350,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.resolvedFileSize = 0;
         this.footerAddr = 0;
         this.indexRowMapAddr = 0;
+        this.dedupSortVersionsAddr = 0;
         this.columnCount = 0;
         this.isColumnIdToIndexBuilt = false;
         this.rowGroupCount = 0;
@@ -611,6 +619,19 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     }
 
     /**
+     * The table dedup version ({@code _meta} offset 64) whose keys sort the row group's rows within each
+     * designated timestamp, in column id order with WAL apply's physical comparisons; {@link #DEDUP_SORT_VERSION_UNSET}
+     * when the footer makes no such claim. Compare with the table's current dedup version before relying on it.
+     */
+    public long getRowGroupDedupSortVersion(int rowGroupIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        if (dedupSortVersionsAddr == 0) {
+            return DEDUP_SORT_VERSION_UNSET;
+        }
+        return Unsafe.getLong(dedupSortVersionsAddr + (long) rowGroupIndex * Long.BYTES);
+    }
+
+    /**
      * Index row the symbol indexes store for a row group's first row; {@code rowGroupStartRow} under identity.
      */
     public long getRowGroupIndexRowLo(int rowGroupIndex, long rowGroupStartRow) {
@@ -826,6 +847,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         this.resolvedFileSize = other.resolvedFileSize;
         this.footerAddr = other.footerAddr;
         this.indexRowMapAddr = other.indexRowMapAddr;
+        this.dedupSortVersionsAddr = other.dedupSortVersionsAddr;
         this.columnCount = other.columnCount;
         this.rowGroupCount = other.rowGroupCount;
         this.checksumVerified = other.checksumVerified;
@@ -1094,21 +1116,25 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         // signal corruption. baseFooterLength already includes the trailing CRC.
         final boolean hasIndexRowMap = (footerFeatureFlags & INDEX_ROW_MAP_FOOTER_FLAG) != 0;
         final long indexRowMapSize = hasIndexRowMap ? Long.BYTES + rowGroupCountLong * Long.BYTES : 0;
+        final boolean hasDedupSortVersions = (footerFeatureFlags & DEDUP_SORT_VERSION_FOOTER_FLAG) != 0;
+        final long dedupSortVersionsSize = hasDedupSortVersions ? rowGroupCountLong * Long.BYTES : 0;
         long knownOptionalFeatureFlags = featureFlags & OPTIONAL_FEATURE_MASK;
-        long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK;
+        long knownOptionalFooterFeatureFlags = footerFeatureFlags & OPTIONAL_FEATURE_MASK & ~DEDUP_SORT_VERSION_FOOTER_FLAG;
         if (knownOptionalFeatureFlags == 0
                 && knownOptionalFooterFeatureFlags == 0
-                && currentFooterLength != baseFooterLength + indexRowMapSize) {
+                && currentFooterLength != baseFooterLength + dedupSortVersionsSize + indexRowMapSize) {
             throw CairoException.critical(0)
-                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength + indexRowMapSize)
+                    .put("unexpected _pm footer feature bytes [expected=").put(baseFooterLength + dedupSortVersionsSize + indexRowMapSize)
                     .put(", actual=").put(currentFooterLength)
                     .put(']');
         }
+        // Footer-flag sections sit in ascending bit order and end at the CRC, which sits at the end of the
+        // footer length: the index row map (bit 32) is last, the dedup sort versions (bit 2) precede it.
+        final long entriesEndOffset = currentOffset + FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE;
         long indexRowMapAddr = 0;
         if (hasIndexRowMap) {
-            // The section ends at the CRC, which sits at the end of the footer length.
             final long indexRowMapOffset = currentOffset + currentFooterLength - Integer.BYTES - indexRowMapSize;
-            if (indexRowMapOffset < currentOffset + FOOTER_FIXED_SIZE + rowGroupCountLong * ROW_GROUP_ENTRY_SIZE) {
+            if (indexRowMapOffset < entriesEndOffset) {
                 throw CairoException.critical(0)
                         .put("invalid _pm index row map [rowGroupCount=").put(rowGroupCount)
                         .put(", footerOffset=").put(currentOffset)
@@ -1116,6 +1142,18 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                         .put(']');
             }
             indexRowMapAddr = addr + indexRowMapOffset;
+        }
+        long dedupSortVersionsAddr = 0;
+        if (hasDedupSortVersions) {
+            final long dedupSortVersionsOffset = currentOffset + currentFooterLength - Integer.BYTES - indexRowMapSize - dedupSortVersionsSize;
+            if (dedupSortVersionsOffset < entriesEndOffset) {
+                throw CairoException.critical(0)
+                        .put("invalid _pm dedup sort versions [rowGroupCount=").put(rowGroupCount)
+                        .put(", footerOffset=").put(currentOffset)
+                        .put(", footerLength=").put(currentFooterLength)
+                        .put(']');
+            }
+            dedupSortVersionsAddr = addr + dedupSortVersionsOffset;
         }
 
         long minBlockSize = ROW_GROUP_BLOCK_HEADER_SIZE + (long) columnCount * COLUMN_CHUNK_SIZE;
@@ -1181,6 +1219,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         }
         this.footerAddr = footerAddr;
         this.indexRowMapAddr = indexRowMapAddr;
+        this.dedupSortVersionsAddr = dedupSortVersionsAddr;
         this.resolvedFileSize = currentSize;
         this.columnCount = columnCount;
         this.rowGroupCount = rowGroupCount;
