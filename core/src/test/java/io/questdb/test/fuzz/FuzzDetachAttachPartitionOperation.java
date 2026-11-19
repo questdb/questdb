@@ -24,9 +24,11 @@
 
 package io.questdb.test.fuzz;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -35,18 +37,23 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Detaches a partition and attaches it back. Between the two, it can run a statement that moves the partition the
  * columns were added at, which tells whether a partition without a column-top record holds a column: TRUNCATE, or a
  * DROP PARTITION of every partition from a given day on. The attach must keep reading a column added after the
  * partition was written as NULL there. Or it renames a column away and back, which moves the column's file version
- * on in the attached partitions only: the attach must keep reading the version the partition holds.
+ * on in the attached partitions only: the attach must keep reading the version the partition holds. While the column
+ * is renamed away, it tries the ATTACH of a native partition, which must refuse the partition when it holds rows of the
+ * column, and attach it otherwise.
  * <p>
  * The test names the detached copy as ATTACH looks for it, see {@code cairo.attach.partition.suffix}, so a WAL table
  * applies the three statements in one go. A DETACH of a partition the table does not hold, or of its active
@@ -60,6 +67,10 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     public static final int BETWEEN_TRUNCATE = 1;
     // the name a column takes while renamed away: this prefix and its name
     public static final String RENAMED_AWAY_PREFIX = "away_";
+    // what the ATTACH while a column is renamed away did, see getRenamedAwayAttachOutcome()
+    public static final int RENAMED_AWAY_ATTACH_ATTACHED = 2;
+    public static final int RENAMED_AWAY_ATTACH_NOT_TRIED = 0;
+    public static final int RENAMED_AWAY_ATTACH_REFUSED = 1;
     // what apply() reports for a statement
     private static final int APPLIED = 0;
     private static final int FAILED = 1;
@@ -68,6 +79,7 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     // the first partition BETWEEN_DROP_NEWEST drops
     private final long dropFromTimestamp;
     private final long partitionTimestamp;
+    private int renamedAwayAttachOutcome = RENAMED_AWAY_ATTACH_NOT_TRIED;
 
     public FuzzDetachAttachPartitionOperation(long partitionTimestamp, int between, long dropFromTimestamp) {
         this.partitionTimestamp = partitionTimestamp;
@@ -90,6 +102,8 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
             if (detached == TABLE_GONE) {
                 return true;
             }
+            final String attachSql = "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + '\'';
+            boolean isAttached = false;
             switch (between) {
                 case BETWEEN_TRUNCATE -> wApi.truncateSoft();
                 case BETWEEN_DROP_NEWEST -> {
@@ -103,15 +117,17 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
                     // The renames change no data, so the WAL table, which takes none, holds what the non-WAL table
                     // must read after the attach
                     if (!wApi.getTableToken().isWal()) {
-                        renameColumnAwayAndBack(rnd, compiler, context, wApi, tableName);
+                        // A Parquet partition finds its columns by their ids: the ATTACH while a column is renamed
+                        // away is for native partitions
+                        final boolean isAttachTried = detached == APPLIED && !hasDetachedParquetData(engine, wApi, partitionName);
+                        isAttached = renameColumnAwayAndBack(rnd, compiler, context, wApi, tableName, isAttachTried ? attachSql : null);
                     }
                 }
                 default -> {
                     assert between == BETWEEN_NOTHING;
                 }
             }
-            final String attachSql = "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + partitionName + '\'';
-            if (apply(compiler, context, wApi, attachSql) == FAILED && detached == APPLIED) {
+            if (!isAttached && apply(compiler, context, wApi, attachSql) == FAILED && detached == APPLIED) {
                 // A WAL table reports neither: it applies the statements later, and skips them when they fail. A
                 // partition a non-WAL table detached must attach back, or it loses the partition, and so would the WAL
                 // table, unnoticed by the comparison of the two.
@@ -135,6 +151,15 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
         return partitionTimestamp;
     }
 
+    /**
+     * What the last ATTACH while a column was renamed away did: RENAMED_AWAY_ATTACH_REFUSED for a partition that holds
+     * rows of the column, RENAMED_AWAY_ATTACH_ATTACHED for one that holds none. RENAMED_AWAY_ATTACH_NOT_TRIED until the
+     * operation tries one.
+     */
+    public int getRenamedAwayAttachOutcome() {
+        return renamedAwayAttachOutcome;
+    }
+
     private static int apply(SqlCompiler compiler, SqlExecutionContextImpl context, TableWriterAPI wApi, String sql) throws SqlException {
         try {
             final AlterOperation alterOp = compiler.compile(sql, context).getAlterOperation();
@@ -155,6 +180,16 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
         }
     }
 
+    // whether the detached copy of the partition, named as ATTACH looks for it, is a Parquet one
+    private static boolean hasDetachedParquetData(CairoEngine engine, TableWriterAPI wApi, CharSequence partitionName) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(wApi.getTableToken()).concat(partitionName)
+                    .put(configuration.getAttachPartitionSuffix()).concat(TableUtils.PARQUET_PARTITION_NAME);
+            return Files.exists(path.$());
+        }
+    }
+
     private static void rename(SqlCompiler compiler, SqlExecutionContextImpl context, TableWriterAPI wApi, String tableName, String from, String to) throws SqlException {
         final String sql = "ALTER TABLE " + tableName + " RENAME COLUMN " + from + " TO " + to;
         final AlterOperation alterOp = compiler.compile(sql, context).getAlterOperation();
@@ -164,16 +199,52 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
     }
 
     /**
+     * Attaches the partition while awayName is renamed away, and returns whether the partition attached. The partition
+     * holds the column under its name from before the rename: the ATTACH must refuse the partition when it holds rows
+     * of the column, and attach it otherwise, which reads the column as NULL there, as the WAL table without the renames
+     * does. Any other failure, such as an injected IO failure, goes to the run, which retries the operation.
+     */
+    private boolean attachWhileRenamedAway(
+            SqlCompiler compiler,
+            SqlExecutionContextImpl context,
+            TableWriterAPI wApi,
+            String attachSql,
+            String awayName
+    ) throws SqlException {
+        final TableRecordMetadata metadata = wApi.getMetadata();
+        final String refusal = "Detached column [index=" + metadata.getWriterIndex(metadata.getColumnIndex(awayName)) + ", name=" + awayName
+                + ", attribute=name] does not match current table metadata";
+        final AlterOperation alterOp = compiler.compile(attachSql, context).getAlterOperation();
+        alterOp.withSqlStatement(attachSql);
+        alterOp.withContext(context);
+        try {
+            wApi.apply(alterOp, false);
+            renamedAwayAttachOutcome = RENAMED_AWAY_ATTACH_ATTACHED;
+            return true;
+        } catch (CairoException e) {
+            if (!Chars.equals(e.getFlyweightMessage(), refusal)) {
+                throw e;
+            }
+            renamedAwayAttachOutcome = RENAMED_AWAY_ATTACH_REFUSED;
+            return false;
+        }
+    }
+
+    /**
      * Renames a column the run added, or renamed, named new_col_*, away and back: its files carry a column name txn,
      * which the detached _cv names. A column that a failed attempt of this operation left renamed away, which the run
      * retries, takes its name back first.
+     *
+     * @param attachSql the ATTACH to run while the column is renamed away, or null for none
+     * @return whether that ATTACH attached the partition
      */
-    private static void renameColumnAwayAndBack(
+    private boolean renameColumnAwayAndBack(
             Rnd rnd,
             SqlCompiler compiler,
             SqlExecutionContextImpl context,
             TableWriterAPI wApi,
-            String tableName
+            String tableName,
+            @Nullable String attachSql
     ) throws SqlException {
         final TableRecordMetadata metadata = wApi.getMetadata();
         final ObjList<String> renamedAway = new ObjList<>();
@@ -193,10 +264,15 @@ public class FuzzDetachAttachPartitionOperation implements FuzzTransactionOperat
             rename(compiler, context, wApi, tableName, renamedAway.getQuick(i), columnName);
             candidates.add(columnName);
         }
+        boolean isAttached = false;
         if (candidates.size() > 0) {
             final String columnName = candidates.getQuick(rnd.nextInt(candidates.size()));
             rename(compiler, context, wApi, tableName, columnName, RENAMED_AWAY_PREFIX + columnName);
+            if (attachSql != null) {
+                isAttached = attachWhileRenamedAway(compiler, context, wApi, attachSql, RENAMED_AWAY_PREFIX + columnName);
+            }
             rename(compiler, context, wApi, tableName, RENAMED_AWAY_PREFIX + columnName, columnName);
         }
+        return isAttached;
     }
 }

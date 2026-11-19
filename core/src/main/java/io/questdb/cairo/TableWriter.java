@@ -1564,7 +1564,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // whether the _cv the partition was detached with named the versions of its columns
                 boolean isColumnVersionKnown = false;
                 if (forceRenamePartitionDir) {
-                    isColumnVersionKnown = attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen);
+                    isColumnVersionKnown = attachPrepare(timestamp, partitionSize, detachedPath, detachedRootLen, hasParquetData);
                     if (!isColumnVersionKnown) {
                         attachValidateMetadata(partitionSize, detachedPath.trimTo(detachedRootLen), timestamp);
                         isSymbolNullKnown = true;
@@ -7475,7 +7475,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private boolean attachPrepare(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot) {
+    private boolean attachPrepare(long partitionTimestamp, long partitionSize, Path detachedPath, int detachedPartitionRoot, boolean isParquet) {
         try {
             // load/check _meta
             detachedPath.trimTo(detachedPartitionRoot).concat(META_FILE_NAME);
@@ -7515,6 +7515,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // attach partition is only possible on partitioned table
                 attachColumnVersionReader.ofRO(ff, detachedPath.$());
                 attachColumnVersionReader.readUnsafe();
+            }
+
+            if (!isParquet) {
+                // A Parquet partition finds its columns by their ids
+                attachValidateRenamedColumns(partitionTimestamp, partitionSize);
             }
 
             // override column tops for the partition we are attaching
@@ -7692,6 +7697,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             path.trimTo(partitionPathLen);
+        }
+    }
+
+    /**
+     * The loop of {@link #attachPrepare} takes a live column whose name the detached metadata lacks for one added after
+     * the DETACH, and reads it as NULL in the partition. A column renamed while the partition was detached holds its
+     * rows there under its old name, so the attach refuses a partition that holds rows of such a column. The check runs
+     * before the loop changes the detached files, so a refused attach leaves them as they were.
+     */
+    private void attachValidateRenamedColumns(long partitionTimestamp, long partitionSize) {
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (metadata.getColumnType(colIdx) > 0 && attachMetadata.getColumnIndexQuiet(metadata.getColumnName(colIdx)) < 0) {
+                // ALTER COLUMN TYPE moves a column to a new writer index, and its replacing chain leads back to the
+                // index the column had at the DETACH
+                for (int i = colIdx; i > -1; i = metadata.getReplacingColumnIndex(i)) {
+                    if (i < attachMetadata.getColumnCount() && attachMetadata.getColumnType(i) > 0) {
+                        // live at the DETACH under another name; a partition without its rows loses nothing
+                        final long detachedColumnTop = attachColumnVersionReader.getColumnTop(partitionTimestamp, i);
+                        if (detachedColumnTop > -1 && detachedColumnTop < partitionSize) {
+                            throw CairoException.detachedColumnMetadataMismatch(colIdx, metadata.getColumnName(colIdx), "name");
+                        }
+                        break;
+                    }
+                }
+            }
         }
     }
 
