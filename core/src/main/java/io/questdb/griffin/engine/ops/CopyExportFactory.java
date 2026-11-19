@@ -37,6 +37,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -132,24 +133,24 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
                 }
                 // A table that carries an EXPIRE ROWS policy must export through the SELECT path: the read
                 // filter that hides expired rows lives in the parser, so a table-reader export would write
-                // out rows the table itself no longer returns. A composite partition keeps dead rows between
-                // its live pieces, so its live row count is no longer its file extent, and it needs the SELECT
-                // path as well. Re-partitioning needs the SELECT path too.
+                // out rows the table itself no longer returns. Composite pieces and Delta runs require a
+                // logical scan rather than a flat base-file export, so they need the SELECT path as well.
+                // Re-partitioning needs the SELECT path too.
                 final boolean mayHaveExpiryPolicy = executionContext.getCairoEngine()
                         .getMetadataCache().mayTableHaveExpiryPolicy(tableToken);
-                final boolean hasCompositePartitions = hasCompositePartitions(executionContext, tableToken);
-                if (partitionBy != -1 || mayHaveExpiryPolicy || hasCompositePartitions) {
+                final boolean isLogicalScanRequired = isLogicalScanRequired(executionContext, tableToken);
+                if (partitionBy != -1 || mayHaveExpiryPolicy || isLogicalScanRequired) {
                     try (TableMetadata meta = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                         final int tablePartitionBy = meta.getPartitionBy();
                         final String expiryPredicate = meta.getExpiryPredicate();
                         final boolean hasExpiryPolicy = expiryPredicate != null && !expiryPredicate.isEmpty();
-                        if (partitionBy == -1 && (hasCompositePartitions || hasExpiryPolicy)) {
+                        if (partitionBy == -1 && (isLogicalScanRequired || hasExpiryPolicy)) {
                             // A default export keeps the table's own partitioning, so the output layout is
                             // the same whether or not the table needs the SELECT path.
                             exportPartitionBy = tablePartitionBy;
                         }
                         final boolean isSelectPathRequired = hasExpiryPolicy
-                                || hasCompositePartitions
+                                || isLogicalScanRequired
                                 || (partitionBy != -1 && tablePartitionBy != partitionBy);
                         if (isSelectPathRequired) {
                             // The source name is a catalog identifier, and the compiler reads this value as SQL.
@@ -338,13 +339,10 @@ public class CopyExportFactory extends AbstractRecordCursorFactory {
         sink.type("Copy");
     }
 
-    /**
-     * Whether any of the table's partitions is composite - live rows split into pieces with dead rows
-     * between them, so the partition's live row count no longer spans file rows {@code [0, liveRows)}.
-     */
-    private static boolean hasCompositePartitions(SqlExecutionContext executionContext, TableToken tableToken) {
+    private static boolean isLogicalScanRequired(SqlExecutionContext executionContext, TableToken tableToken) {
         try (TableReader reader = executionContext.getCairoEngine().getReader(tableToken)) {
-            return reader.getTxFile().hasCompositePartitions();
+            final TxReader txFile = reader.getTxFile();
+            return txFile.hasCompositePartitions() || txFile.hasAnyDeltaActive();
         }
     }
 

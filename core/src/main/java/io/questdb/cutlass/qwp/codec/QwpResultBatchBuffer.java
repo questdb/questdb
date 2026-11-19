@@ -158,8 +158,9 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * appends of {@link QwpColumnScratch}, which read each column's rows from
      * the top down.
      * <p>
-     * The parquet-format fallback iterates rows through {@code record} /
-     * {@link #appendRow}, preserving correctness without the columnar speedup.
+     * The fallback for parquet-format and custom (Delta) frames iterates rows
+     * through {@code record} / {@link #appendRow}, preserving correctness
+     * without the columnar speedup.
      * Replace with a parquet-specific columnar decoder as a follow-up.
      */
     public void appendPageFrame(PageFrame frame, PageFrameMemoryRecord record, long lo, long hi, boolean isDescending) {
@@ -167,10 +168,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         if (rows <= 0) {
             return;
         }
-        if (frame.getFormat() != PartitionFormat.NATIVE) {
-            // Parquet frame: no contiguous column addresses we can memcpy from.
-            // Fall back to per-row using the existing single-row path. Row count
-            // advances via appendRow itself.
+        if (frame.getFormat() != PartitionFormat.NATIVE || frame.getPartitionFrameState() != 0) {
+            // Parquet or custom (Delta) frame: no contiguous column addresses we can
+            // memcpy from; a custom frame reports NATIVE but its addresses point at
+            // the base. Fall back to per-row using the existing single-row path, which
+            // reads the pool-materialized record. Row count advances via appendRow itself.
             if (isDescending) {
                 for (long r = hi - 1; r >= lo; r--) {
                     record.setRowIndex(r);
@@ -615,9 +617,12 @@ public class QwpResultBatchBuffer implements QuietCloseable {
 
     /**
      * Reads one byte of every OS page that holds rows [{@code lo}, {@code hi})
-     * of a NATIVE page frame, column by column, each column in ascending address
-     * order, and returns the number of pages read. A var-size column reads its
-     * aux vector and then its data vector; a column top reads nothing.
+     * of a base-only NATIVE page frame, column by column, each column in
+     * ascending address order, and returns the number of pages read. A custom
+     * (Delta) frame has no raw page addresses to read: its addresses point at
+     * the base, see {@link io.questdb.cairo.sql.PageFrameCursor#hasCustomFrames}.
+     * A var-size column reads its aux vector and then its data vector; a column
+     * top reads nothing.
      * <p>
      * A descending page-frame stream calls this ahead of the rows it copies last
      * to first. Kernel readahead follows a page fault upwards only, and only
@@ -627,7 +632,8 @@ public class QwpResultBatchBuffer implements QuietCloseable {
      * brings them in at readahead size, so the copy finds them cached.
      */
     public long touchPageFrameRows(PageFrame frame, long lo, long hi) {
-        assert frame.getFormat() == PartitionFormat.NATIVE : "parquet frames are decoded into memory";
+        assert frame.getFormat() == PartitionFormat.NATIVE && frame.getPartitionFrameState() == 0
+                : "parquet and custom frames are decoded into memory";
         if (lo >= hi) {
             return 0;
         }

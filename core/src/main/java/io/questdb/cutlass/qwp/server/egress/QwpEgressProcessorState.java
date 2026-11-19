@@ -53,12 +53,14 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zstd;
 import io.questdb.std.datetime.NanosecondClock;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -451,13 +453,15 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * <p>
      * An ascending stream takes the slice from the bottom of the frame's
      * unconsumed rows. A descending one takes it from the top and appends it
-     * last row first. Before it copies rows of a NATIVE frame that are not read
-     * ahead yet, it reads ahead the column pages of a chunk of rows from those
-     * down, in ascending address order, see
+     * last row first. Before it copies rows of a base-only NATIVE frame that are
+     * not read ahead yet, it reads ahead the column pages of a chunk of rows from
+     * those down, in ascending address order, see
      * {@link QwpResultBatchBuffer#touchPageFrameRows}: copying column data that
      * is not in the page cache downwards would fault it in one page at a time.
      * The chunks start at the rows the batch takes and grow with the stream, up
      * to {@link #PAGE_FRAME_PREFETCH_ROWS} rows, see {@link #pageFramePrefetchLo}.
+     * A custom (Delta) frame has no raw page addresses to read ahead: the memory
+     * pool materializes its rows, see {@link PageFrameCursor#hasCustomFrames}.
      *
      * @param batchRows the rows the batch still takes, which also size the
      *                  read-ahead of a descending stream
@@ -470,7 +474,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         final PageFrame frame = streamingCurrentPageFrame;
         if (isStreamingPageFrameDescending) {
             final long sliceLo = hi - sliceRows;
-            if (sliceLo < streamingPageFramePrefetchLo && frame.getFormat() == PartitionFormat.NATIVE) {
+            if (sliceLo < streamingPageFramePrefetchLo
+                    && frame.getFormat() == PartitionFormat.NATIVE
+                    && frame.getPartitionFrameState() == 0) {
                 final long prefetchLo = pageFramePrefetchLo(streamingPageFramePrefetchLo, sliceLo, streamingPageFramePrefetchedRows, batchRows);
                 streamingPageFramePrefetchedPages += batchBuffer.touchPageFrameRows(frame, prefetchLo, streamingPageFramePrefetchLo);
                 streamingPageFramePrefetchedRows += streamingPageFramePrefetchLo - prefetchLo;
@@ -572,18 +578,19 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             long requestId,
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
+            @Nullable MemoryTracker memoryTracker,
             int columnCount,
             long initialCredit,
             CharSequence sqlText,
             short compiledQueryType,
             boolean queryCacheable
     ) {
-        beginStreamingPageFrame(requestId, factory, pageFrameCursor, columnCount, initialCredit, sqlText,
+        beginStreamingPageFrame(requestId, factory, pageFrameCursor, memoryTracker, columnCount, initialCredit, sqlText,
                 compiledQueryType, queryCacheable, false);
     }
 
     /**
-     * As {@link #beginStreamingPageFrame(long, RecordCursorFactory, PageFrameCursor, int, long, CharSequence, short, boolean)},
+     * As {@link #beginStreamingPageFrame(long, RecordCursorFactory, PageFrameCursor, MemoryTracker, int, long, CharSequence, short, boolean)},
      * for a cursor whose frames stream in {@code isDescending} order: a backward
      * scan hands out its frames last first, and each frame's rows, stored
      * ascending, stream last to first, from the top of the unconsumed range down.
@@ -593,6 +600,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             long requestId,
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
+            @Nullable MemoryTracker memoryTracker,
             int columnCount,
             long initialCredit,
             CharSequence sqlText,
@@ -608,11 +616,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
-        pageFrameAddressCache.of(
-                factory.getMetadata(),
-                pageFrameCursor.getColumnMapping(),
-                pageFrameCursor.isExternal()
-        );
+        pageFrameAddressCache.of(factory.getMetadata(), pageFrameCursor);
+        pageFrameMemoryPool.setMemoryTracker(memoryTracker);
         pageFrameMemoryPool.of(pageFrameAddressCache);
         pageFrameMemoryRecord.of(pageFrameCursor);
         this.streamingRequestId = requestId;

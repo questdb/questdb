@@ -267,7 +267,7 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
                 factory = select("SELECT * FROM t ORDER BY ts DESC");
                 cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_DESC);
                 final RecordMetadata metadata = factory.getMetadata();
-                state.beginStreamingPageFrame(1, factory, cursor, metadata.getColumnCount(), 0, "t", CompiledQuery.SELECT, false, true);
+                state.beginStreamingPageFrame(1, factory, cursor, null, metadata.getColumnCount(), 0, "t", CompiledQuery.SELECT, false, true);
                 factory = null;
                 cursor = null;
                 final QwpResultBatchBuffer buffer = beginBatch(state, metadata);
@@ -374,7 +374,7 @@ public class QwpEgressPageFramePrefetchTest extends AbstractCairoTest {
             cursor = factory.getPageFrameCursor(sqlExecutionContext, order);
             final RecordMetadata metadata = factory.getMetadata();
             final boolean isDescending = order == PartitionFrameCursorFactory.ORDER_DESC;
-            state.beginStreamingPageFrame(1, factory, cursor, metadata.getColumnCount(), 0, sql, CompiledQuery.SELECT, false,
+            state.beginStreamingPageFrame(1, factory, cursor, null, metadata.getColumnCount(), 0, sql, CompiledQuery.SELECT, false,
                     isDescending);
             factory = null;
             cursor = null;
