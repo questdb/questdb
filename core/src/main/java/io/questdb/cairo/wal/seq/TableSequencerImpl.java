@@ -468,6 +468,10 @@ public class TableSequencerImpl implements TableSequencer {
         // Activation is at the next txn; restored history must be complete before primary appends resume.
         // Keep caller intent explicit: the legacy (-1,-1,-1) sentinel is also a valid pack address.
         assert getPackStartTxn() <= lastTxn() + 1;
+        // Report a drop, suspension or pending switch first: starting a switch also sets the boundary.
+        checkDropped();
+        checkHardSuspended();
+        checkNoTableModeTransition();
         if (getPackStartTxn() > 0) {
             throw CairoException.nonCritical().put("Delta schema change requires pack coordinates");
         }
