@@ -133,7 +133,7 @@ public class WalSegmentRecordCursor implements RecordCursor, QuietCloseable {
      */
     public void of(WalSegmentPageFrameCursor frameCursor, RecordMetadata metadata) {
         this.frameCursor = frameCursor;
-        addressCache.of(metadata, frameCursor.getColumnMapping(), false);
+        addressCache.of(metadata, frameCursor);
         memoryPool.of(addressCache);
         record.of(frameCursor);
         isFrameLoaded = false;

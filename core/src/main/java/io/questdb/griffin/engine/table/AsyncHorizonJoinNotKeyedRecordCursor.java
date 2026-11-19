@@ -160,7 +160,6 @@ class AsyncHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordCursor
                     slaveFrameCursor,
                     slaveFactory.getMetadata(),
                     slaveFrameCursor.getColumnMapping(),
-                    slaveFrameCursor.isExternal(),
                     executionContext.getPageFrameMinRows(),
                     executionContext.getPageFrameMaxRows(),
                     executionContext.getSharedQueryWorkerCount(),

@@ -368,7 +368,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                 // while holding the writer and essentially the lock on the table,
                 // we can remove the files.
-                cleanDroppedTableDirectory(engine, tempPath, tableToken);
+                if (engine.notifyDroppedTablePurge(tableToken)) {
+                    cleanDroppedTableDirectory(engine, tempPath, tableToken);
+                }
             } finally {
                 Misc.free(writerToClose);
                 engine.unlockReadersAndMetadata(tableToken);
@@ -716,8 +718,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        // An epoch owed after a change no WAL replay can redo is taken whatever the cadence.
-        final boolean epochOwed = tracker.isDurableEpochOwed();
+        // An epoch owed after a change no WAL replay can redo, or a required completion, is taken whatever the cadence.
+        final boolean epochOwed = tracker.isDurableEpochOwed() || tracker.isDurableEpochCompletionRequired();
         final long intervalMs = config.getAdaptiveEpochIntervalMs();
         // A negative interval disables adaptive epochs, except an owed one.
         if (intervalMs < 0 && !epochOwed) {
@@ -736,7 +738,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
         try {
-            advance(writer, nowMs);
+            if (tracker.isDurableEpochCompletionRequired()) {
+                // A required completion that failed, e.g. after a Delta catalog initialization, is retried here
+                // rather than at the next writer open, which a pooled writer may not see for long.
+                writer.completeDurableEpochAfter("owed save point");
+            } else {
+                advance(writer, nowMs);
+            }
         } catch (CairoException e) {
             engine.handleDataSyncFailure(e);
             LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
@@ -856,6 +864,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
                 long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
+                if (skipTxnCount > 0 && writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn + skipTxnCount)) {
+                    skipTxnCount = 0;
+                }
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
                 if (skipTxnCount > 0) {
@@ -867,7 +878,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     writer.commitWalInsertTransactions(
                             walPath,
                             seqTxn,
-                            pressureControl
+                            pressureControl,
+                            commitTimestamp
                     );
                 }
 

@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -88,6 +89,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.circuitBreaker = executionContext.getCircuitBreaker();
+        cursor.executionContext = executionContext;
         cursor.securityContext = executionContext.getSecurityContext();
         return cursor.initialize();
     }
@@ -108,12 +110,15 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         // the non-system tables the principal may see, in registry order
         private final ObjList<TableToken> tables = new ObjList<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private SqlExecutionContext executionContext;
         private SecurityContext securityContext;
         private int tableIndex = -1;
 
         @Override
         public void close() {
             tableBucket.clear();
+            executionContext = null;
+            securityContext = null;
             tables.clear();
             // The factory nulls txReader once it is freed; a cursor closed after the
             // factory (late close on an error path) must not dereference it.
@@ -234,6 +239,13 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 TableUtils.setTxReaderPath(txReader, path, timestampType, partitionBy); // modifies path
                 rowCount = txReader.unsafeLoadRowCount();
                 partitionCount = txReader.getPartitionCount();
+                if (rowCount >= 0 && txReader.hasAnyDelta()) {
+                    // Both values must describe the snapshot whose Delta catalogs we read.
+                    try (TableReader reader = executionContext.getReader(token)) {
+                        rowCount = reader.getLogicalRowCount();
+                        partitionCount = reader.getPartitionCount();
+                    }
+                }
             }
 
         }
