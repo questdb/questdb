@@ -63,6 +63,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.ParallelHashJoinTestUtils;
 import io.questdb.test.griffin.fuzz.FuzzTableFactory.ParquetMode;
+import io.questdb.test.griffin.fuzz.clauses.EquiJoinClause;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayDeque;
@@ -291,7 +292,7 @@ public final class QueryRunner {
     // cursor opened under the rows that a client reads first; see firstReadRows().
     private int parallelJoinFirstReadRuns;
     // Executions of a query of a LIMIT form, on any axis, whose positive LIMIT a parallel hash join
-    // took; see isLimitForm().
+    // took; see EquiJoinClause.limitForm().
     private int parallelJoinLimitFormRuns;
     // Executions of the parallel hash join, on any axis, that ended with a window of one frame.
     private int parallelJoinSingleFrameWindowRuns;
@@ -635,9 +636,9 @@ public final class QueryRunner {
     }
 
     /**
-     * Executions of a query of a LIMIT form, see {@link #isLimitForm(String)}, whose positive LIMIT
-     * a parallel hash join took: the LIMIT reached the join from outside its own query, or through
-     * a runtime-constant filter over it.
+     * Executions of a query of a LIMIT form, see {@link EquiJoinClause#limitForm(String)}, whose
+     * positive LIMIT a parallel hash join took: the LIMIT reached the join from outside its own
+     * query, or through an operator over it.
      */
     public int getParallelJoinLimitFormRuns() {
         return parallelJoinLimitFormRuns;
@@ -1812,42 +1813,6 @@ public final class QueryRunner {
         };
     }
 
-    /**
-     * True when the query states its LIMIT in one of the forms that EquiJoinClause draws so that the
-     * LIMIT reaches the parallel hash joins from outside their own query, or through an operator
-     * over them: the LIMIT of a sub-query over the joins' query or of a CTE of it, of a UNION ALL,
-     * of an ASOF or LT join of which the joins are the master, or of the joins under a WHERE that
-     * holds no column.
-     */
-    private static boolean isLimitForm(String sql) {
-        final int limit = sql.lastIndexOf(" LIMIT ");
-        if (limit < 0) {
-            return false;
-        }
-        boolean isSubQuery = false;
-        if (sql.startsWith("SELECT * FROM (")) {
-            // The sub-query ends where the LIMIT starts, unless it is an input of the query's joins.
-            int depth = 0;
-            for (int i = "SELECT * FROM ".length(); i < limit; i++) {
-                final char c = sql.charAt(i);
-                if (c == '\'') {
-                    i = sql.indexOf('\'', i + 1);
-                } else if (c == '(') {
-                    depth++;
-                } else if (c == ')' && --depth == 0) {
-                    isSubQuery = i == limit - 1;
-                    break;
-                }
-            }
-        }
-        return isSubQuery
-                || sql.startsWith("WITH q AS (")
-                || sql.contains(" UNION ALL ")
-                || sql.contains(" ASOF JOIN ")
-                || sql.contains(" LT JOIN ")
-                || sql.contains(" WHERE now() > ");
-    }
-
     // True when the tasks of the join's last execution, once they ran the stepper copies, started from
     // the first stage's copy of the execution's orientation, the swapped first stage's own in a
     // swapped execution, and handed their matches on to each later stage's own copy. Steppers wired
@@ -2656,9 +2621,12 @@ public final class QueryRunner {
                 executionContext.setFirstReadRows(Long.MAX_VALUE);
             }
             // A join that opened its cursor under a LIMIT form's positive LIMIT took the LIMIT: the
-            // joins of these forms are not the query's rows, which no first-read rows reach.
+            // joins of these forms are not the query's rows, which no first-read rows reach. The
+            // generator that writes the forms names them, so that the two cannot drift apart.
             final long firstWindowRows = AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting();
-            if (firstWindowRows > 0 && firstWindowRows != Long.MAX_VALUE && isLimitForm(sql)) {
+            if (firstWindowRows > 0
+                    && firstWindowRows != Long.MAX_VALUE
+                    && EquiJoinClause.limitForm(sql) != EquiJoinClause.LIMIT_FORM_NONE) {
                 parallelJoinLimitFormRuns++;
             }
             try (RecordCursor cursor = firstReadCursor) {

@@ -68,6 +68,13 @@ import java.util.regex.Pattern;
 public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
     private static final Pattern ALIAS = Pattern.compile("\\b(l|r\\d*)\\.");
     private static final int CORPUS_SIZE = 4_000;
+    // Queries of the corpus that pins the LIMIT forms over stars: the first CORPUS_SIZE queries of
+    // the same seed, and four times as many after them. A form takes a star with a LIMIT and one
+    // draw in twelve of the forms' generator, and the WHERE that holds no column also takes a query
+    // without a WHERE conjunct: about one query in 2,000. CORPUS_SIZE queries hold none for about
+    // one seed in ten, so a change to the generator's draws that keeps the form would fail the pin
+    // as often; this many hold four or more for every seed of the hundreds tried.
+    private static final int LIMIT_FORM_CORPUS_SIZE = 5 * CORPUS_SIZE;
     // Rows that a star query over three fuzz tables of their largest size may return. The fan-out
     // budget keeps the estimate of a query to about 3_600 rows, of which the test's seed draws up to
     // about 5_100; a star without the budget reaches tens of thousands with two joins and hundreds of
@@ -154,7 +161,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
 
     @Test
     public void testCorpusCoversEveryStarForm() {
-        final ObjList<Query> corpus = corpus();
+        final ObjList<Query> corpus = corpus(CORPUS_SIZE);
         // Stars of every length up to the most joins, and both join types after either.
         for (int joins = 1; joins <= EquiJoinClause.MAX_JOINS; joins++) {
             final int n = joins;
@@ -222,13 +229,15 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         assertCorpusHas(corpus, "a negative LIMIT over a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_NONE && q.limit != null && q.limit.startsWith("-"));
         assertCorpusHas(corpus, "a range LIMIT over a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_NONE && q.limit != null && q.limit.contains(", "));
         // Every LIMIT form over a star, whose LIMIT reaches the star's joins from outside their own
-        // query, or through an operator over them.
-        assertCorpusHas(corpus, "a LIMIT over a sub-query of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_SUB_QUERY);
-        assertCorpusHas(corpus, "a LIMIT over a CTE of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_CTE);
-        assertCorpusHas(corpus, "a LIMIT over a UNION ALL of a star with itself", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_UNION_ALL);
-        assertCorpusHas(corpus, "a LIMIT over an ASOF join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_AS_OF);
-        assertCorpusHas(corpus, "a LIMIT over an LT join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_LT);
-        assertCorpusHas(corpus, "a LIMIT over a star under a WHERE that holds no column", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER);
+        // query, or through an operator over them. The forms are the rarest of the pins, so they
+        // read a longer corpus, see LIMIT_FORM_CORPUS_SIZE.
+        final ObjList<Query> limitFormCorpus = corpus(LIMIT_FORM_CORPUS_SIZE);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over a sub-query of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_SUB_QUERY);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over a CTE of a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_CTE);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over a UNION ALL of a star with itself", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_UNION_ALL);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over an ASOF join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_AS_OF);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over an LT join whose master is a star", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_LT);
+        assertCorpusHas(limitFormCorpus, "a LIMIT over a star under a WHERE that holds no column", q -> q.joins.size() > 1 && q.limitForm == EquiJoinClause.LIMIT_FORM_RUNTIME_CONSTANT_FILTER);
     }
 
     @Test
@@ -237,7 +246,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         // condition that the optimiser hands to either input's scan, and no interval on either.
         // They come over a pair of distinct tables, in both orders, whose sizes differ (see
         // FuzzConfig.getTableRows()), and over one table joined with itself, whose sizes are equal.
-        final ObjList<Query> corpus = corpus();
+        final ObjList<Query> corpus = corpus(CORPUS_SIZE);
         final Set<String> pairs = new HashSet<>();
         int selfJoins = 0;
         int stars = 0;
@@ -368,7 +377,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                 return;
             }
         }
-        Assert.fail("the generator produced no query with " + what + " in " + CORPUS_SIZE + " queries");
+        Assert.fail("the generator produced no query with " + what + " in " + corpus.size() + " queries");
     }
 
     private static Set<String> aliases(String condition) {
@@ -380,28 +389,12 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
         return aliases;
     }
 
-    // The index of the parenthesis that closes the one at the given index.
-    private static int closing(String sql, int open) {
-        Assert.assertEquals(sql, '(', sql.charAt(open));
-        int depth = 0;
-        for (int i = open; i < sql.length(); i++) {
-            final char c = sql.charAt(i);
-            if (c == '\'') {
-                i = sql.indexOf('\'', i + 1);
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')' && --depth == 0) {
-                return i;
-            }
-        }
-        throw new AssertionError("unbalanced parentheses: " + sql);
-    }
-
-    private static ObjList<Query> corpus() {
+    // The first queries of the corpus, as many as given: a longer corpus starts with a shorter one.
+    private static ObjList<Query> corpus(int size) {
         final Rnd rnd = new Rnd(0x5eed, 0xe7a4);
         final ObjList<FuzzTable> tables = tables();
         final ObjList<Query> corpus = new ObjList<>();
-        for (int i = 0; i < CORPUS_SIZE; i++) {
+        for (int i = 0; i < size; i++) {
             // The left and the first right table as QueryGenerator picks them: two distinct tables.
             final int left = rnd.nextInt(3);
             final int right = (left + 1 + rnd.nextInt(2)) % 3;
@@ -524,7 +517,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
                     open += "test_fault() AND ".length();
                 }
                 while (open < end && query.charAt(open) == '(') {
-                    final int close = closing(query, open);
+                    final int close = EquiJoinClause.closing(query, open);
                     conjuncts.add(query.substring(open, close + 1));
                     open = close + 1;
                     if (query.startsWith(" AND ", open)) {
@@ -747,7 +740,7 @@ public class EquiJoinStarShapeCoverageTest extends AbstractCairoTest {
             final StringBuilder windows = new StringBuilder();
             for (int at = select.indexOf(" OVER ("); at >= 0; at = select.indexOf(" OVER (", at + 1)) {
                 final int start = select.lastIndexOf(", ", at) + 2;
-                windows.append(select, start, closing(select, at + " OVER ".length()) + 1).append(';');
+                windows.append(select, start, EquiJoinClause.closing(select, at + " OVER ".length()) + 1).append(';');
             }
             return windows.toString();
         }

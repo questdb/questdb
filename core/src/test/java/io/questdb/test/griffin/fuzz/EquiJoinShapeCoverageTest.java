@@ -51,8 +51,9 @@ import java.util.regex.Pattern;
  * paths for them unchecked while the run stays green. Also pins the band that
  * {@link QueryGenerator} carves for the shape out of the SIMPLE range: with the knob off, the
  * generator draws exactly what it drew before the band existed. And pins
- * {@link EquiJoinClause#unwrapLimitForm(String)}, through which this test and
- * {@link EquiJoinStarShapeCoverageTest} read a query of a LIMIT form.
+ * {@link EquiJoinClause#unwrapLimitForm(String)} and {@link EquiJoinClause#closing(String, int)},
+ * through which this test and {@link EquiJoinStarShapeCoverageTest} read a query of a LIMIT form
+ * and the parentheses of any query.
  * <p>
  * The generator is random, so each assertion runs over a corpus; the seed is fixed so a failure
  * is reproducible.
@@ -216,6 +217,33 @@ public class EquiJoinShapeCoverageTest {
     }
 
     @Test
+    public void testClosingFindsTheMatchingParenthesis() {
+        // EquiJoinClause.closing() returns the index of the parenthesis that closes the one at the
+        // given index: of a pair alone, and of the outer and the inner pairs of nested ones.
+        Assert.assertEquals(1, EquiJoinClause.closing("()", 0));
+        final String nested = "a (b (c) (d)) e";
+        Assert.assertEquals(12, EquiJoinClause.closing(nested, 2));
+        Assert.assertEquals(7, EquiJoinClause.closing(nested, 5));
+        Assert.assertEquals(11, EquiJoinClause.closing(nested, 9));
+        // A parenthesis in a quoted literal neither opens nor closes: the last one closes the first.
+        final String quoted = "(l.c2 != ')' AND r.c2 = '((')";
+        Assert.assertEquals(quoted.length() - 1, EquiJoinClause.closing(quoted, 0));
+        // No parenthesis opens at the given index, and one that opens never closes.
+        Assert.assertEquals(
+                "no opening parenthesis at 1: (l.k)",
+                Assert.assertThrows(AssertionError.class, () -> EquiJoinClause.closing("(l.k)", 1)).getMessage()
+        );
+        Assert.assertEquals(
+                "unbalanced parentheses: ((l.k)",
+                Assert.assertThrows(AssertionError.class, () -> EquiJoinClause.closing("((l.k)", 0)).getMessage()
+        );
+        Assert.assertEquals(
+                "unbalanced parentheses: (l.c2 = ')'",
+                Assert.assertThrows(AssertionError.class, () -> EquiJoinClause.closing("(l.c2 = ')'", 0)).getMessage()
+        );
+    }
+
+    @Test
     public void testCorpusCoversEveryForm() {
         final String corpus = corpus();
         // The join types the operator runs, each over the four shared keys and their pairs.
@@ -293,11 +321,11 @@ public class EquiJoinShapeCoverageTest {
             final int where = indexAtDepthZero(sql, " WHERE ", on);
             final int residual = indexAtDepthZero(sql, " AND (", on);
             if (residual > 0 && (where < 0 || residual < where)) {
-                residuals[join + sides(sql.substring(residual + 5, closing(sql, residual + 5) + 1))]++;
+                residuals[join + sides(sql.substring(residual + 5, EquiJoinClause.closing(sql, residual + 5) + 1))]++;
             }
             if (where > 0) {
                 for (int open = where + 7; open < sql.length() && sql.charAt(open) == '('; ) {
-                    final int close = closing(sql, open);
+                    final int close = EquiJoinClause.closing(sql, open);
                     final String conjunct = sql.substring(open, close + 1);
                     if (conjunct.equals("(r.k IS NULL)")) {
                         antiJoins += join > 0 ? 1 : 0;
@@ -536,23 +564,6 @@ public class EquiJoinShapeCoverageTest {
         Assert.assertEquals(sql, text, EquiJoinClause.limitFormText(sql));
     }
 
-    // The index of the parenthesis that closes the one at the given index.
-    private static int closing(String sql, int open) {
-        Assert.assertEquals(sql, '(', sql.charAt(open));
-        int depth = 0;
-        for (int i = open; i < sql.length(); i++) {
-            final char c = sql.charAt(i);
-            if (c == '\'') {
-                i = sql.indexOf('\'', i + 1);
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')' && --depth == 0) {
-                return i;
-            }
-        }
-        throw new AssertionError("unbalanced parentheses: " + sql);
-    }
-
     private static String corpus() {
         final Rnd rnd = new Rnd(0x5eed, 0xe7a1);
         final FuzzTable left = table("t0");
@@ -587,12 +598,12 @@ public class EquiJoinShapeCoverageTest {
         final int where = indexAtDepthZero(sql, " WHERE ", on);
         final int residual = indexAtDepthZero(sql, " AND (", on);
         if (!isLeftJoin && residual > 0 && (where < 0 || residual < where)
-                && sides(sql.substring(residual + 5, closing(sql, residual + 5) + 1)) == 0) {
+                && sides(sql.substring(residual + 5, EquiJoinClause.closing(sql, residual + 5) + 1)) == 0) {
             return true;
         }
         if (where > 0) {
             for (int open = where + 7; open < sql.length() && sql.charAt(open) == '('; ) {
-                final int close = closing(sql, open);
+                final int close = EquiJoinClause.closing(sql, open);
                 final String conjunct = sql.substring(open, close + 1);
                 if (!conjunct.startsWith("(l.ts >= '2024-01-") && sides(conjunct) == 0) {
                     return true;
@@ -632,7 +643,7 @@ public class EquiJoinShapeCoverageTest {
         if (sql.charAt(open) != '(') {
             return false;
         }
-        final String input = sql.substring(open + 1, closing(sql, open));
+        final String input = sql.substring(open + 1, EquiJoinClause.closing(sql, open));
         return indexAtDepthZero(input, " WHERE ", 0) > 0;
     }
 
@@ -643,7 +654,7 @@ public class EquiJoinShapeCoverageTest {
         for (String sql : corpus.split("\n")) {
             for (int at = sql.indexOf("JOIN (SELECT "); at > -1; at = sql.indexOf("JOIN (SELECT ", at + 1)) {
                 final int open = at + 5;
-                final int close = closing(sql, open);
+                final int close = EquiJoinClause.closing(sql, open);
                 final String input = sql.substring(open + 1, close);
                 final int where = indexAtDepthZero(input, " WHERE ", 0);
                 if (where > 0 && sql.startsWith(") r ON ", close) && varchar.matcher(input.substring(where)).find()) {

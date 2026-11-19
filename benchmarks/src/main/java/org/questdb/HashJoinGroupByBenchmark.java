@@ -89,7 +89,7 @@ import java.util.concurrent.TimeUnit;
  *       39,063 rows, one key each, either side of the 256 texts per probe row below which the probe
  *       translates the key through each worker's own cache rather than a cache that the dictionary
  *       sizes, and {@code SYMBOL_10M_FULL} every row.</li>
- *   <li>{@code fused}: false compiles the query with the fused GROUP BY off, the plan it replaces.</li>
+ *   <li>{@code isFused}: false compiles the query with the fused GROUP BY off, the plan it replaces.</li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
  *       per hourly partition.</li>
@@ -121,7 +121,7 @@ public class HashJoinGroupByBenchmark {
     public long factRows;
 
     @Param({"true"})
-    public boolean fused;
+    public boolean isFused;
 
     @Param({"5000000"})
     public long largeDimRows;
@@ -284,13 +284,13 @@ public class HashJoinGroupByBenchmark {
         ctx.setParallelHashJoinGroupByEnabled(true);
         createTables(root);
 
-        ctx.setParallelHashJoinGroupByEnabled(fused);
+        ctx.setParallelHashJoinGroupByEnabled(isFused);
         factory = engine.select(sql(), ctx);
         final TextPlanSink planSink = new TextPlanSink();
         planSink.of(factory, ctx);
         final String text = planSink.getSink().toString();
-        if (fused != text.contains(FUSED_NODE)) {
-            throw new IllegalStateException("routing drift: shape=" + shape + " fused=" + fused + '\n' + text);
+        if (isFused != text.contains(FUSED_NODE)) {
+            throw new IllegalStateException("routing drift: shape=" + shape + " isFused=" + isFused + '\n' + text);
         }
         final RecordMetadata metadata = factory.getMetadata();
         types = new int[metadata.getColumnCount()];

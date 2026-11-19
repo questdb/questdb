@@ -178,7 +178,7 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code cairo.sql.parallel.hash.join.tuple.ring.max.size}.</li>
  *   <li>{@code payloadCopyMaxSize}: {@code cairo.sql.parallel.hash.join.groupby.payload.copy.max.size}
  *       in bytes, 0 to never copy a payload; -1 keeps the default.</li>
- *   <li>{@code freshCompile}: true compiles the query in every operation, so that each operation
+ *   <li>{@code isFreshCompile}: true compiles the query in every operation, so that each operation
  *       runs a factory of its own, whose per-factory classes start cold.</li>
  *   <li>{@code probeRows}: the fact rows that the {@code SMALL_*} and {@code PARQUET_VAR_BUILD_*}
  *       shapes join, and the fsym rows that the {@code SYMBOL_10M_PREFIX_*} shapes join.</li>
@@ -186,7 +186,7 @@ import java.util.concurrent.locks.LockSupport;
  *       decode cache budget; -1 keeps the default.</li>
  *   <li>{@code warmUpRows}: the probe rows after which a factory switches from the shared stepper
  *       template to its stages' hidden copies; -1 keeps the default.</li>
- *   <li>{@code firstReadHint}: whether the {@code PAGE_*} and {@code FETCH_*} shapes open their
+ *   <li>{@code hasFirstReadHint}: whether the {@code PAGE_*} and {@code FETCH_*} shapes open their
  *       cursors under the rows that the client reads first, 1,001 and 1,000, as the HTTP and PG
  *       servers pass them; false opens them as the servers did before they passed them.</li>
  * </ul>
@@ -244,6 +244,12 @@ public class ParallelHashJoinBenchmark {
     @Param({"10000000"})
     public long factRows;
 
+    @Param({"true"})
+    public boolean hasFirstReadHint;
+
+    @Param({"false"})
+    public boolean isFreshCompile;
+
     @Param({"5000000"})
     public long largeDimRows;
 
@@ -258,12 +264,6 @@ public class ParallelHashJoinBenchmark {
 
     @Param({"-1"})
     public long payloadCopyMaxSize;
-
-    @Param({"true"})
-    public boolean firstReadHint;
-
-    @Param({"false"})
-    public boolean freshCompile;
 
     @Param({"ORDINARY", "OPERATOR"})
     public String plan;
@@ -327,7 +327,7 @@ public class ParallelHashJoinBenchmark {
 
     @Benchmark
     public long run() throws SqlException {
-        if (freshCompile) {
+        if (isFreshCompile) {
             try (
                     RecordCursorFactory fresh = engine.select(text, ctx);
                     RecordCursor cursor = openCursor(fresh)
@@ -578,9 +578,9 @@ public class ParallelHashJoinBenchmark {
     }
 
     // The rows that the client of a PAGE_ or FETCH_ shape reads first, Long.MAX_VALUE for any other
-    // shape and without firstReadHint.
+    // shape and without hasFirstReadHint.
     private long firstReadRows() {
-        if (!firstReadHint) {
+        if (!hasFirstReadHint) {
             return Long.MAX_VALUE;
         }
         if (shape.startsWith("PAGE_")) {
@@ -718,11 +718,11 @@ public class ParallelHashJoinBenchmark {
                 .append(" pageFrameMaxRows=").append(pageFrameMaxRows)
                 .append(" ringBudgetFactor=").append(ringBudgetFactor)
                 .append(" payloadCopyMaxSize=").append(payloadCopyMaxSize)
-                .append(" freshCompile=").append(freshCompile)
+                .append(" isFreshCompile=").append(isFreshCompile)
                 .append(" probeRows=").append(probeRows)
                 .append(" parquetCacheSize=").append(parquetCacheSize)
                 .append(" warmUpRows=").append(warmUpRows)
-                .append(" firstReadHint=").append(firstReadHint)
+                .append(" hasFirstReadHint=").append(hasFirstReadHint)
                 .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
 
         final long workerCpu0 = cpuNanos(threads, workerThreadIds);

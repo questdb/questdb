@@ -215,6 +215,30 @@ public final class EquiJoinClause {
     }
 
     /**
+     * The index of the parenthesis that closes the one at the given index, past the parentheses of
+     * quoted literals. Throws an AssertionError when the given index holds no opening parenthesis
+     * and when the parenthesis never closes. The generator's LIMIT forms and the tests that take
+     * its queries apart share it.
+     */
+    public static int closing(String sql, int open) {
+        if (sql.charAt(open) != '(') {
+            throw new AssertionError("no opening parenthesis at " + open + ": " + sql);
+        }
+        int depth = 0;
+        for (int i = open; i < sql.length(); i++) {
+            final char c = sql.charAt(i);
+            if (c == '\'') {
+                i = sql.indexOf('\'', i + 1);
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')' && --depth == 0) {
+                return i;
+            }
+        }
+        throw new AssertionError("unbalanced parentheses: " + sql);
+    }
+
+    /**
      * Draws one join of two inputs, without window functions: the shape of the first join of a
      * star.
      */
@@ -676,22 +700,6 @@ public final class EquiJoinClause {
             default:
                 return query;
         }
-    }
-
-    // The index of the parenthesis that closes the one at the given index, past quoted literals.
-    private static int closing(String sql, int open) {
-        int depth = 0;
-        for (int i = open; i < sql.length(); i++) {
-            final char c = sql.charAt(i);
-            if (c == '\'') {
-                i = sql.indexOf('\'', i + 1);
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')' && --depth == 0) {
-                return i;
-            }
-        }
-        throw new AssertionError("unbalanced parentheses: " + sql);
     }
 
     /**
