@@ -1075,8 +1075,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         "COPY ... FROM is not supported on egress");
                 return;
             }
+            case CompiledQuery.SET:
+                // SET and RESET take effect at compile time. Save the selection before the reply can park.
+                state.setSessionResourceGroup(sqlCtx.getSessionResourceGroup());
+                break;
             default: {
-                // Parse-time-executed statements (TRUNCATE, RENAME TABLE, SET,
+                // Parse-time-executed statements (TRUNCATE, RENAME TABLE,
                 // VACUUM, CHECKPOINT, BEGIN / COMMIT / ROLLBACK, DEALLOCATE,
                 // TABLE_RESUME / SUSPEND / SET_TYPE, CREATE/ALTER USER, etc.)
                 // need no further execute -- the compiler already did the work.
@@ -1342,6 +1346,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     context.getFd(),
                     circuitBreaker.of(context.getFd())
             );
+            sqlCtx.setSessionResourceGroup(state.getSessionResourceGroup());
             sqlCtx.initNow();
             // The breaker is shared with the plain-HTTP processors that may have served this
             // connection before the upgrade; /exec and /exp set per-statement timeouts on it,
@@ -1376,7 +1381,14 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     }
                     if (factory == null) {
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                            CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
+                            final CompiledQuery cq;
+                            // Scope the compiler's session support to QWP SQL on the shared HTTP context.
+                            sqlCtx.setSessionScoped(true);
+                            try {
+                                cq = compiler.compile(decoder.sql, sqlCtx);
+                            } finally {
+                                sqlCtx.setSessionScoped(false);
+                            }
                             short type = cq.getType();
                             compiledQueryType = type;
                             queryCacheable = type == CompiledQuery.SELECT && cq.isCacheable();
