@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.DefaultFactoryProvider;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
@@ -34,8 +36,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
@@ -51,6 +55,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -375,71 +380,89 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         // no worker started by then never run the probe filter.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 32);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64);
-        for (WorkerPoolMode mode : WorkerPoolMode.values()) {
-            assertMemoryLeak(() -> executeOnWorkers(mode, 2, null, configuration, LOG, (db, context) -> {
-                context.setParallelHashJoinEnabled(true);
-                context.changePageFrameSizes(16, 16);
-                // 64 frames of t, all in one partition, so that a row id's partition index is
-                // its frame's index.
-                final String t = "t_" + mode.name().toLowerCase();
-                final String d = "d_" + mode.name().toLowerCase();
-                db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
-                        + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
-                db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
-                final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
-                final Thread owner = Thread.currentThread();
-                final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
-                final AtomicBoolean isClosing = new AtomicBoolean();
-                final AtomicInteger startsAfterClose = new AtomicInteger();
-                final AtomicInteger heldWorkers = new AtomicInteger();
-                TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-                    @Override
-                    public boolean onGet(Record rec, int count) {
-                        final int frame = Rows.toPartitionIndex(rec.getRowId());
-                        if (startedFrames.add(frame) && isClosing.get()) {
-                            startsAfterClose.incrementAndGet();
-                        }
-                        if (frame > 0 && Thread.currentThread() != owner && !isClosing.get()) {
-                            // The worker holds its frame until the consumer's close() cancelled the
-                            // frames and waits for those in flight.
-                            heldWorkers.incrementAndGet();
-                            while (!isClosing.get()) {
-                                if (isAwaitingFrames(owner)) {
-                                    isClosing.set(true);
-                                } else {
-                                    Thread.onSpinWait();
+        // The owner steals no frame from the queue: one that it stole while a worker was still on
+        // the first frame would run past the probe filter's hold, and the owner would steal the
+        // rest of the window, one frame per pass, until the first frame is done, which leaves the
+        // other worker no frame to hold.
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull WorkStealingStrategy getWorkStealingStrategy(
+                    @NotNull CairoConfiguration configuration,
+                    int workerCount,
+                    @NotNull StatefulAtom atom
+            ) {
+                return NeverStealingStrategy.INSTANCE;
+            }
+        };
+        try {
+            for (WorkerPoolMode mode : WorkerPoolMode.values()) {
+                assertMemoryLeak(() -> executeOnWorkers(mode, 2, null, configuration, LOG, (db, context) -> {
+                    context.setParallelHashJoinEnabled(true);
+                    context.changePageFrameSizes(16, 16);
+                    // 64 frames of t, all in one partition, so that a row id's partition index is
+                    // its frame's index.
+                    final String t = "t_" + mode.name().toLowerCase();
+                    final String d = "d_" + mode.name().toLowerCase();
+                    db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
+                            + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                    db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
+                    final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
+                    final Thread owner = Thread.currentThread();
+                    final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
+                    final AtomicBoolean isClosing = new AtomicBoolean();
+                    final AtomicInteger startsAfterClose = new AtomicInteger();
+                    final AtomicInteger heldWorkers = new AtomicInteger();
+                    TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                        @Override
+                        public boolean onGet(Record rec, int count) {
+                            final int frame = Rows.toPartitionIndex(rec.getRowId());
+                            if (startedFrames.add(frame) && isClosing.get()) {
+                                startsAfterClose.incrementAndGet();
+                            }
+                            if (frame > 0 && Thread.currentThread() != owner && !isClosing.get()) {
+                                // The worker holds its frame until the consumer's close() cancelled the
+                                // frames and waits for those in flight.
+                                heldWorkers.incrementAndGet();
+                                while (!isClosing.get()) {
+                                    if (isAwaitingFrames(owner)) {
+                                        isClosing.set(true);
+                                    } else {
+                                        Thread.onSpinWait();
+                                    }
                                 }
                             }
+                            return true;
                         }
-                        return true;
-                    }
-                });
-                try (RecordCursorFactory factory = db.select(sql, context)) {
-                    final AsyncHashJoinRecordCursorFactory join = find(factory);
-                    Assert.assertNotNull(join);
-                    TestUtils.assertContains(plan(factory, context), "filter: (test_latched_counter() or v<0)");
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(64, join.getProbeFrameCount());
-                        // Both workers hold a frame, with the rest of the window queued behind them.
-                        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-                        while (heldWorkers.get() < 2) {
-                            Assert.assertTrue("the workers took no frame", System.nanoTime() < deadline);
-                            Thread.onSpinWait();
+                    });
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        TestUtils.assertContains(plan(factory, context), "filter: (test_latched_counter() or v<0)");
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(64, join.getProbeFrameCount());
+                            // Both workers hold a frame, with the rest of the window queued behind them.
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+                            while (heldWorkers.get() < 2) {
+                                Assert.assertTrue("the workers took no frame", System.nanoTime() < deadline);
+                                Thread.onSpinWait();
+                            }
                         }
+                        // The workers held their frames, and only the frame that a worker took before
+                        // the cancellation, after the first one, started once the consumer closed.
+                        Assert.assertEquals(2, heldWorkers.get());
+                        Assert.assertTrue("frames started after close: " + startsAfterClose.get(), startsAfterClose.get() <= 1);
+                        Assert.assertTrue("frames started: " + startedFrames.size(), startedFrames.size() < 32);
+                        assertReleased(join, db);
+                        TestLatchedCounterFunctionFactory.reset(null);
+                        Assert.assertEquals(ordinary(sql, context), result(factory, context));
+                    } finally {
+                        TestLatchedCounterFunctionFactory.reset(null);
                     }
-                    // The workers held their frames, and only the frame that a worker took before
-                    // the cancellation, after the first one, started once the consumer closed.
-                    Assert.assertEquals(2, heldWorkers.get());
-                    Assert.assertTrue("frames started after close: " + startsAfterClose.get(), startsAfterClose.get() <= 1);
-                    Assert.assertTrue("frames started: " + startedFrames.size(), startedFrames.size() < 32);
-                    assertReleased(join, db);
-                    TestLatchedCounterFunctionFactory.reset(null);
-                    Assert.assertEquals(ordinary(sql, context), result(factory, context));
-                } finally {
-                    TestLatchedCounterFunctionFactory.reset(null);
-                }
-            }));
+                }));
+            }
+        } finally {
+            factoryProvider = null;
         }
     }
 
@@ -1219,6 +1242,21 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
             if (isOnStack(className, methodName) && checks.incrementAndGet() == reachedCheck) {
                 cancel();
             }
+        }
+    }
+
+    // Leaves every frame to the workers: the owner waits for its frames rather than reduce any.
+    private static final class NeverStealingStrategy implements WorkStealingStrategy {
+        private static final NeverStealingStrategy INSTANCE = new NeverStealingStrategy();
+
+        @Override
+        public WorkStealingStrategy of(AtomicInteger startedCounter) {
+            return this;
+        }
+
+        @Override
+        public boolean shouldSteal(int finishedCount) {
+            return false;
         }
     }
 }

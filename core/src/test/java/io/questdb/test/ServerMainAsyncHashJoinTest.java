@@ -134,8 +134,13 @@ public class ServerMainAsyncHashJoinTest extends AbstractBootstrapTest {
                 final int queueCapacity = configuration.getPageFrameReduceQueueCapacity();
                 Assert.assertEquals(Math.min(workerCount, 32), dispatchLimit);
                 Assert.assertEquals(Numbers.ceilPow2(Math.min(4 * workerCount, 256)), queueCapacity);
+                // Probe frames of at most 100_000 rows, below the page frames' 1_000_000, which the
+                // task cap and the ring budget follow.
+                Assert.assertEquals(1_000_000, configuration.getSqlPageFrameMaxRows());
+                Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinPageFrameMaxRows());
+                Assert.assertEquals(100_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
                 Assert.assertEquals(
-                        (long) Math.min(dispatchLimit, queueCapacity) * configuration.getSqlPageFrameMaxRows() * 6 * Long.BYTES,
+                        (long) Math.min(dispatchLimit, queueCapacity) * 100_000 * 6 * Long.BYTES,
                         configuration.getSqlParallelHashJoinTupleRingMaxSize()
                 );
                 try (
@@ -190,7 +195,9 @@ public class ServerMainAsyncHashJoinTest extends AbstractBootstrapTest {
                             }
                         }
                         Assert.assertEquals(expected, rows(engine, context, STAR));
-                        // A stack of five joins over full-size frames keeps the whole window.
+                        // A stack of five joins over full-size probe frames, of 100_000 rows whatever the
+                        // workers, since f's daily partitions hold 576_000 rows and the frames at least
+                        // the server's 100_000, keeps the whole window.
                         try (RecordCursorFactory factory = engine.select(STACK5, context)) {
                             final AsyncHashJoinRecordCursorFactory join = ParallelHashJoinTestUtils.find(factory);
                             Assert.assertNotNull(join);
@@ -201,6 +208,7 @@ public class ServerMainAsyncHashJoinTest extends AbstractBootstrapTest {
                                 Assert.assertEquals(Math.min(dispatchLimit, queueCapacity), ring.getEntryCount());
                                 Assert.assertEquals(Math.min(dispatchLimit, queueCapacity), ring.getDispatchLimit());
                                 Assert.assertTrue(join.getProbeFrameCount() > 1);
+                                Assert.assertEquals(100_000, join.getProbeFrameRowCount(0));
                             }
                         }
                     }
