@@ -61,6 +61,9 @@ public final class Os {
     public static final String archName;
     public static final String name;
     public static final int type;
+    // Read when this class loads, which happens before any thread can restrict itself through
+    // setCurrentThreadCpus() or setCurrentThreadAffinity().
+    private static final int PROCESS_CPU_COUNT = Runtime.getRuntime().availableProcessors();
     /**
      * Downcall to {@code qdb_sleep_millis} in libquestdbr, resolved eagerly in the
      * static initializer so a native library that lacks the symbol fails class load
@@ -195,6 +198,15 @@ public final class Os {
     }
 
     public static native int getPid();
+
+    /**
+     * The number of CPUs available to the process. {@link Runtime#availableProcessors()} reports
+     * the calling thread's CPU set on Linux, so a worker restricted to one socket's CPUs sees only
+     * those; this count is the one the JVM reported before any thread restricted itself.
+     */
+    public static int getProcessCpuCount() {
+        return PROCESS_CPU_COUNT;
+    }
 
     /**
      * Returns physical memory used by this process (Resident Set Size/Working Set Size).

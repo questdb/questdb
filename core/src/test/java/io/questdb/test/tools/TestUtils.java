@@ -91,6 +91,7 @@ import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
+import io.questdb.std.CpuTopology;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Files;
@@ -1992,6 +1993,18 @@ public final class TestUtils {
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
         }
+    }
+
+    /**
+     * The CPUs the calling thread may run on, from {@code /proc/thread-self/status}. Linux only.
+     */
+    public static int[] getThreadAllowedCpus() throws IOException {
+        for (String line : java.nio.file.Files.readAllLines(Paths.get("/proc/thread-self/status"))) {
+            if (line.startsWith("Cpus_allowed_list:")) {
+                return CpuTopology.parseCpuList(line.substring("Cpus_allowed_list:".length()));
+            }
+        }
+        throw new AssertionError("no Cpus_allowed_list in /proc/thread-self/status");
     }
 
     public static TestTimestampType getTimestampType() {

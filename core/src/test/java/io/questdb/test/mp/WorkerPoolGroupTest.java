@@ -41,7 +41,6 @@ import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
-import io.questdb.std.CpuTopology;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
@@ -51,8 +50,6 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -330,7 +327,7 @@ public class WorkerPoolGroupTest {
     @Test
     public void testWorkersRunOnTheirGroupCpus() throws Exception {
         Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
-        final int[] allowed = threadAllowedCpus();
+        final int[] allowed = TestUtils.getThreadAllowedCpus();
         Assume.assumeTrue("needs at least 2 allowed CPUs", allowed.length > 1);
         // split the allowed CPUs into two halves, as two sockets would be
         final int half = allowed.length / 2;
@@ -350,7 +347,7 @@ public class WorkerPoolGroupTest {
                     public boolean run(@NotNull WorkerContext workerContext) {
                         if (seen.get(worker) == null) {
                             try {
-                                seen.set(worker, threadAllowedCpus());
+                                seen.set(worker, TestUtils.getThreadAllowedCpus());
                             } catch (Exception e) {
                                 seen.set(worker, new int[0]);
                             }
@@ -369,7 +366,7 @@ public class WorkerPoolGroupTest {
             Assert.assertArrayEquals("worker " + i, groupCpus[i < 3 ? 0 : 1], seen.get(i));
         }
         // the restriction applies to the workers only
-        Assert.assertArrayEquals(allowed, threadAllowedCpus());
+        Assert.assertArrayEquals(allowed, TestUtils.getThreadAllowedCpus());
     }
 
     @Test
@@ -475,16 +472,6 @@ public class WorkerPoolGroupTest {
                 return WorkerPoolMode.FIBER_HOST;
             }
         };
-    }
-
-    // the calling thread's allowed CPUs, as the kernel reports them
-    private static int[] threadAllowedCpus() throws Exception {
-        for (String line : Files.readAllLines(Path.of("/proc/thread-self/status"))) {
-            if (line.startsWith("Cpus_allowed_list:")) {
-                return CpuTopology.parseCpuList(line.substring("Cpus_allowed_list:".length()));
-            }
-        }
-        throw new AssertionError("no Cpus_allowed_list in /proc/thread-self/status");
     }
 
     // a session that never receives a dispatch and is always quiesced

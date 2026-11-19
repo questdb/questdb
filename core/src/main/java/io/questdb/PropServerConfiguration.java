@@ -1270,7 +1270,8 @@ public class PropServerConfiguration implements ServerConfiguration {
         this.checkpointRecoveryThreadpoolMax = checkpointRecoveryThreadpoolMaxRaw;
         this.devModeEnabled = getBoolean(properties, env, PropertyKey.DEV_MODE_ENABLED, false);
 
-        int cpuAvailable = Runtime.getRuntime().availableProcessors();
+        // the process's CPUs, also when a reload runs on a network worker restricted to one socket's CPUs
+        int cpuAvailable = Os.getProcessCpuCount();
         int cpuWalApplyWorkers = 2;
         int cpuExportWorkers = 1;
         int cpuSpare = 0;
@@ -2216,7 +2217,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlWindowInitialRangeBufferSize = getInt(properties, env, PropertyKey.CAIRO_SQL_ANALYTIC_INITIAL_RANGE_BUFFER_SIZE, 32);
             this.sqlTxnScoreboardEntryCount = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_O3_TXN_SCOREBOARD_ENTRY_COUNT, 16384));
             this.sqlTimerShardCount = Math.max(1, getInt(properties, env, PropertyKey.CAIRO_TIMER_SHARDS,
-                    Math.min(4, Math.max(1, Runtime.getRuntime().availableProcessors() / 4))));
+                    Math.min(4, Math.max(1, cpuAvailable / 4))));
             this.latestByQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_LATEST_ON_QUEUE_CAPACITY, 32));
 
             // telemetry config
