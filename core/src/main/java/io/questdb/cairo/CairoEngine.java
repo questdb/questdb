@@ -1481,6 +1481,7 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public void completeInit() {
         initDataID();
+        saveLastRunVersion();
         settingsStore = new SettingsStore(configuration);
         tableIdGenerator.open();
         checkpointRecover();
@@ -2545,14 +2546,15 @@ public class CairoEngine implements Closeable, WriterSource {
      * Returns a pooled table reader that is pointed at the same transaction number
      * as the source reader.
      * <p>
-     * If the source reader is detached and not in use, returns the source reader.
+     * If the source reader is detached, not in use, and has no Delta rows, returns it.
      * The source reader must be used only through calling this method.
      */
     public TableReader getReaderAtTxn(TableReader srcReader, SqlExecutionContext executionContext) {
         assert srcReader.isOpen() && srcReader.isActive();
         // Fast path: go with the base reader if it's not in-use. It was borrowed before the
         // current query, so it is intentionally not attributed to the query's supervisor.
-        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0) {
+        // Delta readers need pooled copies so cursor close frees checkpoints before tracker recycling.
+        if (readerPool.isDetached(srcReader) && readerPool.getDetachedRefCount(srcReader) == 0 && !srcReader.hasAnyDelta()) {
             readerPool.incDetachedRefCount(srcReader);
             return srcReader;
         }
@@ -3131,7 +3133,8 @@ public class CairoEngine implements Closeable, WriterSource {
                                 sequencerTxn,
                                 walTimestamp,
                                 minTimestamp == Long.MAX_VALUE ? Numbers.LONG_NULL : minTimestamp,
-                                maxTimestamp
+                                maxTimestamp,
+                                RecentWriteTracker.RowCountSource.of(txReader)
                         )) {
                             hydratedCount++;
                         }
@@ -3496,6 +3499,14 @@ public class CairoEngine implements Closeable, WriterSource {
             return true;
         }
         return false;
+    }
+
+    /**
+     * Runs before a dropped WAL table's files are deleted, while its readers and writer are locked out.
+     * Returns false when background work must drain before a later purge attempt.
+     */
+    public boolean notifyDroppedTablePurge(TableToken tableToken) {
+        return true;
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {
@@ -5178,6 +5189,13 @@ public class CairoEngine implements Closeable, WriterSource {
             // client REBASE WAL on a demoting primary is refused (the demote write-fence).
             oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
 
+            // Delta catalogs retain transaction numbers that a WAL rebase resets to zero.
+            if (oldWriter.getTxWriter().hasDeltaState()) {
+                throw CairoException.nonCritical()
+                        .put("cannot rebase WAL, table has a delta-active partition or delta data [table=")
+                        .put(tableName).put(']');
+            }
+
             try (Path src = new Path(); Path dst = new Path()) {
                 // Build the clone in a hidden ".rebase/" staging dir (mirrors ".download"/".checkpoint").
                 // Startup table-dir scans only consider immediate db-root children that are complete tables
@@ -5531,6 +5549,14 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    // Records the release that starts on the database directory, before it changes anything there: see
+    // LastRunVersion. A read-only instance writes nothing to the directory.
+    private void saveLastRunVersion() {
+        if (!configuration.isReadOnlyInstance()) {
+            LastRunVersion.save(configuration, getOssVersion(), getEnterpriseVersion());
+        }
+    }
+
     private boolean tryLockWalPurgeJob0(long timeout, TimeUnit timeUnit) {
         if (timeout == 0) {
             return walPurgeJobLock.tryLock();
@@ -5660,8 +5686,27 @@ public class CairoEngine implements Closeable, WriterSource {
         isSqlExecutionCooperativePollingEnabled = true;
     }
 
+    /**
+     * The QuestDB Enterprise version this engine runs as, for {@link LastRunVersion}: {@code null} in OSS,
+     * which has none. {@link #completeInit()} may call it from the constructor, so an override must not read
+     * the fields of its own class.
+     */
+    protected @Nullable CharSequence getEnterpriseVersion() {
+        return null;
+    }
+
     protected Iterable<FunctionFactory> getFunctionFactories() {
         return new FunctionFactoryCacheBuilder().scan(LOG).build();
+    }
+
+    /**
+     * The QuestDB (OSS) version this engine runs as, for {@link LastRunVersion}. In OSS it is the version of
+     * the build; Enterprise, whose build information names the Enterprise release, overrides it.
+     * {@link #completeInit()} may call it from the constructor, so an override must not read the fields of
+     * its own class.
+     */
+    protected CharSequence getOssVersion() {
+        return configuration.getBuildInformation().getSwVersion();
     }
 
     protected void initDataID() {

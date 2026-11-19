@@ -221,11 +221,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {
-        return getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
+        final TableReader reader = getCairoEngine().getReader(tableToken, version, this.getReaderPoolSupervisor());
+        reader.setMemoryTracker(getMemoryTracker());
+        return reader;
     }
 
     default TableReader getReader(TableToken tableToken) {
-        return getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+        final TableReader reader = getCairoEngine().getReader(tableToken, this.getReaderPoolSupervisor());
+        reader.setMemoryTracker(getMemoryTracker());
+        return reader;
     }
 
     /**
@@ -494,6 +498,22 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isValidationOnly();
 
+    /**
+     * Whether the current compile derives an ordinary view's metadata, at CREATE, ALTER or
+     * recompilation. PIVOT IN subqueries execute now and must also work without the caller later.
+     */
+    default boolean isViewCompile() {
+        return false;
+    }
+
+    /**
+     * Whether this compile is inside a PIVOT IN subquery that derives an ordinary view's metadata.
+     * Unlike the rest of the view's SELECT, its functions execute during detached recompilation.
+     */
+    default boolean isViewMetadataSubquery() {
+        return false;
+    }
+
     boolean isWalApplication();
 
     /**
@@ -674,6 +694,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);
+
+    default void setViewCompile(boolean value) {
+    }
+
+    default void setViewMetadataSubquery(boolean value) {
+    }
 
     default boolean shouldLogSql() {
         return true;

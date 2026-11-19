@@ -903,6 +903,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     // interpolated rather than spelled "adaptive", so a -Dquestdb.test.commit.mode sweep does not
                                     // fail here on a value this test is not about.
                                     "cairo.commit.mode\tQDB_CAIRO_COMMIT_MODE\t" + Overrides.TEST_COMMIT_MODE + "\tconf\tfalse\tfalse\n" +
+                                    "cairo.commit.mode.adaptive.downgrade\tQDB_CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.create.as.select.retry.count\tQDB_CAIRO_CREATE_AS_SELECT_RETRY_COUNT\t5\tdefault\tfalse\tfalse\n" +
                                     "cairo.date.locale\tQDB_CAIRO_DATE_LOCALE\ten\tdefault\tfalse\tfalse\n" +
                                     "cairo.default.sequencer.part.txn.count\tQDB_CAIRO_DEFAULT_SEQUENCER_PART_TXN_COUNT\t0\tdefault\tfalse\tfalse\n" +

@@ -355,6 +355,9 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
         private final PageFrameAddressCache frameAddressCache;
+        // Delta readers may have to materialize index hits. This cursor consumes one index frame
+        // at a time, so one query-scoped buffer can be reused across all scanned partitions.
+        private final DirectLongList indexFrameRows = new DirectLongList(64, MemoryTag.NATIVE_INDEX_READER, true);
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private final ObjList<SymbolTable> symbolTables = new ObjList<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -410,11 +413,14 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
         @Override
         public void close() {
+            indexFrameRows.close();
+            indexFrameRows.setMemoryTracker(null);
             Misc.free(frameMemoryPool);
             Misc.free(frameAddressCache);
             Misc.freeObjListIfCloseable(symbolTables);
             frameMemory = null;
             frameCursor = Misc.free(frameCursor);
+            memoryTracker = null;
         }
 
         public long getNextTimestamp() {
@@ -584,7 +590,13 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
                         // Re-fetch index cursor to correctly position it to frameNextRowId
                         IndexReader symbolIndexReader = frame.getIndexReader(groupBySymbolColIndex, IndexReader.DIR_FORWARD);
-                        indexCursor = symbolIndexReader.getFrameCursor(groupBySymbolKey, frameLo, frameHi);
+                        indexCursor = symbolIndexReader.getFrameCursor(
+                                groupBySymbolKey,
+                                frameLo,
+                                frameHi - 1,
+                                frameMemory.getSourceRowResolver(),
+                                indexFrameRows
+                        );
 
                         // Fall through to STATE_FETCH_NEXT_INDEX_FRAME;
                     } else {
@@ -785,6 +797,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             this.groupBySymbolKey = groupBySymbolKey;
             this.circuitBreaker = sqlExecutionContext.getCircuitBreaker();
             this.memoryTracker = sqlExecutionContext.getMemoryTracker();
+            indexFrameRows.close();
+            indexFrameRows.setMemoryTracker(memoryTracker);
             Misc.freeObjListIfCloseable(symbolTables);
             final RecordMetadata outMetadata = SampleByFirstLastRecordCursorFactory.this.getMetadata();
             for (int i = 0, n = queryToFrameColumnMapping.length; i < n; i++) {
@@ -793,7 +807,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         ColumnType.isSymbol(outMetadata.getColumnType(i)) ? frameCursor.newSymbolTable(queryToFrameColumnMapping[i]) : null
                 );
             }
-            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor);
             toTop();
             parseParams(this, sqlExecutionContext);
             initialized = false;

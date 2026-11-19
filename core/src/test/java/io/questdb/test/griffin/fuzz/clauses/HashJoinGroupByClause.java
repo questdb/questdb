@@ -27,9 +27,12 @@ package io.questdb.test.griffin.fuzz.clauses;
 
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.std.ObjList;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.FuzzColumn;
+import io.questdb.test.griffin.fuzz.FuzzConfig;
 import io.questdb.test.griffin.fuzz.FuzzNames;
 import io.questdb.test.griffin.fuzz.FuzzTable;
 import io.questdb.test.griffin.fuzz.GeneratedQuery;
@@ -160,6 +163,7 @@ public final class HashJoinGroupByClause {
     private static final String RIGHT_ALIAS = "r";
     // The fuzz tables span 30 to 75 hours, so every interval yields several buckets.
     private static final String[] SAMPLE_BY_INTERVALS = {"1h", "6h", "1d"};
+    private static final long[] SAMPLE_BY_INTERVAL_MICROS = {Micros.HOUR_MICROS, 6 * Micros.HOUR_MICROS, Micros.DAY_MICROS};
     private static final String SYMBOL_KEY = "sym";
     private static final String VARCHAR_KEY = "vk";
     private static final String[] VARIANCE_FUNCTIONS = {"stddev", "stddev_samp", "stddev_pop", "variance", "var_samp", "var_pop"};
@@ -171,7 +175,14 @@ public final class HashJoinGroupByClause {
     private HashJoinGroupByClause() {
     }
 
-    public static GeneratedQuery generate(Rnd rnd, FuzzTable left, FuzzTable right, BindContext ctx, boolean injectFaultFn) {
+    public static GeneratedQuery generate(
+            Rnd rnd,
+            FuzzTable left,
+            FuzzTable right,
+            BindContext ctx,
+            boolean injectFaultFn,
+            FuzzConfig config
+    ) {
         // The draws below depend neither on ctx nor on injectFaultFn, so the bind variant
         // regenerates the same tree.
         final String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
@@ -194,8 +205,12 @@ public final class HashJoinGroupByClause {
         StringSink sql = new StringSink();
         sql.put("SELECT ");
         final int keyCount = rnd.nextBoolean() ? 0 : 1 + rnd.nextInt(2);
+        boolean hasLeftKey = false;
+        boolean hasRightKey = false;
         for (int i = 0; i < keyCount; i++) {
             final boolean isLeft = rnd.nextBoolean();
+            hasLeftKey |= isLeft;
+            hasRightKey |= !isLeft;
             appendGroupingKey(sql, rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx);
             sql.put(" AS e").put(i).put(", ");
         }
@@ -308,10 +323,19 @@ public final class HashJoinGroupByClause {
             // unless it fills. A RIGHT or FULL JOIN null-extends l.ts, and a filled SAMPLE BY
             // fails on a NULL designated timestamp ("SAMPLE BY designated timestamp cannot be
             // NULL"), so only INNER and LEFT joins get a FILL.
-            sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
+            int intervalIndex = rnd.nextInt(SAMPLE_BY_INTERVALS.length);
+            final StringSink fill = new StringSink();
             if (!isMasterNullExtended && rnd.nextInt(3) == 0) {
-                appendFill(sql, rnd, aggCount);
+                appendFill(fill, rnd, aggCount);
             }
+            // A fill keyed on both inputs emits a row per pair of joined rows and bucket. Widen
+            // the interval until the result fits; the draws above stay the same.
+            if (hasLeftKey && hasRightKey && fill.length() > 0 && !Chars.equals(fill, " FILL(NONE)")) {
+                while (intervalIndex < SAMPLE_BY_INTERVALS.length - 1 && config.isJoinFillTooLarge(SAMPLE_BY_INTERVAL_MICROS[intervalIndex])) {
+                    intervalIndex++;
+                }
+            }
+            sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[intervalIndex]).put(fill);
             // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a
             // RIGHT or FULL JOIN does not keep ("TIMESTAMP column is required but not provided").
             final int align = rnd.nextInt(3);

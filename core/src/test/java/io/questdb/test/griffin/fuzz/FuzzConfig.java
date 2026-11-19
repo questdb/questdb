@@ -54,7 +54,7 @@ public final class FuzzConfig {
     public static final String WINDOW_PROP = "questdb.fuzz.window";
     private static final int CONCURRENT_NUM_QUERIES = 50;
     // Queries per run when nothing overrides it, i.e. what CI executes. Sized so that every query
-    // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzTest) and the
+    // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzDriver) and the
     // "this generator has stopped compiling" guard actually holds it. Measured queries per shape,
     // on one seed that drew a posting-indexed SYMBOL:
     //
@@ -72,9 +72,13 @@ public final class FuzzConfig {
     // run's random schema draw put a posting-indexed SYMBOL on some table, which
     // FuzzTableFactory.assignIndexes decides per SYMBOL column. On a run that drew none - 7 of the
     // 40 measured - no budget lifts POSTING off zero and it reports 0/0 whatever the budget.
-    // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
+    // QueryFuzzDriver checks that precondition before it asserts a shape generated anything, so those
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
+    // A SAMPLE BY FILL over a join, keyed on a column from each side, emits one row per pair
+    // of joined rows and bucket. On forConcurrency's tables that reaches tens of millions of
+    // rows, more than the sort budget and QueryRunner's text copies of the result can take.
+    private static final long MAX_JOIN_FILL_ROWS = 3_000_000;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
@@ -103,8 +107,12 @@ public final class FuzzConfig {
     private final String tsStart;
 
     public FuzzConfig(Rnd rnd) {
+        this(rnd, DEFAULT_NUM_QUERIES);
+    }
+
+    public FuzzConfig(Rnd rnd, int defaultNumQueries) {
         // 30 minutes: 60..150 rows cover 30..75 hours, so 2-4 DAY partitions.
-        this(rnd, 60, 90, 30L * 60L * 1_000_000L, DEFAULT_NUM_QUERIES);
+        this(rnd, 60, 90, 30L * 60L * 1_000_000L, defaultNumQueries);
     }
 
     private FuzzConfig(Rnd rnd, int minRowsPerTable, int rowsPerTableRange, long stepMicros, int defaultNumQueries) {
@@ -266,6 +274,19 @@ public final class FuzzConfig {
 
     public boolean isHorizonJoinEnabled() {
         return isHorizonJoinEnabled;
+    }
+
+    /**
+     * Whether a SAMPLE BY FILL at this interval over a join of two of this config's tables,
+     * keyed on a column from each side, can emit more than {@link #MAX_JOIN_FILL_ROWS} rows.
+     * The join keys sym and vk draw 8 values plus NULL with equal probability, and NULL keys
+     * match, so about a ninth of all row pairs join; an eighth leaves margin.
+     */
+    public boolean isJoinFillTooLarge(long intervalMicros) {
+        final long joinedRows = (long) rowsPerTable * rowsPerTable / 8;
+        // +2 for the partial buckets at both ends
+        final long buckets = (long) rowsPerTable * stepMicros / intervalMicros + 2;
+        return joinedRows * buckets > MAX_JOIN_FILL_ROWS;
     }
 
     public boolean isLatestOnEnabled() {
