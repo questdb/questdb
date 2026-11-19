@@ -66,18 +66,6 @@ stages:
     jobs:
       - template: templates/check-changes-job.yml
 
-  - stage: TriggerEnterpriseCI
-    displayName: "Trigger Enterprise CI"
-    # An explicit condition drops the implicit succeeded(), so restore it: a queue build
-    # whose CheckChanges stage failed must not post a real enterprise run.
-    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
-    dependsOn:
-      - CheckChanges
-    jobs:
-      - template: templates/trigger-enterprise-job.yml
-        parameters:
-          flavour: light
-
   # Compiles the Rust library once per architecture; the self-hosted Linux legs below download
   # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
   # starts it next to CheckChanges. Fork PRs run no code on the self-hosted pools, so this stage

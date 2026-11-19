@@ -1,30 +1,20 @@
-# Triggers the enterprise CI pipeline (questdb-enterprise, definition 23) for an OSS PR or
-# merge-queue build. The enterprise run tests the questdb submodule at the OSS commit and
-# reports a commit status back to it.
-#
-# flavour selects how much of the enterprise pipeline runs:
-#   light - Linux amd64 only. test-pipeline.yml triggers it on every PR build. It reports the
-#           advisory enterprise-ci-light status, which can never satisfy the required check.
-#   full  - every platform and replication store. test-hosted-pipeline.yml (macwin) triggers it,
-#           on demand on a PR and in the merge queue. Only the full run reports enterprise-ci,
-#           the required check, so a PR merges only after a full enterprise run has passed.
-# A light trigger skips merge-queue builds: the macwin pipeline runs there and triggers the full
-# run, which is the one the queue gates on.
-parameters:
-  - name: flavour
-    type: string
-    values:
-      - light
-      - full
-
+# Starts the full enterprise CI run (questdb-enterprise, definition 23) for an OSS PR or
+# merge-queue build: every Enterprise test on every platform and replication store, Windows
+# included. Only the macwin pipeline (test-hosted-pipeline.yml) uses it, so an OSS PR gets an
+# enterprise run when someone comments `/azp run macwin` on it, and in the merge queue; a plain
+# push starts none. The run tests the questdb submodule at the OSS commit, with the Enterprise
+# branch named like the OSS one or else main, and reports enterprise-ci, a required check, back
+# to that commit. When an open Enterprise PR comes from that same-named branch, the run skips its
+# tests and reports enterprise-ci as passed: that Enterprise PR tests the pair itself (see the
+# tandem step in questdb-enterprise ci/templates/check-changes-job.yml).
 jobs:
   - job: TriggerEnterprise
-    displayName: "Trigger Enterprise Pipeline (${{ parameters.flavour }})"
+    displayName: "Trigger Enterprise Pipeline"
     pool: hetzner-incus
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
     # A PR or merge-queue build triggers enterprise CI even when no source path changed:
-    # enterprise-ci (reported by the full run) is a required check, so GitHub blocks a PR that
+    # enterprise-ci (reported by the enterprise run) is a required check, so GitHub blocks a PR that
     # never reports it from merging, and ejects a queue entry that never reports it.
     condition: >-
       and(succeeded(),
@@ -58,10 +48,6 @@ jobs:
             # Test the merge commit itself (PR merged with latest master); recover the PR
             # number from the branch name and the PR source branch from the GitHub API.
             OSS_PR_NUMBER="${BASH_REMATCH[1]}"
-            if [ "$ENT_FLAVOUR" != "full" ]; then
-              echo "Merge-queue build for PR #$OSS_PR_NUMBER: the macwin pipeline triggers the full enterprise run; skipping"
-              exit 0
-            fi
             OSS_COMMIT="$BUILD_SOURCEVERSION"
             OSS_BRANCH=$(gh_pr_field "$OSS_PR_NUMBER" '.head.ref')
             echo "Merge-queue build for PR #$OSS_PR_NUMBER; merge commit $OSS_COMMIT; source branch $OSS_BRANCH"
@@ -76,17 +62,16 @@ jobs:
             exit 1
           fi
 
-          # Queue the enterprise run. $1: enterprise branch; $2: "with-flavour" to pass ossFlavour.
+          # Queue the enterprise run on enterprise branch $1. The pipeline's ossFlavour parameter
+          # defaults to the full run, so it is not passed.
           trigger() {
             curl -s -o response.json -w "%{http_code}" -X POST \
               -H "$AUTH_HEADER" \
               -H "Content-Type: application/json" \
               "https://dev.azure.com/questdb/questdb-enterprise/_apis/pipelines/23/runs?api-version=7.0" \
-              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" \
-                --arg pr "$OSS_PR_NUMBER" --arg flavour "$ENT_FLAVOUR" --arg mode "$2" '
+              -d "$(jq -n --arg ref "refs/heads/$1" --arg commit "$OSS_COMMIT" --arg pr "$OSS_PR_NUMBER" '
                 {resources: {repositories: {self: {refName: $ref}}},
-                 templateParameters: ({ossCommit: $commit, ossPrNumber: $pr}
-                   + (if $mode == "with-flavour" then {ossFlavour: $flavour} else {} end))}')"
+                 templateParameters: {ossCommit: $commit, ossPrNumber: $pr}}')"
           }
 
           # Test against the enterprise branch named like the OSS one, if there is one. Azure
@@ -94,20 +79,12 @@ jobs:
           # access to the private enterprise repo is needed; a ref it cannot resolve means there
           # is no such branch, and the run falls back to main.
           ENT_BRANCH="${OSS_BRANCH:-main}"
-          FLAVOUR_MODE="with-flavour"
-          echo "Triggering $ENT_FLAVOUR enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
-          HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+          echo "Triggering enterprise CI for commit $OSS_COMMIT (PR #$OSS_PR_NUMBER) on enterprise branch $ENT_BRANCH"
+          HTTP_CODE=$(trigger "$ENT_BRANCH")
           if [ "$ENT_BRANCH" != "main" ] && grep -q "Unable to resolve the reference" response.json; then
             echo "Enterprise repo has no branch $ENT_BRANCH; triggering on main"
             ENT_BRANCH="main"
-            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
-          fi
-          if [ "$HTTP_CODE" = "400" ] && grep -q ossFlavour response.json; then
-            # An enterprise branch that predates the ossFlavour parameter rejects it; run that
-            # branch's pipeline as it is, which is the full run.
-            echo "Enterprise branch $ENT_BRANCH has no ossFlavour parameter; triggering without it"
-            FLAVOUR_MODE="without-flavour"
-            HTTP_CODE=$(trigger "$ENT_BRANCH" "$FLAVOUR_MODE")
+            HTTP_CODE=$(trigger "$ENT_BRANCH")
           fi
 
           # A 2xx without a run id is Azure's sign-in page (HTTP 203), not a queued run.
@@ -125,7 +102,6 @@ jobs:
         displayName: "Trigger Enterprise Pipeline"
         env:
           AZURE_DEVOPS_ENT_PAT: $(AZURE_DEVOPS_ENT_PAT)
-          ENT_FLAVOUR: ${{ parameters.flavour }}
           GH_TOKEN: $(GH_TOKEN)
           OSS_PR_NUMBER: $(System.PullRequest.PullRequestNumber)
           OSS_BRANCH: $(System.PullRequest.SourceBranch)
