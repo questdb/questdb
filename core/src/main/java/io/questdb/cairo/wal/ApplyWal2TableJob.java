@@ -104,6 +104,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private boolean isLastApplyStoppedByDeltaPressure;
     // Set by processWalCommit for the live-view dedup-base signal: true if the just-processed
     // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
     // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
@@ -418,6 +419,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         boolean isTerminating;
         boolean finishedAll = true;
         long initialSeqTxn = writer.getSeqTxn();
+        final long initialAppliedSeqTxn = writer.getAppliedSeqTxn();
         // Default to incremental mat view refresh.
         mvRefreshTask.clear();
         mvRefreshTask.operation = MatViewRefreshTask.INCREMENTAL_REFRESH;
@@ -570,6 +572,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 assert walId == writer.getWalTnxDetails().getWalId(seqTxn);
                                 assert segmentId == writer.getWalTnxDetails().getSegmentId(seqTxn);
 
+                                final byte walTxnType = writer.getWalTnxDetails().getWalTxnType(seqTxn);
+                                if ((walTxnType == DATA || walTxnType == MAT_VIEW_DATA)
+                                        && !writer.isDeltaWalApplyReady(seqTxn)) {
+                                    isLastApplyStoppedByDeltaPressure = true;
+                                    finishedAll = false;
+                                    break WHILE_TRANSACTION_CURSOR;
+                                }
+
                                 final int txnCommitted = processWalCommit(
                                         writer,
                                         walId,
@@ -607,7 +617,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     }
                     totalTransactionCount += iTransaction;
 
-                    if (!finishedAll || isTerminating) {
+                    // A run that moved nothing, such as a Delta stop on its first transaction, has nothing to commit.
+                    if (isTerminating || (!finishedAll
+                            && (writer.getSeqTxn() != initialSeqTxn || writer.getAppliedSeqTxn() != initialAppliedSeqTxn))) {
                         writer.commitSeqTxn();
                     }
 
@@ -863,9 +875,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             case LIVE_VIEW_DATA:
                 TableToken tableToken = writer.getTableToken();
                 walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, txnDetails.getMinTimestamp(seqTxn), txnDetails.getMaxTimestamp(seqTxn));
-                long skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
-                if (skipTxnCount > 0 && writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn + skipTxnCount)) {
-                    skipTxnCount = 0;
+                long skipTxnCount = 0;
+                // A transaction into a Delta-active partition is never skipped, so the O(pending) scan would be wasted.
+                if (!writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
+                    skipTxnCount = calculateSkipTransactionCount(tableToken, seqTxn, txnDetails);
+                    if (skipTxnCount > 0 && writer.walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn + skipTxnCount)) {
+                        skipTxnCount = 0;
+                    }
                 }
                 // Ask TableWriter to skip applying transactions entirely when possible
                 boolean skipped = false;
@@ -1296,6 +1312,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
+        this.isLastApplyStoppedByDeltaPressure = false;
         this.lastAttemptSeqTxn = -1;
         try {
             // security context is checked on writing to the WAL and can be ignored here
@@ -1330,7 +1347,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     // table may get no next batch, and a notification dropped while the writer was busy is not
                     // republished.
                     writer.reconcileDurableEpochAnchor();
-                    if (pressureControl.onEnoughMemory()) {
+                    // A Delta stop says nothing about memory.
+                    if (!isLastApplyStoppedByDeltaPressure && pressureControl.onEnoughMemory()) {
                         LOG.info().$("table writing memory pressure is easing up [table=").$(tableToken)
                                 .$(", parallelMemoryLimit=").$(pressureControl.getMemoryPressureRegulationValue())
                                 .I$();
@@ -1386,7 +1404,15 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     Misc.free(writer);
                 }
                 if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
-                    engine.notifyWalTxnCommitted(tableToken);
+                    if (isLastApplyStoppedByDeltaPressure) {
+                        if (queueDriven) {
+                            // The paced scan re-notifies the still-initialised tracker. A reset would make
+                            // the scan raise the RecentWriteTracker floor over the stopped transactions.
+                            engine.notifyWalTxnRepublisher();
+                        }
+                    } else {
+                        engine.notifyWalTxnCommitted(tableToken);
+                    }
                 }
             }
         } catch (Throwable ex) {
