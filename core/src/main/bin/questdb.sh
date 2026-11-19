@@ -30,7 +30,7 @@ function read_link {
 
         if [[ "$f" != /* ]]; then
             f="$(dirname "$1")/$f"
-            f="$(cd "$(dirname "${f}")"; pwd)/$(basename "${f}")"
+            f="$(cd "$(dirname "${f}")" >/dev/null && pwd)/$(basename "${f}")"
         fi
 
         n=$(read_link "${f}")
@@ -115,7 +115,7 @@ function usage {
 }
 
 function export_pid {
-    export QDB_PID=`${PS_CMD} | grep ${QDB_PROCESS_LABEL} | grep -v grep | tr -s " " | cut -d " " -f 2`
+    export QDB_PID=`${PS_CMD} | grep -F -- "${QDB_PROCESS_LABEL}" | grep -v grep | tr -s " " | cut -d " " -f 2`
 }
 
 function export_java {
@@ -356,7 +356,7 @@ function start {
 
     # Arrays keep paths with spaces (root dir, install dir) as single arguments.
     # JVM_PREPEND comes from env.sh as a space-separated string of flags.
-    read -ra JVM_PREPEND_ARGS <<< "${JVM_PREPEND}"
+    read -r -d '' -a JVM_PREPEND_ARGS <<< "${JVM_PREPEND}" || true
     JAVA_OPTS=(
     "-D$QDB_PROCESS_LABEL"
     "-Dcontainerized=$([ "${QDB_CONTAINER_MODE}" != '' ] && echo "true" || echo "false" )"
@@ -559,7 +559,7 @@ if [[ $# -gt 0 ]]; then
         start
     else
         # Normal argument parsing for other commands
-        export_args $@
+        export_args "$@"
 
         case ${command} in
            status)
