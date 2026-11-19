@@ -836,11 +836,15 @@ public class ParallelHashJoinBenchmark {
             case "LIMIT_SUBQUERY" -> "SELECT * FROM (" + SINGLE_LARGE_JOIN + ") LIMIT 100";
             case "LIMIT_CTE" -> "WITH j AS (" + SINGLE_LARGE_JOIN + ") SELECT * FROM j LIMIT 100";
             case "LIMIT_ORDER_QUALIFIED" -> SINGLE_LARGE_JOIN + " ORDER BY f.ts DESC LIMIT 100";
-            case "LIMIT_ASOF" -> "SELECT f.id, f.v, d3.w, t.w tw FROM fact f JOIN d3 ON f.k3 = d3.k ASOF JOIN dtiny t LIMIT 100";
+            case "LIMIT_ASOF" ->
+                    "SELECT f.id, f.v, d3.w, t.w tw FROM fact f JOIN d3 ON f.k3 = d3.k ASOF JOIN dtiny t LIMIT 100";
             case "LIMIT_UNION_ALL" -> SINGLE_LARGE_JOIN + " UNION ALL " + SINGLE_LARGE_JOIN + " LIMIT 100";
-            case "LIMIT_WINDOW" -> "SELECT f.id, f.v, d3.w, row_number() OVER () rn FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
-            case "LIMIT_CROSS" -> "SELECT j.id, j.v, j.w, c.x FROM (" + SINGLE_LARGE_JOIN + ") j CROSS JOIN long_sequence(2) c LIMIT 100";
-            case "LIMIT_SNOWFLAKE" -> "SELECT f.id, f.v, d3.w, d1.w w1 FROM fact f JOIN d3 ON f.k3 = d3.k LEFT JOIN d1 ON d3.k = d1.k LIMIT 100";
+            case "LIMIT_WINDOW" ->
+                    "SELECT f.id, f.v, d3.w, row_number() OVER () rn FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "LIMIT_CROSS" ->
+                    "SELECT j.id, j.v, j.w, c.x FROM (" + SINGLE_LARGE_JOIN + ") j CROSS JOIN long_sequence(2) c LIMIT 100";
+            case "LIMIT_SNOWFLAKE" ->
+                    "SELECT f.id, f.v, d3.w, d1.w w1 FROM fact f JOIN d3 ON f.k3 = d3.k LEFT JOIN d1 ON d3.k = d1.k LIMIT 100";
             case "PAGE_1K", "FETCH_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
             case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
             // A quarter of the fact rows meet a hot key with eight matches.
