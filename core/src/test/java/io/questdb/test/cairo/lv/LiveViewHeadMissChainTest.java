@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
@@ -64,6 +65,9 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
     private static final long HOUR = 60 * MINUTE;
     private static final String LAG = "lag(x) OVER w AS l";
     private static final String LAG_ORACLE = "lag(x) OVER (PARTITION BY sym, timestamp_floor('d', ts) ORDER BY ts) AS l";
+    // A bounded RANGE frame: its ring is imaged whole at every boundary, and its view's own
+    // SELECT run on the base is the oracle.
+    private static final String RANGE_SUM = "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s";
     private static final String SUM = "sum(x) OVER w AS s";
     private static final String SUM_ORACLE = "sum(x) OVER (PARTITION BY sym, timestamp_floor('d', ts) ORDER BY ts) AS s";
 
@@ -92,6 +96,22 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
             }
             restartLiveViewsAndRecover();
             assertRestoredFromTimeline("lv");
+            assertMatchesRecompute(SUM_ORACLE);
+            // The restored root reaches s7, which only boundary 0 imaged, through every root
+            // stacked on it: a row above the frontier continues its day-1 sum, 1.0 + 1.0. A
+            // root that lost the key would restart it at 1.0.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1 + 61 * MINUTE, "s7"), false);
+            }
+            assertQuery("SELECT ts, sym, s FROM lv WHERE sym = 's7'")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-02T00:00:00.000007Z\ts7\t1.0
+                            2026-01-02T01:01:00.000000Z\ts7\t2.0
+                            """);
             assertMatchesRecompute(SUM_ORACLE);
         });
     }
@@ -188,6 +208,30 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCountGuardDeclineBindsNoPrice() throws Exception {
+        // max.chained.boundaries = 0 refuses the 13-root splice before any price: the capture is
+        // gone before the wipe, so no price is bound and none declines, though scan.max.keys = 1
+        // would refuse lag at boundary 0. The truncate at R keeps the 23:00 root, and the closing
+        // seal images the window and lag complete over 'b', the K = 1,000 keys and 'a': 1,002.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        assertMemoryLeak(() -> {
+            createView(LAG, "");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                buildHm(job, 1_000, 1_000, 12, true);
+                final long[] before = counters(job);
+                late(job, lateRow(DAY1, "b"));
+                Assert.assertEquals(
+                        "route=range versioned=0 declines=0 discarded=0 winCaptures=1 winIncremental=0 winKeys=1002 fnCaptures=1 fnKeys=1002",
+                        delta(before, job)
+                );
+                Assert.assertEquals("the 23:00 root and the truncate's head", 2, colLong("checkpoint_timeline_entries"));
+            }
+            assertMatchesRecompute(LAG_ORACLE);
+        });
+    }
+
+    @Test
     public void testDeclineInAYieldingTurn() throws Exception {
         // T6c's refused shape (N = 13,011, rows 13,024) with a replay budget that ends the
         // first turn on the row crossing boundary 1: 'b', the 13,011 key rows and 'a' at
@@ -207,7 +251,20 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
                     execute("INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1, "b"));
                     drainWalQueue();
                     driveUntilParked(job, "lv");
-                    Assert.assertNotNull(instance.getSuspendedRepair());
+                    final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                    Assert.assertNotNull(parked);
+                    if (maxRows == 13_014) {
+                        // The refusal landed in the turn that parked: it dropped the capture and
+                        // its 13 boundaries before the park, so the resumed turn freezes nothing.
+                        Assert.assertEquals(0, parked.getBoundaries().size());
+                        Assert.assertEquals(0, parked.getCapturedBoundaries());
+                    } else {
+                        // The turn parked on 00:05, past boundary 0 only: the capture still holds
+                        // the 13 boundaries and boundary 0's root, which the resumed turn's
+                        // refusal at boundary 1 discards.
+                        Assert.assertEquals(13, parked.getBoundaries().size());
+                        Assert.assertEquals(1, parked.getCapturedBoundaries());
+                    }
                     driveRefreshToQuiescence(job);
                     Assert.assertNull(instance.getSuspendedRepair());
                     Assert.assertEquals(
@@ -242,6 +299,83 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFusionDisabledStandaloneRootsChain() throws Exception {
+        // T12m's 16 sums, count(*) and count(sym) with window map fusion off: s16, n and c sit
+        // past the window's leaf budget and keep function roots of their own, which the chain
+        // freezes standalone off their own dirty sets rather than out of the anchor map. HM at
+        // K = 1,000 on the end-of-table arm: the window 1,001 + 12 keys, 12 of 13 incremental,
+        // and each of the 3 roots the same: 3 x 13 captures, 3 x 12 incremental, 3 x 1,013 keys.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0L);
+            final StringBuilder ddl = new StringBuilder();
+            final StringBuilder projections = new StringBuilder();
+            final StringBuilder oracle = new StringBuilder();
+            final StringBuilder columns = new StringBuilder();
+            for (int i = 1; i <= 16; i++) {
+                ddl.append(", q").append(i).append(" DOUBLE");
+                projections.append(", sum(q").append(i).append(") OVER w AS s").append(i);
+                oracle.append(", sum(q").append(i).append(") OVER (PARTITION BY sym, timestamp_floor('d', ts) ORDER BY ts) AS s").append(i);
+                columns.append(", s").append(i);
+            }
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE" + ddl + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x" + projections
+                    + ", count(*) OVER w AS n, count(sym) OVER w AS c FROM base" + ANCHOR_WINDOW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                buildHm(job, 1_000, 1_000, 12, true);
+                final LiveViewCheckpointCaptureLedger ledger = instance().getCheckpointCaptureLedgerForTest();
+                final long fnIncrementalBefore = ledger.getFunctionIncrementalCaptures();
+                final long[] before = counters(job);
+                late(job, lateRow(DAY1, "b"));
+                Assert.assertEquals(
+                        "route=range versioned=13 declines=0 discarded=0 winCaptures=13 winIncremental=12 winKeys=1013 fnCaptures=39 fnKeys=3039",
+                        delta(before, job)
+                );
+                Assert.assertEquals(36, ledger.getFunctionIncrementalCaptures() - fnIncrementalBefore);
+                // A late 'a' at 00:12 and s5 at 00:17 resume from the chained 00:10 root and chain
+                // the 10 roots above it on that root: the restore stamps every target, so every
+                // boundary freezes incrementally, in the window and in each of the 3 roots, none of
+                // which froze complete in this chain. The 00:15 boundary images 'a', the 00:20 one
+                // 'a' and s5 - which no boundary of this chain staged, so its probe reaches the
+                // 00:10 root - and the 8 above them 'a': 11 keys, 3 x 11 in the roots.
+                final long fnIncrementalBeforeResume = ledger.getFunctionIncrementalCaptures();
+                final long[] beforeResume = counters(job);
+                late(job, lateRow(DAY1 + 12 * MINUTE, "a") + ", " + lateRow(DAY1 + 17 * MINUTE, "s5"));
+                Assert.assertEquals("resume from anchor", colStr("checkpoint_repair_last_disposition"));
+                Assert.assertEquals(
+                        "route=none versioned=10 declines=0 discarded=0 winCaptures=10 winIncremental=10 winKeys=11 fnCaptures=30 fnKeys=33",
+                        delta(beforeResume, job)
+                );
+                Assert.assertEquals(30, ledger.getFunctionIncrementalCaptures() - fnIncrementalBeforeResume);
+            }
+            final String oracleSql = "SELECT ts, sym, x" + oracle
+                    + ", count(*) OVER (PARTITION BY sym, timestamp_floor('d', ts) ORDER BY ts) AS n"
+                    + ", count(sym) OVER (PARTITION BY sym, timestamp_floor('d', ts) ORDER BY ts) AS c FROM base ORDER BY ts, sym";
+            final String viewSql = "SELECT ts, sym, x" + columns + ", n, c FROM lv ORDER BY ts, sym";
+            assertNoRefreshFaults("lv");
+            assertSqlCursors(oracleSql, viewSql);
+            // Restored from the newest chained root, s7 - imaged at boundary 0 alone - continues
+            // in each standalone root: s16 2.0 over a NULL, n and c 2.
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, "INSERT INTO base (ts, sym, x, q16) VALUES (" + (DAY1 + 61 * MINUTE) + "::timestamp, 's7', 1.0, 2.0)", false);
+            }
+            assertQuery("SELECT ts, sym, s16, n, c FROM lv WHERE sym = 's7'")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tsym\ts16\tn\tc
+                            2026-01-02T00:00:00.000007Z\ts7\tnull\t1\t1
+                            2026-01-02T01:01:00.000000Z\ts7\t2.0\t2\t2
+                            """);
+            assertNoRefreshFaults("lv");
+            assertSqlCursors(oracleSql, viewSql);
+        });
+    }
+
+    @Test
     public void testKeyBudgetAtOrBelowZeroIsUnlimited() throws Exception {
         // N = K = 1,000: rows 1,013 would refuse boundary 0 (1,001 x 13 > 1,013) at any positive
         // scan.max.keys below 13,013; at 0 and -1 the floor is unlimited and the chain is kept.
@@ -270,6 +404,26 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
                 );
             }
             assertMatchesRecompute(SUM_ORACLE);
+            // The incremental root stands on the spliced one for every key it did not image:
+            // restored, it continues s1 (imaged by the seal) at 3.0 and s4 (left to the spliced
+            // root, which has it from boundary 0) at 2.0.
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES "
+                        + lateRow(DAY1 + 62 * MINUTE, "s1") + ", "
+                        + lateRow(DAY1 + 62 * MINUTE, "s4"), false);
+            }
+            assertQuery("SELECT ts, sym, s FROM lv WHERE ts = '2026-01-02T01:02:00.000000Z' ORDER BY sym")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-02T01:02:00.000000Z\ts1\t3.0
+                            2026-01-02T01:02:00.000000Z\ts4\t2.0
+                            """);
+            assertMatchesRecompute(SUM_ORACLE);
         });
     }
 
@@ -281,6 +435,72 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
         // timeline; the closing seal opens a one-root history.
         assertPriceDecision(LAG, LAG_ORACLE, 1_000, 14_000, 12, false, 1, "route=range versioned=13 declines=0 discarded=0 winCaptures=13 winIncremental=12 winKeys=1013 fnCaptures=13 fnKeys=13025");
         assertPriceDecision(LAG, LAG_ORACLE, 1_000, 1_000, 12, false, 1, "route=range versioned=0 declines=1 discarded=0");
+    }
+
+    @Test
+    public void testParkedChainKeepsItsPriceAcrossAnotherViewsRepair() throws Exception {
+        // testDeclineInAYieldingTurn's 13,013 shape on lv parks past boundary 0, S = 1,001. In the
+        // same pass, after it, the worker runs lv2's resume, whose chain it prices on its own price:
+        // lv2 holds lag over s1..s10 and 'a', its late 'a' at 00:07 resumes from the 00:05 root
+        // and its chain over the 00:10 and 00:15 roots needs 11 x 2 = 22 images, more than the 15
+        // rows its base holds, so it declines. lv's resumed turn still prices on the price its
+        // session kept: boundary 1 refused at imaged 1,001 against B = 13,024 rows, as alone.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 13_013);
+        final LogCapture capture = new LogCapture();
+        try {
+            assertMemoryLeak(() -> {
+                createView(LAG, "");
+                execute("CREATE TABLE base2 (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, " + LAG + " FROM base2" + ANCHOR_WINDOW);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    buildHm(job, 1_000, 13_011, 12, true);
+                    driveSeedToCompletion(job, "lv2");
+                    commit(job, "INSERT INTO base2 (ts, sym, x) SELECT (" + DAY1 + " + x)::timestamp, ('s' || x)::symbol, 1.0 FROM long_sequence(10)", true);
+                    for (int j = 1; j <= 3; j++) {
+                        commit(job, "INSERT INTO base2 (ts, sym, x) VALUES " + lateRow(DAY1 + j * 5 * MINUTE, "a"), true);
+                    }
+                    final long[] before = counters(job);
+                    final long resumeDeclinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
+                    final LiveViewInstance instance = instance();
+                    capture.start();
+                    // Two drains, so lv's refresh task is queued ahead of lv2's.
+                    execute("INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1, "b"));
+                    drainWalQueue();
+                    execute("INSERT INTO base2 (ts, sym, x) VALUES " + lateRow(DAY1 + 7 * MINUTE, "a"));
+                    drainWalQueue();
+                    driveUntilParked(job, "lv");
+                    final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                    Assert.assertNotNull(parked);
+                    Assert.assertEquals(13, parked.getBoundaries().size());
+                    Assert.assertEquals(1, parked.getCapturedBoundaries());
+                    Assert.assertEquals("lv2's chain was priced while lv was parked", 1,
+                            job.getStatsForTest().get(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT) - resumeDeclinesBefore);
+                    capture.drain();
+                    capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv, ");
+                    capture.assertLogged("live view O3 resume declined the checkpoint chain, truncating instead [view=lv2, ");
+                    capture.assertNotLoggedAfter(
+                            "live view O3 resume declined the checkpoint chain, truncating instead [view=lv2, ",
+                            "live view O3 repair yielded on its turn budget [view=lv, "
+                    );
+                    driveRefreshToQuiescence(job);
+                    Assert.assertNull(instance.getSuspendedRepair());
+                    capture.drain();
+                    capture.assertLogged(DECLINE_LOG + ", boundaries=13, frozenRoots=1, boundaryKeys=1002, imagedKeys=1001, keyBudget=13024, replayScanRows=13024, outputLowTs=2026-01-02T00:00:00.000000Z]");
+                    final String actual = delta(before, job);
+                    Assert.assertEquals("route=range versioned=0 declines=1 discarded=1", actual.substring(0, "route=range versioned=0 declines=1 discarded=1".length()));
+                    Assert.assertEquals("the 23:00 root and the truncate's head", 2, colLong("checkpoint_timeline_entries"));
+                }
+                assertMatchesRecompute(LAG_ORACLE);
+                assertNoRefreshFaults("lv2");
+                assertSqlCursors(
+                        "SELECT ts, sym, x, " + LAG_ORACLE + " FROM base2 ORDER BY ts, sym",
+                        "SELECT ts, sym, x, l FROM lv2 ORDER BY ts, sym"
+                );
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test
@@ -319,6 +539,66 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testParkedChainPublishesAcrossAnotherViewsRepair() throws Exception {
+        // testParkedChainPublishes's chain on lv, parked between two of its roots while the worker
+        // repairs lv2 in the same pass: lv2's late 'a' at 00:07 resumes from its 00:05 root and
+        // publishes a chain over the 00:10 and 00:15 roots through the worker's store writer. lv's
+        // capture keeps what it staged before the park: its ledger and rows are as alone.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 2_000);
+        assertMemoryLeak(() -> {
+            createView(SUM, "");
+            execute("CREATE TABLE base2 (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, " + SUM + " FROM base2" + ANCHOR_WINDOW);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                driveSeedToCompletion(job, "lv2");
+                setCurrentMicros(0L);
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES (" + DAY0_2300 + "::timestamp, 'a', 1.0)", true);
+                commit(job, keyCommit(1_000, 1_000), true);
+                for (int j = 1; j <= 12; j++) {
+                    commit(job, "INSERT INTO base (ts, sym, x) SELECT (" + (DAY1 + j * 5 * MINUTE - 2_500) + " + x)::timestamp, 'a'::symbol, 1.0 FROM long_sequence(2500)", true);
+                }
+                commit(job, "INSERT INTO base2 (ts, sym, x) SELECT (" + DAY1 + " + x)::timestamp, ('s' || x)::symbol, 1.0 FROM long_sequence(10)", true);
+                for (int j = 1; j <= 3; j++) {
+                    commit(job, "INSERT INTO base2 (ts, sym, x) VALUES " + lateRow(DAY1 + j * 5 * MINUTE, "a"), true);
+                }
+                final long[] before = counters(job);
+                final LiveViewInstance instance = instance();
+                final LiveViewInstance instance2 = engine.getLiveViewRegistry().getViewInstance("lv2");
+                Assert.assertNotNull(instance2);
+                final long versioned2Before = instance2.getCheckpointRepairRootsVersioned();
+                execute("INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1, "b"));
+                drainWalQueue();
+                driveUntilParked(job, "lv");
+                execute("INSERT INTO base2 (ts, sym, x) VALUES " + lateRow(DAY1 + 7 * MINUTE, "a"));
+                drainWalQueue();
+                // One pass: lv's parked repair takes its turn first and parks again, then lv2's
+                // refresh task runs its repair.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                job.processNotificationsForTest();
+                drainWalQueue();
+                Assert.assertNotNull("lv is still parked", instance.getSuspendedRepair());
+                Assert.assertEquals("lv2's chain published", 2, instance2.getCheckpointRepairRootsVersioned() - versioned2Before);
+                driveRefreshToQuiescence(job);
+                Assert.assertNull(instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "route=range versioned=13 declines=0 discarded=0 winCaptures=13 winIncremental=12 winKeys=1013 fnCaptures=0 fnKeys=0",
+                        delta(before, job)
+                );
+                assertMatchesRecompute(SUM_ORACLE);
+            }
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            assertMatchesRecompute(SUM_ORACLE);
+            assertNoRefreshFaults("lv2");
+            assertSqlCursors(
+                    "SELECT ts, sym, x, " + SUM_ORACLE + " FROM base2 ORDER BY ts, sym",
+                    "SELECT ts, sym, x, s FROM lv2 ORDER BY ts, sym"
+            );
+        });
+    }
+
+    @Test
     public void testPriceAtTheExactKeyBudget() throws Exception {
         // HM with anchored lag (imaged whole), K = N = 1,000, R + 1 = 13: rows 1,013. The chain
         // images 1,001 + 12 x 1,002 = 13,025 lag keys. scan.max.keys = 13,025 keeps it;
@@ -335,6 +615,21 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
         } finally {
             capture.stop();
         }
+    }
+
+    @Test
+    public void testRangeRingChainAtTheDefaultKeyBudget() throws Exception {
+        // A bounded RANGE view whose late commit carries 'b' below the first root above it and
+        // an 'a' above the frontier, so the repair reaches the end of the table and splices the
+        // 13 roots above 'b'. Every boundary's ring holds the K keys, 'a' and 'b', and the replay
+        // reads about K + 15 rows, so B is scan.max.keys at its default, 100,000.
+        //  - K = 10,000: 10,002 x 13 = 130,026 > 100,000, refused at boundary 0. Nothing is
+        //    spliced; the truncate at R keeps the 00:10 root, and the closing seal for the 'a'
+        //    above the frontier images the ring complete: 10,002 keys.
+        //  - K = 1,000: 1,002 x 13 = 13,026, kept. 13 complete ring captures and the closing
+        //    seal's, which replaces the newest spliced root: 14 x 1,002 keys.
+        assertRangeRingChain(10_000, "route=range versioned=0 declines=1 discarded=0 winCaptures=0 winIncremental=0 winKeys=0 fnCaptures=1 fnKeys=10002", 2);
+        assertRangeRingChain(1_000, "route=range versioned=13 declines=0 discarded=0 winCaptures=0 winIncremental=0 winKeys=0 fnCaptures=14 fnKeys=14028", 14);
     }
 
     @Test
@@ -463,6 +758,66 @@ public class LiveViewHeadMissChainTest extends AbstractLiveViewTest {
                 }
             }
             assertMatchesRecompute(oracle);
+            dropViewAndBase();
+        });
+    }
+
+    // The view's own SELECT run on the base, ordered outside it: a RANGE frame reads its input
+    // in designated-timestamp order.
+    private void assertRangeMatchesRecompute() throws Exception {
+        assertNoRefreshFaults("lv");
+        assertSqlCursors(
+                "SELECT * FROM (SELECT ts, sym, x, " + RANGE_SUM + " FROM base) ORDER BY ts, sym",
+                "SELECT ts, sym, x, s FROM lv ORDER BY ts, sym"
+        );
+    }
+
+    // The analysis's eofRange shape: roots at 00:10 and, after a 00:15 row that is not due, at
+    // the key commit's 00:25 and 12 more every 5 minutes up to 01:25; the K keys at 00:20 + i us.
+    // The late commit: 'b' at 00:20:30 and 'a' at 01:25:01.
+    private void assertRangeRingChain(int keys, String expected, long entriesAfter) throws Exception {
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(100_000L, engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys());
+            setCurrentMicros(0L);
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 65536 NOCACHE, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, " + RANGE_SUM + " FROM base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1 + 10 * MINUTE, "a"), true);
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1 + 15 * MINUTE, "a"), false);
+                commit(job, "INSERT INTO base (ts, sym, x) SELECT (" + (DAY1 + 20 * MINUTE) + " + x)::timestamp, ('s' || x)::symbol, 1.0 FROM long_sequence(" + keys + ")"
+                        + " UNION ALL SELECT " + (DAY1 + 25 * MINUTE) + "::timestamp, 'a'::symbol, 1.0 FROM long_sequence(1)", true);
+                for (int j = 1; j <= 12; j++) {
+                    commit(job, "INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1 + 25 * MINUTE + j * 5 * MINUTE, "a"), true);
+                }
+                Assert.assertEquals(14, colLong("checkpoint_timeline_entries"));
+                final LiveViewCheckpointCaptureLedger ledger = instance().getCheckpointCaptureLedgerForTest();
+                final long fnIncrementalBefore = ledger.getFunctionIncrementalCaptures();
+                final long[] before = counters(job);
+                late(job, lateRow(DAY1 + 20 * MINUTE + 30 * SECOND, "b") + ", " + lateRow(DAY1 + 85 * MINUTE + SECOND, "a"));
+                Assert.assertEquals("K=" + keys, expected, delta(before, job));
+                Assert.assertEquals("every ring capture is complete", 0, ledger.getFunctionIncrementalCaptures() - fnIncrementalBefore);
+                Assert.assertEquals(entriesAfter, colLong("checkpoint_timeline_entries"));
+                assertRangeMatchesRecompute();
+            }
+            // Restored, the ring still holds 'a' at 01:25 and 01:25:01: 'a' at 01:25:30 sums
+            // all three.
+            restartLiveViewsAndRecover();
+            assertRestoredFromTimeline("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commit(job, "INSERT INTO base (ts, sym, x) VALUES " + lateRow(DAY1 + 85 * MINUTE + 30 * SECOND, "a"), false);
+            }
+            assertQuery("SELECT ts, sym, s FROM lv WHERE ts >= '2026-01-02T01:25:00.000000Z'")
+                    .noLeakCheck()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tsym\ts
+                            2026-01-02T01:25:00.000000Z\ta\t1.0
+                            2026-01-02T01:25:01.000000Z\ta\t2.0
+                            2026-01-02T01:25:30.000000Z\ta\t3.0
+                            """);
+            assertRangeMatchesRecompute();
             dropViewAndBase();
         });
     }

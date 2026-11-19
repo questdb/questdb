@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -50,6 +51,7 @@ import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
+import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -194,6 +196,128 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Assert.assertTrue(capture.isChained());
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testAChainFromNothingFreezesItsFirstBoundaryComplete() throws Exception {
+        // buildKeyHistory's roots; the runtime holds a, k, c, d and e and carries the provisional
+        // stamp a resume's restore leaves, with nothing dirty. A chain over [00:15, 00:25) has one
+        // boundary, the 00:20 root, and R0 below it holds a alone. Seeded from R0, boundary 0
+        // freezes incrementally over it: 0 keys. A chain that is not seeded stands on nothing,
+        // whatever sits below the interval: boundary 0 freezes complete, the runtime's 5 keys,
+        // and the root it publishes for 00:20 holds exactly those - a seeded publication of the
+        // seeded freeze would hold R0's a alone.
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildKeyHistory(job);
+                final LiveViewWindow window = instance.getAnchorWindow();
+                Assert.assertEquals(5, window.getAnchorMapSize());
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    stampRepairBaseline(window, functions);
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, true)) {
+                        capture.collectBoundaries(ts(timestamp(15)), ts(timestamp(25)), entries);
+                        Assert.assertEquals(1, entries.size());
+                        Assert.assertEquals("seeded", "captures=1 incremental=1 keys=0", captureWindow(capture, entries.getQuick(0), functions, window));
+                    }
+                    stampRepairBaseline(window, functions);
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, true, false)) {
+                        capture.collectBoundaries(ts(timestamp(15)), ts(timestamp(25)), entries);
+                        Assert.assertEquals(1, entries.size());
+                        Assert.assertEquals("from nothing", "captures=1 incremental=0 keys=5", captureWindow(capture, entries.getQuick(0), functions, window));
+                        publish(writer, capture, instance, ts(timestamp(25)), 0);
+                    }
+                }
+                final LiveViewCheckpointTimelineEntry boundary = entries.getQuick(0);
+                restoreRoot(instance, functions, boundary.maxTimestamp, boundary.checkpointId);
+                Assert.assertEquals("the 00:20 root holds a, k, c, d and e", 5, window.getAnchorMapSize());
+            }
+        });
+    }
+
+    @Test
+    public void testAChainedWindowFreezeLooksPastEntriesACompleteFreezeOmitted() throws Exception {
+        // Roots R0..R4 of an anchored view: a at 00:10, k at 00:20, c, d and e at 00:30, 00:40
+        // and 00:50, so R0 holds a and R1 holds a and k. A chain from nothing over the 00:30,
+        // 00:40 and 00:50 roots, each boundary frozen complete off a restored root: B0 off R1
+        // (a, k), B1 off R0 (a; k omitted), B2 off R1 again (a, and k back at the bytes B0
+        // staged for it). B2 probes k and finds only B0's entry, staged below B1's complete
+        // freeze, which no longer stands for the tree B2 is built on - B1's root, without k. So
+        // B2 puts k and its root holds a and k; elided against B0's entry, it would hold a alone.
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildKeyHistory(job);
+                final ObjList<LiveViewCheckpointTimelineEntry> history = timelineEntries(instance);
+                final LiveViewWindow window = instance.getAnchorWindow();
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true, false)
+                ) {
+                    capture.collectBoundaries(ts(timestamp(25)), ts(timestamp(55)), entries);
+                    Assert.assertEquals(3, entries.size());
+                    restoreRoot(instance, functions, history.getQuick(1).maxTimestamp, history.getQuick(1).checkpointId);
+                    Assert.assertEquals("B0", "captures=1 incremental=0 keys=2", captureWindow(capture, entries.getQuick(0), functions, window));
+                    restoreRoot(instance, functions, history.getQuick(0).maxTimestamp, history.getQuick(0).checkpointId);
+                    Assert.assertEquals("B1", "captures=1 incremental=0 keys=1", captureWindow(capture, entries.getQuick(1), functions, window));
+                    restoreRoot(instance, functions, history.getQuick(1).maxTimestamp, history.getQuick(1).checkpointId);
+                    Assert.assertEquals("B2", "captures=1 incremental=0 keys=2", captureWindow(capture, entries.getQuick(2), functions, window));
+                    publish(writer, capture, instance, ts(timestamp(55)), 0);
+                }
+                final LiveViewCheckpointTimelineEntry b2 = entries.getQuick(2);
+                restoreRoot(instance, functions, b2.maxTimestamp, b2.checkpointId);
+                Assert.assertEquals("the 00:50 root holds a and k", 2, window.getAnchorMapSize());
+            }
+        });
+    }
+
+    @Test
+    public void testAChainedWindowFreezeLooksPastAPredecessorACompleteFreezeReplaced() throws Exception {
+        // buildKeyHistory's roots. A chain seeded from R1 (a, k) over the 00:30 and 00:40 roots:
+        // B0 frozen complete off R0 (a; k omitted, so its root, built on R1, drops k), B1 frozen
+        // complete off R1 (k back at the bytes R1 holds for it). B1 probes k, which no boundary
+        // staged, and must not reach the published R1, whose tree B0's complete freeze replaced.
+        // So B1 puts k and its root holds a and k; elided against R1's entry, it would hold a
+        // alone.
+        assertMemoryLeak(() -> {
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildKeyHistory(job);
+                final ObjList<LiveViewCheckpointTimelineEntry> history = timelineEntries(instance);
+                final LiveViewWindow window = instance.getAnchorWindow();
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true)
+                ) {
+                    capture.collectBoundaries(ts(timestamp(25)), ts(timestamp(45)), entries);
+                    Assert.assertEquals(2, entries.size());
+                    restoreRoot(instance, functions, history.getQuick(0).maxTimestamp, history.getQuick(0).checkpointId);
+                    Assert.assertEquals("B0", "captures=1 incremental=0 keys=1", captureWindow(capture, entries.getQuick(0), functions, window));
+                    restoreRoot(instance, functions, history.getQuick(1).maxTimestamp, history.getQuick(1).checkpointId);
+                    Assert.assertEquals("B1", "captures=1 incremental=0 keys=2", captureWindow(capture, entries.getQuick(1), functions, window));
+                    publish(writer, capture, instance, ts(timestamp(45)), 0);
+                }
+                final LiveViewCheckpointTimelineEntry b0 = entries.getQuick(0);
+                restoreRoot(instance, functions, b0.maxTimestamp, b0.checkpointId);
+                Assert.assertEquals("the 00:30 root holds a alone", 1, window.getAnchorMapSize());
+                final LiveViewCheckpointTimelineEntry b1 = entries.getQuick(1);
+                restoreRoot(instance, functions, b1.maxTimestamp, b1.checkpointId);
+                Assert.assertEquals("the 00:40 root holds a and k", 2, window.getAnchorMapSize());
             }
         });
     }
@@ -3476,6 +3600,24 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
+    // Captures one boundary at its own row position and returns what that freeze added to the
+    // capture's window ledger.
+    private static String captureWindow(
+            LiveViewCheckpointTimelineStoreWriter.RepairCapture capture,
+            LiveViewCheckpointTimelineEntry boundary,
+            ObjList<WindowFunction> functions,
+            LiveViewWindow window
+    ) {
+        final LiveViewCheckpointCaptureLedger ledger = capture.getCaptureLedger();
+        final long captures = ledger.getWindowCaptures();
+        final long incremental = ledger.getWindowIncrementalCaptures();
+        final long keys = ledger.getWindowKeysImaged();
+        capture.capture(boundary, functions, window, boundary.baseLvRowPosition);
+        return "captures=" + (ledger.getWindowCaptures() - captures)
+                + " incremental=" + (ledger.getWindowIncrementalCaptures() - incremental)
+                + " keys=" + (ledger.getWindowKeysImaged() - keys);
+    }
+
     private static Path checkpointsDir(LiveViewInstance instance) {
         return new Path().of(configuration.getDbRoot())
                 .concat(instance.getLiveViewToken())
@@ -3617,6 +3759,18 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         return result;
     }
 
+    // What a resume's restore leaves on the runtime before its chain's first freeze: the
+    // provisional repair stamp on the window and every function that is not latched.
+    private static void stampRepairBaseline(LiveViewWindow window, ObjList<WindowFunction> functions) {
+        window.onCheckpointPersisted(window.getCheckpointLogicalStateBytes(), LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION);
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final WindowFunction function = functions.getQuick(i);
+            if (!function.isCheckpointFullScanRequired()) {
+                function.onCheckpointPersisted(function.getCheckpointLogicalStateBytes(), LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION);
+            }
+        }
+    }
+
     // A 2026-01-01 microsecond literal at the given second-of-day offset. The whole
     // history sits inside one calendar day, so the base's DAY partitioning never
     // enters the picture.
@@ -3674,6 +3828,50 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             }
             execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testRowsSpliceThroughThePrimaryIsNotPriced() throws Exception {
+        // testRowsSpliceLocalizesFromTheDiscoveredBounds's converging ROWS splice with the
+        // isolated runtime off, so it replays through the primary copied aside. Its capture
+        // carries the repair's key domain and does not chain, and the price is for chains
+        // reaching the end of the table: with scan.max.keys = 1 the ring's keys would refuse
+        // any priced boundary, yet the splice still re-versions the 30s, 40s and 50s roots.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 1);
+        assertMemoryLeak(() -> {
+            createRowsView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+                final long declinesBefore = job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT);
+                final long versionedBefore = instance.getCheckpointRepairRootsVersioned();
+
+                appendAndRefresh(job, 25, 100);
+
+                Assert.assertEquals(4, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(3, instance.getCheckpointRepairRootsVersioned() - versionedBefore);
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT) - declinesBefore);
+                Assert.assertEquals(HISTORY_COMMITS, entryCount(instance));
+                Assert.assertEquals(generationBefore + 1, generation(instance));
+                final LongList after = snapshotTimeline(instance);
+                assertSameRoot(before, after, 1);
+                assertNewRoot(before, after, 2);
+                assertNewRoot(before, after, 3);
+                assertNewRoot(before, after, 4);
+                assertSameRoot(before, after, 5);
+                assertNoRefreshFaults("lv");
+            }
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) s FROM base",
+                    "SELECT ts, sym, s FROM lv",
+                    LOG,
+                    true
+            );
         });
     }
 
@@ -4208,6 +4406,26 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         return instance;
     }
 
+    // An anchored view sealed one root per commit, all in one day: a (x = 1) at 00:10, k (x = 5)
+    // at 00:20, then c, d and e at 00:30, 00:40 and 00:50 - R0 holds a, R1 a and k.
+    private LiveViewInstance buildKeyHistory(LiveViewRefreshJob job) throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym, sum(x) OVER w s FROM base"
+                + " WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+        final String[] syms = {"a", "k", "c", "d", "e"};
+        for (int i = 0; i < syms.length; i++) {
+            setCurrentMicros(currentMicros + 200_000);
+            execute("INSERT INTO base VALUES ('" + timestamp((i + 1) * 10) + "', '" + syms[i] + "', " + (i == 1 ? 5 : 1) + ")");
+            drainWalQueue();
+            drainJob(job);
+            drainWalQueue();
+        }
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertEquals(5, entryCount(instance));
+        return instance;
+    }
+
     /**
      * The same forward history {@link #buildHistory(LiveViewRefreshJob, int)}
      * drives, for a cadence coarser than one root per commit: the caller sets
@@ -4662,6 +4880,18 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             });
         }
         return rows;
+    }
+
+    private ObjList<LiveViewCheckpointTimelineEntry> timelineEntries(LiveViewInstance instance) {
+        final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+        try (
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin();
+                LiveViewCheckpointTimelineReader reader = openTimelineReader(instance)
+        ) {
+            reader.iterateAll(pin.getTimelineRootRef(), entry -> entries.add(new LiveViewCheckpointTimelineEntry().copyFrom(entry)));
+        }
+        return entries;
     }
 
     /**
