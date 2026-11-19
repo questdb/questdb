@@ -43,6 +43,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
+import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -71,7 +72,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         int n = args.size();
         final Function keyFunction = args.getQuick(0);
-        final int keyType = keyFunction.getType();
+        final boolean isNullOperand = ColumnType.isNull(keyFunction.getType());
 
         Function elseBranch;
         final int elseBranchPosition;
@@ -86,11 +87,18 @@ public class SwitchFunctionFactory implements FunctionFactory {
             elseBranchPosition = -1;
         }
 
+        // a NULL operand, as in 'CASE null WHEN 1', has no type: its keys take the type of the
+        // first non-NULL one
+        final int keyType = keyTypeOf(args, n);
+        int nullKeyIndex = -1;
         for (int i = 1; i < n; i += 2) {
             final Function keyFunc = args.getQuick(i);
             final int keyArgType = keyFunc.getType();
             if (!keyFunc.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
+            }
+            if (nullKeyIndex < 0 && keyFunc.isNullConstant()) {
+                nullKeyIndex = i;
             }
 
             if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
@@ -138,6 +146,21 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     configuration,
                     sqlExecutionContext
             );
+        }
+
+        if (isNullOperand && n > 1) {
+            // A NULL operand matches only a NULL key, as 'null = null' does, so the branch is
+            // known now. Reading the operand as the key type would match a key that shares the
+            // NULL's bits, such as IPv4 128.0.0.0, false or 0.
+            final Function elseB = getElseFunction(returnType, elseBranch);
+            final Function branch = nullKeyIndex > 0 ? args.getQuick(nullKeyIndex + 1) : elseB;
+            final ObjList<Function> argsToPoke = new ObjList<>();
+            for (int i = 2; i < n; i += 2) {
+                argsToPoke.add(args.getQuick(i));
+            }
+            argsToPoke.add(elseB);
+            argsToPoke.add(keyFunction);
+            return CaseCommon.getCaseFunction(position, returnType, record -> branch, argsToPoke);
         }
 
         return switch (ColumnType.tagOf(keyType)) {
@@ -220,6 +243,28 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static CharSequence getString(Function function, Record record) {
         return function.getStrA(record);
+    }
+
+    // the type the keys are read as: the operand's, or for a NULL operand the first non-NULL key's
+    private static int keyTypeOf(ObjList<Function> args, int n) {
+        int type = args.getQuick(0).getType();
+        for (int i = 1; i < n && ColumnType.isNull(type); i += 2) {
+            type = args.getQuick(i).getType();
+        }
+        return type;
+    }
+
+    /**
+     * Returns a key that none of the branches has, for the int and long hash maps to mark their
+     * empty slots with. A map reads a slot holding that key as empty, so a branch with the key
+     * would never match.
+     */
+    private static long unusedKey(LongList keys) {
+        long key = -1;
+        while (keys.indexOf(key) > -1) {
+            key--;
+        }
+        return key;
     }
 
     private Function getCharSequenceKeyedFunction(
@@ -425,11 +470,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
             Function elseBranch,
             IntMethod intMethod
     ) throws SqlException {
-        final IntObjHashMap<Function> map = new IntObjHashMap<>();
+        final LongList keys = new LongList();
+        for (int i = 1; i < n; i += 2) {
+            keys.add(intMethod.getKey(args.getQuick(i), null));
+        }
+        final IntObjHashMap<Function> map = new IntObjHashMap<>(8, 0.5, (int) unusedKey(keys));
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
-            final Function fun = args.getQuick(i);
-            final int key = intMethod.getKey(fun, null);
+            final int key = (int) keys.getQuick(i >> 1);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -463,11 +511,14 @@ public class SwitchFunctionFactory implements FunctionFactory {
             Function elseBranch,
             LongMethod longMethod
     ) throws SqlException {
-        final LongObjHashMap<Function> map = new LongObjHashMap<>();
+        final LongList keys = new LongList();
+        for (int i = 1; i < n; i += 2) {
+            keys.add(longMethod.getKey(args.getQuick(i), null));
+        }
+        final LongObjHashMap<Function> map = new LongObjHashMap<>(8, 0.5, unusedKey(keys));
         final ObjList<Function> argsToPoke = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
-            final Function fun = args.getQuick(i);
-            final long key = longMethod.getKey(fun, null);
+            final long key = keys.getQuick(i >> 1);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
@@ -575,14 +626,16 @@ public class SwitchFunctionFactory implements FunctionFactory {
             Function elseBranch,
             int timestampType
     ) throws SqlException {
-        final LongObjHashMap<Function> map = new LongObjHashMap<>();
-        final ObjList<Function> argsToPoke = new ObjList<>();
-        TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        long key;
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final LongList keys = new LongList();
         for (int i = 1; i < n; i += 2) {
             final Function fun = args.getQuick(i);
-            int funType = fun.getType();
-            key = driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(funType));
+            keys.add(driver.from(fun.getTimestamp(null), ColumnType.getTimestampType(fun.getType())));
+        }
+        final LongObjHashMap<Function> map = new LongObjHashMap<>(8, 0.5, unusedKey(keys));
+        final ObjList<Function> argsToPoke = new ObjList<>();
+        for (int i = 1; i < n; i += 2) {
+            final long key = keys.getQuick(i >> 1);
             final int index = map.keyIndex(key);
             if (index < 0) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");

@@ -24,10 +24,43 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testAllNullBranchesCast() throws Exception {
+        // a CASE whose every branch is NULL has the NULL type; a cast reads it through a
+        // getter, which must return NULL
+        assertQuery("""
+                SELECT
+                    x,
+                    (CASE WHEN x > 1 THEN null END)::SYMBOL a,
+                    (CASE x WHEN 2 THEN null END)::VARCHAR b,
+                    (CASE WHEN x > 1 THEN null ELSE null END)::STRING c,
+                    (CASE WHEN x > 1 THEN null END)::INT d,
+                    (CASE WHEN x > 1 THEN null END)::LONG e,
+                    (CASE WHEN x > 1 THEN null END)::DOUBLE f,
+                    (CASE WHEN x > 1 THEN null END)::TIMESTAMP g,
+                    (CASE WHEN x > 1 THEN null END)::SYMBOL <= '5' h
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf\tg\th
+                        1\t\t\t\tnull\tnull\tnull\t\tfalse
+                        2\t\t\t\tnull\tnull\tnull\t\tfalse
+                        """);
+    }
 
     @Test
     public void testBinary() throws Exception {
@@ -1149,6 +1182,23 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalValueCastIsReportedNotThreadSafe() throws Exception {
+        // CASE casts each DECIMAL value to the common type, and a decimal cast keeps a scratch
+        // value. A CASE that claims to be thread-safe over such a cast is shared between the
+        // workers of a parallel GROUP BY, which race on the scratch value and lose groups.
+        final ObjList<Function> args = new ObjList<>();
+        args.add(BooleanConstant.TRUE);
+        args.add(DecimalColumn.newInstance(0, ColumnType.getDecimalType(30, 2)));
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        try (Function caseFunction = new CaseFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(args.getQuick(1).isThreadSafe());
+            Assert.assertFalse(caseFunction.isThreadSafe());
+        }
+    }
+
+    @Test
     public void testDouble() throws Exception {
         assertQuery("""
                 select\s
@@ -2054,6 +2104,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         2\tzero\tother\ttwo\t\trest\tnone
                         3\tone\tone\t\tthree\trest\tnone
                         4\tother\tother\t\t\trest\tnone
+                        """);
+    }
+
+    @Test
+    public void testSimpleCaseWithUnaryOperand() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE -x WHEN -1 THEN 'minus one' WHEN -3 THEN 'minus three' ELSE 'other' END a,
+                    10 - CASE -x WHEN -2 THEN 1 ELSE 0 END b,
+                    CASE ~x WHEN -3 THEN 'two' END c
+                FROM long_sequence(4)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc
+                        1\tminus one\t10\t
+                        2\tother\t9\ttwo
+                        3\tminus three\t10\t
+                        4\tother\t10\t
                         """);
     }
 

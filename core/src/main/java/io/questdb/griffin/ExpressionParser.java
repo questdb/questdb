@@ -1043,7 +1043,7 @@ public class ExpressionParser {
         assert prevBranch != BRANCH_BETWEEN_START;
         switch (prevBranch) {
             case BRANCH_OPERATOR, BRANCH_LEFT_PARENTHESIS, BRANCH_LEFT_BRACKET, BRANCH_COMMA, BRANCH_NONE,
-                 BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
+                 BRANCH_CASE_START, BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
                 // we have unary minus or unary complement, update op completely because it will change precedence
                 if (thisChar == '-') {
                     op = activeRegistry.unaryMinus;
@@ -1833,7 +1833,9 @@ public class ExpressionParser {
                             // replace:
                             // <literal or constant> IS NULL     -> <literal or constant> = NULL
                             // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
-                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
+                            // The operand can also end in a parameterised type, an array type or a
+                            // subscript, as in 'x::decimal(18, 3)', 'x::double[]' and 'x[1]'.
+                            if (isCompletedOperand(prevBranch) || prevBranch == BRANCH_ARRAY_TYPE_QUALIFIER_END) {
                                 tok = validateIsKeyword(lexer, tok, lastPos);
                             } else {
                                 throw SqlException.$(lastPos, "IS [NOT] not allowed here");

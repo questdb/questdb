@@ -1476,6 +1476,74 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinusOneKey() throws Exception {
+        // The int and long hash maps behind switch() mark empty slots with -1 by default. The
+        // keys -1 and -2 make the map pick -3, which the first row checks takes the ELSE branch.
+        assertQuery("""
+                SELECT
+                    v,
+                    CASE v::byte WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END b,
+                    CASE v::short WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END s,
+                    CASE v::int WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END i,
+                    CASE (v::int)::ipv4 WHEN '255.255.255.255'::ipv4 THEN 'm1' WHEN '255.255.255.254'::ipv4 THEN 'm2' ELSE 'other' END ip,
+                    CASE v WHEN -1 THEN 'm1' WHEN -2 THEN 'm2' ELSE 'other' END l,
+                    CASE v::date WHEN (-1)::date THEN 'm1' WHEN (-2)::date THEN 'm2' ELSE 'other' END d,
+                    CASE v::timestamp WHEN (-1)::timestamp THEN 'm1' WHEN (-2)::timestamp THEN 'm2' ELSE 'other' END ts,
+                    CASE v::timestamp_ns WHEN (-1)::timestamp_ns THEN 'm1' WHEN (-2)::timestamp_ns THEN 'm2' ELSE 'other' END ts_ns
+                FROM (SELECT x - 4 v FROM long_sequence(4))
+                """)
+                .expectSize()
+                .returns("""
+                        v\tb\ts\ti\tip\tl\td\tts\tts_ns
+                        -3\tother\tother\tother\tother\tother\tother\tother\tother
+                        -2\tm2\tm2\tm2\tm2\tm2\tm2\tm2\tm2
+                        -1\tm1\tm1\tm1\tm1\tm1\tm1\tm1\tm1
+                        0\tother\tother\tother\tother\tother\tother\tother\tother
+                        """);
+    }
+
+    @Test
+    public void testMinusOneKeyDuplicateBranch() throws Exception {
+        assertQuery("select case x::int when -1 then 'a' when -1 then 'b' end from long_sequence(1)")
+                .fails(41, "duplicate branch");
+        assertQuery("select case x when -1 then 'a' when -1 then 'b' end from long_sequence(1)")
+                .fails(36, "duplicate branch");
+    }
+
+    @Test
+    public void testNullOperand() throws Exception {
+        // A NULL operand matches only a NULL key, as 'null = null' does, and otherwise takes the
+        // ELSE branch. No key matches it by value: not IPv4 128.0.0.0, whose bits are INT's NULL,
+        // nor false or 0, which BOOLEAN, BYTE and SHORT read NULL as.
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE null WHEN 1 THEN 'one' ELSE 'other' END a,
+                    CASE null WHEN 1 THEN 'one' WHEN null THEN 'null' END b,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN -2 THEN 'minus two' ELSE 'other' END c,
+                    CASE null WHEN 'x' THEN 1 ELSE 2 END d,
+                    CASE null WHEN '2024-01-01'::TIMESTAMP THEN 1 ELSE 2 END e,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN '128.0.0.0'::IPv4 THEN 'hit' ELSE 'miss' END f,
+                    CASE null WHEN '1.1.1.1'::IPv4 THEN 'a' WHEN null THEN 'n' ELSE 'e' END g,
+                    CASE null WHEN false THEN 'f' ELSE 'e' END h,
+                    CASE null WHEN 0::BYTE THEN 'z' ELSE 'e' END i,
+                    CASE null WHEN 0::SHORT THEN 'z' ELSE 'e' END j,
+                    CASE null WHEN null THEN 'n' WHEN 1 THEN 'one' END k,
+                    CASE null WHEN null THEN 'n' END l
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf\tg\th\ti\tj\tk\tl
+                        1\tother\tnull\tother\t2\t2\tmiss\tn\te\te\te\tn\tn
+                        2\tother\tnull\tother\t2\t2\tmiss\tn\te\te\te\tn\tn
+                        """);
+        // without a key there is no type to read the NULL as
+        assertQuery("SELECT switch(null) FROM long_sequence(1)")
+                .fails(14, "type NULL is not supported in 'switch' type of 'case' statement");
+    }
+
+    @Test
     public void testShort() throws Exception {
         assertQuery("""
                 select\s

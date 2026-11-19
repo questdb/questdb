@@ -471,6 +471,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseLikeSwitchUnaryOperand() throws SqlException {
+        // '-' and '~' right after CASE are unary, as they are after WHEN, THEN and ELSE
+        x("x - 1 'a' case", "case -x when 1 then 'a' end");
+        x("5 - 1 'a' case", "case -5 when 1 then 'a' end");
+        x("x ~ 1 'a' case", "case ~x when 1 then 'a' end");
+        x("x - 1 + 1 'a' case", "case -x + 1 when 1 then 'a' end");
+        x("1 x - 2 'a' case -", "1 - case -x when 2 then 'a' end");
+    }
+
+    @Test
     public void testCaseLowercase() throws SqlException {
         x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
@@ -1596,6 +1606,34 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(". is great", 2, "IS [NOT] not allowed here");
         assertFail("column is $1", 7, "IS must be followed by NULL, TRUE or FALSE");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
+    }
+
+    @Test
+    public void testIsNullAfterTypedCastOrSubscript() throws Exception {
+        // IS follows any completed operand, including a cast to a parameterised or array type
+        // and a subscript
+        x("x decimal_18_3 :: NULL =", "x::decimal(18,3) IS NULL");
+        x("x decimal_18_3 :: NULL !=", "x::decimal(18,3) IS NOT NULL");
+        x("x geohash6c :: NULL =", "x::geohash(6c) IS NULL");
+        x("x 1 [] NULL !=", "x[1] IS NOT NULL");
+        x("x double[] :: NULL !=", "x::double[] IS NOT NULL");
+        assertFail("x::decimal(18,3) IS 1", 17, "IS must be followed by NULL, TRUE or FALSE");
+        assertFail("x[1] IS NOT 1", 5, "IS NOT must be followed by NULL, TRUE or FALSE");
+        assertQuery("""
+                SELECT
+                    x,
+                    (CASE WHEN x > 1 THEN x END)::DECIMAL(18, 3) IS NULL a,
+                    (CASE WHEN x > 1 THEN x END)::DECIMAL(18, 3) IS NOT NULL b,
+                    (CASE WHEN x > 1 THEN 'sp052w92' END)::GEOHASH(6c) IS NULL c,
+                    ARRAY[(CASE WHEN x > 1 THEN x END)::DOUBLE, 2.0][1] IS NULL d
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td
+                        1\ttrue\tfalse\ttrue\ttrue
+                        2\tfalse\ttrue\tfalse\tfalse
+                        """);
     }
 
     @Test
