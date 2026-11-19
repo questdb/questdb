@@ -144,6 +144,14 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
         return (long) frame * FRAME_ROWS + (isFiltered ? 2 : 1);
     }
 
+    // The join under a LIMIT of more rows than it returns, which sends every frame out with the
+    // first, where the window's ramp would send out the first frame alone, whose task joins the
+    // frame's first rows only; see setUpExecution(). The LIMIT stands over a sub-query, through
+    // which it reaches the join: the LIMIT of the join's own query would go to its probe filter.
+    private static String fullWindowSql(boolean isFiltered, boolean isDescending) {
+        return "SELECT * FROM (" + joinSql(isFiltered, isDescending) + ") LIMIT 1_000_000";
+    }
+
     private static String joinSql(boolean isFiltered, boolean isDescending) {
         return JOIN + (isFiltered ? " WHERE t.v % 2 = 0" : "") + (isDescending ? " ORDER BY t.ts DESC" : "");
     }
@@ -265,7 +273,7 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals(ROW_COUNT - ROW_COUNT / 5, expectedOther[1]);
-            final String sql = joinSql(false, false);
+            final String sql = fullWindowSql(false, false);
             final Router router = new Router();
             TestLatchedCounterFunctionFactory.reset(router);
             final long[] expected;
@@ -359,7 +367,7 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
             for (boolean isCopy : new boolean[]{true, false}) {
                 for (boolean isFiltered : new boolean[]{false, true}) {
                     for (boolean isDescending : new boolean[]{false, true}) {
-                        final String sql = joinSql(isFiltered, isDescending);
+                        final String sql = fullWindowSql(isFiltered, isDescending);
                         final String label = sql + ", copies: " + isCopy;
                         final String expected = ordinary(sql, context);
                         useSteppers(isCopy);
@@ -520,7 +528,8 @@ public class AsyncHashJoinTaskCancellationTest extends AbstractCairoTest {
     }
 
     private void setUpExecution() {
-        // Room for every frame in flight at once, so that the first row dispatches them all.
+        // Room for every frame in flight at once, so that the first row dispatches them all, under
+        // a LIMIT of more rows than the join returns; see fullWindowSql().
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 2 * FRAME_COUNT);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 2 * FRAME_COUNT);
     }

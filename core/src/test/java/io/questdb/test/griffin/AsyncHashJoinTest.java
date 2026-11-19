@@ -870,7 +870,10 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
     public void testProbeMemoryLimitAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             // One large probe frame over a two-row build: the frame's tuples take 50_000 * 2 * 8 bytes,
-            // far more than the build.
+            // far more than the build. Without a LIMIT the frame's task joins its first 4_096 rows,
+            // and the consumer's continuation joins the rest in chunks of as many rows as the frame
+            // joined before each, each into an entry of its tuples' room: 4_096 and 8_192 rows fit the
+            // limit, and the chunk of 16_384 rows, whose tuples take 262_144 bytes, breaches it.
             execute("CREATE TABLE t AS (SELECT (x % 3)::INT k, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT x::INT k, x w FROM long_sequence(2))");
             sqlExecutionContext.changePageFrameSizes(50_000, 50_000);
@@ -879,11 +882,14 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
             try (RecordCursorFactory factory = select(sql)) {
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 200_000L);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    cursor.hasNext();
-                    Assert.fail("expected the probe task to breach the memory limit");
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                    Assert.fail("expected the probe to breach the memory limit");
                 } catch (CairoException e) {
                     Assert.assertTrue(e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=262144");
                 }
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
                 Assert.assertEquals(expected, result(factory, sqlExecutionContext));

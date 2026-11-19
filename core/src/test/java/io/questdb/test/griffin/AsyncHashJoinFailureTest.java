@@ -377,7 +377,11 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
         // A window of 32 frames of 16 rows; two workers each hold a frame past the first one inside
         // the probe filter, so the frames behind them wait in the queue, until the consumer, which
         // read the first row, closes its cursor and waits for the frames in flight. The frames that
-        // no worker started by then never run the probe filter.
+        // no worker started by then never run the probe filter. A LIMIT of more rows than the join
+        // returns sends the full window out with the first frame, where the window's ramp would
+        // send the first frame alone, and the second once the consumer takes it. The LIMIT stands
+        // over a sub-query, through which it reaches the join: the LIMIT of the join's own query
+        // would go to its probe filter.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 32);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 64);
         // The owner steals no frame from the queue: one that it stole while a worker was still on
@@ -406,7 +410,7 @@ public class AsyncHashJoinFailureTest extends AbstractCairoTest {
                     db.execute("CREATE TABLE " + t + " AS (SELECT (x % 50)::INT k, x v, timestamp_sequence('2024-01-01', 1_000_000) ts"
                             + " FROM long_sequence(1_024)) TIMESTAMP(ts) PARTITION BY DAY", context);
                     db.execute("CREATE TABLE " + d + " AS (SELECT (x % 40)::INT k, x w FROM long_sequence(300))", context);
-                    final String sql = "SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)";
+                    final String sql = "SELECT * FROM (SELECT t.v, d.w FROM " + t + " t JOIN " + d + " d ON t.k = d.k WHERE (test_latched_counter() OR t.v < 0)) LIMIT 1_000_000";
                     final Thread owner = Thread.currentThread();
                     final Set<Integer> startedFrames = ConcurrentHashMap.newKeySet();
                     final AtomicBoolean isClosing = new AtomicBoolean();

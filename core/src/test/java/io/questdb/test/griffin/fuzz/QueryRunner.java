@@ -320,10 +320,12 @@ public final class QueryRunner {
     // the cursor returned its first row.
     private int parallelJoinNarrowedWindowRuns;
     // Partial reads of a parallel hash join's cursor (see checkParallelJoinPartialReads), in all,
-    // and those of a stacked operator, of a swapped execution and of an execution that joined frames
-    // in continuations.
+    // and those of a stacked operator, of a swapped execution, of an execution that joined frames in
+    // continuations, and of those of them whose join compiled with a first task of fewer rows than
+    // the default, see firstTaskRows().
     private int parallelJoinPartialReadChecks;
     private int parallelJoinPartialReadContinued;
+    private int parallelJoinPartialReadHeadContinued;
     private int parallelJoinPartialReadStacked;
     private int parallelJoinPartialReadSwapped;
     private int parallelJoinAxisSwapCandidates;
@@ -671,6 +673,15 @@ public final class QueryRunner {
      */
     public int getParallelJoinPartialReadContinued() {
         return parallelJoinPartialReadContinued;
+    }
+
+    /**
+     * Partial reads checked over an execution that joined some of its frames in continuations, whose
+     * join compiled with a first task of fewer rows than the default, see {@link #firstTaskRows}: the
+     * continuations of the first frame of an execution without a LIMIT among them.
+     */
+    public int getParallelJoinPartialReadHeadContinued() {
+        return parallelJoinPartialReadHeadContinued;
     }
 
     /**
@@ -1871,6 +1882,22 @@ public final class QueryRunner {
      * them once it collects its first frame, or the server default, which no fuzz query reaches. Drawn from the
      * query's text, as {@link #firstReadRows(String)} draws its rows.
      */
+    /**
+     * The rows that the first probe frame's task of an execution without a LIMIT joins, in the
+     * parallel hash joins that {@link #runOnce} compiles: the server default, which no fuzz table's
+     * frame reaches, or one to eight rows, which most of their first frames pass, so that the
+     * consumer continues the first frame, and the window ramps up, past the frame's head. Drawn from
+     * the query's text, as {@link #stepperWarmUpRows(String)} draws its rows.
+     */
+    private static long firstTaskRows(String sql) {
+        final int hash = sql.hashCode() & 0x7fff_ffff;
+        return switch ((hash >>> 13) % 3) {
+            case 0 -> AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS;
+            case 1 -> 1;
+            default -> 2 + (hash >>> 15) % 7;
+        };
+    }
+
     private static long stepperWarmUpRows(String sql) {
         final int hash = sql.hashCode() & 0x7fff_ffff;
         return switch ((hash >>> 7) % 3) {
@@ -1964,6 +1991,9 @@ public final class QueryRunner {
         }
         if (isContinued) {
             parallelJoinPartialReadContinued++;
+            if (firstTaskRows(sql) < AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS) {
+                parallelJoinPartialReadHeadContinued++;
+            }
         }
     }
 
@@ -2577,13 +2607,16 @@ public final class QueryRunner {
     }
 
     // Compiles the query, its parallel hash joins under the stepper warm-up that stepperWarmUpRows()
-    // draws, which each join reads as it compiles.
+    // draws and the first task's rows that firstTaskRows() draws, which each join reads as it
+    // compiles.
     private RecordCursorFactory selectUnderStepperWarmUp(SqlCompiler compiler, String sql) throws SqlException {
         AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(stepperWarmUpRows(sql));
+        AsyncHashJoinRecordCursorFactory.setFirstTaskRowsForTesting(firstTaskRows(sql));
         try {
             return engine.select(compiler, sql, executionContext);
         } finally {
             AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+            AsyncHashJoinRecordCursorFactory.setFirstTaskRowsForTesting(AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS);
         }
     }
 

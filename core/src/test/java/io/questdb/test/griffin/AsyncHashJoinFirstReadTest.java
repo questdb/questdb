@@ -56,17 +56,21 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * A parallel hash join whose rows are the query's own takes the rows that the client reads first,
  * see {@code SqlExecutionContext.getFirstReadRows()}, as it takes a LIMIT: an execution first
  * dispatches only the leading probe frames whose rows reach them, the last of them joining only the
- * rows still needed. A reader that has read those rows and asks for more opens the full window at
- * once, while the consumer continues the capped frame; a reader that lacks some of them, which an
- * INNER join dropped, continues the frame first. The join's rows are the query's own under the
+ * rows still needed. The frames that the consumer takes in the first window step the window's ramp,
+ * which doubles with each, and a reader that has read those rows and asks for more takes a step of
+ * the ramp with each chunk of the capped frame that it continues, and the frames past the first
+ * window go out within the ramp while the consumer continues the capped frame; a reader that lacks
+ * some of them, which an INNER join dropped, continues the frame first. The join's rows are the query's own under the
  * operators that read at most one row of the join per row they return, those through which a
  * LIMIT reaches it too: projections, sub-queries and CTEs of them, the master side of ASOF and LT
  * joins, UNION ALL branches and runtime-constant filters. Any other query over the join, under a
  * sort, a window function or a LIMIT, never reads the hint, which leaves its first window as the
- * query's LIMIT, if any, makes it. The rows always equal the ordinary plan's, in order.
+ * query's LIMIT, if any, makes it, and without a LIMIT its ramp starts at one frame, which goes out
+ * with the second one once the consumer takes it. The rows always equal the ordinary plan's, in
+ * order.
  * <p>
  * The probe table t holds 64 rows in one partition, cut into frames of four rows: sixteen frames,
- * which a full window dispatches at once. Every row of t meets one row of d1.
+ * which a full window holds. Every row of t meets one row of d1.
  */
 public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
     private static final int FRAME_COUNT = 16;
@@ -121,13 +125,14 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
                 ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
-                // The reader reads past the three rows it reads first, which opens the window, and the
-                // execution is then cancelled, inside the capped frame's continuation.
+                // The reader reads past the three rows it reads first, which takes a step of the ramp,
+                // from the two frames that taking frame 0 left it at to four, and sends frames 1 to 3
+                // out, and the execution is then cancelled, inside the capped frame's continuation.
                 try (RecordCursor cursor = openUnder(factory, 3)) {
                     for (int i = 0; i < 4; i++) {
                         Assert.assertTrue(cursor.hasNext());
                     }
-                    Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
+                    Assert.assertEquals(4, join.getDispatchedFrameCount());
                     breaker.cancel();
                     //noinspection StatementWithEmptyBody
                     while (cursor.hasNext()) {
@@ -178,12 +183,12 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(0, join.getAtom().getContinuationCount());
                     // The chain's rows count as read, so the reader has read more than the two rows it
-                    // reads first, and the next row, v = 3, of the capped frame's continuation, opens
-                    // the full window.
+                    // reads first, and the next row, v = 3, of the capped frame's continuation, takes a
+                    // step of the ramp, to four frames.
                     Assert.assertTrue(cursor.hasNext());
                     Assert.assertEquals(3, record.getLong(0));
                     CursorPrinter.println(record, metadata, rows, true);
-                    Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
+                    Assert.assertEquals(4, join.getDispatchedFrameCount());
                     Assert.assertEquals(1, join.getAtom().getContinuationCount());
                     while (cursor.hasNext()) {
                         CursorPrinter.println(record, metadata, rows, true);
@@ -242,7 +247,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                     Assert.assertEquals(0, engine.getBusyReaderCount());
                     // The factory serves the next executions, under the rows read first and without.
                     assertDispatchedUnder(factory, joins, sql, 3, expected,
-                            new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, FRAME_COUNT, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
+                            new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, 4, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
                     Assert.assertEquals(expected, printRows(factory));
                     Assert.assertEquals(Long.MAX_VALUE, AsyncHashJoinRecordCursorFactory.takeLastFirstWindowRowsForTesting());
                 }
@@ -255,9 +260,17 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // The rows read first, and the frames of four rows that they need: a capped first frame,
-            // the first frame whole, and the first frames whole and a capped last one.
+            // the first frame whole, and the first frames whole and a capped last one. The ramp
+            // starts at the first window's frames, and each frame that the consumer takes in it
+            // doubles the ramp. The row past the rows read first steps it once more, and sends out
+            // the frames past the first window, up to the ramp: one or three rows leave a ramp of
+            // two once the consumer took frame 0, which the capped frame's continuation steps to
+            // four, frames 0 to 3; four rows take frame 0 whole, and the consumer takes frame 1,
+            // which steps the ramp to four, frames 1 to 4; five and ten rows took two and three
+            // frames, past the full window.
             final long[] firstReads = {1, 3, FRAME_ROWS, 5, 10};
             final int[] firstWindows = {1, 1, 1, 2, 3};
+            final int[] windowsPastFirstRead = {4, 4, 1 + 4, FRAME_COUNT, FRAME_COUNT};
             for (String sql : SHAPES) {
                 final String expected = ordinaryRows(sql, sqlExecutionContext);
                 try (RecordCursorFactory factory = select(sql)) {
@@ -280,11 +293,12 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                             }
                             Assert.assertEquals(label, firstRead, join.getAtom().getJoinedProbeRowCount());
                             Assert.assertEquals(label, 0, join.getAtom().getContinuationCount());
-                            // The next row opens the full window: the consumer continues the capped
-                            // frame, if any, while the workers join the frames after it.
+                            // The next row sends the frames after the first window out, within the
+                            // ramp: the consumer continues the capped frame, if any, while the
+                            // workers join the frames after it.
                             Assert.assertTrue(label, cursor.hasNext());
                             CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
-                            Assert.assertEquals(label, FRAME_COUNT, join.getDispatchedFrameCount());
+                            Assert.assertEquals(label, windowsPastFirstRead[i], join.getDispatchedFrameCount());
                             Assert.assertEquals(label, firstRead % FRAME_ROWS != 0, join.getAtom().getContinuationCount() > 0);
                             while (cursor.hasNext()) {
                                 CursorPrinter.println(cursor.getRecord(), metadata, rows, true);
@@ -420,11 +434,12 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                 try (RecordCursorFactory factory = select(sql)) {
                     final AsyncHashJoinRecordCursorFactory join = findAll(factory, sqlExecutionContext).getQuick(0);
                     // One factory, executed under each first read: none, zero and negative ones leave
-                    // the execution as it is, as do rows past those of every frame; all of them need
-                    // every frame.
+                    // the execution without a first window, whose ramp starts at one frame, which
+                    // goes out with the second once the consumer takes it; the rows of every frame,
+                    // and rows past them, need every frame, which goes out at once.
                     final long[] firstReads = {3, Long.MAX_VALUE, 10, 0, -5, Long.MIN_VALUE, ROW_COUNT, ROW_COUNT + 1, 1_000, 3};
                     final long[] firstWindowRows = {3, Long.MAX_VALUE, 10, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, ROW_COUNT, ROW_COUNT + 1, 1_000, 3};
-                    final int[] firstWindows = {1, FRAME_COUNT, 3, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, 1};
+                    final int[] firstWindows = {1, 2, 3, 2, 2, 2, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, 1};
                     for (int i = 0; i < firstReads.length; i++) {
                         final String label = sql + ", first read " + firstReads[i];
                         try (RecordCursor cursor = openUnder(factory, firstReads[i])) {
@@ -464,31 +479,33 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             // A UNION ALL returns every row it reads, of its first branch until it runs out, then of
             // its second, so the rows that the client reads first bound the rows of each branch, and
             // the join of each takes them: three rows need its first frame, and the row after them
-            // opens its full window. A branch whose rows the branches before it left unread never
-            // builds, and one that the client reaches starts at its own first window, although the
-            // client has read rows of the branches before it.
+            // takes a step of its ramp, to four frames. A branch whose rows the branches before it
+            // left unread never builds, and one that the client reaches starts at its own first
+            // window, although the client has read rows of the branches before it.
             assertDispatchedUnder(JOIN_D1 + " UNION ALL " + JOIN_D1, 3, both,
-                    new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, FRAME_COUNT, 0}, new int[]{ROW_COUNT, FRAME_COUNT, 0},
-                    new int[]{ROW_COUNT + 1, FRAME_COUNT, 1}, new int[]{ROW_COUNT + 3, FRAME_COUNT, 1}, new int[]{ROW_COUNT + 4, FRAME_COUNT, FRAME_COUNT});
+                    new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, 4, 0}, new int[]{ROW_COUNT, FRAME_COUNT, 0},
+                    new int[]{ROW_COUNT + 1, FRAME_COUNT, 1}, new int[]{ROW_COUNT + 3, FRAME_COUNT, 1}, new int[]{ROW_COUNT + 4, FRAME_COUNT, 4});
             // An empty first branch reads every frame before the second one returns the first row.
             assertDispatchedUnder(empty + " UNION ALL " + JOIN_D1, 3, both,
-                    new int[]{1, FRAME_COUNT, 1}, new int[]{3, FRAME_COUNT, 1}, new int[]{4, FRAME_COUNT, FRAME_COUNT});
+                    new int[]{1, FRAME_COUNT, 1}, new int[]{3, FRAME_COUNT, 1}, new int[]{4, FRAME_COUNT, 4});
             // Eighteen rows need four frames and two rows of the fifth. The first branch returns 16
             // rows, and the second one starts at the frames of eighteen rows, not of the two that the
-            // client still reads first.
+            // client still reads first. The five frames that the consumer takes step its ramp past
+            // the full window, which the row after the eighteen sends out.
             assertDispatchedUnder(JOIN_M + " UNION ALL " + JOIN_D1, 18, both,
                     new int[]{1, 5, 0}, new int[]{17, FRAME_COUNT, 5}, new int[]{16 + 18, FRAME_COUNT, 5}, new int[]{16 + 19, FRAME_COUNT, FRAME_COUNT});
             // Three branches, the first two of which a nested UNION ALL holds.
             assertDispatchedUnder(JOIN_D1 + " UNION ALL " + JOIN_D1 + " UNION ALL " + JOIN_D1, 3, new boolean[]{true, true, true},
-                    new int[]{1, 1, 0, 0}, new int[]{3, 1, 0, 0}, new int[]{4, FRAME_COUNT, 0, 0},
-                    new int[]{ROW_COUNT + 1, FRAME_COUNT, 1, 0}, new int[]{ROW_COUNT + 4, FRAME_COUNT, FRAME_COUNT, 0},
+                    new int[]{1, 1, 0, 0}, new int[]{3, 1, 0, 0}, new int[]{4, 4, 0, 0},
+                    new int[]{ROW_COUNT + 1, FRAME_COUNT, 1, 0}, new int[]{ROW_COUNT + 4, FRAME_COUNT, 4, 0},
                     new int[]{2 * ROW_COUNT + 1, FRAME_COUNT, FRAME_COUNT, 1}, new int[]{2 * ROW_COUNT + 3, FRAME_COUNT, FRAME_COUNT, 1},
-                    new int[]{2 * ROW_COUNT + 4, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT});
+                    new int[]{2 * ROW_COUNT + 4, FRAME_COUNT, FRAME_COUNT, 4});
             // SYMBOL columns, which the union casts back to SYMBOL over its branches.
             assertDispatchedUnder(symbols + " UNION ALL " + symbols, 3, both,
-                    new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, FRAME_COUNT, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
+                    new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, 4, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
             // A branch under its own LIMIT 4 takes that LIMIT, whose rows its first frame holds, and
-            // never the hint; the other branch takes the hint, whose five rows need two frames.
+            // never the hint; the other branch takes the hint, whose five rows need two frames, which
+            // step its ramp to eight frames, and the row past them to sixteen.
             assertDispatchedUnder("SELECT * FROM (" + JOIN_D1 + " LIMIT 4) UNION ALL " + JOIN_D1, 5, new boolean[]{false, true},
                     new int[]{1, 1, 0}, new int[]{4, 1, 0}, new int[]{5, 1, 2}, new int[]{4 + 5, 1, 2}, new int[]{4 + 6, 1, FRAME_COUNT});
             // The UNION ALL in a sub-query, of a CTE, which each branch reads, and of ASOF joins
@@ -499,7 +516,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                     asof + " UNION ALL " + asof,
             }) {
                 assertDispatchedUnder(sql, 3, both,
-                        new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, FRAME_COUNT, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
+                        new int[]{1, 1, 0}, new int[]{3, 1, 0}, new int[]{4, 4, 0}, new int[]{ROW_COUNT + 1, FRAME_COUNT, 1});
             }
         });
     }
@@ -513,7 +530,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             // join's own cursor over, which opens under the rows that the client reads first, and
             // false returns no row without opening the join.
             assertDispatchedUnder(JOIN_D1 + " WHERE now() > '2020-01-01'::TIMESTAMP", 3, marked,
-                    new int[]{1, 1}, new int[]{3, 1}, new int[]{4, FRAME_COUNT});
+                    new int[]{1, 1}, new int[]{3, 1}, new int[]{4, 4});
             assertDispatchedUnder(JOIN_D1 + " WHERE now() < '2020-01-01'::TIMESTAMP", 3, marked);
             // A boolean $1, which each execution of one factory reads.
             final String sql = JOIN_D1 + " WHERE $1";
@@ -529,7 +546,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                         final String expected = ordinaryRows(sql, sqlExecutionContext);
                         Assert.assertEquals(isTrue, !expected.isEmpty());
                         if (isTrue) {
-                            assertDispatchedUnder(factory, joins, sql, 3, expected, new int[]{1, 1}, new int[]{3, 1}, new int[]{4, FRAME_COUNT});
+                            assertDispatchedUnder(factory, joins, sql, 3, expected, new int[]{1, 1}, new int[]{3, 1}, new int[]{4, 4});
                         } else {
                             assertDispatchedUnder(factory, joins, sql, 3, expected);
                             Assert.assertEquals(0, joins.getQuick(0).getDispatchedFrameCount());
@@ -549,7 +566,8 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
             createShapeTables();
             // An ASOF or LT join reads one row of its master per row it returns, so the rows that the
             // client reads first bound the rows of the join that is its master, whose first three
-            // rows the first frame holds, and the row after them opens the full window: keyed and
+            // rows the first frame holds, and the row after them takes a step of the ramp, to four
+            // frames: keyed and
             // without a key, under a TOLERANCE, over a filtered slave, LT after ASOF, a LEFT join as
             // the master, a sub-query over the ASOF join, and a sub-query as the master.
             for (String sql : new String[]{
@@ -564,12 +582,12 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                     "SELECT * FROM (SELECT t.v, d1.w, q.p FROM t JOIN d1 ON t.k = d1.k ASOF JOIN q ON (k))",
                     "SELECT j.v, j.w, q.p FROM ((" + JOIN_D1_TS + ") TIMESTAMP(ts)) j ASOF JOIN q",
             }) {
-                assertDispatchedUnder(sql, 3, new boolean[]{true}, new int[]{1, 1}, new int[]{3, 1}, new int[]{4, FRAME_COUNT});
+                assertDispatchedUnder(sql, 3, new boolean[]{true}, new int[]{1, 1}, new int[]{3, 1}, new int[]{4, 4});
             }
             // A star as the master, whose every probe row meets two rows of d2: the first window caps
-            // its task at three probe rows, whose six rows the client reads before the window opens.
+            // its task at three probe rows, whose six rows the client reads before the ramp steps.
             assertDispatchedUnder("SELECT t.v, d1.w, d2.w2, q.p FROM t JOIN d1 ON t.k = d1.k JOIN d2 ON t.k = d2.k ASOF JOIN q ON (k)", 3, new boolean[]{true},
-                    new int[]{1, 1}, new int[]{3, 1}, new int[]{6, 1}, new int[]{7, FRAME_COUNT});
+                    new int[]{1, 1}, new int[]{3, 1}, new int[]{6, 1}, new int[]{7, 4});
             // A slave without random access, a join of q, makes the ASOF and LT joins the full-fat
             // ones, which read their master as the others do; the slave join's rows are not the
             // query's own, and it never reads the hint. The slave join's frames share the workers'
@@ -666,11 +684,12 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLimitOpensTheWindowOnceReadPast() throws Exception {
+    public void testLimitStepsTheRampOnceReadPast() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             // The join's own cursor under LIMIT 3, as a test reads it, past the LIMIT's rows: the
-            // fourth row opens the full window, as it does past the rows read first.
+            // fourth row takes a step of the ramp, to four frames, as it does past the rows read
+            // first.
             final String sql = SHAPES[0] + " LIMIT 3";
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -682,7 +701,7 @@ public class AsyncHashJoinFirstReadTest extends AbstractCairoTest {
                         Assert.assertEquals(1, join.getDispatchedFrameCount());
                     }
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
+                    Assert.assertEquals(4, join.getDispatchedFrameCount());
                     int rows = 4;
                     while (cursor.hasNext()) {
                         rows++;

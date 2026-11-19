@@ -132,8 +132,10 @@ public class AsyncHashJoinProbeFrameMaxRowsTest extends AbstractCairoTest {
         // server's page frame sizes, 100_000 to 1_000_000 rows, a context of one worker cuts one
         // frame of the partition's rows, and the probe's cap ten frames of 100_000 rows: a task
         // writes 100_000 tuples of two longs, 1_600_000 bytes, which a query memory limit of 4 MiB,
-        // whose quarter holds no task's tuples, holds once. A frame of 1_000_000 rows, 16_000_000
-        // bytes of tuples, does not fit it.
+        // whose quarter holds no task's tuples, holds once. A frame of 1_000_000 rows does not fit
+        // it: the frame's task joins its first 4_096 rows, and the consumer's continuation the rest,
+        // in chunks of as many rows as the frame joined before each, each into an entry of its
+        // tuples' room, and the chunk of 262_144 rows takes 4_194_304 bytes, the whole limit.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         assertMemoryLeak(() -> {
@@ -175,9 +177,9 @@ public class AsyncHashJoinProbeFrameMaxRowsTest extends AbstractCairoTest {
                             Assert.fail("expected the query memory limit to fail the query");
                         } catch (CairoException e) {
                             Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
-                            // The one frame's entry, which takes its 16_000_000 bytes at once.
+                            // The one frame's entry, which takes the chunk's 4_194_304 bytes at once.
                             TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                            TestUtils.assertContains(e.getFlyweightMessage(), "size=16000000");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "size=4194304");
                         }
                     }
                 }
@@ -240,7 +242,10 @@ public class AsyncHashJoinProbeFrameMaxRowsTest extends AbstractCairoTest {
         // whose rows each meet one row of each build, fill each with 100_000 tuples of a probe row
         // and an entry per join: 1_600_000 bytes for one join, 3_200_000 for three. At the former
         // cap of a page frame's 1_000_000 rows, a context of one worker cuts one frame of the
-        // partition's rows, whose one entry takes 16_000_000 and 32_000_000 bytes.
+        // partition's rows, the first frame, whose task joins its first 4_096 rows, and the
+        // consumer's continuation the rest, in chunks of as many rows as the frame joined before
+        // each: the last chunk joins the 475_712 rows left after 524_288, into an entry that takes
+        // 7_611_392 bytes for one join, and 15_222_784 for three.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
@@ -253,8 +258,8 @@ public class AsyncHashJoinProbeFrameMaxRowsTest extends AbstractCairoTest {
             Assert.assertEquals(4 * 1_600_000, ringBytesAfterFullRead(single, 10));
             Assert.assertEquals(4 * 3_200_000, ringBytesAfterFullRead(star, 10));
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS, 1_000_000);
-            Assert.assertEquals(16_000_000, ringBytesAfterFullRead(single, 1));
-            Assert.assertEquals(32_000_000, ringBytesAfterFullRead(star, 1));
+            Assert.assertEquals(475_712 * 2 * Long.BYTES, ringBytesAfterFullRead(single, 1));
+            Assert.assertEquals(475_712 * 4 * Long.BYTES, ringBytesAfterFullRead(star, 1));
         });
     }
 

@@ -164,6 +164,15 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code SINGLE_LARGE}, as an HTTP page of 1,000 rows without a row count does, and
  *       {@code FETCH_1K} and {@code FETCH_LARGE} read every row of them, as a JDBC client of fetch
  *       size 1,000 does, through a portal that it resumes.
+ *       {@code SHORT_*_SYM} and {@code SHORT_*_VARCHAR} read ten rows of the whole fact table joined
+ *       on its SYMBOL column with a dimension of its 64 texts, and on its VARCHAR column with a
+ *       dimension of its thousand texts, one match per fact row, under an operator that the LIMIT
+ *       does not reach: a window function ({@code WINDOW}), a CROSS JOIN ({@code CROSS}), a serial
+ *       LEFT join keyed on the dimension ({@code SNOWFLAKE}), a filter that the join cannot run
+ *       ({@code WHERE}), UNION ({@code UNION}), EXCEPT and INTERSECT with the join of the fact
+ *       table's first rows ({@code EXCEPT}, {@code INTERSECT}), and the slave of an ASOF join of
+ *       the fact table's first ten rows ({@code ASOF_SLAVE}). {@code FULL_SYM} and
+ *       {@code FULL_VARCHAR} read every row of those joins.
  *       </li>
  *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
  *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
@@ -208,8 +217,9 @@ import java.util.concurrent.locks.LockSupport;
  * untimed, and prints one {@code HASHJOIN-REPORT} line: rows and a checksum (equal across plans),
  * wall and CPU time of the consumer and the workers, the peak of the per-query tracked memory, and
  * the operator's dispatch limit, ring memory, continuation chunks and probe frame count. The
- * {@code LIMIT_*} and {@code PAGE_*} shapes add the median time to the first row and the worker CPU
- * per execution over 20 executions. With {@code -Dquestdb.bench.report=<file>} in the forked JVM's arguments the
+ * {@code LIMIT_*}, {@code PAGE_*} and {@code SHORT_*} shapes add the median time to the first row
+ * and the worker CPU per execution over 20 executions. With {@code -Dquestdb.bench.printPlan=true}
+ * the set-up prints the query's plan. With {@code -Dquestdb.bench.report=<file>} in the forked JVM's arguments the
  * line also goes to that file.
  */
 @State(Scope.Benchmark)
@@ -238,6 +248,10 @@ public class ParallelHashJoinBenchmark {
     private static final String POOL_NAME = "hashjoinbench";
     // The SINGLE_LARGE shape's join, which the LIMIT_* shapes over other operators read.
     private static final String SINGLE_LARGE_JOIN = "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
+    // The SHORT_*_SYM shapes' join: one row of ds, of 64 texts, per fact row.
+    private static final String SHORT_SYM_JOIN = "SELECT f.id, f.v, f.ts, d.w FROM fact f JOIN ds d ON f.sym = d.sym";
+    // The SHORT_*_VARCHAR shapes' join: one row of dn, of a thousand texts, per fact row.
+    private static final String SHORT_VARCHAR_JOIN = "SELECT f.id, f.v, f.ts, d.w FROM fact f JOIN dn d ON f.note = d.note";
     private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
     private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
@@ -245,7 +259,7 @@ public class ParallelHashJoinBenchmark {
     private static final String SYMBOL_10M_JOIN = "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d1k d ON f.sym = d.sym";
     // fsym's first timestamp, 2024-01-01T00:00:00Z.
     private static final long SYMBOL_10M_START_MICROS = 1_704_067_200_000_000L;
-    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k"};
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k", "ds", "dn"};
 
     @Param({"HOUR"})
     public String factPartitionBy;
@@ -316,7 +330,12 @@ public class ParallelHashJoinBenchmark {
             "FANOUT_1000_RESIDUAL_ALL",
             "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10",
             "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL",
-            "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K"
+            "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K",
+            "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",
+            "SHORT_UNION_SYM", "SHORT_EXCEPT_SYM", "SHORT_INTERSECT_SYM", "SHORT_ASOF_SLAVE_SYM",
+            "SHORT_WINDOW_VARCHAR", "SHORT_CROSS_VARCHAR", "SHORT_SNOWFLAKE_VARCHAR", "SHORT_WHERE_VARCHAR",
+            "SHORT_UNION_VARCHAR", "SHORT_EXCEPT_VARCHAR", "SHORT_INTERSECT_VARCHAR", "SHORT_ASOF_SLAVE_VARCHAR",
+            "FULL_SYM", "FULL_VARCHAR"
     })
     public String shape;
 
@@ -448,6 +467,29 @@ public class ParallelHashJoinBenchmark {
         return probeBound(probeRows);
     }
 
+    // Ten rows of a SHORT_ shape's join under an operator that the LIMIT does not reach. EXCEPT and
+    // INTERSECT read their right input, a join of the fact table's first rows, whole first.
+    private String shortReadSql() {
+        final boolean isSymbol = shape.endsWith("_SYM");
+        final String from = isSymbol ? " FROM fact f JOIN ds d ON f.sym = d.sym" : " FROM fact f JOIN dn d ON f.note = d.note";
+        final String join = (isSymbol ? SHORT_SYM_JOIN : SHORT_VARCHAR_JOIN);
+        final String operator = shape.substring("SHORT_".length(), shape.lastIndexOf('_'));
+        return switch (operator) {
+            case "WINDOW" -> "SELECT f.id, f.v, d.w, row_number() OVER () rn" + from + " LIMIT 10";
+            case "CROSS" -> "SELECT * FROM (" + join + ") j CROSS JOIN long_sequence(2) c LIMIT 10";
+            case "SNOWFLAKE" -> "SELECT f.id, f.v, d.w, d1.k k1" + from + " LEFT JOIN d1 ON d.w = d1.w LIMIT 10";
+            case "WHERE" -> "SELECT * FROM (" + join + ") WHERE rnd_int(0, 1, 0) >= 0 LIMIT 10";
+            case "UNION" -> "SELECT * FROM (" + join + " UNION " + join + ") LIMIT 10";
+            case "EXCEPT" ->
+                    "SELECT * FROM (" + join + " EXCEPT " + join + " WHERE f.ts < " + probeBound(10) + ") LIMIT 10";
+            case "INTERSECT" ->
+                    "SELECT * FROM (" + join + " INTERSECT " + join + " WHERE f.ts < " + probeBound(1_000) + ") LIMIT 10";
+            case "ASOF_SLAVE" -> "SELECT q.id, j.w FROM (SELECT id, ts FROM fact WHERE ts < " + probeBound(10)
+                    + ") q ASOF JOIN ((" + join + ") TIMESTAMP(ts)) j LIMIT 10";
+            default -> throw new IllegalArgumentException("unknown shape: " + shape);
+        };
+    }
+
     private static String starSql(String fact, String joins) {
         return STAR_SELECT + fact + " f" + joins;
     }
@@ -470,7 +512,19 @@ public class ParallelHashJoinBenchmark {
                 "(x * 7 % 1_000) / 1000.0 w, ('name' || x)::VARCHAR name FROM long_sequence(" + rows + "))", ctx);
     }
 
+    // The dimensions of the SHORT_* and FULL_* shapes, which a data directory of an earlier revision
+    // of the benchmark lacks: ds, the fact table's 64 SYMBOL texts, and dn, its thousand VARCHAR texts.
+    private void createShortReadDimensions() throws SqlException {
+        if (engine.getTableTokenIfExists("ds") == null) {
+            engine.execute("CREATE TABLE ds AS (SELECT ('s' || (x - 1))::SYMBOL sym, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(64))", ctx);
+        }
+        if (engine.getTableTokenIfExists("dn") == null) {
+            engine.execute("CREATE TABLE dn AS (SELECT ('note' || (x - 1))::VARCHAR note, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000))", ctx);
+        }
+    }
+
     private void createTables(Path root) throws SqlException {
+        createShortReadDimensions();
         if (engine.getTableTokenIfExists("ready") != null) {
             return;
         }
@@ -694,6 +748,9 @@ public class ParallelHashJoinBenchmark {
         final TextPlanSink planSink = new TextPlanSink();
         planSink.of(factory, ctx);
         final String planText = planSink.getSink().toString();
+        if (Boolean.getBoolean("questdb.bench.printPlan")) {
+            System.out.println("HASHJOIN-PLAN shape=" + shape + '\n' + planText);
+        }
         // The probe tasks of PARQUET_VAR_RESIDUAL would read a VARCHAR payload of a Parquet build,
         // which keeps the ordinary plan.
         if ((isOperator && !"PARQUET_VAR_RESIDUAL".equals(shape)) != planText.contains(OPERATOR_NODE)) {
@@ -808,7 +865,7 @@ public class ParallelHashJoinBenchmark {
                         wall / 1e6, consumerCpu / 1e6, workerCpu / 1e6))
                 .append(" peakTrackedBytes=").append(peak);
 
-        if (shape.startsWith("LIMIT_") || shape.startsWith("PAGE_")) {
+        if (shape.startsWith("LIMIT_") || shape.startsWith("PAGE_") || shape.startsWith("SHORT_")) {
             final long[] firstRow = new long[LIMIT_PROBE_EXECUTIONS];
             final long limitWorkerCpu0 = cpuNanos(threads, workerThreadIds);
             final long limitConsumerCpu0 = threads.getCurrentThreadCpuTime();
@@ -972,6 +1029,13 @@ public class ParallelHashJoinBenchmark {
             case "SYMBOL_10M_INTERVAL_D50K" ->
                     "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
             case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
+            case "FULL_SYM" -> SHORT_SYM_JOIN;
+            case "FULL_VARCHAR" -> SHORT_VARCHAR_JOIN;
+            case "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",
+                 "SHORT_UNION_SYM", "SHORT_EXCEPT_SYM", "SHORT_INTERSECT_SYM", "SHORT_ASOF_SLAVE_SYM",
+                 "SHORT_WINDOW_VARCHAR", "SHORT_CROSS_VARCHAR", "SHORT_SNOWFLAKE_VARCHAR", "SHORT_WHERE_VARCHAR",
+                 "SHORT_UNION_VARCHAR", "SHORT_EXCEPT_VARCHAR", "SHORT_INTERSECT_VARCHAR", "SHORT_ASOF_SLAVE_VARCHAR" ->
+                    shortReadSql();
             // fsym's first probeRows rows, whose timestamps step by half a second from 2024-01-01.
             case "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN "
                     + (shape.endsWith("D1K") ? "d1k" : "d50k") + " d ON f.sym = d.sym WHERE f.ts < "

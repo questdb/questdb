@@ -289,10 +289,13 @@ public class AsyncHashJoinConcurrentTest extends AbstractCairoTest {
             context.setParallelHashJoinEnabled(true);
             createTables(db, context);
             // The filter of the probe input runs in the probe reducer, the filter of the build
-            // input in the build's first round.
+            // input in the build's first round. The probe's frames hold each other up, the owner's
+            // and a worker's, so they have to go out together: a LIMIT of more rows than the join
+            // returns sends the full window out at once, where the window's ramp would send the
+            // first frame alone.
             final String sql = isRound
                     ? "SELECT t.k, t.v, d.w, d.s FROM t LEFT JOIN (SELECT * FROM d WHERE test_latched_counter()) d ON t.k = d.k"
-                    : "SELECT t.k, t.v, d.w, d.s FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k";
+                    : "SELECT t.k, t.v, d.w, d.s FROM (SELECT * FROM t WHERE test_latched_counter()) t LEFT JOIN d ON t.k = d.k LIMIT 1_000_000";
             final String reducerClass = isRound ? STAGE : ATOM;
             final String reducer = isRound ? "partitionFrame" : "probeFrame";
             context.changePageFrameSizes(64, 64);

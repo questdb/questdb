@@ -103,11 +103,21 @@ import java.util.concurrent.atomic.AtomicInteger;
  * a LIMIT of the query would reach, through the same operators.
  */
 public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursorFactory {
+    /**
+     * The rows that the first probe frame's task of an execution without a LIMIT joins, if the frame
+     * has more; see {@link AsyncHashJoinRecordCursor}. A few thousand rows' join takes tens of
+     * microseconds, about the cost of the task's dispatch, so a reader that reads few rows gets them
+     * about as soon as from the serial join, and the frame's continuation, whose chunks double,
+     * reaches the frame's end in a few chunks.
+     */
+    public static final long FIRST_TASK_ROWS = 4_096;
     private static final PageFrameReducer REDUCER = AsyncHashJoinRecordCursorFactory::probeFrame;
     @TestOnly
     private static final AtomicInteger constructionsBeforeFailureForTesting = new AtomicInteger();
     @TestOnly
     private static volatile RuntimeException constructorFailureForTesting;
+    @TestOnly
+    private static volatile long firstTaskRowsForTesting = FIRST_TASK_ROWS;
     @TestOnly
     private static volatile long lastFirstWindowRowsForTesting = -1;
     private final SCSequence collectSubSeq = new SCSequence();
@@ -167,7 +177,7 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
             if (constructorFailure != null && constructionsBeforeFailureForTesting.getAndDecrement() <= 0) {
                 throw constructorFailure;
             }
-            cursor = new AsyncHashJoinRecordCursor(spec);
+            cursor = new AsyncHashJoinRecordCursor(spec, firstTaskRowsForTesting);
         } catch (Throwable th) {
             Misc.free(buildRounds, th);
             Misc.free(frameSequence, th);
@@ -531,6 +541,17 @@ public final class AsyncHashJoinRecordCursorFactory extends AbstractRecordCursor
     @TestOnly
     public static void setStepperCopyHookForTesting(@Nullable Runnable hook) {
         HashJoinStageStepper.setNewInstanceHook(hook);
+    }
+
+    /**
+     * Sets the rows that the first probe frame's task of the executions without a LIMIT of the
+     * factories that compile from here on joins, if the frame has more, {@link #FIRST_TASK_ROWS}
+     * unless a test lowers it, as the query fuzzer does for tables whose frames hold fewer rows.
+     */
+    @TestOnly
+    public static void setFirstTaskRowsForTesting(long rows) {
+        assert rows > 0;
+        firstTaskRowsForTesting = rows;
     }
 
     /**

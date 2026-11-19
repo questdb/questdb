@@ -117,7 +117,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * frames; whatever the fan-out, a native probe frame holds no more than
  * {@code cairo.sql.parallel.hash.join.page.frame.max.rows}, see {@link #getProbeFrameMaxRows()}.
  * Under a LIMIT, the task of the last frame of the first window joins only the rows that the LIMIT
- * may need, and leaves the rest to the consumer's continuation, whose chunks then double; see
+ * may need, and without one, the task of the first frame joins only the frame's first few thousand
+ * rows; either leaves the rest to the consumer's continuation, whose chunks then double; see
  * {@link #setRowCappedFrame}.
  * <p>
  * A count of the join's rows dispatches count-only tasks, which walk the stages as a probe task
@@ -258,7 +259,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     @Nullable
     private IntHashSet probeTaskColumns;
     // The frame whose task joins no more than rowCappedFrameRows of its rows, the last frame of the
-    // first window under a LIMIT, -1 for none; see setRowCappedFrame().
+    // execution's first window, -1 for none; see setRowCappedFrame().
     private int rowCappedFrame = -1;
     private long rowCappedFrameRows;
     // True once the factory's executions collected the warm-up's probe rows, from which point the
@@ -1052,7 +1053,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             task.setFilteredRowCount(Math.max(0, countRows(slot, task, rows, 0, isWarm, STEPPER_RUN_COUNT_TASK, circuitBreaker)));
             return;
         }
-        // The first window's last frame under a LIMIT joins only the rows the LIMIT may need, and
+        // The first window's last frame joins only the rows that the first window was cut for, and
         // leaves the rest to the consumer's continuation.
         final long rowLimit = task.getFrameIndex() == rowCappedFrame ? rowCappedFrameRows : Long.MAX_VALUE;
         final long tupleCount = joinRows(slot, task, rows, 0, rowLimit, isWarm, STEPPER_RUN_TASK, circuitBreaker);
@@ -1066,9 +1067,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
     /**
      * Caps the rows that the task of a frame joins, for the rest of the execution: the last frame of
-     * the first window under a LIMIT joins only the rows the LIMIT may need, and leaves the rest of
-     * them to the consumer, see {@link #continueFrame}, whose chunks then join as many rows as the
-     * frame joined before each. The owner calls it once per execution, before it dispatches the
+     * the first window, under a LIMIT, joins only the rows the LIMIT may need, and without one, the
+     * first frame joins only its first few thousand rows; either leaves the rest of them to the
+     * consumer, see {@link #continueFrame}, whose chunks then join as many rows as the frame joined
+     * before each. The owner calls it once per execution, before it dispatches the
      * first task, which publishes it to the workers; the execution's {@link #clear()} removes it.
      *
      * @param frameIndex the frame, -1 for none

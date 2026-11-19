@@ -65,16 +65,21 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * branches and runtime-constant filters, and an execution under a positive one first dispatches
  * only the leading probe frames whose rows reach it, the last of them joining only the rows the
  * LIMIT still needs; the consumer continues that
- * frame itself, in chunks that double, if it reads further, and only then opens the full window. The
+ * frame itself, in chunks that double, if it reads further, and only then sends the frames past the
+ * first window out, within the window's ramp, which each frame that the consumer took, and each
+ * chunk, doubles. An execution without a LIMIT ramps up from one frame, which goes out with the
+ * second once the consumer takes it, and one under a LIMIT of more rows than a full window's frames
+ * hold dispatches the full window at once. The
  * rows always equal the ordinary plan's, in order: the LIMIT stays with its own factory. A range
  * {@code LIMIT lo, hi} of no negative bound reads at most the larger bound's rows, and narrows the
  * first window to them as a positive LIMIT of as many rows does. A NULL, zero or negative LIMIT, or a
- * range with a negative bound, leaves the execution as it was. The join reads the
+ * range with a negative bound, leaves the execution as it was, as does a LONG LIMIT of
+ * {@code Long.MAX_VALUE} rows, as many as no LIMIT reads. The join reads the
  * LIMIT once the SELECT list compiled, so an untyped bind variable that both use takes the type that
  * the SELECT list gives it, as on the ordinary plan.
  * <p>
  * The probe table t holds 64 rows in one partition, cut into frames of four rows: sixteen frames,
- * which a full window dispatches at once.
+ * which a full window holds.
  */
 public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     private static final int FRAME_COUNT = 16;
@@ -131,8 +136,12 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 // One factory, executed under each value: the first window follows each execution's.
                 final long[] limits = {2, 100, -2, Numbers.LONG_NULL, 5, 0};
                 // The frames a first row needs: one for two rows, two for five; a LIMIT of more rows than
-                // a full window holds, or none, dispatches a full window.
-                final int[] firstWindows = {1, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, 2, FRAME_COUNT};
+                // a full window holds dispatches a full window, and none, a negative, NULL or zero one,
+                // starts the ramp at one frame, which goes out with the second once the consumer
+                // takes it. Only a LIMIT that ends inside a frame leaves the rest of it to a
+                // continuation.
+                final int[] firstWindows = {1, FRAME_COUNT, 2, 2, 2, 2};
+                final boolean[] isCapped = {true, false, false, false, true, false};
                 for (int i = 0; i < limits.length; i++) {
                     bindVariableService.setLong("lim", limits[i]);
                     final String label = "LIMIT " + limits[i];
@@ -150,7 +159,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                         }
-                        Assert.assertEquals(label, firstWindows[i] < FRAME_COUNT, join.getAtom().getContinuationCount() > 0);
+                        Assert.assertEquals(label, isCapped[i], join.getAtom().getContinuationCount() > 0);
                     }
                 }
             }
@@ -164,17 +173,20 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             createLimitShapeTables();
             // One factory of each shape, executed under each value of an INT and of a LONG $1: the
             // first join's first row comes with the frames that the execution's LIMIT needs, one for
-            // one row, two for five, five for seventeen; LIMIT 0 reads no row, and a negative or NULL
-            // LIMIT, or one of more rows than a full window holds, dispatches a full window.
+            // one row, two for five, five for seventeen; LIMIT 0 reads no row, a negative LIMIT
+            // returns the last rows, whose first comes once the join dispatched every frame, a NULL
+            // one starts the ramp at one frame, which goes out with the second once the consumer
+            // takes it, and one of more rows than a full window holds dispatches a full window, but
+            // for the LONG one of Long.MAX_VALUE rows, which reads as none.
             final String[] shapes = {
                     "SELECT * FROM (" + JOIN_D1 + ") LIMIT $1",
                     "SELECT t.v, d1.w, q.p FROM t JOIN d1 ON t.k = d1.k ASOF JOIN q ON (k) LIMIT $1",
                     JOIN_D1 + " UNION ALL " + JOIN_D1 + " LIMIT $1",
             };
-            final int[] firstWindows = {1, 2, 5, 0, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT};
             for (String sql : shapes) {
                 for (int bindType : new int[]{ColumnType.INT, ColumnType.LONG}) {
                     final boolean isInt = bindType == ColumnType.INT;
+                    final int[] firstWindows = {1, 2, 5, 0, FRAME_COUNT, 2, isInt ? FRAME_COUNT : 2};
                     final long[] limits = {1, 5, 17, 0, -1, isInt ? Numbers.INT_NULL : Numbers.LONG_NULL, isInt ? Integer.MAX_VALUE : Long.MAX_VALUE};
                     bindVariableService.clear();
                     try {
@@ -392,14 +404,16 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             for (String star : STARS) {
-                // Without a LIMIT the first row comes with a full window of frames in flight.
+                // Without a LIMIT the first row comes with the ramp's first two frames in flight: the
+                // first frame, whose task joined its rows, and the second, which the consumer's
+                // taking the first sent out, and which the owner has not run yet.
                 try (RecordCursorFactory factory = select(star)) {
                     final AsyncHashJoinRecordCursorFactory join = find(factory);
                     Assert.assertNotNull(join);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(star, FRAME_COUNT, join.getDispatchedFrameCount());
-                        Assert.assertEquals(star, FRAME_COUNT * FRAME_ROWS, join.getAtom().getJoinedProbeRowCount());
+                        Assert.assertEquals(star, 2, join.getDispatchedFrameCount());
+                        Assert.assertEquals(star, FRAME_ROWS, join.getAtom().getJoinedProbeRowCount());
                     }
                 }
                 // LIMIT 3 dispatches the first frame alone, whose task joins three of its rows.
@@ -582,10 +596,10 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             createTables();
             // A window function may read every joined row, so the optimiser gives the join model no
             // LIMIT, and the LIMIT stops at the window's factory: the join's first row comes with
-            // the full window.
+            // the ramp's first two frames.
             final String window = "SELECT t.v, row_number() OVER () rn FROM t JOIN d1 ON t.k = d1.k LIMIT 1";
             Assert.assertNull(window, joinModelLimitAdvice(window));
-            assertFirstWindow(window, FRAME_COUNT);
+            assertFirstWindow(window, 2);
             assertParallelHashJoin(window, sqlExecutionContext);
             // The join takes the LIMIT of the sub-query that states it, LIMIT 9, which the optimiser
             // gives the join model too, and not the outer LIMIT 1, which counts the sub-query's rows:
@@ -723,9 +737,10 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 }
             }
             // A range reads at most its larger bound's rows, the bounds swapped when the lower one is
-            // the larger; a negative bound counts rows from the end, which reads every row.
+            // the larger; a negative bound counts rows from the end, which reads every row, and
+            // starts the ramp at one frame, which goes out with the second.
             final String[] ranges = {" LIMIT 2, 5", " LIMIT 5, 2", " LIMIT , 5", " LIMIT -5, -2", " LIMIT 2, -1"};
-            final int[] rangeWindows = {2, 2, 2, FRAME_COUNT, FRAME_COUNT};
+            final int[] rangeWindows = {2, 2, 2, 2, 2};
             for (int i = 0; i < ranges.length; i++) {
                 final String sql = "SELECT * FROM (" + JOIN_D1 + ")" + ranges[i];
                 assertParallelHashJoin(sql, sqlExecutionContext);
@@ -735,7 +750,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             // WHERE that the join runs, as a build filter, a probe filter or a post-join filter, a
             // star and a LEFT join: the LIMIT reaches the join, whose first three rows the first
             // frame holds, but under the probe filter, whose frame keeps two of them: the third row
-            // reads on into the full window.
+            // reads on past the first window, into frame 1, which goes out with frame 2, and taking
+            // it steps the ramp to four frames, frames 1 to 4.
             execute("CREATE VIEW jv AS (" + JOIN_D1 + ")");
             final Object[][] cases = {
                     {"SELECT * FROM (SELECT * FROM (" + JOIN_D1 + ")) LIMIT 3", 1},
@@ -748,7 +764,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     {"WITH j AS (" + JOIN_D1 + ") SELECT v, w FROM j LIMIT 3", 1},
                     {"SELECT * FROM jv LIMIT 3", 1},
                     {"SELECT * FROM (" + JOIN_D1 + ") WHERE w > 15 LIMIT 3", 1},
-                    {"SELECT * FROM (" + JOIN_D1 + ") WHERE v > 2 LIMIT 3", FRAME_COUNT},
+                    {"SELECT * FROM (" + JOIN_D1 + ") WHERE v > 2 LIMIT 3", 5},
                     {"SELECT * FROM (" + JOIN_D1 + " WHERE d1.w > t.v) LIMIT 3", 1},
                     {"SELECT * FROM (" + STARS[2] + ") LIMIT 3", 1},
                     {"SELECT * FROM (SELECT t.v, d1.w FROM t LEFT JOIN d1 ON t.k = d1.k) LIMIT 3", 1},
@@ -811,7 +827,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 assertDispatched(sql, new int[]{1}, new int[]{1});
             }
             // A slave without random access, a join of q, makes the ASOF and LT joins the full-fat
-            // ones, which read their master as the others do; the slave join keeps a full window.
+            // ones, which read their master as the others do; the slave join holds no LIMIT, and its
+            // own first row comes with the ramp's first two frames.
             final String slave = "((SELECT q.k, q.p, q.ts FROM q JOIN d1 ON q.k = d1.k) TIMESTAMP(ts)) q2 ON (k)";
             for (String sql : new String[]{
                     "SELECT t.v, d1.w, q2.p FROM t JOIN d1 ON t.k = d1.k ASOF JOIN " + slave + " LIMIT 3",
@@ -827,7 +844,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     }
                     try (RecordCursor cursor = joins.getQuick(1).getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(sql, cursor.hasNext());
-                        Assert.assertEquals(sql, FRAME_COUNT, joins.getQuick(1).getDispatchedFrameCount());
+                        Assert.assertEquals(sql, 2, joins.getQuick(1).getDispatchedFrameCount());
                     }
                 }
             }
@@ -854,7 +871,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             createTables();
             createLimitShapeTables();
             // An operator that may read more rows of the join than it returns keeps the LIMIT from
-            // the join, which then holds no LIMIT: its own first row comes with a full window. A
+            // the join, which then holds no LIMIT: its own first row comes with the ramp's first two
+            // frames. A
             // window function, a CROSS JOIN, a serial join over the join, a filter that the join
             // cannot run, a sort, DISTINCT, GROUP BY, SAMPLE BY and LATEST ON over it, UNION, EXCEPT
             // and INTERSECT, a sort over a UNION ALL, the join as the slave of an ASOF join, and a
@@ -879,7 +897,13 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                         "SELECT t.v, d1.w, q.p FROM t JOIN d1 ON t.k = d1.k ASOF JOIN q ON (k) WHERE q.p > t.v LIMIT 3",
                 }) {
                     assertParallelHashJoin(sql, sqlExecutionContext);
-                    assertFirstWindow(sql, FRAME_COUNT);
+                    if (sql.contains(" EXCEPT ")) {
+                        // The second join's probe filter keeps rows of the last frame alone, whose
+                        // first row comes once the consumer took the empty frames before it.
+                        assertFirstWindows(sql, 2, FRAME_COUNT);
+                    } else {
+                        assertFirstWindow(sql, 2);
+                    }
                 }
             } finally {
                 sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
@@ -1088,7 +1112,8 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             createTables();
             for (String star : STARS) {
                 // A negative bound counts rows from the end, which takes every row; a range whose
-                // bounds are both zero, or equal, returns none.
+                // bounds are both zero, or equal, returns none. The join holds no LIMIT, and its own
+                // first row comes with the ramp's first two frames.
                 for (String limit : new String[]{
                         " LIMIT -1", " LIMIT -3", " LIMIT -100", " LIMIT 0",
                         " LIMIT -5, -2", " LIMIT -3, 0", " LIMIT 2, -1", " LIMIT 0, -60", " LIMIT 0, 0", " LIMIT , 0"
@@ -1104,7 +1129,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                         Assert.assertEquals(sql, 0, join.getAtom().getContinuationCount());
                         try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                             Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(sql, FRAME_COUNT, join.getDispatchedFrameCount());
+                            Assert.assertEquals(sql, 2, join.getDispatchedFrameCount());
                         }
                     }
                 }
@@ -1230,12 +1255,14 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
                 Assert.assertNotNull(join);
                 // One factory, executed under each pair of bounds: the first window follows each
-                // execution's larger bound, unless one bound is negative or NULL, or both are zero.
+                // execution's larger bound, unless one bound is negative or NULL, both are zero, or
+                // the larger is Long.MAX_VALUE, which reads as no LIMIT: the ramp then starts at one
+                // frame, which goes out with the second once the consumer takes it.
                 final long[][] bounds = {
                         {2, 5}, {-5, -2}, {5, 2}, {0, 0}, {2, -1}, {0, 9}, {2, Numbers.LONG_NULL}, {Numbers.LONG_NULL, Numbers.LONG_NULL},
                         {4, 4}, {0, Long.MAX_VALUE}, {Numbers.LONG_NULL, -1}, {1, 2}
                 };
-                final int[] firstWindows = {2, FRAME_COUNT, 2, FRAME_COUNT, FRAME_COUNT, 3, FRAME_COUNT, FRAME_COUNT, 1, FRAME_COUNT, FRAME_COUNT, 1};
+                final int[] firstWindows = {2, 2, 2, 2, 2, 3, 2, 2, 1, 2, 2, 1};
                 for (int i = 0; i < bounds.length; i++) {
                     bindVariableService.setLong("lo", bounds[i][0]);
                     bindVariableService.setLong("hi", bounds[i][1]);
@@ -1262,7 +1289,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     untyped,
                     ColumnType.INT,
                     new long[]{1, FRAME_ROWS, 5, 0, -2, Numbers.INT_NULL},
-                    new int[]{1, 1, 2, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT},
+                    new int[]{1, 1, 2, 2, 2, 2},
                     new boolean[]{true, false, true, false, false, false}
             );
         });
@@ -1273,14 +1300,15 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // t.k + $1 makes $1 an INT. A LIMIT of one or four rows needs the first frame, of five the
-            // first two; one of more rows than a full window holds, or none, dispatches a full
-            // window. A LIMIT that ends inside a frame leaves the rest of that frame to its
-            // continuation.
+            // first two; one of more rows than a full window holds dispatches a full window, and
+            // none starts the ramp at one frame, which goes out with the second once the consumer
+            // takes it, as does a LONG LIMIT of Long.MAX_VALUE rows. A LIMIT that ends inside a frame
+            // leaves the rest of that frame to its continuation.
             assertUntypedLimitPerExecution(
                     "SELECT t.k + $1 y, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT $1",
                     ColumnType.INT,
                     new long[]{1, FRAME_ROWS, 5, 0, -2, Numbers.INT_NULL, Integer.MAX_VALUE, -Integer.MAX_VALUE},
-                    new int[]{1, 1, 2, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT},
+                    new int[]{1, 1, 2, 2, 2, 2, FRAME_COUNT, 2},
                     new boolean[]{true, false, true, false, false, false, false, false}
             );
             // t.v + $1 makes $1 a LONG.
@@ -1288,10 +1316,11 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     "SELECT t.v + $1 y, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT $1",
                     ColumnType.LONG,
                     new long[]{1, 5, Long.MAX_VALUE, Numbers.LONG_NULL, -1},
-                    new int[]{1, 2, FRAME_COUNT, FRAME_COUNT, FRAME_COUNT},
+                    new int[]{1, 2, 2, 2, 2},
                     new boolean[]{true, true, false, false, false}
             );
-            // A negative LIMIT of an INT $1 returns the last rows and leaves the execution as it is.
+            // A negative LIMIT of an INT $1 returns the last rows and leaves the execution as it is,
+            // whose ramp starts at one frame.
             final String last = "SELECT t.k + $1 y, d1.w FROM t JOIN d1 ON t.k = d1.k LIMIT -$1";
             bindVariableService.clear();
             try (RecordCursorFactory factory = select(last)) {
@@ -1310,7 +1339,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                 Assert.assertEquals(expected, ordinaryRows(last, sqlExecutionContext));
                 try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(FRAME_COUNT, join.getDispatchedFrameCount());
+                    Assert.assertEquals(2, join.getDispatchedFrameCount());
                 }
             } finally {
                 bindVariableService.clear();
@@ -1542,6 +1571,13 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     // Each parallel hash join of the query returns its first row, through its own cursor, with the
     // given frames dispatched; $1, if the query has one, reads 1.
     private static void assertFirstWindow(String sql, int dispatched) throws SqlException {
+        assertFirstWindows(sql, dispatched);
+    }
+
+    // The query's parallel hash joins, in the order of the plan, return their first rows, each
+    // through its own cursor, with the given frames dispatched, one count per join, or one count
+    // for every join; $1, if the query has one, reads 1.
+    private static void assertFirstWindows(String sql, int... dispatched) throws SqlException {
         bindVariableService.clear();
         try (RecordCursorFactory factory = select(sql)) {
             if (sql.contains("$1")) {
@@ -1549,11 +1585,12 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
             }
             final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, sqlExecutionContext);
             Assert.assertTrue(sql, joins.size() > 0);
+            Assert.assertTrue(sql, dispatched.length == 1 || dispatched.length == joins.size());
             for (int i = 0, n = joins.size(); i < n; i++) {
                 final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
                 try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(sql, cursor.hasNext());
-                    Assert.assertEquals(sql, dispatched, join.getDispatchedFrameCount());
+                    Assert.assertEquals(sql + ", join " + i, dispatched[dispatched.length == 1 ? 0 : i], join.getDispatchedFrameCount());
                 }
             }
         } finally {

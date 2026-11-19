@@ -134,10 +134,11 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             createTables();
             // A budget of four tasks' caps of tuples: a first window of four frames, whose entries the
             // duplicate matches of d grow, doubling from a frame's room, to room for 32 tuples, 512
-            // bytes each. The first row leaves three more tuple-carrying frames in flight, whose
-            // entries a count reads and gives back: each of the four entries read holds more than its
-            // share of the budget, 1,536 / 8 = 192 bytes, while the window, which follows the entries
-            // read to three frames, holds fewer frames than the ring's eight entries.
+            // bytes each. The first row leaves one more tuple-carrying frame in flight, the one that
+            // the ramp sent out once the consumer took frame 0, whose entries a count reads and gives
+            // back: each of the two entries read holds more than its share of the budget, 1,536 / 8 =
+            // 192 bytes, while the window, which follows the entries read to three frames, holds fewer
+            // frames than the ring's eight entries.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, CAP);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 4 * CAP_BYTES);
             try (RecordCursorFactory factory = select(WALK)) {
@@ -148,12 +149,12 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                 final long rows = ordinaryRowCount(WALK, sqlExecutionContext);
                 try (RecordCursor cursor = join.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(4, join.getDispatchedFrameCount());
+                    Assert.assertEquals(2, join.getDispatchedFrameCount());
                     final RecordCursor.Counter counter = new RecordCursor.Counter();
                     cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
                     Assert.assertEquals(rows - 1, counter.get());
-                    // The frame the cursor held and the three in flight.
-                    Assert.assertEquals(4, join.getCountedTupleFrameCount());
+                    // The frame the cursor held and the one in flight.
+                    Assert.assertEquals(2, join.getCountedTupleFrameCount());
                     Assert.assertEquals(0, ring.getAllocatedBytes());
                     Assert.assertEquals(3, ring.getDispatchLimit());
                     cursor.toTop();
@@ -261,7 +262,8 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             }
             // Joins whose probe rows yield one tuple at most: a build of one row per key, under a
             // residual or not, a stage that hands d's chains to the consumer, and a LEFT join's stage
-            // whose build ran its whole residual over d's rows, which hands them on too.
+            // whose build ran its whole residual over d's rows, which hands them on too. Their first
+            // row comes with the ramp's two frames, within the window of six.
             for (String sql : new String[]{
                     "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k",
                     "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k AND u.w > t.v",
@@ -269,7 +271,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                     "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > 0",
             }) {
                 assertParallelHashJoin(sql, sqlExecutionContext);
-                assertFirstWindow(sql, 6, 6);
+                assertFirstWindow(sql, 6, 2);
             }
         });
     }
@@ -428,23 +430,26 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                         Assert.assertEquals(sql, 1, ring.getDispatchLimit());
                         Assert.assertEquals(sql, 8, ring.getEntryCount());
                         // The first frame's rows end with its one kept row's matches, three of d's rows
-                        // at most; the next row is the second frame's, which goes out with as many
-                        // frames as the window holds.
+                        // at most; the next row is the second frame's, and frames go out after it up to
+                        // the smaller of the window and the ramp, which holds four frames once the
+                        // consumer took the first two.
                         int rows = 1;
                         while (join.getDispatchedFrameCount() == 1 && cursor.hasNext()) {
                             rows++;
                         }
                         Assert.assertTrue(sql, rows <= 4);
-                        Assert.assertEquals(sql, Math.min(8, 1 + window), join.getDispatchedFrameCount());
+                        Assert.assertEquals(sql, 1 + Math.min(4, window), join.getDispatchedFrameCount());
                         Assert.assertEquals(sql, window, ring.getDispatchLimit());
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) {
                         }
                         Assert.assertTrue(sql, ring.getAllocatedBytes() <= FRAME_BYTES);
-                        // toTop() keeps the window, which the frames the consumer read set.
+                        // toTop() keeps the window, which the frames the consumer read set, and starts
+                        // the ramp over: the first row comes with two frames.
                         cursor.toTop();
                         Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(sql, window, join.getDispatchedFrameCount());
+                        Assert.assertEquals(sql, window, ring.getDispatchLimit());
+                        Assert.assertEquals(sql, 2, join.getDispatchedFrameCount());
                     }
                 }
             }
@@ -496,13 +501,13 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
     }
 
     // Reads an execution of the factory, whose rows equal the ordinary plan's, and returns the window
-    // that it started at, which its first row came with.
+    // that it started at; its first row came with the ramp's two frames, within that window.
     private static int readFirstWindow(RecordCursorFactory factory, AsyncHashJoinRecordCursorFactory join, String sql) throws SqlException {
         final String expected = ordinaryRows(sql, sqlExecutionContext);
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Assert.assertTrue(sql, cursor.hasNext());
             final int window = join.getAtom().getRing().getDispatchLimit();
-            Assert.assertEquals(sql, window, join.getDispatchedFrameCount());
+            Assert.assertEquals(sql, Math.min(2, window), join.getDispatchedFrameCount());
             Assert.assertEquals(sql, expected, printFromCurrentRow(cursor, factory.getMetadata()));
             return window;
         }

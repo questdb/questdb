@@ -60,7 +60,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * dynamic window of the tuple ring, whose entries frames in flight never share, which the ring
  * asserts. Once the consumer takes a frame, the join dispatches the frames after it up to the
  * window, so the workers join them while the consumer reads, rather than once the consumer drained
- * the window. Every query compares with the ordinary plan, in order.
+ * the window. The window ramps up: the first frame goes out alone, and each frame that the
+ * consumer takes doubles the frames in flight, up to the ring's window. Every query compares with
+ * the ordinary plan, in order.
  * <p>
  * Most tests wait, before the consumer reads the first row of a frame, until the workers joined
  * every frame dispatched so far: the consumer then finds each frame ready, as when the workers keep
@@ -118,8 +120,9 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
         // pair of which the residual keeps: a's 32_000 rows make 320 frames of 100_000 / 1_000 =
         // 100 rows, the floor, whose tasks each write the cap, which grows their entries, doubling
         // from the frame's 200 longs, to 204_800 longs, 1_638_400 bytes. A query memory limit of
-        // 64 MiB leaves the ring a quarter, 16 MiB, which holds ten such tasks' tuples: the first
-        // window holds the dispatch limit's eight frames. A limit of 4 MiB leaves 1 MiB, less than
+        // 64 MiB leaves the ring a quarter, 16 MiB, which holds ten such tasks' tuples: the ring's
+        // first window holds the dispatch limit's eight frames, of which the ramp sends two out by
+        // the first row, frame 0 and the frame after it. A limit of 4 MiB leaves 1 MiB, less than
         // one task's tuples: the first window holds one frame, whose entry, with the build, fits
         // the limit.
         final int workerCount = 8;
@@ -140,7 +143,7 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
             context.setParallelHashJoinEnabled(true);
             final String sql = "SELECT a.v, b.w FROM a JOIN b ON a.k = b.k AND b.w > a.v";
             try {
-                for (long[] limitAndWindow : new long[][]{{64 * 1024 * 1024, 8}, {4 * 1024 * 1024, 1}}) {
+                for (long[] limitAndWindow : new long[][]{{64 * 1024 * 1024, 8, 2}, {4 * 1024 * 1024, 1, 1}}) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limitAndWindow[0]);
                     try (RecordCursorFactory factory = db.select(sql, context)) {
                         final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -154,7 +157,7 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                             Assert.assertEquals(320, join.getProbeFrameCount());
                             Assert.assertEquals(100, join.getProbeFrameRowCount(0));
                             Assert.assertEquals(limitAndWindow[1], join.getAtom().getRing().getDispatchLimit());
-                            Assert.assertEquals(limitAndWindow[1], join.getDispatchedFrameCount());
+                            Assert.assertEquals(limitAndWindow[2], join.getDispatchedFrameCount());
                             do {
                                 rows++;
                                 vSum += record.getLong(0);
@@ -300,7 +303,7 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(context)) {
                     // The consumer holds frame 2, and frames 3 and 4 went out with tuples, ahead of it.
                     readFramesWhenReady(cursor, factory.getMetadata(), join, 2, dispatched, sink);
-                    TestUtils.assertEquals("[3,4,5]", dispatched.toString());
+                    TestUtils.assertEquals("[2,4,5]", dispatched.toString());
                     final long readRows = 2 * FRAME_JOINED_ROWS + 1;
                     Assert.assertEquals(readRows, countLines(sink));
                     // The count reads the tuples of frame 2 and of the two frames ahead of it, and
@@ -460,13 +463,14 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                 final StringSink sink = new StringSink();
                 try (RecordCursor cursor = factory.getCursor(context)) {
                     final Record record = cursor.getRecord();
-                    // The first row dispatched the first window: frames 0, 1 and 2.
+                    // The first row comes with frame 0, which went out alone, and frame 1, which the
+                    // ramp sent out once the consumer took frame 0.
                     Assert.assertTrue(cursor.hasNext());
                     CursorPrinter.println(record, metadata, sink);
-                    Assert.assertEquals(3, join.getDispatchedFrameCount());
+                    Assert.assertEquals(2, join.getDispatchedFrameCount());
                     awaitReducedFrames(join);
-                    // Frame 1's first row: the consumer took frame 1, which was ready, and frame 3
-                    // went out, ...
+                    // Frame 1's first row: the consumer took frame 1, which was ready, which stepped
+                    // the ramp past the window, and frames 2 and 3 went out, ...
                     while (cursor.hasNext()) {
                         CursorPrinter.println(record, metadata, sink);
                         if (record.getLong(0) == 65) {
@@ -614,16 +618,18 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                 final IntList dispatched = new IntList();
                 final StringSink sink = new StringSink();
                 try (RecordCursor cursor = factory.getCursor(context)) {
-                    // Each frame the consumer takes sends the frame three past it out, so that three
-                    // frames stay in flight, the one the consumer reads included.
+                    // Frame 0 goes out alone, and taking it sends frame 1 out; from frame 1 on, which
+                    // steps the ramp past the window, each frame the consumer takes sends the frame
+                    // three past it out, so that three frames stay in flight, the one the consumer
+                    // reads included.
                     readFramesWhenReady(cursor, factory.getMetadata(), join, 2, dispatched, sink);
-                    TestUtils.assertEquals("[3,4,5]", dispatched.toString());
-                    // toTop() in the middle of frame 2 starts over from the first window.
+                    TestUtils.assertEquals("[2,4,5]", dispatched.toString());
+                    // toTop() in the middle of frame 2 starts the ramp over.
                     cursor.toTop();
                     dispatched.clear();
                     sink.clear();
                     readFramesWhenReady(cursor, factory.getMetadata(), join, Integer.MAX_VALUE, dispatched, sink);
-                    TestUtils.assertEquals("[3,4,5,6,7,8,8,8]", dispatched.toString());
+                    TestUtils.assertEquals("[2,4,5,6,7,8,8,8]", dispatched.toString());
                     TestUtils.assertEquals(expected, sink);
                 }
                 Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());

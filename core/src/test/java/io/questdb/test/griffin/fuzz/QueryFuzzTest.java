@@ -993,8 +993,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // seed's probes have more frames than the ring has entries, and the frames of duplicate matches
     // narrow the window, down to one frame. A cap of one tuple per task leaves frames to
     // continuations, and the partial reads of the cursor-verify axis then meet stacked, swapped and
-    // continued executions. A third of the queries run the stages' stepper copies from the first
-    // task, and another third switch to them once their first execution collected a frame, within
+    // continued executions, among them executions without a LIMIT whose first frame's task joined
+    // its first row alone, as a third of the queries compile it, and whose consumer continued the
+    // frame past it, as the window ramps up. A third of the queries run the stages' stepper copies
+    // from the first task, and another third switch to them once their first execution collected a
+    // frame, within
     // the first pass over the cursor for some: the copies run stacked joins in the query's
     // orientation, and swapped ones, stacked among them, on copies defined as they compiled. Half of
     // the queries open their cursors under the rows that a client reads first, which the parallel
@@ -1020,7 +1023,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                             + ", partial reads " + runner.getParallelJoinPartialReadChecks()
                             + " (stacked " + runner.getParallelJoinPartialReadStacked()
                             + ", swapped " + runner.getParallelJoinPartialReadSwapped()
-                            + ", continued " + runner.getParallelJoinPartialReadContinued() + ")"
+                            + ", continued " + runner.getParallelJoinPartialReadContinued()
+                            + ", past a first task's head " + runner.getParallelJoinPartialReadHeadContinued() + ")"
                             + ", stepper copies " + runner.getParallelJoinStepperCopyRuns()
                             + " (stacked " + runner.getParallelJoinStepperCopyStackedRuns()
                             + ", swapped " + runner.getParallelJoinStepperCopySwappedRuns()
@@ -1035,6 +1039,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadStacked() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadSwapped() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinPartialReadContinued() > 0);
+                    Assert.assertTrue(counts, runner.getParallelJoinPartialReadHeadContinued() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperCopyRuns() > 0);
                     Assert.assertTrue(counts, runner.getParallelJoinStepperSwitchRuns() > 0);
                     // Some queries define their copies as they compile, apart from those that switch.
