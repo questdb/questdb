@@ -263,6 +263,12 @@ impl FooterFeatureFlags {
     /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
     pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
 
+    /// The header's `IS_ASCII` column flags hold for every row group of this snapshot. The header
+    /// is written once, so an update that appends a footer cannot clear a flag there; its footer
+    /// carries this bit only when no flagged column holds a non-ASCII value. The first footer of
+    /// the chain needs no bit: the header was written with it. No section.
+    pub const HEADER_ASCII_VALID_BIT: u64 = 1 << 2;
+
     pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
 
     pub const fn new() -> Self {
@@ -291,6 +297,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn has_header_ascii_valid(self) -> bool {
+        self.0 & Self::HEADER_ASCII_VALID_BIT != 0
+    }
+
+    pub const fn with_header_ascii_valid(self) -> Self {
+        Self(self.0 | Self::HEADER_ASCII_VALID_BIT)
     }
 
     pub const fn has_index_row_map(self) -> bool {
@@ -591,6 +605,35 @@ impl StatFlags {
     }
 }
 
+// ── ChunkFlags ─────────────────────────────────────────────────────────
+
+/// Bitfield stored in each column chunk's FLAGS field.
+///
+/// A row group block never changes once written, so a chunk flag describes its own values in
+/// every snapshot that refers to the block.
+///
+/// Layout:
+/// - bit 0: IS_ASCII (varchar columns): every value of the chunk is ASCII
+/// - bits 1-31: reserved
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub struct ChunkFlags(pub u32);
+
+impl ChunkFlags {
+    const IS_ASCII_BIT: u32 = 1 << 0;
+
+    pub const fn new() -> Self {
+        Self(0)
+    }
+
+    pub const fn is_ascii(self) -> bool {
+        self.0 & Self::IS_ASCII_BIT != 0
+    }
+
+    pub const fn with_ascii(self) -> Self {
+        Self(self.0 | Self::IS_ASCII_BIT)
+    }
+}
+
 // ── FieldRepetition ────────────────────────────────────────────────────
 
 /// Field repetition level, stored in bits 2-3 of [`ColumnFlags`].
@@ -647,7 +690,9 @@ impl TryFrom<u8> for FieldRepetition {
 ///
 /// Layout:
 /// - bit 0: LOCAL_KEY_IS_GLOBAL (symbol columns)
-/// - bit 1: IS_ASCII (varchar columns)
+/// - bit 1: IS_ASCII (varchar columns): every value of the column was ASCII when the file was
+///   created. It holds for a later snapshot only under
+///   [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`]; [`ChunkFlags`] carries the per-chunk flag.
 /// - bits 2-3: FIELD_REPETITION (2 bits)
 /// - bit 4: DESCENDING (for sorted columns)
 /// - bits 5-31: reserved
@@ -714,6 +759,27 @@ pub const fn decode_stat_sizes(stat_sizes: u8) -> (u8, u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chunk_flags_ascii() {
+        assert!(!ChunkFlags::new().is_ascii());
+        assert!(ChunkFlags::new().with_ascii().is_ascii());
+        assert_eq!(ChunkFlags::new().with_ascii().0, 1);
+        // the other bits are reserved and do not read as ASCII
+        assert!(!ChunkFlags(!1).is_ascii());
+    }
+
+    #[test]
+    fn footer_flags_header_ascii_valid() {
+        let flags = FooterFeatureFlags::new();
+        assert!(!flags.has_header_ascii_valid());
+        let flags = flags.with_header_ascii_valid();
+        assert!(flags.has_header_ascii_valid());
+        assert_eq!(flags.0, 1 << 2);
+        // optional: a reader that does not know the bit accepts the footer
+        assert_eq!(flags.unknown_required(0), 0);
+        assert!(!FooterFeatureFlags(!(1 << 2)).has_header_ascii_valid());
+    }
 
     #[test]
     fn seq_txn_serde_round_trip() {

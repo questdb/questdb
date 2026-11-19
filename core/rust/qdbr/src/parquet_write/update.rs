@@ -1837,6 +1837,25 @@ impl ParquetUpdater {
                     .map_err(ParquetError::from)
                     .context("could not read existing _pm file")?;
 
+                // The append cannot change the column flags of the _pm header, see
+                // update_parquet_metadata(). An update keeps the schema, so the columns of
+                // qdb_meta, of the parquet schema and of _pm share their positions.
+                let is_column_ascii: Vec<bool> = qdb_meta
+                    .schema
+                    .iter()
+                    .map(|col| col.ascii == Some(true))
+                    .collect();
+                let is_new_chunk_ascii: Vec<bool> = schema_columns
+                    .iter()
+                    .map(|col_desc| {
+                        col_desc
+                            .base_type
+                            .get_field_info()
+                            .id
+                            .is_some_and(|id| self.written_ascii.get(&id) == Some(&true))
+                    })
+                    .collect();
+
                 let result = crate::parquet_metadata::update_parquet_metadata(
                     &existing_pm,
                     parse_anchor,
@@ -1848,6 +1867,8 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                     self.seq_txn,
                     self.is_index_row_map_dropped,
+                    &is_column_ascii,
+                    &is_new_chunk_ascii,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
@@ -6872,6 +6893,376 @@ mod tests {
         assert_eq!(reader.column_count(), 2);
         assert_eq!(reader.column_descriptor(0).unwrap().id, 10);
         assert_eq!(reader.column_descriptor(1).unwrap().id, 20);
+        Ok(())
+    }
+
+    /// A VARCHAR column of inlined values (9 bytes at most), each flagged ASCII as its bytes are.
+    fn make_varchar_column(id: i32, name: &'static str, values: &[&str]) -> Column {
+        let aux: Vec<[u8; 16]> = values
+            .iter()
+            .map(|value| {
+                let bytes = value.as_bytes();
+                assert!(bytes.len() <= 9);
+                let mut entry = [0u8; 16];
+                // inlined, plus the ASCII bit
+                entry[0] = ((bytes.len() as u8) << 4) | 0b01 | ((value.is_ascii() as u8) << 1);
+                entry[1..1 + bytes.len()].copy_from_slice(bytes);
+                entry
+            })
+            .collect();
+        let aux: &'static [[u8; 16]] = Box::leak(aux.into_boxed_slice());
+        Column::from_raw_data(
+            id,
+            name,
+            ColumnTypeTag::Varchar.into_type().code(),
+            0,
+            aux.len(),
+            aux.as_ptr() as *const u8,
+            0,
+            aux.as_ptr() as *const u8,
+            aux.len() * 16,
+            null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    fn make_varchar_partition(ts: &[i64], a: &[&str], b: &[&str]) -> Partition {
+        let ts: &'static [i64] = Box::leak(ts.to_vec().into_boxed_slice());
+        Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", ts),
+                make_varchar_column(1, "a", a),
+                make_varchar_column(2, "b", b),
+            ],
+        }
+    }
+
+    /// A Parquet file of one row group (ts 1..4, `a` and `b` ASCII) with the `_pm` a rewrite
+    /// builds for it: the header flags `a` and `b` ASCII.
+    struct VarcharAsciiFile {
+        parquet: NamedTempFile,
+        pm: NamedTempFile,
+        pm_size: u64,
+    }
+
+    impl VarcharAsciiFile {
+        fn new() -> Result<Self, Box<dyn Error>> {
+            use crate::allocator::TestAllocatorState;
+            use parquet2::metadata::SortingColumn;
+
+            let src = NamedTempFile::new()?;
+            ParquetWriter::new(src.reopen()?)
+                .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
+                .finish(make_varchar_partition(
+                    &[1, 2, 3, 4],
+                    &["a1", "a2", "a3", "a4"],
+                    &["b1", "b2", "b3", "b4"],
+                ))?;
+            let src_len = src.as_file().metadata()?.len();
+
+            let parquet = NamedTempFile::new()?;
+            let pm = NamedTempFile::new()?;
+            let alloc = TestAllocatorState::new();
+            let mut updater = super::ParquetUpdater::new(
+                alloc.allocator(),
+                src.reopen()?,
+                src_len,
+                parquet.reopen()?,
+                0, // rewrite
+                Some(vec![SortingColumn::new(0, false, false)]),
+                true,
+                false,
+                CompressionOptions::Uncompressed,
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                Some(pm.reopen()?),
+                0,
+                0,
+                -1,
+                SeqTxn::UNSET,
+            )?;
+            updater.copy_row_group(0)?;
+            updater.end(None)?;
+            let pm_size = updater.result_parquet_meta_size() as u64;
+            Ok(Self { parquet, pm, pm_size })
+        }
+
+        /// Appends a row group of four rows in place, as an O3 commit into the partition does.
+        fn append_in_place(&mut self, a: &[&str], b: &[&str]) -> Result<(), Box<dyn Error>> {
+            use crate::allocator::TestAllocatorState;
+            use parquet2::metadata::SortingColumn;
+
+            let parquet_len = self.parquet.as_file().metadata()?.len();
+            let row_count = read_footer(&self.parquet)?.num_rows;
+            let ts: Vec<i64> = (1..=4).map(|i| (row_count + i) as i64).collect();
+            let alloc = TestAllocatorState::new();
+            let mut updater = super::ParquetUpdater::new(
+                alloc.allocator(),
+                self.parquet.reopen()?,
+                parquet_len,
+                self.parquet.reopen()?,
+                parquet_len, // update in place
+                Some(vec![SortingColumn::new(0, false, false)]),
+                true,
+                false,
+                CompressionOptions::Uncompressed,
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                Some(self.pm.reopen()?),
+                self.pm_size,
+                self.pm_size,
+                parquet_len as i64,
+                SeqTxn::UNSET,
+            )?;
+            updater.insert_row_group(
+                &make_varchar_partition(&ts, a, b),
+                (row_count / 4) as i32,
+                row_count,
+            )?;
+            updater.end(None)?;
+            updater.commit_parquet_meta(false)?;
+            self.pm_size = updater.result_parquet_meta_size() as u64;
+            Ok(())
+        }
+
+        fn pm_bytes(&self) -> Result<Vec<u8>, Box<dyn Error>> {
+            Ok(std::fs::read(self.pm.path())?)
+        }
+
+        /// Rewrites `_pm` the way QuestDB 10.2.0 and older left it: no chunk carries a flag and
+        /// no footer says whether the header flags hold.
+        fn strip_to_old_format(&mut self) -> Result<(), Box<dyn Error>> {
+            use crate::parquet_metadata::reader::ParquetMetaReader;
+            use crate::parquet_metadata::types::{
+                FooterFeatureFlags, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
+                FOOTER_FEATURE_FLAGS_OFF, HEADER_CRC_AREA_OFF,
+            };
+
+            let mut bytes = self.pm_bytes()?;
+            // (footer flags offset, checksum offset) of every snapshot, newest first
+            let mut footers = Vec::new();
+            let mut chunk_flag_offsets = Vec::new();
+            let mut size = self.pm_size;
+            while size != 0 {
+                let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
+                let footer_offset = reader.footer_offset() as usize;
+                footers.push((
+                    footer_offset + FOOTER_FEATURE_FLAGS_OFF,
+                    size as usize - 4 - FOOTER_CHECKSUM_SIZE,
+                ));
+                for rg in 0..reader.row_group_count() as usize {
+                    let block = reader.footer().row_group_block_offset(rg).unwrap() as usize;
+                    for col in 0..reader.column_count() as usize {
+                        chunk_flag_offsets.push(block + 8 + col * COLUMN_CHUNK_SIZE + 4);
+                    }
+                }
+                size = reader.prev_parquet_meta_file_size();
+            }
+            for offset in chunk_flag_offsets {
+                bytes[offset..offset + 4].fill(0);
+            }
+            // oldest first: every checksum covers the footers before it
+            for &(flags_offset, checksum_offset) in footers.iter().rev() {
+                let flags = u64::from_le_bytes(bytes[flags_offset..flags_offset + 8].try_into()?)
+                    & !FooterFeatureFlags::HEADER_ASCII_VALID_BIT;
+                bytes[flags_offset..flags_offset + 8].copy_from_slice(&flags.to_le_bytes());
+                let crc = crc32fast::hash(&bytes[HEADER_CRC_AREA_OFF..checksum_offset]);
+                bytes[checksum_offset..checksum_offset + 4].copy_from_slice(&crc.to_le_bytes());
+            }
+            ParquetMetaReader::from_file_size(&bytes, self.pm_size)
+                .unwrap()
+                .verify_checksum()
+                .unwrap();
+            std::fs::write(self.pm.path(), &bytes)?;
+            Ok(())
+        }
+
+        /// The ASCII flag a table scan gives each value of a column, row group by row group. A
+        /// scan decodes VARCHAR as slices of the page and flags them by the metadata alone; a
+        /// decode into VARCHAR proper looks at the bytes of each value.
+        fn decoded_ascii_flags(&self, column: i32) -> Result<Vec<Vec<bool>>, Box<dyn Error>> {
+            self.decoded_ascii_flags_at(self.pm_size, column)
+        }
+
+        fn decoded_ascii_flags_at(
+            &self,
+            pm_size: u64,
+            column: i32,
+        ) -> Result<Vec<Vec<bool>>, Box<dyn Error>> {
+            use crate::allocator::TestAllocatorState;
+            use crate::parquet_metadata::reader::ParquetMetaReader;
+            use crate::parquet_read::parquet_meta_decode::{decode_row_group, ColumnChunkSource};
+            use crate::parquet_read::{DecodeContext, RowGroupBuffers};
+
+            let parquet = std::fs::read(self.parquet.path())?;
+            let pm = self.pm_bytes()?;
+            let reader = ParquetMetaReader::from_file_size(&pm, pm_size).unwrap();
+            let alloc = TestAllocatorState::new();
+            let mut flags = Vec::new();
+            for rg in 0..reader.row_group_count() as usize {
+                let mut ctx = DecodeContext::new(parquet.as_ptr(), parquet.len() as u64);
+                let mut bufs = RowGroupBuffers::new(alloc.allocator());
+                let rows = decode_row_group(
+                    &mut ctx,
+                    &mut bufs,
+                    ColumnChunkSource::File(&parquet),
+                    &reader,
+                    &[(column, ColumnTypeTag::VarcharSlice.into_type())],
+                    rg,
+                    0,
+                    4,
+                )?;
+                assert_eq!(rows, 4);
+                flags.push(
+                    bufs.column_buffers()[0]
+                        .aux_vec
+                        .chunks_exact(16)
+                        .map(|entry| entry[0] & 0b10 != 0)
+                        .collect(),
+                );
+            }
+            Ok(flags)
+        }
+
+        fn is_header_ascii_valid(&self) -> Result<bool, Box<dyn Error>> {
+            use crate::parquet_metadata::reader::ParquetMetaReader;
+            let pm = self.pm_bytes()?;
+            let reader = ParquetMetaReader::from_file_size(&pm, self.pm_size).unwrap();
+            Ok(reader.is_header_ascii_valid())
+        }
+    }
+
+    const ASCII: [bool; 4] = [true; 4];
+    const NOT_ASCII: [bool; 4] = [false; 4];
+
+    #[test]
+    fn rewrite_flags_ascii_columns_in_pm_header_and_chunks() -> Result<(), Box<dyn Error>> {
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+
+        let file = VarcharAsciiFile::new()?;
+        let pm = file.pm_bytes()?;
+        let reader = ParquetMetaReader::from_file_size(&pm, file.pm_size).unwrap();
+        let chunks = reader.row_group(0).unwrap();
+        for (col, is_ascii) in [(0, false), (1, true), (2, true)] {
+            assert_eq!(
+                reader.column_descriptor(col).unwrap().flags().is_ascii(),
+                is_ascii
+            );
+            assert_eq!(
+                chunks.column_chunk(col).unwrap().flags().is_ascii(),
+                is_ascii
+            );
+        }
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_append_of_ascii_values_keeps_pm_ascii_flags() -> Result<(), Box<dyn Error>> {
+        let mut file = VarcharAsciiFile::new()?;
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+        assert!(file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn in_place_append_of_non_ascii_value_clears_ascii_flag_of_its_chunk_only(
+    ) -> Result<(), Box<dyn Error>> {
+        let mut file = VarcharAsciiFile::new()?;
+        let pm_size_before = file.pm_size;
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
+        // the header still flags b ASCII, which no append can undo
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII]);
+        // a reader of the snapshot before the append sees its one row group, flagged
+        assert_eq!(file.decoded_ascii_flags_at(pm_size_before, 2)?, [ASCII]);
+
+        // later appends flag their own chunks; b's non-ASCII chunk stays as it is
+        file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII, NOT_ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn pm_of_old_version_keeps_header_ascii_flags_until_updated_in_place(
+    ) -> Result<(), Box<dyn Error>> {
+        let mut file = VarcharAsciiFile::new()?;
+        file.strip_to_old_format()?;
+        // one snapshot: the header was written for it
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII]);
+
+        // this version appends ASCII values: the header flags hold, and the footer says so
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+        assert!(file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII]);
+
+        // a non-ASCII value in b: the header vouches for no column any more, the chunks this
+        // version wrote keep their own flags
+        file.append_in_place(
+            &["a9", "a10", "a11", "a12"],
+            &["b9", "\u{fc}10", "b11", "b12"],
+        )?;
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, ASCII, NOT_ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn pm_updated_in_place_by_old_version_reads_no_stale_ascii_flag() -> Result<(), Box<dyn Error>>
+    {
+        // the bug of 10.2.0 and older: the footer of the append says nothing, the header keeps
+        // flagging b ASCII
+        let mut file = VarcharAsciiFile::new()?;
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
+        file.strip_to_old_format()?;
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
+
+        // an append by this version cannot prove b ASCII again
+        file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(
+            file.decoded_ascii_flags(2)?,
+            [NOT_ASCII, NOT_ASCII, NOT_ASCII]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pm_updated_in_place_by_old_version_gets_header_ascii_flags_back_when_they_hold(
+    ) -> Result<(), Box<dyn Error>> {
+        // an old version appended ASCII values only: nothing in _pm tells that from the bug
+        let mut file = VarcharAsciiFile::new()?;
+        file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
+        file.strip_to_old_format()?;
+        assert!(!file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
+
+        // the parquet footer says both columns are ASCII, so the next append vouches for the
+        // header flags
+        file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
+        assert!(file.is_header_ascii_valid()?);
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII, ASCII]);
         Ok(())
     }
 

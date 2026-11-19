@@ -381,6 +381,16 @@ impl<'a> ParquetMetaReader<'a> {
         self.footer.prev_parquet_meta_file_size()
     }
 
+    /// Whether the header's `IS_ASCII` column flags hold for the row groups of this snapshot: it
+    /// is the first of the chain, which the header was written with, or its footer says so. An
+    /// update that appends a footer cannot clear a header flag, and QuestDB 10.2.0 and older
+    /// appended footers without saying whether the flags still held, so a snapshot they left
+    /// proves nothing about its columns.
+    pub fn is_header_ascii_valid(&self) -> bool {
+        self.footer.prev_parquet_meta_file_size() == 0
+            || self.footer.feature_flags().has_header_ascii_valid()
+    }
+
     /// Walks the MVCC chain starting from the latest snapshot to find the
     /// footer whose parquet file size matches `target_parquet_size`. Each
     /// step reads `prev_parquet_meta_file_size` from the current footer,
