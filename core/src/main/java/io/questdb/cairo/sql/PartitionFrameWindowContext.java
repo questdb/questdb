@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -143,6 +144,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     projectionPlan.primaryColumnCount(),
                     baseViewLease.viewAddress(),
                     baseViewLease.viewCount(),
+                    baseViewLease.dedupSortVersion,
                     trackerAddress
             );
             for (int previous; (previous = decoder.requiredBaseWindow()) >= 0; ) {
@@ -197,6 +199,9 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         private final RowGroupBuffers parquetBuffers;
         private final DirectIntList parquetColumns;
         private final DirectLongList views;
+        // The dedup version whose keys order the prepared base rows within each timestamp. A parquet row
+        // group records it in _pm; a native base makes no claim here.
+        private long dedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
         private ParquetPartitionDecoder parquetDecoder;
         private long parquetResource;
 
@@ -279,6 +284,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             parquetResource = 0;
             parquetColumns.clear();
             views.clear();
+            dedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
         }
 
         private static int findParquetColumn(ParquetDecoder decoder, int columnId) {
@@ -372,6 +378,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             if (baseRows == 0) {
                 return;
             }
+            // A parquet window is one row group of the base.
+            dedupSortVersion = parquetDecoder.metadata().getRowGroupDedupSortVersion(window);
             for (long i = 0, n = requiredColumns.size(); i < n; i += 2) {
                 final int columnId = requiredColumns.get(i);
                 final int parquetColumn = findParquetColumn(parquetDecoder, columnId);

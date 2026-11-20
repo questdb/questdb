@@ -98,6 +98,13 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
      * array whose first {@code primaryColumnCount} entries are the primary
      * projection and the rest the remaining projection. Each column ID is the
      * original writer index, preserved across type changes.
+     *
+     * @param baseDedupSortVersion the dedup version whose keys order the base rows of the window within
+     *                             each designated timestamp, see
+     *                             {@link io.questdb.cairo.ParquetMetaFileReader#getRowGroupDedupSortVersion},
+     *                             or {@link io.questdb.cairo.ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET}
+     *                             when no such order is known. The caller vouches for the order: a decoder
+     *                             that resolves duplicates may rely on it.
      */
     void prepareWindow(
             int windowIndex,
@@ -105,6 +112,7 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
             int primaryColumnCount,
             long baseViewsAddress,
             int baseViewCount,
+            long baseDedupSortVersion,
             long memoryTrackerAddress
     );
 
