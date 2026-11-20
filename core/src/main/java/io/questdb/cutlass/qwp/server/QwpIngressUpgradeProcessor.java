@@ -58,7 +58,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 
 import java.nio.charset.StandardCharsets;
@@ -139,15 +141,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // block would leave it null at the time the precomputation runs.
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     // Precomputed full 400 Bad Request responses for each handshake validation
-    // error. validateHandshake returns one of the ERROR_ singletons by reference,
-    // and the reject path memcpys the matching response directly into the send
-    // buffer. Replaces a per-reject triple-allocation (reason.getBytes +
-    // Integer.toString + contentLength.getBytes) with a zero-GC lookup so
-    // probe / attack traffic does not produce GC pressure on the connect path.
+    // error and for a malformed X-QWP-Owned-By. validateHandshake returns one of
+    // the ERROR_ singletons by reference, negotiateOwnedBy passes
+    // ERROR_INVALID_OWNED_BY, and the reject path memcpys the matching response
+    // directly into the send buffer. Replaces a per-reject triple-allocation
+    // (reason.getBytes + Integer.toString + contentLength.getBytes) with a zero-GC
+    // lookup so probe / attack traffic does not produce GC pressure on the
+    // connect path.
     private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
     private static final byte[] BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_OWNED_BY =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
@@ -167,6 +173,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             WebSocketFrameWriter.headerSize(BROWSER_SERVER_INFO_PAYLOAD_BYTES, false)
                     + BROWSER_SERVER_INFO_PAYLOAD_BYTES;
     private static final String ERROR_DURABLE_ACK_POLL_NOT_NEGOTIATED = "durable ACK poll was not negotiated";
+    private static final byte[] FORBIDDEN_PREFIX =
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: ".getBytes(StandardCharsets.US_ASCII);
     // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
     @SuppressWarnings("FieldMayBeFinal")
     private static Log LOG = LogFactory.getLog(QwpIngressUpgradeProcessor.class);
@@ -223,6 +231,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // qwp.min.idle.ms.before.writer.release in micros; 0 disables the release.
     private final long idleWriterReleaseMicros;
     private final int maxResponseContentLength;
+    // Scratch of negotiateOwnedBy(): the X-QWP-Owned-By echo of the 101 response, the owner, and the owner
+    // as UTF-8.
+    private final Utf8StringSink ownedByEchoSink = new Utf8StringSink();
+    private final StringSink ownedBySink = new StringSink();
+    private final Utf8StringSink ownedByUtf8Sink = new Utf8StringSink();
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
 
@@ -274,38 +287,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // Slow path: arbitrary reason text (tests, future callers). Builds the
         // response with the customary getBytes / Integer.toString allocations.
         byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-        String contentLength = String.valueOf(reasonBytes.length);
-        byte[] contentLengthBytes = contentLength.getBytes(StandardCharsets.US_ASCII);
-
-        int requiredSize = badRequestResponseSize(reasonBytes.length);
-
-        if (requiredSize > bufferSize) {
+        if (badRequestResponseSize(reasonBytes.length) > bufferSize) {
             return -1;
         }
-
-        int offset = 0;
-
-        // Write prefix
-        for (byte b : BAD_REQUEST_PREFIX) {
-            Unsafe.putByte(buffer + offset++, b);
-        }
-
-        // Write content length
-        for (byte b : contentLengthBytes) {
-            Unsafe.putByte(buffer + offset++, b);
-        }
-
-        // Write header end
-        for (byte b : HTTP_HEADER_END) {
-            Unsafe.putByte(buffer + offset++, b);
-        }
-
-        // Write body
-        for (byte b : reasonBytes) {
-            Unsafe.putByte(buffer + offset++, b);
-        }
-
-        return offset;
+        return writeTextResponse(buffer, BAD_REQUEST_PREFIX, reasonBytes);
     }
 
     /**
@@ -492,6 +477,15 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
 
         HttpRequestHeader requestHeader = context.getRequestHeader();
+
+        // Before sizing the 101 response, which echoes the owner. A client that
+        // asked for an owner and got no echo landed on a server that ignored the
+        // request, so it must not count on its tables getting that owner.
+        if (!negotiateOwnedBy(context, requestHeader, bufferAddr, bufferSize)) {
+            return;
+        }
+        final Utf8Sequence ownedByEcho = ownedByEchoSink.size() > 0 ? ownedByEchoSink : null;
+
         Utf8Sequence wsKey = QwpIngressHttpProcessor.getWebSocketKey(requestHeader);
 
         // Read QWP version negotiation headers
@@ -562,7 +556,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, ownedByEcho);
         if (browserServerInfoRequested) {
             requiredHandshakeSize += BROWSER_SERVER_INFO_WS_FRAME_BYTES;
         }
@@ -593,7 +587,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
-                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
+                durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected, ownedByEcho);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
         }
@@ -1027,10 +1021,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     private static int badRequestResponseSize(int reasonByteCount) {
-        return BAD_REQUEST_PREFIX.length
-                + Integer.toString(reasonByteCount).length()
-                + HTTP_HEADER_END.length
-                + reasonByteCount;
+        return textResponseSize(BAD_REQUEST_PREFIX, reasonByteCount);
     }
 
     private static void finalizeHandshake(HttpConnectionContext context, QwpIngressProcessorState state) {
@@ -1112,7 +1103,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     // Reference-identity switch on the singleton ERROR_ String constants
-    // returned by QwpWebSocketHttpProcessor.validateHandshake. Returns the
+    // returned by QwpWebSocketHttpProcessor.validateHandshake, and on
+    // ERROR_INVALID_OWNED_BY of negotiateOwnedBy. Returns the
     // pre-built 400 response for known errors, null for arbitrary text. The
     // returned byte[] is shared and read-only -- copy bytes into the response
     // buffer, do not mutate.
@@ -1125,6 +1117,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
             case QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED ->
                     BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED;
+            case QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY -> BAD_REQUEST_RESPONSE_INVALID_OWNED_BY;
             case QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
                     BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
             case QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
@@ -1212,6 +1205,44 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             REJECT_FLUSH.set(context, tracker);
         }
         tracker.pendingBytes = bytesWritten;
+    }
+
+    // Stages a 403 Forbidden, or else a 400 Bad Request, upgrade rejection with reason as its body. Allocates,
+    // which only a rejected upgrade pays for.
+    private static void stageTextReject(HttpConnectionContext context, long bufferAddr, int bufferSize, boolean isForbidden, String reason) {
+        final byte[] prefix = isForbidden ? FORBIDDEN_PREFIX : BAD_REQUEST_PREFIX;
+        final byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+        final int requiredSize = textResponseSize(prefix, reasonBytes.length);
+        if (requiredSize > bufferSize) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), isForbidden ? "403 forbidden response" : "400 bad request response", bufferSize, requiredSize);
+        }
+        stageReject(context, writeTextResponse(bufferAddr, prefix, reasonBytes));
+    }
+
+    private static int textResponseSize(byte[] prefix, int reasonByteCount) {
+        return prefix.length
+                + Integer.toString(reasonByteCount).length()
+                + HTTP_HEADER_END.length
+                + reasonByteCount;
+    }
+
+    // Writes prefix, a status line and headers ending with an open Content-Length header, then the length
+    // and the body. The caller checks that the response fits, see textResponseSize().
+    private static int writeTextResponse(long buffer, byte[] prefix, byte[] reasonBytes) {
+        int offset = 0;
+        for (byte b : prefix) {
+            Unsafe.putByte(buffer + offset++, b);
+        }
+        for (byte b : Integer.toString(reasonBytes.length).getBytes(StandardCharsets.US_ASCII)) {
+            Unsafe.putByte(buffer + offset++, b);
+        }
+        for (byte b : HTTP_HEADER_END) {
+            Unsafe.putByte(buffer + offset++, b);
+        }
+        for (byte b : reasonBytes) {
+            Unsafe.putByte(buffer + offset++, b);
+        }
+        return offset;
     }
 
     /**
@@ -2490,6 +2521,48 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
     private boolean isSecureConnection(HttpConnectionContext context) {
         return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
+    }
+
+    /**
+     * Names the owner of the tables and columns this connection auto-creates, when the upgrade request
+     * asks for one, see {@link QwpIngressHttpProcessor#decodeOwnedBy} and
+     * {@link SecurityContext#setAutoCreateOwner}. Checking the owner now lets a client that may not name it
+     * fail at connect instead of at the first table it creates: a malformed name answers 400 Bad Request, a
+     * refused one 403 Forbidden, and a server that cannot set an owner at all 400 Bad Request.
+     *
+     * @return false when the upgrade was rejected, with the reject response staged; otherwise
+     * {@link #ownedByEchoSink} holds the {@code X-QWP-Owned-By} echo, empty when the request named no owner
+     */
+    private boolean negotiateOwnedBy(HttpConnectionContext context, HttpRequestHeader requestHeader, long bufferAddr, int bufferSize) {
+        ownedByEchoSink.clear();
+        if (!QwpIngressHttpProcessor.decodeOwnedBy(requestHeader, ownedByUtf8Sink, ownedBySink)) {
+            LOG.error().$("WebSocket upgrade names a malformed owner [fd=").$(context.getFd()).I$();
+            // a precomputed response, so a malformed owner allocates nothing
+            final int bytesWritten = writeBadRequestResponse(bufferAddr, bufferSize, QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY);
+            if (bytesWritten < 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "400 bad request response", bufferSize, BAD_REQUEST_RESPONSE_INVALID_OWNED_BY.length);
+            }
+            stageReject(context, bytesWritten);
+            return false;
+        }
+        if (ownedBySink.length() == 0) {
+            return true;
+        }
+        try {
+            context.getSecurityContext().setAutoCreateOwner(ownedBySink);
+        } catch (CairoException e) {
+            LOG.error().$("WebSocket upgrade owner refused [fd=").$(context.getFd())
+                    .$(", owner=").$safe(ownedBySink)
+                    .$(", error=").$safe(e.getFlyweightMessage())
+                    .I$();
+            stageTextReject(context, bufferAddr, bufferSize, e.isAuthorizationError(), "owned_by refused: " + e.getFlyweightMessage());
+            return false;
+        }
+        QwpIngressHttpProcessor.encodeOwnedBy(ownedByUtf8Sink, ownedByEchoSink);
+        LOG.info().$("WebSocket connection names the owner of the tables and columns it auto-creates [fd=").$(context.getFd())
+                .$(", owner=").$safe(ownedBySink)
+                .I$();
+        return true;
     }
 
     private int negotiateQwpVersion(HttpRequestHeader requestHeader, long fd) {

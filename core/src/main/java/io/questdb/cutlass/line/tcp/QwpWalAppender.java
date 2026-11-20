@@ -1036,6 +1036,10 @@ public class QwpWalAppender implements QuietCloseable {
                         } else {
                             try {
                                 securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+                                // Checked ahead of addColumn(): the column commits before the DDL
+                                // listener grants it to this owner, so a refusal there would leave
+                                // the column behind.
+                                securityContext.authorizeAutoCreateOwner();
                                 writer.addColumn(columnName, newColumnType, securityContext);
                                 columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
                             } catch (CairoException e) {

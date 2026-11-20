@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -1048,6 +1049,34 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
         tud.setLastStructureCheckSeqTxn(seqTxn);
     }
 
+    // Checks the owner of a table this connection is about to auto-create, ahead of createTable(), whose DDL
+    // listener grants the new table to that owner, see SecurityContext.authorizeAutoCreateOwner(). The refusal
+    // stands only when this connection would create the table. A table another connection has just created
+    // needs no owner from this connection, so this method returns it. A table another operation is still
+    // creating gets a retriable refusal instead of a wait: nothing bounds how long the operation holds the
+    // name, and a wait would pin this I/O thread for all that time. The client replays the frame, which then
+    // finds the table. Returns null when this connection may create the table.
+    private TableToken authorizeOwnerOrGetTable(SecurityContext securityContext, CharSequence tableName) {
+        try {
+            securityContext.authorizeAutoCreateOwner();
+            return null;
+        } catch (CairoException e) {
+            final TableToken tableToken = engine.getTableNameRegistry().getTableToken(tableName);
+            if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
+                // neither an authorization error nor a schema mismatch, so the client retries it, see
+                // QwpIngressProcessorState.cairoExceptionStatus()
+                throw CairoException.nonCritical()
+                        .put("table is being created, cannot ingest [table=")
+                        .put(tableName)
+                        .put(']');
+            }
+            if (tableToken == null || tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+                throw e;
+            }
+            return tableToken;
+        }
+    }
+
     // Evicts a stale cached entry (see isTableTokenStale): either the table was
     // DROPped -- its token resolves by neither name nor directory -- or it was
     // RENAMEd and the old name was reused by a new table. A pure rename that
@@ -1160,7 +1189,10 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     return null;
                 }
             }
-            tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+            tableToken = authorizeOwnerOrGetTable(securityContext, tableNameUtf16);
+            if (tableToken == null) {
+                tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
+            }
         }
         if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
             // schemaMismatch(), not a bare nonCritical(): the target's kind is a property of
