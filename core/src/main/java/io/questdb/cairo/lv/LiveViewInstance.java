@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -107,6 +109,7 @@ public class LiveViewInstance implements QuietCloseable {
     // Spins before the refresh-latch wait starts sleeping. Short, because the wait
     // is either over almost immediately or lasts a whole refresh turn.
     private static final int LATCH_SPINS_BEFORE_SLEEP = 64;
+    private static final Log LOG = LogFactory.getLog(LiveViewInstance.class);
     private static final long[] EMPTY_CHECKPOINT_REPAIR = {
             0L, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL
     };
@@ -3555,6 +3558,11 @@ public class LiveViewInstance implements QuietCloseable {
      * Agent side of the checkpoint/drop handshake: returns {@code false} without
      * freezing when a concurrent DROP has already marked the view dropped (see
      * {@link #markDroppedAndAwaitCheckpoint()}). The caller must then skip the view.
+     * <p>
+     * The hold makes the agent a refresh-latch holder like a refresh turn, so once it
+     * releases the latch, in either outcome, it retries {@link #tryCloseIfDropped()} and
+     * {@link #tryFreeRuntimeStateIfInvalid()}, whose CAS a DROP or an invalidation may
+     * have lost to the hold.
      *
      * @param circuitBreaker polled while waiting for the latch, so {@code CANCEL
      *                       QUERY} can abort a checkpoint stuck behind a long
@@ -3601,6 +3609,9 @@ public class LiveViewInstance implements QuietCloseable {
             }
         } finally {
             refreshLatch.set(false);
+            // This hold is a refresh-latch hold like a refresh turn's: a DROP or an invalidation whose free found the
+            // latch taken left that free to the holder, and no refresh turn comes for a dropped or invalid view.
+            retryFreesAfterLatchRelease();
         }
         return true;
     }
@@ -3616,7 +3627,7 @@ public class LiveViewInstance implements QuietCloseable {
             return;
         }
         if (!refreshLatch.compareAndSet(false, true)) {
-            // Refresh in flight; its finally hook retries.
+            // A refresh turn or a checkpoint freeze holds the latch; the holder retries once it lets go.
             return;
         }
         try {
@@ -3654,8 +3665,9 @@ public class LiveViewInstance implements QuietCloseable {
      * <p>
      * Mirrors {@link #tryCloseIfDropped()}: CAS-acquires the refresh latch and
      * frees only when no refresh cycle is in flight. On CAS failure the caller
-     * relies on the refresh worker's finally hook to retry once the in-flight
-     * cycle completes. Idempotent - the freed fields become null, so repeat
+     * relies on the latch holder - a refresh turn, or the checkpoint agent's
+     * {@link #startCheckpoint(SqlExecutionCircuitBreaker)} - which retries once it
+     * lets go. Idempotent - the freed fields become null, so repeat
      * calls (and a later {@code tryCloseIfDropped} / {@code close}) are no-ops.
      */
     public void tryFreeRuntimeStateIfInvalid() {
@@ -3663,7 +3675,7 @@ public class LiveViewInstance implements QuietCloseable {
             return;
         }
         if (!refreshLatch.compareAndSet(false, true)) {
-            // Refresh in flight; the worker's finally hook retries.
+            // A refresh turn or a checkpoint freeze holds the latch; the holder retries once it lets go.
             return;
         }
         try {
@@ -3907,6 +3919,19 @@ public class LiveViewInstance implements QuietCloseable {
         // wrap as having reached it.
         final long relaxed = current + Math.max(1, current / 4);
         adaptiveCheckpointDurationMicros = relaxed < current || relaxed >= ceiling ? ceiling : relaxed;
+    }
+
+    // Runs the frees a DROP or an invalidation left to this view's latch holder. Never throws: a startCheckpoint
+    // that published its freeze must return normally, or the agent never calls the endCheckpoint() it owes and the
+    // view stays frozen.
+    private void retryFreesAfterLatchRelease() {
+        try {
+            tryCloseIfDropped();
+            tryFreeRuntimeStateIfInvalid();
+        } catch (Throwable th) {
+            LOG.error().$("could not free live view runtime state after a checkpoint freeze [view=").$(liveViewToken)
+                    .$(", error=").$(th).I$();
+        }
     }
 
 }

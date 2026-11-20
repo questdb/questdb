@@ -66,6 +66,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * The first invalidation lands where a concurrent one would: from the refresh-fault observer of the turn
  * that spends the budget, once the fault reached the handler and before the turn charges it; from the hook
  * between the two reads of the ahead-of-base guard; or while the later one waits out a checkpoint freeze.
+ * <p>
+ * A checkpoint freeze that takes the refresh latch while an invalidation writes the state file frees the
+ * invalidated view's runtime state once it lets the latch go, since the invalidation's own free lost to it.
  */
 public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     // A reason for the base-table writer in the tests that call it directly, without changing the base.
@@ -656,6 +659,66 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
         });
     }
 
+    @Test
+    public void testCheckpointFreezeFreesViewItsRefreshTurnInvalidated() throws Exception {
+        // The turn that spends the flush-retry budget invalidates the seeding view once it released the refresh
+        // latch. A checkpoint freeze requested in that turn waits for the latch behind it, takes it when the turn
+        // lets it go, and waits for the view's monitor, which the invalidation holds while it writes the state file:
+        // the invalidation's free of the view's runtime state loses its latch CAS to the freeze. startCheckpoint makes
+        // the free once it lets the latch go. The test thread holds the monitor across the drive, and the
+        // invalidation's write of the state file waits until the freeze blocks on it holding the latch.
+        assertMemoryLeak(fault, () -> {
+            final LiveViewInstance instance = createSeedingFixture();
+            fault.watchStateFile(instance);
+            fault.failOpensIn("2026-01-01");
+            final int maxRetry = configuration.getLiveViewFlushRetryMax();
+            final AtomicReference<Thread> agent = new AtomicReference<>();
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final long firstUs;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                hooks(job).setRefreshFaultObserver(t -> {
+                    if (instance.getFlushRetryCount() == maxRetry - 1 && agent.get() == null) {
+                        agent.set(startThread(
+                                "lv-checkpoint-agent",
+                                agentError,
+                                () -> isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER))
+                        ));
+                        // The turn's invalidation makes the next write of the state file, once the turn released
+                        // the refresh latch. A write ahead of that release fails the wait.
+                        fault.runAtNextStateFileOpen(() -> awaitBlockedHoldingTheLatch(agent.get(), instance));
+                    }
+                });
+                synchronized (instance) {
+                    runUntilInvalid(job, instance);
+                    firstUs = currentMicros;
+                    Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getCompiledFactory());
+                    Assert.assertNotNull(instance.getMemoryTracker());
+                    Assert.assertNotNull(instance.getAnchorWindow());
+                }
+            }
+            Assert.assertNotNull("the turn that spends the budget must have run", agent.get());
+            joinWithoutError(agent.get(), agentError);
+            Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+            Assert.assertTrue(instance.isFreezeInProgress());
+            TestUtils.assertEquals(BUDGET_EXHAUSTED_REASON, instance.getInvalidationReason());
+            Assert.assertEquals(firstUs, instance.getStateReader().getInvalidationTimestampUs());
+            Assert.assertNull(instance.getCompiledFactory());
+            Assert.assertNull(instance.getInMemoryTier());
+            Assert.assertNull(instance.getMemoryTracker());
+            Assert.assertNull(instance.getAnchorWindow());
+            Assert.assertNull(instance.getRepairRuntime());
+            Assert.assertNull(instance.getStoredRowScanFactory());
+            Assert.assertNull(instance.getSeedBaseReader());
+            instance.endCheckpoint();
+            Assert.assertFalse(instance.isFreezeArmed());
+            capture.drain();
+            Assert.assertEquals(1, capture.countOccurrences(BUDGET_EXHAUSTED_LINE));
+            capture.assertNotLogged(COULD_NOT_PERSIST_LINE);
+            assertInvalidAfterARestart(BUDGET_EXHAUSTED_REASON, firstUs);
+        });
+    }
+
     // The view is invalid with the first invalidation's reason and time, the turn charged its fault and logged
     // the spent budget, and no write of the state file failed.
     private static void assertFirstInvalidationStands(LiveViewInstance instance, String reason, long firstUs) {
@@ -667,6 +730,19 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
         capture.drain();
         Assert.assertEquals(1, capture.countOccurrences(BUDGET_EXHAUSTED_LINE));
         capture.assertNotLogged(COULD_NOT_PERSIST_LINE);
+    }
+
+    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
+    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
+    // the latch.
+    private static void awaitBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
     }
 
     // Spins until the thread parks on a monitor's wait(): the freeze's waitForUnfrozen() in these tests.
@@ -920,10 +996,12 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     /**
      * {@link LiveViewBaseAmountOpenFault}, which fails the base's amount column file, and faults on the state
      * file of the view {@link #watchStateFile} names: fails its next opens for writing, reporting a missing file,
-     * and counts those made while the view is marked dropped.
+     * counts those made while the view is marked dropped, and runs the action {@link #runAtNextStateFileOpen}
+     * names ahead of the next one.
      */
     private static final class StateFileFault extends LiveViewBaseAmountOpenFault {
         private final AtomicBoolean isMissingStateFileErrnoPending = new AtomicBoolean();
+        private final AtomicReference<Runnable> stateFileOpenAction = new AtomicReference<>();
         private final AtomicInteger stateFileOpenFailures = new AtomicInteger();
         private final AtomicInteger stateFileOpensAfterDrop = new AtomicInteger();
         // The file name, with the view's directory and the separators ahead of it, of the watched state file.
@@ -942,6 +1020,10 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
                 if (watchedInstance.isDropped()) {
                     stateFileOpensAfterDrop.incrementAndGet();
                 }
+                final Runnable action = stateFileOpenAction.getAndSet(null);
+                if (action != null) {
+                    action.run();
+                }
                 if (stateFileOpenFailures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
                     isMissingStateFileErrnoPending.set(true);
                     return -1;
@@ -956,6 +1038,11 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
 
         int getStateFileOpensAfterDrop() {
             return stateFileOpensAfterDrop.get();
+        }
+
+        // Runs the action once, at the next open of the watched state file, ahead of the open.
+        void runAtNextStateFileOpen(Runnable action) {
+            stateFileOpenAction.set(action);
         }
 
         // Sets the instance before the name the open checks first.

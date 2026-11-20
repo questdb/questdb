@@ -33,9 +33,11 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewLifecycleState;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewRefreshTask;
@@ -65,6 +67,7 @@ import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -99,6 +102,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -191,6 +195,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // floor above a data row, even if it spins many times during ingestion.
     private static final String CLOCK_START = "2026-01-01T00:00:00.000000Z";
     private static final String DATA_START = "2027-01-01T00:00:00.000000Z";
+    // What startCheckpoint logs when the frees it retries once it lets the refresh latch go fail. It swallows the
+    // failure, so the line is all that tells a failed free from one that had nothing to do.
+    private static final String FAILED_FREEZE_FREE_LINE = "could not free live view runtime state after a checkpoint freeze";
     // Filter workers for the parallel-filter tier-swap soak: the pool's size and, because
     // the two must agree for the reduce work to land on those threads, the shared-worker
     // count each reader's execution context declares.
@@ -198,6 +205,11 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // The filtered read the parallel-filter soak routes through the tier's page frame. The
     // predicate keeps every row of the (ts, i, rn) view - see readFilteredRowNumberViewOnce.
     private static final String FILTERED_VIEW_SQL = "SELECT * FROM lv WHERE rn > 0";
+    // The reason the tests of a checkpoint freeze that holds the refresh latch invalidate their view with.
+    private static final String FREEZE_HOLD_REASON = "invalidated during the freeze";
+    // The view those tests freeze: an IN MEMORY 60s view over base (ts, sym, i) with a running sum per sym.
+    private static final String FREEZE_VIEW_SQL = "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts "
+            + "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base";
     // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
     // own bound - the driver inlines that loop to sample the tier between passes.
     private static final int REFRESH_PASSES_PER_TICK = 64;
@@ -209,6 +221,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
     private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
+    // How long a test waits for a thread it started to reach a point or to finish; only a broken run waits it out.
+    private static final long THREAD_JOIN_MILLIS = 60_000;
     // How long the multi-worker soak's driver waits after a tick for a worker to finish a
     // turn that did work. A tick no writer committed on has no turn to wait for, so the bound
     // keeps such a tick from stalling the driver.
@@ -385,6 +399,139 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // structural guarantee has moved to the isFreezeArmed() gate in
         // refreshInstance, which precedes every latch-held rewrite.
         assertMemoryLeak(this::runCheckpointFreezeDuringLatchHeldRewrite);
+    }
+
+    @Test
+    public void testCheckpointFreezeFreesViewInvalidatedDuringItsHold() throws Exception {
+        // An invalidation frees the view's runtime state through a refresh-latch CAS and, when the CAS loses,
+        // leaves the free to the latch holder. CHECKPOINT CREATE's startCheckpoint holds the latch while it waits
+        // for the view's monitor, which invalidateLiveView holds while it writes _lv.s, so the invalidation's free
+        // loses to the freeze. startCheckpoint makes the free once it lets the latch go, as a refresh turn does.
+        assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(false);
+    }
+
+    @Test
+    public void testCheckpointFreezeFreesViewTheBaseInvalidatedDuringItsHold() throws Exception {
+        // As testCheckpointFreezeFreesViewInvalidatedDuringItsHold, through the base-table writer's invalidation,
+        // which the WAL apply job runs for a base DROP, RENAME, UPDATE or schema change.
+        assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(true);
+    }
+
+    @Test
+    public void testCheckpointFreezeKeepsRuntimeStateOfValidView() throws Exception {
+        // startCheckpoint frees a dropped or invalid view's runtime state once it lets the refresh latch go. A valid
+        // view keeps its compiled factory, in-memory tier and memory tracker through the freeze, and its window
+        // state carries on: the next AA row sums with the AA row before it.
+        assertMemoryLeak(() -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final RecordCursorFactory factory = instance.getCompiledFactory();
+            final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+            final MemoryTracker tracker = instance.getMemoryTracker();
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            try {
+                Assert.assertTrue(instance.isFreezeInProgress());
+                Assert.assertSame(factory, instance.getCompiledFactory());
+                Assert.assertSame(tier, instance.getInMemoryTier());
+                Assert.assertSame(tracker, instance.getMemoryTracker());
+            } finally {
+                instance.endCheckpoint();
+            }
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            execute("INSERT INTO base VALUES ('2027-01-01T00:00:03.000000Z', 'AA', 3)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ti\tv
+                            2027-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                            2027-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                            2027-01-01T00:00:03.000000Z\tAA\t3\t4.0
+                            """);
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeOfInvalidViewWithNothingLeftToFree() throws Exception {
+        // The frees startCheckpoint retries find nothing to do on an invalid view whose own invalidation freed its
+        // runtime state, or that was invalidated before a refresh allocated any. Each of two checkpoints in a row
+        // publishes its freeze and leaves the view invalid with nothing in memory, and no free fails.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(true);
+                assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(false);
+                capture.drain();
+                capture.assertNotLogged(FAILED_FREEZE_FREE_LINE);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeReleasesSeedSnapshotOfViewInvalidatedDuringItsHold() throws Exception {
+        // A seeding view pins its base snapshot across sweep turns, and the free of an invalidated view returns it
+        // to the pool. As in testCheckpointFreezeFreesViewInvalidatedDuringItsHold, the invalidation's free loses to
+        // a checkpoint freeze, which returns the snapshot once it lets the refresh latch go.
+        // One row per sweep turn, so the sweep yields with its snapshot pinned.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2025-01-01T00:00:01.000000Z', 'AA', 1),
+                        ('2025-01-02T00:00:01.000000Z', 'AA', 2),
+                        ('2025-01-03T00:00:01.000000Z', 'BB', 3)
+                    """);
+            drainWalQueue();
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM BEGINNING AS " + FREEZE_VIEW_SQL);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int pass = 0; pass < SEED_COMPLETION_PASSES && instance.getSeedBaseReader() == null; pass++) {
+                    job.run();
+                }
+            }
+            Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+            Assert.assertNotNull("the sweep must yield with its base snapshot pinned", instance.getSeedBaseReader());
+
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            synchronized (instance) {
+                agent.start();
+                awaitAgentBlockedHoldingTheLatch(agent, instance);
+                engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+                Assert.assertTrue(instance.isInvalid());
+                Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getSeedBaseReader());
+                Assert.assertNotNull(instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            joinWithoutError(agent, agentError);
+            Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+            Assert.assertTrue(instance.isFreezeInProgress());
+            Assert.assertTrue(instance.isInvalid());
+            Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
+            assertRuntimeStateFreed(instance);
+            instance.endCheckpoint();
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            execute("DROP LIVE VIEW lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -1573,6 +1720,61 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefusedCheckpointFreezeClosesViewItsDropCouldNotClose() throws Exception {
+        // DROP LIVE VIEW marks the view dropped, fences its refresh, unregisters it and then closes it through a
+        // refresh-latch CAS, which leaves the close to the latch holder when it loses. A checkpoint that looked the
+        // view up before the drop unregistered it takes the latch and waits for the view's monitor, then refuses to
+        // freeze the dropped view. The drop's close loses to it, and nothing else reaches the unregistered view
+        // again, so startCheckpoint closes it once it lets the latch go. The leak check fails without that close.
+        final DropPausedAtTimelineRetire ff = new DropPausedAtTimelineRetire();
+        assertMemoryLeak(ff, () -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final AtomicReference<Throwable> dropError = new AtomicReference<>();
+            final Thread dropper = new Thread(() -> {
+                try {
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                } catch (Throwable th) {
+                    dropError.set(th);
+                } finally {
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-dropper");
+            ff.pause(dropper);
+            dropper.start();
+            ff.awaitPaused();
+            Assert.assertTrue(instance.isDropped());
+            Assert.assertSame("the paused drop has not unregistered the view yet", instance, engine.getLiveViewRegistry().getViewInstance("lv"));
+
+            final AtomicBoolean isFrozen = new AtomicBoolean(true);
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            synchronized (instance) {
+                try {
+                    agent.start();
+                    awaitAgentBlockedHoldingTheLatch(agent, instance);
+                } finally {
+                    ff.resume();
+                }
+                joinWithoutError(dropper, dropError);
+                Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                Assert.assertNotNull("the drop's close must lose to the freeze", instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getInMemoryTier());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            joinWithoutError(agent, agentError);
+            Assert.assertFalse("the freeze of a dropped view must be refused", isFrozen.get());
+            Assert.assertFalse(instance.isFreezeArmed());
+            Assert.assertFalse(instance.isFreezeInProgress());
+            assertRuntimeStateFreed(instance);
+            Assert.assertEquals(LiveViewLifecycleState.DROPPING, instance.getLifecycleState());
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    @Test
     public void testTierSwapDriverClosesInitialCursorAfterSwap() throws Exception {
         assertMemoryLeak(() -> assertInitialTierCursorClosed(false));
     }
@@ -1829,6 +2031,175 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             sum += workedTurns.getQuick(i).get();
         }
         return sum;
+    }
+
+    // None of the runtime state the frees of a dropped or invalid view release is left.
+    private static void assertRuntimeStateFreed(LiveViewInstance instance) {
+        Assert.assertNull(instance.getCompiledFactory());
+        Assert.assertNull(instance.getInMemoryTier());
+        Assert.assertNull(instance.getMemoryTracker());
+        Assert.assertNull(instance.getAnchorWindow());
+        Assert.assertNull(instance.getRepairRuntime());
+        Assert.assertNull(instance.getStoredRowScanFactory());
+        Assert.assertNull(instance.getSeedBaseReader());
+    }
+
+    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
+    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
+    // the latch, so from here on every free that CASes the latch loses until the caller lets the monitor go.
+    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
+    private static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
+        thread.join(THREAD_JOIN_MILLIS);
+        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
+        if (error.get() != null) {
+            throw new AssertionError(thread.getName() + " failed", error.get());
+        }
+    }
+
+    // A thread that runs startCheckpoint on the view, as DatabaseCheckpointAgent does for CHECKPOINT CREATE, and
+    // records whether it published the freeze.
+    private static Thread newCheckpointAgentThread(
+            LiveViewInstance instance,
+            AtomicBoolean isFrozen,
+            AtomicReference<Throwable> error
+    ) {
+        return new Thread(() -> {
+            try {
+                isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-agent");
+    }
+
+    // A checkpoint freeze takes the refresh latch of a refreshed IN MEMORY view and waits for the view's monitor,
+    // which this thread holds while it invalidates the view, the base-table writer's way with isBaseWriter,
+    // invalidateLiveView's without. The invalidation's free loses its latch CAS to the freeze, and the freeze frees
+    // the view's runtime state once it lets the latch go. The view stays invalid, serves its rows from disk, loads
+    // invalid after a restart, and drops.
+    private void assertCheckpointFreezeFreesViewInvalidatedDuringItsHold(boolean isBaseWriter) throws Exception {
+        assertMemoryLeak(() -> {
+            final LiveViewInstance instance = createRefreshedFreezeView();
+            final TableToken baseToken = engine.verifyTableName("base");
+            final AtomicBoolean isFrozen = new AtomicBoolean();
+            final AtomicReference<Throwable> agentError = new AtomicReference<>();
+            final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                synchronized (instance) {
+                    agent.start();
+                    awaitAgentBlockedHoldingTheLatch(agent, instance);
+                    if (isBaseWriter) {
+                        engine.invalidateLiveViewsForBaseTable(baseToken, FREEZE_HOLD_REASON);
+                    } else {
+                        engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+                    }
+                    Assert.assertTrue(instance.isInvalid());
+                    Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getCompiledFactory());
+                    Assert.assertNotNull(instance.getInMemoryTier());
+                    Assert.assertNotNull(instance.getMemoryTracker());
+                }
+                joinWithoutError(agent, agentError);
+                capture.drain();
+                capture.assertNotLogged(FAILED_FREEZE_FREE_LINE);
+            } finally {
+                capture.stop();
+            }
+            Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+            Assert.assertTrue(instance.isFreezeInProgress());
+            assertRuntimeStateFreed(instance);
+            assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+            instance.endCheckpoint();
+            Assert.assertFalse(instance.isFreezeArmed());
+
+            assertQuery("SELECT * FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\ti\tv
+                            2027-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                            2027-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                            """);
+            restartLiveViewsAndRecover();
+            assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+
+            execute("DROP LIVE VIEW lv");
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+        });
+    }
+
+    // An invalid view with nothing in memory - refreshed, then invalidated with no freeze in the way, so the
+    // invalidation freed it, or invalidated before a refresh allocated anything - goes through two checkpoints in a
+    // row: each publishes its freeze and leaves the view as it was, and the view drops.
+    private void assertCheckpointFreezeOfInvalidViewWithNothingLeftToFree(boolean isRefreshed) throws Exception {
+        final LiveViewInstance instance = isRefreshed ? createRefreshedFreezeView() : createFreezeView();
+        engine.invalidateLiveView(instance, FREEZE_HOLD_REASON);
+        Assert.assertTrue(instance.isInvalid());
+        assertRuntimeStateFreed(instance);
+        for (int checkpoint = 0; checkpoint < 2; checkpoint++) {
+            Assert.assertTrue(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            try {
+                Assert.assertTrue(instance.isFreezeInProgress());
+                assertRuntimeStateFreed(instance);
+                assertInvalidWithNoInMemoryRows(FREEZE_HOLD_REASON);
+            } finally {
+                instance.endCheckpoint();
+            }
+            Assert.assertFalse(instance.isFreezeArmed());
+        }
+        execute("DROP LIVE VIEW lv");
+        Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+        execute("DROP TABLE base");
+    }
+
+    // live_views() reports the view invalid with the reason, and with no in-memory tier, so no in-memory bytes or rows.
+    private void assertInvalidWithNoInMemoryRows(String reason) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason, in_mem_bytes, in_mem_rows FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\tin_mem_bytes\tin_mem_rows\n"
+                        + "invalid\t" + reason + "\t0\t0\n");
+    }
+
+    // base (ts, sym, i) and the never-refreshed view FREEZE_VIEW_SQL over it.
+    private LiveViewInstance createFreezeView() throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + FREEZE_VIEW_SQL);
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        return instance;
+    }
+
+    // createFreezeView refreshed past rows AA 1 and BB 2, so it holds a compiled factory, an in-memory tier and a
+    // memory tracker.
+    private LiveViewInstance createRefreshedFreezeView() throws Exception {
+        final LiveViewInstance instance = createFreezeView();
+        execute("INSERT INTO base VALUES ('2027-01-01T00:00:01.000000Z', 'AA', 1), ('2027-01-01T00:00:02.000000Z', 'BB', 2)");
+        drainWalQueue();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertNotNull(instance.getCompiledFactory());
+        Assert.assertNotNull(instance.getInMemoryTier());
+        Assert.assertNotNull(instance.getMemoryTracker());
+        return instance;
     }
 
     // Commits a late row 1us above every row of the day that holds the dataset's row a third of
@@ -4809,6 +5180,45 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
         private static boolean isFrameOf(StackWalker.StackFrame frame, Class<?> clazz, String methodName) {
             return clazz.getName().equals(frame.getClassName()) && methodName.equals(frame.getMethodName());
+        }
+    }
+
+    // Pauses DROP LIVE VIEW, on the thread pause() names and once, at the first file call of its timeline retire:
+    // the check for _checkpoints/_timeline, which comes after the drop marked the view dropped and fenced its
+    // refresh, and before it unregisters and closes the view.
+    private static final class DropPausedAtTimelineRetire extends TestFilesFacadeImpl {
+        private final CountDownLatch paused = new CountDownLatch(1);
+        private final AtomicReference<Thread> pausedThread = new AtomicReference<>();
+        private final CountDownLatch resumed = new CountDownLatch(1);
+
+        @Override
+        public boolean exists(LPSZ path) {
+            if (Utf8s.endsWithAscii(path, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + Files.SEPARATOR + LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                    && pausedThread.compareAndSet(Thread.currentThread(), null)) {
+                paused.countDown();
+                await(resumed, "the test never resumed the paused drop");
+            }
+            return super.exists(path);
+        }
+
+        void awaitPaused() {
+            await(paused, "the drop never reached its timeline retire");
+        }
+
+        void pause(Thread thread) {
+            pausedThread.set(thread);
+        }
+
+        void resume() {
+            resumed.countDown();
+        }
+
+        private static void await(CountDownLatch latch, String failure) {
+            try {
+                Assert.assertTrue(failure, latch.await(THREAD_JOIN_MILLIS, TimeUnit.MILLISECONDS));
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
         }
     }
 
