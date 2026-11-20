@@ -280,6 +280,69 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnInvalidationAfterTheCreateRollbackMarkedTheViewWritesNothing() throws Exception {
+        // The rollback of a CREATE LIVE VIEW that failed once it published the view marks the view dropped, tripping
+        // its refresh breaker, and then the base-table writer and invalidateLiveView reach the view. Both find it
+        // dropped and write nothing over the rollback's teardown, and the base-table writer goes on to lv0.
+        final LiveViewStateFileFault fault = new LiveViewStateFileFault();
+        assertMemoryLeak(fault, () -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final TableToken baseToken = createRollbackFixture(true);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicBoolean isStateFileOpened = new AtomicBoolean();
+                final AtomicBoolean isRefreshCancelledAtTheMark = new AtomicBoolean();
+                final AtomicReference<Thread> invalidatorRef = new AtomicReference<>();
+                final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+                registerBaseTableFault = () -> {
+                    final LiveViewInstance partial = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the CREATE must have published the view", partial);
+                    partialRef.set(partial);
+                    fault.watchStateFile(partial);
+                    fault.runAtNextStateFileOpen(() -> isStateFileOpened.set(true));
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                // Right after the mark: both invalidations run, on a thread of their own, before the rollback goes on.
+                engine.setLiveViewCreateRollbackHooks(() -> {
+                    final LiveViewInstance partial = partialRef.get();
+                    isRefreshCancelledAtTheMark.set(partial.getRefreshCancelledFlag().get());
+                    final Thread invalidator = startThread("lv-invalidator", invalidatorError, () -> {
+                        engine.invalidateLiveViewsForBaseTable(baseToken, BASE_REASON);
+                        engine.invalidateLiveView(partial, ROLLBACK_REASON);
+                    });
+                    invalidatorRef.set(invalidator);
+                    try {
+                        invalidator.join(THREAD_JOIN_MILLIS);
+                    } catch (InterruptedException e) {
+                        throw new AssertionError(e);
+                    }
+                }, null);
+                try {
+                    assertCreateFailsAfterPublishing();
+                } finally {
+                    registerBaseTableFault = null;
+                    engine.setLiveViewCreateRollbackHooks(null, null);
+                }
+                joinWithoutError(invalidatorRef.get(), invalidatorError);
+                Assert.assertFalse("an invalidation must not open the state file of a view the rollback marked dropped", isStateFileOpened.get());
+                Assert.assertEquals(0, fault.getStateFileOpensAfterDrop());
+                Assert.assertTrue("the mark must trip the view's refresh breaker", isRefreshCancelledAtTheMark.get());
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertTrue(partial.isDropped());
+                Assert.assertFalse("an invalidation must not flip a view the rollback marked dropped", partial.isInvalid());
+                Assert.assertNull(partial.getInvalidationReason());
+                final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv0");
+                Assert.assertTrue("the base-table writer must go on past the dropped view", sibling.isInvalid());
+                TestUtils.assertEquals(BASE_REASON, sibling.getInvalidationReason());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, BASE_REASON);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testApplyLagDeferralRebuildsAdvancedWindowState() throws Exception {
         // Regression for questdb#7514: a reader saw the view's FIRST row carrying a running
         // count well above 1 (rn=193 on a 12-row lead, rn=201 on a 22-row generation).
@@ -897,6 +960,140 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCreateRollbackAfterABaseInvalidationWhoseStateFileWriteFailed() throws Exception {
+        // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, and the base-table writer's open of the
+        // view's state file fails. The view flips invalid in memory all the same, the failure is logged once, and the
+        // rollback still waits for the writer and leaves nothing behind.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, true);
+    }
+
+    @Test
+    public void testCreateRollbackDoesNotWaitForACheckpointFreeze() throws Exception {
+        // A checkpoint freeze of the view a failing CREATE LIVE VIEW published holds the base-table writer, which
+        // invalidated lv0 and waits for the freeze to end, with the view's monitor released. The rollback marks the
+        // view dropped and tears it down without waiting for the freeze: no checkpoint copies a view whose name never
+        // committed. Once the freeze ends, the writer finds the view dropped and writes nothing.
+        final LiveViewStateFileFault fault = new LiveViewStateFileFault();
+        assertMemoryLeak(fault, () -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                final TableToken baseToken = createRollbackFixture(true);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicReference<Thread> invalidatorRef = new AtomicReference<>();
+                final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+                final AtomicReference<Throwable> createError = new AtomicReference<>();
+                registerBaseTableFault = () -> {
+                    final LiveViewInstance partial = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the CREATE must have published the view", partial);
+                    partialRef.set(partial);
+                    fault.watchStateFile(partial);
+                    Assert.assertTrue(partial.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                    final Thread invalidator = startThread(
+                            "lv-invalidator",
+                            invalidatorError,
+                            () -> engine.invalidateLiveViewsForBaseTable(baseToken, BASE_REASON)
+                    );
+                    invalidatorRef.set(invalidator);
+                    awaitWaiting(invalidator);
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                final Thread creator;
+                try {
+                    creator = startCreateThread(createError);
+                    creator.join(THREAD_JOIN_MILLIS);
+                } finally {
+                    registerBaseTableFault = null;
+                }
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertNotNull("the CREATE must have published the view", partial);
+                try {
+                    Assert.assertFalse("the rollback must not wait for a checkpoint freeze", creator.isAlive());
+                    Assert.assertTrue(partial.isFreezeInProgress());
+                    Assert.assertTrue(partial.isDropped());
+                } finally {
+                    partial.endCheckpoint();
+                }
+                assertCreateFailedAfterPublishing(createError.get());
+                joinWithoutError(invalidatorRef.get(), invalidatorError);
+                Assert.assertEquals(0, fault.getStateFileOpensAfterDrop());
+                Assert.assertEquals(0, fault.getOpenStateFileFdCount());
+                Assert.assertFalse("an invalidation must not flip a view the rollback marked dropped", partial.isInvalid());
+                Assert.assertNull(partial.getInvalidationReason());
+                final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv0");
+                Assert.assertTrue(sibling.isInvalid());
+                TestUtils.assertEquals(BASE_REASON, sibling.getInvalidationReason());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, BASE_REASON);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
+    public void testCreateRollbackFencesARefreshTurnThatTakesTheMonitor() throws Exception {
+        // A refresh worker holds the refresh latch of the view a failing CREATE LIVE VIEW published and, once the
+        // rollback marked the view dropped, takes the view's monitor, as persistState does under the latch. The mark
+        // lets the monitor go before the rollback waits for the latch, so the worker gets through, lets the latch go,
+        // and the rollback ends: no deadlock.
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                createRollbackFixture(false);
+                final CountDownLatch instanceRegistered = new CountDownLatch(1);
+                final CountDownLatch workerLatched = new CountDownLatch(1);
+                final CountDownLatch viewMarked = new CountDownLatch(1);
+                final AtomicReference<LiveViewInstance> partialRef = new AtomicReference<>();
+                final AtomicReference<Throwable> workerError = new AtomicReference<>();
+                final AtomicReference<Throwable> createError = new AtomicReference<>();
+                final Thread worker = startThread("lv-refresh-worker", workerError, () -> {
+                    awaitLatch(instanceRegistered, "the CREATE never published the view");
+                    final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull("the worker must see the published view", instance);
+                    Assert.assertTrue(instance.tryLockForRefresh());
+                    try {
+                        workerLatched.countDown();
+                        awaitLatch(viewMarked, "the rollback never marked the view dropped");
+                        synchronized (instance) {
+                            Assert.assertTrue(instance.isDropped());
+                        }
+                    } finally {
+                        instance.unlockAfterRefresh();
+                        instance.tryCloseIfDropped();
+                    }
+                });
+                registerBaseTableFault = () -> {
+                    partialRef.set(engine.getLiveViewRegistry().getViewInstance("lv"));
+                    instanceRegistered.countDown();
+                    awaitLatch(workerLatched, "the refresh worker never took the view's refresh latch");
+                    throw CairoException.critical(0).put(CREATE_FAILURE);
+                };
+                // Right after the mark, ahead of the fence.
+                engine.setLiveViewCreateRollbackHooks(viewMarked::countDown, null);
+                final Thread creator;
+                try {
+                    creator = startCreateThread(createError);
+                    creator.join(THREAD_JOIN_MILLIS);
+                    worker.join(THREAD_JOIN_MILLIS);
+                } finally {
+                    registerBaseTableFault = null;
+                    engine.setLiveViewCreateRollbackHooks(null, null);
+                }
+                Assert.assertFalse("the rollback must not deadlock with a refresh turn", creator.isAlive());
+                joinWithoutError(worker, workerError);
+                assertCreateFailedAfterPublishing(createError.get());
+                final LiveViewInstance partial = partialRef.get();
+                Assert.assertTrue(partial.isDropped());
+                Assert.assertFalse(partial.isInvalid());
+                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, null);
+            } finally {
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testCreateRollbackFencesLateRefreshAndKeepsLifecycleBounded() throws Exception {
         // createLiveView publishes the instance into the registry the refresh worker
         // iterates (registerView -> getViews) BEFORE the CREATE commits. If a later
@@ -1070,14 +1267,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // The base-table writer, which a base DROP, RENAME, UPDATE or schema change runs, invalidates lv0 and then
         // the view a failing CREATE LIVE VIEW published, and holds that view's monitor inside its open of the view's
         // state file when the CREATE's rollback marks the view dropped.
-        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON);
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, false);
     }
 
     @Test
     public void testCreateRollbackWaitsForAnInvalidationWritingTheStateFile() throws Exception {
         // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, through invalidateLiveView, which a
         // refresh worker runs off the refresh latch.
-        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(false, ROLLBACK_REASON);
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(false, ROLLBACK_REASON, false);
     }
 
     @Test
@@ -2105,6 +2302,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
     }
 
+    // The CREATE on a thread of startCreateThread failed with what registerBaseTableFault throws once it published lv.
+    private static void assertCreateFailedAfterPublishing(@Nullable Throwable createError) {
+        Assert.assertTrue("the CREATE must fail with the injected failure, not " + createError, createError instanceof CairoException);
+        TestUtils.assertContains(((CairoException) createError).getFlyweightMessage(), CREATE_FAILURE);
+    }
+
     // The directory and the name of the view the failed CREATE published are gone.
     private static void assertPartialViewGone(String partialDirName) {
         try (Path path = new Path()) {
@@ -2112,6 +2315,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             Assert.assertFalse("the rollback must remove the view's directory", configuration.getFilesFacade().exists(path.$()));
         }
         Assert.assertNull(engine.getTableTokenByDirName(partialDirName));
+    }
+
+    private static void awaitLatch(CountDownLatch latch, String failure) {
+        try {
+            Assert.assertTrue(failure, latch.await(THREAD_JOIN_MILLIS, TimeUnit.MILLISECONDS));
+        } catch (InterruptedException e) {
+            throw new AssertionError(e);
+        }
     }
 
     // Spins until the rollback of the failed CREATE on createThread blocks on the view's monitor to mark the view
@@ -2150,6 +2361,18 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
         final LockInfo lock = info.getLockInfo();
         return lock != null && lock.getIdentityHashCode() == System.identityHashCode(monitor);
+    }
+
+    // Runs ROLLBACK_CREATE_SQL on a thread of its own, as a client session does, and records what it threw in
+    // createError.
+    private static Thread startCreateThread(AtomicReference<Throwable> createError) {
+        return startThread("lv-create", createError, () -> {
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
+                execute(ROLLBACK_CREATE_SQL, context);
+            } catch (SqlException e) {
+                throw new AssertionError(e);
+            }
+        });
     }
 
     // Builds the thread that tears the checkpoint soak's view down: it awaits the barrier and the view's first
@@ -2330,8 +2553,13 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // and is inside its open of the view's state file, past its check for a drop: the base-table writer's, after it
     // invalidated lv0, with isBaseWriter, invalidateLiveView's without. The rollback's mark of the drop waits for the
     // monitor, so the invalidation's write, file closed, lands ahead of it, and nothing opens the file after it: the
-    // rollback removes a directory nothing writes to.
-    private void assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(boolean isBaseWriter, String reason) throws Exception {
+    // rollback removes a directory nothing writes to. With isWriteFailed the open fails, which the invalidation logs,
+    // and the view still flips invalid in memory.
+    private void assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(
+            boolean isBaseWriter,
+            String reason,
+            boolean isWriteFailed
+    ) throws Exception {
         final LiveViewStateFileFault fault = new LiveViewStateFileFault();
         assertMemoryLeak(fault, () -> {
             final LogCapture capture = new LogCapture();
@@ -2353,6 +2581,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     fault.runAtNextStateFileOpen(() -> {
                         invalidatorInsideTheOpen.countDown();
                         isRollbackAtTheMark.set(awaitRollbackAtTheMark(createThread, partial));
+                        if (isWriteFailed) {
+                            fault.failStateFileOpens(1);
+                        }
                     });
                     invalidatorRef.set(startThread("lv-invalidator", invalidatorError, () -> {
                         if (isBaseWriter) {
@@ -2361,14 +2592,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                             engine.invalidateLiveView(partial, reason);
                         }
                     }));
-                    try {
-                        Assert.assertTrue(
-                                "the invalidation never reached its open of the state file",
-                                invalidatorInsideTheOpen.await(THREAD_JOIN_MILLIS, TimeUnit.MILLISECONDS)
-                        );
-                    } catch (InterruptedException e) {
-                        throw new AssertionError(e);
-                    }
+                    awaitLatch(invalidatorInsideTheOpen, "the invalidation never reached its open of the state file");
                     throw CairoException.critical(0).put(CREATE_FAILURE);
                 };
                 try {
@@ -2379,10 +2603,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 joinWithoutError(invalidatorRef.get(), invalidatorError);
                 Assert.assertTrue("the rollback never came to its mark", isRollbackAtTheMark.get());
                 Assert.assertEquals("nothing may open the state file once the rollback marked the view dropped", 0, fault.getStateFileOpensAfterDrop());
-                Assert.assertEquals("the invalidation must close the state file holding the view's monitor", 1, fault.getStateFileClosesHoldingTheMonitor());
+                Assert.assertEquals(
+                        "the invalidation must close the state file holding the view's monitor",
+                        isWriteFailed ? 0 : 1,
+                        fault.getStateFileClosesHoldingTheMonitor()
+                );
                 Assert.assertEquals(0, fault.getStateFileClosesWithoutTheMonitor());
                 Assert.assertEquals(0, fault.getOpenStateFileFdCount());
                 final LiveViewInstance partial = partialRef.get();
+                final String partialDirName = partial.getLiveViewToken().getDirName();
                 Assert.assertTrue(partial.isDropped());
                 // The invalidation held the monitor first, so it ran first.
                 Assert.assertTrue(partial.isInvalid());
@@ -2392,7 +2621,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     Assert.assertTrue(sibling.isInvalid());
                     TestUtils.assertEquals(reason, sibling.getInvalidationReason());
                 }
-                assertCreateRolledBackCleanly(capture, partial.getLiveViewToken().getDirName(), 0, isBaseWriter ? reason : null);
+                capture.drain();
+                Assert.assertEquals(
+                        isWriteFailed ? 1 : 0,
+                        capture.countOccurrences(COULD_NOT_PERSIST_LINE + partialDirName + ", reason=" + reason + ", error=")
+                );
+                assertCreateRolledBackCleanly(capture, partialDirName, isWriteFailed ? 1 : 0, isBaseWriter ? reason : null);
             } finally {
                 capture.stop();
             }
