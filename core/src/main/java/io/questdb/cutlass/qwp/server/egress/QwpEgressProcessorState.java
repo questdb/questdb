@@ -52,6 +52,7 @@ import io.questdb.mp.SCSequence;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -439,6 +440,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             long requestId,
             RecordCursorFactory factory,
             PageFrameCursor pageFrameCursor,
+            @Nullable MemoryTracker memoryTracker,
             int columnCount,
             long initialCredit,
             CharSequence sqlText,
@@ -453,11 +455,8 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             pageFrameMemoryPool = new PageFrameMemoryPool(cairoConfiguration, 0L);
             pageFrameMemoryRecord = new PageFrameMemoryRecord();
         }
-        pageFrameAddressCache.of(
-                factory.getMetadata(),
-                pageFrameCursor.getColumnMapping(),
-                pageFrameCursor.isExternal()
-        );
+        pageFrameAddressCache.of(factory.getMetadata(), pageFrameCursor);
+        pageFrameMemoryPool.setMemoryTracker(memoryTracker);
         pageFrameMemoryPool.of(pageFrameAddressCache);
         pageFrameMemoryRecord.of(pageFrameCursor);
         this.streamingRequestId = requestId;
