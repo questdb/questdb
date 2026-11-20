@@ -2269,8 +2269,6 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 @Override
                 public boolean checkIfTrippedOrYield() {
                     Assert.assertFalse(checkIfTripped());
-                    // ResourceGroupRuntime.pollCpuGrant can throw cancellation on redispatch,
-                    // after the shared breaker's initial non-throwing cancellation check.
                     Assert.assertTrue(Fiber.yieldCooperatively());
                     statefulThrowExceptionIfTrippedNoThrottle();
                     Assert.fail("the suspended entry must have been cancelled");

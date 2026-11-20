@@ -158,6 +158,11 @@ public interface MessageBus extends Closeable {
 
     RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard);
 
+    int getPageFrameReduceReservedShardCount();
+
+    /**
+     * Counts every shard. The reserved ones are the last {@link #getPageFrameReduceReservedShardCount()}.
+     */
     int getPageFrameReduceShardCount();
 
     MCSequence getPageFrameReduceSubSeq(int shard);

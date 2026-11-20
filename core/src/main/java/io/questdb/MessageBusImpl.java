@@ -106,6 +106,7 @@ public class MessageBusImpl implements MessageBus {
     private volatile PageFrameReduceDispatcher pageFrameReduceDispatcher;
     private final MPSequence[] pageFrameReducePubSeq;
     private final RingQueue<PageFrameReduceTask>[] pageFrameReduceQueue;
+    private final int pageFrameReduceReservedShardCount;
     private final int pageFrameReduceShardCount;
     private final MCSequence[] pageFrameReduceSubSeq;
     private final MPSequence postingSealPurgePubSeq;
@@ -195,7 +196,8 @@ public class MessageBusImpl implements MessageBus {
             this.postingSealPurgePubSeq = new MPSequence(this.postingSealPurgeQueue.getCycle());
             this.postingSealPurgePubSeq.then(this.postingSealPurgeSubSeq).then(this.postingSealPurgePubSeq);
 
-            this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount();
+            this.pageFrameReduceReservedShardCount = configuration.getPageFrameReduceReservedShardCount();
+            this.pageFrameReduceShardCount = configuration.getPageFrameReduceShardCount() + pageFrameReduceReservedShardCount;
 
             //noinspection unchecked
             pageFrameReduceQueue = new RingQueue[pageFrameReduceShardCount];
@@ -534,6 +536,11 @@ public class MessageBusImpl implements MessageBus {
     @Override
     public RingQueue<PageFrameReduceTask> getPageFrameReduceQueue(int shard) {
         return pageFrameReduceQueue[shard];
+    }
+
+    @Override
+    public int getPageFrameReduceReservedShardCount() {
+        return pageFrameReduceReservedShardCount;
     }
 
     @Override
