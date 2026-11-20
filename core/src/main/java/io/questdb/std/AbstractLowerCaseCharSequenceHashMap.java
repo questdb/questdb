@@ -51,6 +51,21 @@ abstract class AbstractLowerCaseCharSequenceHashMap extends AbstractLowerCaseCha
         }
     }
 
+    // Removes a present key in O(1), where removeAt() scans the key list for it: the caller passes the key's
+    // position in keys(), and the last key of the list moves into it. A loop that removes while it walks keys()
+    // must therefore walk it from the end.
+    public void removeAtQuick(int keyIndex, int listIndex) {
+        assert keyIndex < 0 : "removeAtQuick expects a present key (negative keyIndex)";
+        if (keyIndex < 0) {
+            assert list.getQuick(listIndex) == keys[-keyIndex - 1];
+            super.removeAt(keyIndex);
+            final CharSequence lastKey = list.popLast();
+            if (listIndex < list.size()) {
+                list.setQuick(listIndex, lastKey);
+            }
+        }
+    }
+
     protected void putAt0(int index, CharSequence key) {
         keys[index] = key;
         list.add(key);
