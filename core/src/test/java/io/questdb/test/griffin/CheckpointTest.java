@@ -7034,6 +7034,10 @@ public class CheckpointTest extends AbstractCairoTest {
             final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
+            // The restore checks partitions in parallel. Match only the files of the damaged partition,
+            // so the other partition's worker never hits the fault, whatever the interleaving.
+            final String keyFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + "s.pk";
+            final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
             final FilesFacade failingFacade = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
