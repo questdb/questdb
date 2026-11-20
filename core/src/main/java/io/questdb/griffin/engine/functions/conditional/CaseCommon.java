@@ -68,8 +68,9 @@ public class CaseCommon {
             return arg;
         }
         if (isNull(argType)) {
-            // The NULL constant replaces the argument, which the caller hands over. Close it: a
-            // CASE whose every branch is NULL still owns its conditions, which can hold native memory.
+            // Close the argument the NULL constant replaces: a CASE whose every branch is NULL owns
+            // its conditions, which can hold native memory. A caller that frees the argument again
+            // after an error finds nothing left to free.
             Misc.free(arg);
             return Constants.getNullConstant(toType);
         }

@@ -212,7 +212,9 @@ public final class ExpressionGenerator {
      * A CASE whose values are of the {@code target} kind, with one or two WHEN branches and an
      * optional ELSE. Half of them take the simple form over an operand from
      * {@link #generateCaseOperand}; the rest take the searched form with {@code lhs > rhs}
-     * conditions. The keys of the simple form are distinct
+     * conditions. A third of the simple forms have five to eight branches instead, more keys than
+     * {@code switch()} compares one by one before it looks a DOUBLE operand up by hash. The keys
+     * of the simple form are distinct
      * INT literals around -1, the default empty-slot key of the hash maps behind {@code switch()}.
      * They never become bind variables: {@code switch()} accepts only constant keys, so a bound
      * key would fail the bind form alone.
@@ -222,7 +224,8 @@ public final class ExpressionGenerator {
         final ObjList<FuzzExpr> whens = new ObjList<>();
         final ObjList<FuzzExpr> thens = new ObjList<>();
         int key = rnd.nextInt(4) - 2;
-        for (int i = 0, n = 1 + rnd.nextInt(2); i < n; i++) {
+        final int branchCount = operand != null && rnd.nextInt(3) == 0 ? 5 + rnd.nextInt(4) : 1 + rnd.nextInt(2);
+        for (int i = 0; i < branchCount; i++) {
             if (operand != null) {
                 whens.add(new ConstantExpr(ColumnKind.NUMERIC, Integer.toString(key)));
                 key += 1 + rnd.nextInt(3);

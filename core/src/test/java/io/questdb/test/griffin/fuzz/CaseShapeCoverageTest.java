@@ -53,11 +53,13 @@ import java.util.regex.Pattern;
  * The spelling axis in {@link QueryRunner} checks the same on whole queries, and their rows.
  * The shapes are the ones the parser once rejected inside a CASE: FROM in
  * {@code extract(day FROM ts)} and the multi-word type of {@code cast(x AS DOUBLE PRECISION)}
- * read as CASE keywords, and the function-call operand of {@code CASE abs(x) WHEN ...} taken
- * for the searched form.
+ * taken for column names, and the function-call operand of {@code CASE abs(x) WHEN ...} taken
+ * for the searched form. The rest are the operands and keys switch() once matched wrongly or
+ * slowly: negative keys, a NULL operand, DOUBLE operands that can be -0.0, and more DOUBLE keys
+ * than switch() compares one by one.
  */
 public class CaseShapeCoverageTest extends AbstractCairoTest {
-    private static final int CORPUS_SIZE = 5_000;
+    private static final int CORPUS_SIZE = 20_000;
     private static final Pattern KEYWORD_FORM = Pattern.compile("CASE [^W]| FROM | AS ");
     private static final Pattern[] SHAPES = {
             Pattern.compile("CASE .*extract\\([a-z]+ FROM "),
@@ -66,6 +68,8 @@ public class CaseShapeCoverageTest extends AbstractCairoTest {
             Pattern.compile("CASE null WHEN "),
             Pattern.compile("CASE \\(round\\(.*\\) \\* -1\\.0\\) WHEN "),
             Pattern.compile("CASE \\S*c_double WHEN "),
+            // a DOUBLE operand with more keys than switch() compares one by one
+            Pattern.compile("CASE (\\S*c_double|\\(round\\(.*\\) \\* -1\\.0\\))( WHEN -?[0-9]+ THEN [^W]*){5}"),
             Pattern.compile("CASE .*cast\\(.* AS DOUBLE PRECISION\\)"),
             Pattern.compile("CASE .*cast\\(.* AS TIMESTAMP WITH TIME ZONE\\)"),
     };

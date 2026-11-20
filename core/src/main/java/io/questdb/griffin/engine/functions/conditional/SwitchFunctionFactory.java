@@ -41,7 +41,6 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
-import io.questdb.std.DoubleList;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
@@ -249,16 +248,6 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getStrA(record);
     }
 
-    // the index of the first key that equals the value as '=' does, or -1
-    private static int indexOfEqual(DoubleList keys, double value) {
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            if (Numbers.equals(keys.getQuick(i), value)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     // the type the keys are read as: the operand's, or for a NULL operand the first non-NULL key's
     private static int keyTypeOf(ObjList<Function> args, int n) {
         int type = args.getQuick(0).getType();
@@ -342,8 +331,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Matches a FLOAT or DOUBLE operand with Numbers.equals(), as '=' does. Its tolerance rules
-     * out a hash map, so the picker tries the keys in order.
+     * Matches a FLOAT or DOUBLE operand as '=' does, see {@link DoubleKeyIndex}.
      */
     private Function getDoubleKeyedFunction(
             ObjList<Function> args,
@@ -354,20 +342,18 @@ public class SwitchFunctionFactory implements FunctionFactory {
             int valueType,
             Function elseBranch
     ) throws SqlException {
-        final DoubleList keys = new DoubleList();
+        final DoubleKeyIndex keys = new DoubleKeyIndex();
         final ObjList<Function> values = new ObjList<>();
         for (int i = 1; i < n; i += 2) {
-            final double key = getDouble(args.getQuick(i), null);
-            if (indexOfEqual(keys, key) > -1) {
+            if (keys.add(getDouble(args.getQuick(i), null)) > -1) {
                 throw SqlException.$(argPositions.getQuick(i), "duplicate branch");
             }
-            keys.add(key);
             values.add(args.getQuick(i + 1));
         }
 
         final Function elseB = getElseFunction(valueType, elseBranch);
         final CaseFunctionPicker picker = record -> {
-            final int index = indexOfEqual(keys, getDouble(keyFunction, record));
+            final int index = keys.indexOf(getDouble(keyFunction, record));
             return index > -1 ? values.getQuick(index) : elseB;
         };
         final ObjList<Function> argsToPoke = new ObjList<>(values);

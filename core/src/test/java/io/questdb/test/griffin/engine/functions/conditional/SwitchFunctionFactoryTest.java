@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.std.DoubleList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class SwitchFunctionFactoryTest extends AbstractCairoTest {
@@ -844,6 +848,107 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                 .fails(44, "duplicate branch");
         assertQuery("SELECT CASE x::DOUBLE WHEN 0.3 THEN 1 WHEN 0.30000000000000004 THEN 2 END FROM long_sequence(1)")
                 .fails(43, "duplicate branch");
+        // more keys than switch() compares one by one, so it finds the earlier key by hash
+        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 5 WHEN 2.00000000005 THEN 6 END FROM long_sequence(1)")
+                .fails(97, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 1073741824 THEN 5 WHEN 1073741824.0 THEN 6 END FROM long_sequence(1)")
+                .fails(106, "duplicate branch");
+    }
+
+    @Test
+    public void testDoubleKeysMatchAsSearchedForm() throws Exception {
+        // The reference spells each key as 'v - k = 0': the tolerance of '=' in a searched CASE,
+        // which the parser does not turn into switch(). Keys come close to each other, reach 2^30
+        // and beyond, and outnumber the keys switch() compares one by one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, f FLOAT)");
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final DoubleList keys = new DoubleList();
+            final StringBuilder sql = new StringBuilder();
+            for (int iteration = 0; iteration < 10; iteration++) {
+                keys.clear();
+                for (int i = 0, n = 1 + rnd.nextInt(40); i < n; i++) {
+                    final double key = switch (rnd.nextInt(4)) {
+                        case 0 -> rnd.nextInt(20) - 10;
+                        case 1 -> (rnd.nextInt(20) - 10) / 4.0 + rnd.nextInt(3) * 0.75e-10;
+                        case 2 -> (1L << 30) + rnd.nextInt(8) * 0.25;
+                        default -> rnd.nextInt(1_000_000) / 1000.0;
+                    };
+                    boolean isDuplicate = false;
+                    for (int j = 0, m = keys.size(); j < m; j++) {
+                        isDuplicate |= Numbers.equals(keys.getQuick(j), key);
+                    }
+                    if (!isDuplicate) {
+                        keys.add(key);
+                    }
+                }
+                sql.setLength(0);
+                sql.append("INSERT INTO t VALUES (NULL, NULL)");
+                for (int i = 0, n = keys.size(); i < n; i++) {
+                    for (double offset : new double[]{0, 0.5, -0.5, 1.5, -1.5}) {
+                        final double value = keys.getQuick(i) + offset * Numbers.DOUBLE_TOLERANCE;
+                        sql.append(", (").append(value).append(", ").append(value).append(')');
+                    }
+                }
+                execute(sql);
+                final boolean hasNullKey = rnd.nextBoolean();
+                for (String column : new String[]{"d", "f"}) {
+                    sql.setLength(0);
+                    sql.append("SELECT d, f, CASE ").append(column);
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        sql.append(" WHEN ").append(keys.getQuick(i)).append(" THEN ").append(i);
+                    }
+                    if (hasNullKey) {
+                        sql.append(" WHEN null THEN -1");
+                    }
+                    final String actual = sql.append(" ELSE -2 END r FROM t").toString();
+                    sql.setLength(0);
+                    sql.append("SELECT d, f, CASE");
+                    for (int i = 0, n = keys.size(); i < n; i++) {
+                        sql.append(" WHEN ").append(column).append(" - ").append(keys.getQuick(i)).append(" = 0 THEN ").append(i);
+                    }
+                    if (hasNullKey) {
+                        sql.append(" WHEN ").append(column).append(" = null THEN -1");
+                    }
+                    assertSqlCursors(sql.append(" ELSE -2 END r FROM t"), actual);
+                }
+                execute("TRUNCATE TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testDoubleManyKeys() throws Exception {
+        // more keys than switch() compares one by one; from 2^30 up it matches the bits
+        assertQuery("""
+                SELECT x, CASE d
+                    WHEN 0 THEN 'zero' WHEN 1 THEN 'one' WHEN 2 THEN 'two' WHEN 3 THEN 'three'
+                    WHEN 1073741824 THEN '2^30' WHEN 1073741824.5 THEN '2^30 + 0.5' WHEN null THEN 'null'
+                    ELSE 'other'
+                END k
+                FROM t
+                """)
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT x, CASE x
+                                WHEN 1 THEN 0.0 WHEN 2 THEN -0.0 WHEN 3 THEN 3.0 WHEN 4 THEN 3.00000000005
+                                WHEN 5 THEN 1073741824.0 WHEN 6 THEN 1073741824.5 WHEN 7 THEN 7.5
+                            END d
+                            FROM long_sequence(8)
+                        )
+                        """)
+                .expectSize()
+                .returns("""
+                        x\tk
+                        1\tzero
+                        2\tzero
+                        3\tthree
+                        4\tthree
+                        5\t2^30
+                        6\t2^30 + 0.5
+                        7\tother
+                        8\tnull
+                        """);
     }
 
     @Test
@@ -928,6 +1033,26 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         null\t-1870444467\t-2034804966\t171200398\t1
                         0.0\t1637847416\t-419093579\t-1819240775\t4
                         -0.0\t-1533414895\t-1787109293\t-66297136\t4
+                        """);
+    }
+
+    @Test
+    public void testDoubleTieTakesFirstBranch() throws Exception {
+        // 0.75e-10 equals both 0 and 1.5e-10 under '=', which do not equal each other. The first
+        // WHEN wins, as in the searched form, with few keys and with many.
+        assertQuery("""
+                SELECT
+                    CASE d WHEN 0 THEN 'a' WHEN 1.5e-10 THEN 'b' END ab,
+                    CASE d WHEN 1.5e-10 THEN 'b' WHEN 0 THEN 'a' END ba,
+                    CASE d WHEN 0 THEN 'a' WHEN 1.5e-10 THEN 'b' WHEN 1 THEN 'c' WHEN 2 THEN 'c' WHEN 3 THEN 'c' END ab_many,
+                    CASE d WHEN 1 THEN 'c' WHEN 2 THEN 'c' WHEN 3 THEN 'c' WHEN 1.5e-10 THEN 'b' WHEN 0 THEN 'a' END ba_many
+                FROM t
+                """)
+                .ddl("CREATE TABLE t AS (SELECT 0.75e-10 d FROM long_sequence(1))")
+                .expectSize()
+                .returns("""
+                        ab\tba\tab_many\tba_many
+                        a\tb\ta\tb
                         """);
     }
 
@@ -1032,6 +1157,34 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     public void testFloatDuplicateBranchUnderEquals() throws Exception {
         assertQuery("SELECT CASE x::FLOAT4 WHEN 0.0 THEN 1 WHEN -0.0 THEN 2 END FROM long_sequence(1)")
                 .fails(43, "duplicate branch");
+    }
+
+    @Test
+    public void testFloatManyKeys() throws Exception {
+        // more keys than switch() compares one by one; a FLOAT operand compares at DOUBLE width
+        assertQuery("""
+                SELECT x, CASE f
+                    WHEN 0.5 THEN 'half' WHEN 0.1 THEN 'double 0.1' WHEN 0.1::FLOAT4 THEN 'float 0.1'
+                    WHEN 1 THEN 'one' WHEN 2 THEN 'two' WHEN null THEN 'null'
+                    ELSE 'other'
+                END k
+                FROM t
+                """)
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT x, CASE x WHEN 1 THEN 0.5::FLOAT4 WHEN 2 THEN 0.1::FLOAT4 WHEN 3 THEN 2.0::FLOAT4 WHEN 4 THEN 3.0::FLOAT4 END f
+                            FROM long_sequence(5)
+                        )
+                        """)
+                .expectSize()
+                .returns("""
+                        x\tk
+                        1\thalf
+                        2\tfloat 0.1
+                        3\ttwo
+                        4\tother
+                        5\tnull
+                        """);
     }
 
     @Test
@@ -1604,7 +1757,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNullOperandArrayKeyIsClosed() throws Exception {
-        // A NULL operand picks its branch at compile time and leaves the keys unused. The CASE
+        // A NULL operand picks its branch at compile time and leaves the keys unused. switch()
         // must still free them: an array key holds native memory.
         assertQuery("""
                 SELECT
