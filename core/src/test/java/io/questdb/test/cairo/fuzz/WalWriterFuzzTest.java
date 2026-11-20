@@ -1942,6 +1942,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     private void runDetachAttachPartitionFuzz(boolean isParquet) throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        // the detach/attach fuzz copies on DETACH, see questdb-enterprise#1575; set after setTestParams(), which can
+        // set the test up again with a new files facade
+        fuzzer.getFileFacade().setDetachCopied(true);
         // the detached copy takes the name ATTACH looks for, so a WAL table applies a DETACH and the ATTACH after it
         // in one go
         node1.setProperty(PropertyKey.CAIRO_ATTACH_PARTITION_SUFFIX, TableUtils.DETACHED_DIR_MARKER);
