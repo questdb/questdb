@@ -140,6 +140,15 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void test400MalformedOwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+        runWithFragmentedSend(port -> assertFullRejectDelivered(
+                port,
+                ownedByUpgradeRequest(port, "/write/v4", "team%zz"),
+                textReject("Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
+        ));
+    }
+
+    @Test
     public void test400OriginRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
         runWithFragmentedSend(port -> {
             String request = "GET /write/v4 HTTP/1.1\r\n"
@@ -152,15 +161,6 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                     + "\r\n";
             assertFullRejectDelivered(port, request, EXPECTED_400_ORIGIN_REJECT);
         });
-    }
-
-    @Test
-    public void test400MalformedOwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
-        runWithFragmentedSend(port -> assertFullRejectDelivered(
-                port,
-                ownedByUpgradeRequest(port, "/write/v4", "team%zz"),
-                textReject("Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
-        ));
     }
 
     @Test

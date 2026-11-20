@@ -594,6 +594,16 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyRejectsPrimaryCatchupRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP, "PRIMARY_CATCHUP"));
+    }
+
+    @Test
+    public void testOnHeadersReadyRejectsReplicaRole() throws Exception {
+        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_REPLICA, "REPLICA"));
+    }
+
+    @Test
     public void testOnHeadersReadySetsAndEchoesOwnedBy() throws Exception {
         assertMemoryLeak(() -> {
             OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
@@ -635,26 +645,6 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
-    public void testOnHeadersReadyUnsupportedOwnedByAnswers400() throws Exception {
-        // OSS has no access control, so the default SecurityContext refuses an owner: a bad request, not a 403.
-        assertMemoryLeak(() -> {
-            String response = ownedByHandshake(AllowAllSecurityContext.INSTANCE, "team", null, false);
-            assertTextReject(response, "400 Bad Request",
-                    "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
-        });
-    }
-
-    @Test
-    public void testOnHeadersReadyRejectsPrimaryCatchupRole() throws Exception {
-        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_PRIMARY_CATCHUP, "PRIMARY_CATCHUP"));
-    }
-
-    @Test
-    public void testOnHeadersReadyRejectsReplicaRole() throws Exception {
-        assertMemoryLeak(() -> assertHandshakeRejectedForRole(QwpEgressMsgKind.ROLE_REPLICA, "REPLICA"));
-    }
-
-    @Test
     public void testOnHeadersReadyTreatsMissingVersionAsUpgradeRequiredWhenResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -678,6 +668,16 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             } finally {
                 Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyUnsupportedOwnedByAnswers400() throws Exception {
+        // OSS has no access control, so the default SecurityContext refuses an owner: a bad request, not a 403.
+        assertMemoryLeak(() -> {
+            String response = ownedByHandshake(AllowAllSecurityContext.INSTANCE, "team", null, false);
+            assertTextReject(response, "400 Bad Request",
+                    "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
         });
     }
 
@@ -968,14 +968,6 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
-    private static void assertTextReject(String response, String status, String reason) {
-        Assert.assertEquals(
-                "HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
-                        + reason.getBytes(StandardCharsets.UTF_8).length + "\r\n\r\n" + reason,
-                response
-        );
-    }
-
     private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -1050,6 +1042,14 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void assertTextReject(String response, String status, String reason) {
+        Assert.assertEquals(
+                "HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
+                        + reason.getBytes(StandardCharsets.UTF_8).length + "\r\n\r\n" + reason,
+                response
+        );
     }
 
     /**

@@ -207,6 +207,17 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testEncodeOwnedBy() {
+        Utf8StringSink sink = new Utf8StringSink();
+        // RFC 3986 unreserved characters stay as they are
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("Team-A_1.x~"), sink);
+        Assert.assertEquals("Team-A_1.x~", sink.toString());
+        // everything else is percent-encoded UTF-8 with upper-case hex digits, '%' and '+' included
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("a b+c%d/é表"), sink);
+        Assert.assertEquals("a%20b%2Bc%25d%2F%C3%A9%E8%A1%A8", sink.toString());
+    }
+
+    @Test
     public void testIsConnectionUpgrade() {
         Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("Upgrade")));
         Assert.assertTrue(QwpIngressHttpProcessor.isConnectionUpgrade(new Utf8String("upgrade")));
@@ -406,29 +417,6 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testResponseWithQwpV1Subprotocol() throws Exception {
-        assertMemoryLeak(() -> {
-            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
-            for (boolean isDurableAckOffered : new boolean[]{false, true}) {
-                int expectedSize = QwpIngressHttpProcessor.responseSize(
-                        acceptKey, 1, null, false, null, null, null, isDurableAckOffered, true);
-                long buf = allocateBuffer(512);
-                try {
-                    int written = QwpIngressHttpProcessor.writeResponse(
-                            buf, acceptKey, 1, null, false, null, null, null, isDurableAckOffered, true);
-                    Assert.assertEquals(expectedSize, written);
-                    String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
-                    String selected = isDurableAckOffered ? "questdb.qwp.durable-ack.v1" : "questdb.qwp.v1";
-                    Assert.assertTrue(response.contains("Sec-WebSocket-Protocol: " + selected + "\r\n"));
-                    Assert.assertEquals(1, response.split("Sec-WebSocket-Protocol:", -1).length - 1);
-                } finally {
-                    freeBuffer(buf, 512);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testResponseWithOwnedByEcho() throws Exception {
         assertMemoryLeak(() -> {
             byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
@@ -459,14 +447,26 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
-    public void testEncodeOwnedBy() {
-        Utf8StringSink sink = new Utf8StringSink();
-        // RFC 3986 unreserved characters stay as they are
-        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("Team-A_1.x~"), sink);
-        Assert.assertEquals("Team-A_1.x~", sink.toString());
-        // everything else is percent-encoded UTF-8 with upper-case hex digits, '%' and '+' included
-        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("a b+c%d/é表"), sink);
-        Assert.assertEquals("a%20b%2Bc%25d%2F%C3%A9%E8%A1%A8", sink.toString());
+    public void testResponseWithQwpV1Subprotocol() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            for (boolean isDurableAckOffered : new boolean[]{false, true}) {
+                int expectedSize = QwpIngressHttpProcessor.responseSize(
+                        acceptKey, 1, null, false, null, null, null, isDurableAckOffered, true);
+                long buf = allocateBuffer(512);
+                try {
+                    int written = QwpIngressHttpProcessor.writeResponse(
+                            buf, acceptKey, 1, null, false, null, null, null, isDurableAckOffered, true);
+                    Assert.assertEquals(expectedSize, written);
+                    String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                    String selected = isDurableAckOffered ? "questdb.qwp.durable-ack.v1" : "questdb.qwp.v1";
+                    Assert.assertTrue(response.contains("Sec-WebSocket-Protocol: " + selected + "\r\n"));
+                    Assert.assertEquals(1, response.split("Sec-WebSocket-Protocol:", -1).length - 1);
+                } finally {
+                    freeBuffer(buf, 512);
+                }
+            }
+        });
     }
 
     @Test
