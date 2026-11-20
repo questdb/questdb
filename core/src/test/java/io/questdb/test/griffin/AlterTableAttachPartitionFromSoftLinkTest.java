@@ -136,6 +136,43 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testAttachSoftLinkedPartitionAfterColumnRenamedAwayAndBack() throws Exception {
+        // RENAME COLUMN gives x a new column name txn and links the files of the attached partitions only. The
+        // partition in cold storage keeps the files of the version it was detached with, which the attach must read.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (ts " + timestampTypeName + ", l LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // a row on another day first: x takes a column name txn above 0, and the attached partition holds all of it
+            execute("INSERT INTO " + tableName + " VALUES ('2022-10-16T00:00:00.000000Z', 0)");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN x INT");
+            execute("INSERT INTO " + tableName + " VALUES ('" + readOnlyPartitionName + "T00:00:00.000000Z', 1, 10), ('"
+                    + readOnlyPartitionName + "T01:00:00.000000Z', 2, 20), ('" + activePartitionName + "T00:00:00.000000Z', 3, 30)");
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "COLD_RENAMED");
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN x TO x_away");
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN x_away TO x");
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionReadOnlyByPartitionTimestamp(readOnlyPartitionTimestamp));
+            }
+            final String expected = replaceTimestampSuffix("""
+                    ts\tl\tx
+                    2022-10-16T00:00:00.000000Z\t0\tnull
+                    2022-10-17T00:00:00.000000Z\t1\t10
+                    2022-10-17T01:00:00.000000Z\t2\t20
+                    2022-10-18T00:00:00.000000Z\t3\t30
+                    """);
+            assertQuery("SELECT * FROM " + tableName).noLeakCheck().timestamp("ts").expectSize().returns(expected);
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertQuery("SELECT * FROM " + tableName).noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreKeepsReadOnlyPartition() throws Exception {
         assertCheckpointRestoreKeepsReadOnlyPartition(false);
     }
