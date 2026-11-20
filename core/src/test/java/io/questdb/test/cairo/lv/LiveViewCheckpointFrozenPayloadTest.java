@@ -641,6 +641,7 @@ public class LiveViewCheckpointFrozenPayloadTest extends AbstractLiveViewTest {
                 seq,
                 batchMinTs,
                 Numbers.LONG_NULL,
+                null,
                 null
         );
         seq++;

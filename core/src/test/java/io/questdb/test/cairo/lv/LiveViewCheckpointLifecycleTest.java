@@ -681,7 +681,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
                 try {
                     writer.append(
                             dir, new ObjList<>(), null, 7, 0, 0, 0, 0, LIFECYCLE_IDENTITY, false, 1, 0,
-                            Numbers.LONG_NULL, Numbers.LONG_NULL, null
+                            Numbers.LONG_NULL, Numbers.LONG_NULL, null, null
                     );
                     Assert.fail("expected replica publication rejection");
                 } catch (CairoException e) {
@@ -1107,7 +1107,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             ) {
                 writer.append(
                         dir, new ObjList<>(), null, 7, 0, 2, 2, 0, LIFECYCLE_IDENTITY, true, 10, 1,
-                        Numbers.LONG_NULL, Numbers.LONG_NULL, null
+                        Numbers.LONG_NULL, Numbers.LONG_NULL, null, null
                 );
                 Assert.fail("a seal over an older-format timeline must refuse");
             } catch (CairoException e) {
@@ -1279,7 +1279,7 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
             functions.add(stub);
             return writer.append(
                     dir, functions, null, 7, 0, maxTimestamp, maxTimestamp, 0, LIFECYCLE_IDENTITY, true, maxTimestamp, 1,
-                    Numbers.LONG_NULL, seedCursorOffset, null
+                    Numbers.LONG_NULL, seedCursorOffset, null, null
             ).getGeneration();
         }
     }

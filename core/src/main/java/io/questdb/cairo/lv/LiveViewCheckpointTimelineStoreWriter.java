@@ -354,55 +354,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      *                         path, so no native capacity and no charge outlive it -
      *                         the writer is shared across every view its worker
      *                         seals
-     */
-    public Result append(
-            @Transient @NotNull Path checkpointsDir,
-            @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow,
-            long definitionTxn,
-            long createdLvSeqTxn,
-            long normalizedBaseSeqTxn,
-            long coveredLvSeqTxn,
-            long historyEpoch,
-            long lifecycleIdentity,
-            boolean primaryOwner,
-            long maxTimestamp,
-            long effectiveLvRowPosition,
-            long batchMinTs,
-            long seedCursorOffset,
-            @Nullable MemoryTracker memoryTracker
-    ) {
-        return append(
-                checkpointsDir,
-                functions,
-                anchorWindow,
-                definitionTxn,
-                createdLvSeqTxn,
-                normalizedBaseSeqTxn,
-                coveredLvSeqTxn,
-                historyEpoch,
-                lifecycleIdentity,
-                primaryOwner,
-                maxTimestamp,
-                effectiveLvRowPosition,
-                batchMinTs,
-                seedCursorOffset,
-                memoryTracker,
-                null
-        );
-    }
-
-    /**
-     * As above, with the ids of the roots the caller sealed only because a repair owed a
-     * root at its frontier. When the generation's second-newest root is one of them, the
-     * appended boundary removes it in the generation it publishes:
-     * {@code [.., X, Y] + Z} publishes {@code [.., Y, Z]}. The removed root releases its
-     * segment references and logical state bytes as a replaced head does, and
-     * {@link Result#getRemovedCheckpointId()} names it. A seal that replaces the head
-     * removes nothing else; an id the timeline does not hold at that position removes
-     * nothing.
-     *
-     * @param repairRootCheckpointIds the caller's repair root ids, or null for none
+     * @param repairRootCheckpointIds the ids of the roots the caller sealed only
+     *                         because a repair owed a root at its frontier, or null
+     *                         for none. When the generation's second-newest root is
+     *                         one of them, the appended boundary removes it in the
+     *                         generation it publishes: {@code [.., X, Y] + Z}
+     *                         publishes {@code [.., Y, Z]}. The removed root releases
+     *                         its segment references and logical state bytes as a
+     *                         replaced head does, and
+     *                         {@link Result#getRemovedCheckpointId()} names it. A
+     *                         seal that replaces the head removes nothing else; an id
+     *                         the timeline does not hold at that position removes
+     *                         nothing
      */
     public Result append(
             @Transient @NotNull Path checkpointsDir,

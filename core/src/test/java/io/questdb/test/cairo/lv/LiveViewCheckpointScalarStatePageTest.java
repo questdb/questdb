@@ -293,6 +293,7 @@ public class LiveViewCheckpointScalarStatePageTest extends AbstractCairoTest {
                     seq,
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
+                    null,
                     null
             );
         }

@@ -856,6 +856,7 @@ public class LiveViewCheckpointSealReplacementTest extends AbstractCairoTest {
                     seq,
                     batchMinTs,
                     Numbers.LONG_NULL,
+                    null,
                     null
             );
         }

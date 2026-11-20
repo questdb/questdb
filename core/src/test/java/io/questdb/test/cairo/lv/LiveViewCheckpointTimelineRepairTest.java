@@ -2751,6 +2751,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                 0,
                                 Numbers.LONG_NULL,
                                 Numbers.LONG_NULL,
+                                null,
                                 null
                         );
                         Assert.fail("expected append definition identity mismatch");

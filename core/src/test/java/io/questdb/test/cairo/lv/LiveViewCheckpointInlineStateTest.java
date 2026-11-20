@@ -473,6 +473,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
                     // seal compare a key against the entry the root below holds.
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
+                    null,
                     null
             );
         }
