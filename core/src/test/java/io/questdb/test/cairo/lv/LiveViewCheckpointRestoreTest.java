@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.log.LogFactory;
@@ -62,6 +63,7 @@ import org.junit.Test;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SQL {@code CHECKPOINT CREATE} / restore (database backup) coverage for live views.
@@ -80,6 +82,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
     private static final String SNAPSHOT_ID = "test-checkpoint-instance";
+    // How long a case waits for a thread it started to reach a point or to finish; only a broken run waits it out.
+    private static final long THREAD_JOIN_MILLIS = 60_000;
     // Installed before the engine is built (setUpStatic) so DatabaseCheckpointAgent captures it. A pure
     // pass-through unless a test arms lvStateCopyHook; testCheckpointWhileBaseAdvancesConverges uses it to
     // land a deterministic base advance during the _lv.s copy.
@@ -461,6 +465,80 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
             assertViewMatchesRecompute(viewSql1, "lv1");
             assertViewMatchesRecompute(viewSql2, "lv2");
+
+            execute("CHECKPOINT RELEASE");
+        });
+    }
+
+    @Test
+    public void testCheckpointCreateFreesViewInvalidatedByBaseDdlDuringItsFreeze() throws Exception {
+        // CHECKPOINT CREATE freezes a live view by taking its refresh latch and then its monitor. A base DROP COLUMN
+        // of a column the view reads invalidates the view under that monitor, which the test thread holds while the
+        // checkpoint waits for it, so the invalidation's free of the view's runtime state loses its latch CAS to the
+        // checkpoint. The checkpoint makes the free once it lets the latch go and leaves nothing of the view in
+        // memory, and the copy it takes afterwards holds the invalidation, which the view committed before it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " +
+                    "SELECT ts, sym, i, sum(i) OVER (PARTITION BY sym ORDER BY ts " +
+                    "ROWS BETWEEN 4 PRECEDING AND CURRENT ROW) AS v FROM base");
+            execute("INSERT INTO base VALUES ('2026-01-01T00:00:01.000000Z', 'AA', 1), ('2026-01-01T00:00:02.000000Z', 'BB', 2)");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            final String expectedRows = """
+                    ts\tsym\ti\tv
+                    2026-01-01T00:00:01.000000Z\tAA\t1\t1.0
+                    2026-01-01T00:00:02.000000Z\tBB\t2\t2.0
+                    """;
+            assertQuery("SELECT * FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertNotNull("the refreshed view must hold an in-memory tier", instance.getInMemoryTier());
+
+            final AtomicReference<Throwable> checkpointError = new AtomicReference<>();
+            final Thread checkpoint = new Thread(() -> {
+                try {
+                    engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                } catch (Throwable th) {
+                    checkpointError.set(th);
+                } finally {
+                    clearWorkerThreadLocals();
+                }
+            }, "lv-checkpoint");
+            synchronized (instance) {
+                checkpoint.start();
+                awaitAgentBlockedHoldingTheLatch(checkpoint, instance);
+                execute("ALTER TABLE base DROP COLUMN i");
+                drainWalQueue();
+                Assert.assertTrue(instance.isInvalid());
+                Assert.assertNotNull("the invalidation's free must lose to the checkpoint's freeze", instance.getCompiledFactory());
+                Assert.assertNotNull(instance.getInMemoryTier());
+                Assert.assertNotNull(instance.getMemoryTracker());
+            }
+            checkpoint.join(THREAD_JOIN_MILLIS);
+            Assert.assertFalse("CHECKPOINT CREATE must complete", checkpoint.isAlive());
+            if (checkpointError.get() != null) {
+                throw new AssertionError("CHECKPOINT CREATE failed", checkpointError.get());
+            }
+            Assert.assertFalse("CHECKPOINT CREATE must end its freeze", instance.isFreezeArmed());
+            Assert.assertNull(instance.getCompiledFactory());
+            Assert.assertNull(instance.getInMemoryTier());
+            Assert.assertNull(instance.getMemoryTracker());
+            assertQuery("SELECT view_status, invalidation_reason, in_mem_bytes, in_mem_rows FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\tin_mem_bytes\tin_mem_rows\n" +
+                            "invalid\tdrop column operation [column=i]\t0\t0\n");
+
+            restoreFromCheckpoint();
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n" +
+                            "invalid\tdrop column operation [column=i]\n");
+            assertQuery("SELECT * FROM lv").noLeakCheck().timestamp("ts").expectSize().returns(expectedRows);
 
             execute("CHECKPOINT RELEASE");
         });
@@ -1192,6 +1270,19 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     // Appends one row to the (ts, sym, x) base table via a direct WalWriter. Used by the base-advance
     // FilesFacade hook, which runs off the SQL execution context and so cannot use execute(INSERT ...).
+    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
+    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
+    // the latch.
+    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
     private static void appendBaseRow(WalWriter walWriter, long ts, CharSequence sym, double x) {
         TableWriter.Row row = walWriter.newRow(ts);
         row.putSym(1, sym);

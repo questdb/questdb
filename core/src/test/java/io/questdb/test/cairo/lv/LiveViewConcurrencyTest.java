@@ -190,6 +190,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
+    // The reason the checkpoint soak's teardown invalidates the view with.
+    private static final String CHECKPOINT_SOAK_INVALIDATION_REASON = "invalidated during the checkpoint soak";
     // The clock sits at 2026-01-01 (the CREATE moment / view lower bound); the data
     // starts a year later so the refresh driver's clock advances can never lift the
     // floor above a data row, even if it spins many times during ingestion.
@@ -684,7 +686,30 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // every thread joins and the refresh quiesces single-threaded, the view
         // still equals the from-scratch recompute.
         final Rnd rnd = TestUtils.generateRandom(LOG);
-        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800));
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.NONE));
+    }
+
+    @Test
+    public void testConcurrentCheckpointDuringRefreshThenDrop() throws Exception {
+        // As testConcurrentCheckpointDuringRefresh, with DROP LIVE VIEW on another thread at a random cycle of the
+        // checkpoint agent while the refresh driver and the writers run, and a thread that holds the view's monitor
+        // on and off, as the view's state file writers do, which keeps the agent on the refresh latch while it waits
+        // for the monitor. The drop closes the view it unregistered through a refresh-latch CAS, and whichever holder
+        // that close loses to - a refresh turn, or the agent's freeze, refused once the view is dropped - closes the
+        // view once it lets the latch go: nothing of the view stays in memory, and the leak check passes with no
+        // close of the test's own.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.DROP));
+    }
+
+    @Test
+    public void testConcurrentCheckpointDuringRefreshThenInvalidation() throws Exception {
+        // As testConcurrentCheckpointDuringRefreshThenDrop, with an invalidation of the view, the base-table writer's
+        // or invalidateLiveView's, in place of the drop. Whichever holder of the refresh latch the invalidation's free
+        // loses to - a refresh turn or the agent's freeze - makes the free once it lets the latch go: the view ends
+        // invalid with nothing in memory.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> runCheckpointDuringRefresh(rnd, 4, 800, CheckpointSoakTeardown.INVALIDATION));
     }
 
     @Test
@@ -2083,6 +2108,96 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-checkpoint-agent");
     }
 
+    // Builds the thread that tears the checkpoint soak's view down: it awaits the barrier and the view's first
+    // in-memory tier, waits until the checkpoint agent has run a number of cycles it draws after that, spins a number
+    // of pauses it draws, and then drops the view or invalidates it, through the base-table writer or
+    // invalidateLiveView as it draws. Logs its draws, so a seed reproduces the run, and sets isTornDown once it is
+    // done, however it ends.
+    private static Thread newCheckpointSoakTeardownThread(
+            Rnd rnd,
+            CheckpointSoakTeardown teardown,
+            LiveViewInstance instance,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicLong agentCycles,
+            AtomicBoolean isTornDown,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final int cycles = rnd.nextInt(64);
+        final int spins = rnd.nextInt(10_000);
+        final boolean isBaseWriter = rnd.nextBoolean();
+        LOG.info().$("LV concurrency checkpoint soak teardown: teardown=").$(teardown.name())
+                .$(", cycles=").$(cycles)
+                .$(", spins=").$(spins)
+                .$(", baseWriter=").$(isBaseWriter).$();
+        return new Thread(() -> {
+            try {
+                barrier.await();
+                // The view has runtime state to free once a refresh turn built its in-memory tier.
+                while (instance.getInMemoryTier() == null && errors.isEmpty()) {
+                    Os.pause();
+                }
+                final long cyclesBefore = agentCycles.get();
+                while (agentCycles.get() - cyclesBefore < cycles && errors.isEmpty()) {
+                    Os.pause();
+                }
+                for (int spin = spins; spin > 0; spin--) {
+                    Os.pause();
+                }
+                if (teardown == CheckpointSoakTeardown.DROP) {
+                    engine.dropLiveView("lv", AllowAllSecurityContext.INSTANCE);
+                } else if (isBaseWriter) {
+                    engine.invalidateLiveViewsForBaseTable(baseToken, CHECKPOINT_SOAK_INVALIDATION_REASON);
+                } else {
+                    engine.invalidateLiveView(instance, CHECKPOINT_SOAK_INVALIDATION_REASON);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                isTornDown.set(true);
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-soak-teardown");
+    }
+
+    // Builds the thread that stands in for the writers of the soak view's state file - the WAL apply job's rewrite of
+    // it, an invalidation's - which hold the view's monitor while they write. Until the teardown is done and the
+    // writers stop, it holds the monitor for a number of pauses it draws, then lets it go for another number it draws.
+    // A checkpoint freeze that takes the refresh latch meanwhile keeps it until the monitor frees up, and that is the
+    // hold the frees of a dropped or invalidated view lose to. Logs its draws, so a seed reproduces the run.
+    private static Thread newViewMonitorHolderThread(
+            Rnd rnd,
+            LiveViewInstance instance,
+            CyclicBarrier barrier,
+            AtomicBoolean running,
+            AtomicBoolean isTornDown,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final int holdSpins = rnd.nextInt(2_000);
+        final int gapSpins = rnd.nextInt(2_000);
+        LOG.info().$("LV concurrency checkpoint soak monitor holder: holdSpins=").$(holdSpins)
+                .$(", gapSpins=").$(gapSpins).$();
+        return new Thread(() -> {
+            try {
+                barrier.await();
+                while (running.get() || !isTornDown.get()) {
+                    synchronized (instance) {
+                        for (int spin = holdSpins; spin > 0; spin--) {
+                            Os.pause();
+                        }
+                    }
+                    for (int spin = gapSpins; spin > 0; spin--) {
+                        Os.pause();
+                    }
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-view-monitor-holder");
+    }
+
     // A checkpoint freeze takes the refresh latch of a refreshed IN MEMORY view and waits for the view's monitor,
     // which this thread holds while it invalidates the view, the base-table writer's way with isBaseWriter,
     // invalidateLiveView's without. The invalidation's free loses its latch CAS to the freeze, and the freeze frees
@@ -2974,7 +3089,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // worker; the try/finally guarantees endCheckpoint so a freeze never leaks and
     // blocks the final quiescence drive. After all threads join and the refresh
     // quiesces single-threaded, the view equals the from-scratch recompute.
-    private void runCheckpointDuringRefresh(Rnd rnd, int numWriters, int rowCount) throws Exception {
+    // A teardown other than NONE invalidates or drops the view on a thread of its
+    // own at a random agent cycle, while another thread holds the view's monitor on
+    // and off as the view's state file writers do, and the agent and the driver run
+    // on until the teardown is done; the view then ends invalid, or gone, with
+    // nothing of it in memory.
+    private void runCheckpointDuringRefresh(Rnd rnd, int numWriters, int rowCount, CheckpointSoakTeardown teardown) throws Exception {
         setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
 
         final int n = 1 + rnd.nextInt(8);
@@ -3002,20 +3122,30 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
         final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
         final AtomicBoolean running = new AtomicBoolean(true);
+        final boolean hasTeardown = teardown != CheckpointSoakTeardown.NONE;
+        // Set once the teardown is done, so the agent and the driver run on until then.
+        final AtomicBoolean isTornDown = new AtomicBoolean(!hasTeardown);
+        final AtomicLong agentCycles = new AtomicLong();
         try {
-            // numWriters writers + the refresh driver + the checkpoint agent,
-            // released together so the freeze lands while ingestion and refresh
-            // are both in flight.
-            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2);
+            // numWriters writers + the refresh driver + the checkpoint agent (+ the
+            // teardown and the monitor holder), released together so the freeze
+            // lands while ingestion and refresh are both in flight.
+            final CyclicBarrier barrier = new CyclicBarrier(numWriters + 2 + (hasTeardown ? 2 : 0));
             final Thread[] writers = new Thread[numWriters];
             for (int w = 0; w < numWriters; w++) {
                 final int batch = 5 + rnd.nextInt(20);
                 writers[w] = newWriterThread(w, numWriters, 0, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
             }
+            final Thread teardownThread = hasTeardown
+                    ? newCheckpointSoakTeardownThread(rnd, teardown, instance, baseToken, barrier, agentCycles, isTornDown, errors)
+                    : null;
+            final Thread monitorHolder = hasTeardown
+                    ? newViewMonitorHolderThread(rnd, instance, barrier, running, isTornDown, errors)
+                    : null;
             final Thread driver = new Thread(() -> {
                 try {
                     barrier.await();
-                    while (running.get()) {
+                    while (running.get() || !isTornDown.get()) {
                         setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                         drainWalQueue();
                         drainJob(job);
@@ -3029,7 +3159,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             final Thread agent = new Thread(() -> {
                 try {
                     barrier.await();
-                    while (running.get()) {
+                    while (running.get() || !isTornDown.get()) {
                         // Mirror DatabaseCheckpointAgent: freeze, (the per-LV file
                         // copy would run here), unfreeze. The finally guarantees
                         // endCheckpoint regardless of how the freeze interleaves.
@@ -3039,6 +3169,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         } finally {
                             instance.endCheckpoint();
                         }
+                        agentCycles.incrementAndGet();
                     }
                 } catch (Throwable th) {
                     errors.add(th);
@@ -3052,10 +3183,18 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
             driver.start();
             agent.start();
+            if (teardownThread != null) {
+                teardownThread.start();
+                monitorHolder.start();
+            }
             for (Thread t : writers) {
                 t.join();
             }
             running.set(false);
+            if (teardownThread != null) {
+                teardownThread.join();
+                monitorHolder.join();
+            }
             driver.join();
             agent.join();
 
@@ -3068,6 +3207,24 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         } finally {
             Misc.free(job);
+        }
+
+        if (teardown == CheckpointSoakTeardown.INVALIDATION) {
+            Assert.assertTrue(instance.isInvalid());
+            TestUtils.assertEquals(CHECKPOINT_SOAK_INVALIDATION_REASON, instance.getInvalidationReason());
+            assertRuntimeStateFreed(instance);
+            assertInvalidWithNoInMemoryRows(CHECKPOINT_SOAK_INVALIDATION_REASON);
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+            return;
+        }
+        if (teardown == CheckpointSoakTeardown.DROP) {
+            Assert.assertTrue(instance.isDropped());
+            assertRuntimeStateFreed(instance);
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            Assert.assertNull(engine.getTableTokenIfExists("lv"));
+            execute("DROP TABLE base");
+            return;
         }
 
         TestUtils.assertSqlCursors(
@@ -5118,6 +5275,11 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Assert.assertTrue("quiesced row_number() read must route through Mode B", cursor.isRoutingEligible());
             }
         }
+    }
+
+    // How the checkpoint soak ends its view while the agent cycles: not at all, by an invalidation, or by DROP LIVE VIEW.
+    private enum CheckpointSoakTeardown {
+        DROP, INVALIDATION, NONE
     }
 
     // Raises the engine's closing flag, once armed, at the next open of a file of the base's timestamp column that a

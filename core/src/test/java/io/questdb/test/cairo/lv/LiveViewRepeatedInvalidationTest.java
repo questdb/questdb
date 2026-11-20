@@ -686,7 +686,7 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
                         ));
                         // The turn's invalidation makes the next write of the state file, once the turn released
                         // the refresh latch. A write ahead of that release fails the wait.
-                        fault.runAtNextStateFileOpen(() -> awaitBlockedHoldingTheLatch(agent.get(), instance));
+                        fault.runAtNextStateFileOpen(() -> awaitAgentBlockedHoldingTheLatch(agent.get(), instance));
                     }
                 });
                 synchronized (instance) {
@@ -735,7 +735,7 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
     // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
     // the latch.
-    private static void awaitBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
         final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
         while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
             if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {

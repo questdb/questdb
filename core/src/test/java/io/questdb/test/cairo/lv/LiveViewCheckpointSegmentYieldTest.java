@@ -38,6 +38,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
@@ -50,6 +51,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -60,6 +62,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
 import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_YIELD_COUNT;
@@ -95,6 +98,10 @@ import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_YIELD_COUNT;
  */
 public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
+    // What startCheckpoint logs when the frees it retries once it lets the refresh latch go fail.
+    private static final String FAILED_FREEZE_FREE_LINE = "could not free live view runtime state after a checkpoint freeze";
+    // The reason the checkpoint freeze cases invalidate their view with.
+    private static final String FREEZE_HOLD_REASON = "invalidated during the freeze";
     // The route a repair took beside the rows it replayed taking it, which is the pair a
     // park holds apart for as many turns as it lasts.
     private static final String REPAIR_READING =
@@ -111,6 +118,8 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     // The one key the injected set carries into the resumed turn, so the park that follows
     // it has a key to copy back and therefore an add() to fail on.
     private static final int SEEDED_GROUP_KEY = 7;
+    // How long a case waits for a thread it started to reach a point or to finish; only a broken run waits it out.
+    private static final long THREAD_JOIN_MILLIS = 60_000;
 
     @Test
     public void testACloseWhoseWriterFreeThrowsStillReleasesEverythingBelowIt() throws Exception {
@@ -1796,6 +1805,110 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCheckpointFreezeDiscardsTheParkedRepairOfAViewInvalidatedDuringItsHold() throws Exception {
+        // A checkpoint freeze takes the refresh latch of the view a repair is parked on and waits for the view's
+        // monitor, and the base-table writer invalidates the view meanwhile. The invalidation's free of the view's
+        // runtime state, which discards the parked repair, loses its latch CAS to the freeze, and the freeze makes
+        // it on its own thread once it lets the latch go: the capture hands its scratch and the payloads it froze
+        // back to the worker's writer, and the view keeps nothing in memory.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                parkAStagedCapture(job);
+                final LiveViewInstance instance = viewInstance();
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                Assert.assertEquals("the parked capture must hold its scratch lease", 1, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertTrue("the parked capture must hold the payloads it froze", writer.getRetainedFrozenPayloadBytesForTest() > 0);
+                final AtomicBoolean isFrozen = new AtomicBoolean();
+                final AtomicReference<Throwable> agentError = new AtomicReference<>();
+                final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+                capture.start();
+                try {
+                    invalidateWhileTheAgentHoldsTheLatch(instance, agent);
+                    joinWithoutError(agent, agentError);
+                    capture.drain();
+                    capture.assertNotLogged(FAILED_FREEZE_FREE_LINE);
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertTrue("the freeze of a view that is not dropped must be published", isFrozen.get());
+                Assert.assertTrue(instance.isFreezeInProgress());
+                Assert.assertNull("the freeze must discard the parked repair", instance.getSuspendedRepair());
+                Assert.assertEquals("the discard must return the capture's scratch lease", 0, writer.getLeasedRepairScratchCountForTest());
+                Assert.assertEquals("the discard must free the payloads the capture froze", 0, writer.getRetainedFrozenPayloadBytesForTest());
+                Assert.assertEquals("the discard must unlink the staged segment", 0, stagedTmpSegmentCount(instance));
+                Assert.assertNull(instance.getCompiledFactory());
+                Assert.assertNull(instance.getInMemoryTier());
+                Assert.assertNull(instance.getMemoryTracker());
+
+                // The worker's next pass finds the repair it parked gone, and leaves the view alone.
+                runOneRefreshPass(job);
+                Assert.assertTrue(instance.isInvalid());
+                TestUtils.assertEquals(FREEZE_HOLD_REASON, instance.getInvalidationReason());
+                Assert.assertNull(instance.getSuspendedRepair());
+                Assert.assertNull(instance.getCompiledFactory());
+                instance.endCheckpoint();
+                Assert.assertFalse(instance.isFreezeArmed());
+                execute("DROP LIVE VIEW lv");
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+            }
+        });
+    }
+
+    @Test
+    public void testCheckpointFreezeSurvivesAFailedFreeOfAParkedRepair() throws Exception {
+        // As testCheckpointFreezeDiscardsTheParkedRepairOfAViewInvalidatedDuringItsHold, but the discard of the
+        // parked repair fails on the freeze's thread. startCheckpoint has published its freeze by then, so it logs
+        // the failure and returns normally: a throw would keep the checkpoint from the endCheckpoint it owes, and the
+        // view would stay frozen with every later DROP parked behind the freeze.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final LogCapture capture = new LogCapture();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                parkAStagedCapture(job);
+                final LiveViewInstance instance = viewInstance();
+                final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
+                final AtomicBoolean isFrozen = new AtomicBoolean();
+                final AtomicReference<Throwable> agentError = new AtomicReference<>();
+                final Thread agent = newCheckpointAgentThread(instance, isFrozen, agentError);
+                final AtomicReference<Thread> failedReleaseThread = new AtomicReference<>();
+                writer.setRepairScratchReleaseHookForTest(() -> {
+                    if (Thread.currentThread() == agent && failedReleaseThread.compareAndSet(null, agent)) {
+                        throw CairoException.critical(0).put("injected repair scratch release failure");
+                    }
+                });
+                capture.start();
+                try {
+                    invalidateWhileTheAgentHoldsTheLatch(instance, agent);
+                    joinWithoutError(agent, agentError);
+                    capture.drain();
+                    Assert.assertEquals(1, capture.countOccurrences(FAILED_FREEZE_FREE_LINE + " [view=lv"));
+                    Assert.assertEquals(1, capture.countOccurrences("injected repair scratch release failure"));
+                } finally {
+                    capture.stop();
+                    writer.setRepairScratchReleaseHookForTest(null);
+                }
+                Assert.assertSame("the discard must fail on the freeze's thread", agent, failedReleaseThread.get());
+                Assert.assertTrue("a freeze whose free failed must still be published", isFrozen.get());
+                Assert.assertTrue(instance.isFreezeInProgress());
+                instance.endCheckpoint();
+                Assert.assertFalse(instance.isFreezeArmed());
+                Assert.assertFalse(instance.isFreezeInProgress());
+
+                // With the freeze ended, DROP LIVE VIEW does not wait for it, and frees what the failed free left.
+                execute("DROP LIVE VIEW lv");
+                Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                Assert.assertNull(instance.getCompiledFactory());
+                Assert.assertNull(instance.getMemoryTracker());
+            }
+        });
+    }
+
+    @Test
     public void testDecliningTheIsolatedRuntimeUnderAParkedLoopLosesNoCorrection() throws Exception {
         // The runtime a parked repair is standing in can drift out from under it, and an
         // operator declining the isolated runtime mid-repair is the deterministic way to
@@ -1919,6 +2032,19 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         });
     }
 
+    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
+    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
+    // the latch.
+    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
     /**
      * Poisons the worker's OWN uniqueness detector - the source {@code suspend()} copies from -
      * so the copy fails on the first park of the next repair, before any session has been
@@ -1986,6 +2112,20 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         groupKeysField.set(uniqueness, new ThrowingGroupKeySet());
     }
 
+    // Holds the view's monitor while the checkpoint agent takes the refresh latch and blocks on that monitor, and
+    // invalidates the view through the base-table writer meanwhile: the invalidation's free, which discards the
+    // repair parked on the view, loses its latch CAS to the agent, which makes it once it lets the latch go.
+    private static void invalidateWhileTheAgentHoldsTheLatch(LiveViewInstance instance, Thread agent) {
+        synchronized (instance) {
+            agent.start();
+            awaitAgentBlockedHoldingTheLatch(agent, instance);
+            engine.invalidateLiveViewsForBaseTable(engine.verifyTableName("tx"), FREEZE_HOLD_REASON);
+            Assert.assertTrue(instance.isInvalid());
+            Assert.assertNotNull("the invalidation's free must lose to the freeze", instance.getSuspendedRepair());
+            Assert.assertNotNull(instance.getCompiledFactory());
+        }
+    }
+
     private static boolean isFrame(StackTraceElement frame, Class<?> frameClass, String methodName) {
         return frameClass.getName().equals(frame.getClassName()) && methodName.equals(frame.getMethodName());
     }
@@ -2003,6 +2143,32 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
             }
         }
         return false;
+    }
+
+    private static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
+        thread.join(THREAD_JOIN_MILLIS);
+        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
+        if (error.get() != null) {
+            throw new AssertionError(thread.getName() + " failed", error.get());
+        }
+    }
+
+    // A thread that runs startCheckpoint on the view, as DatabaseCheckpointAgent does for CHECKPOINT CREATE, and
+    // records whether it published the freeze.
+    private static Thread newCheckpointAgentThread(
+            LiveViewInstance instance,
+            AtomicBoolean isFrozen,
+            AtomicReference<Throwable> error
+    ) {
+        return new Thread(() -> {
+            try {
+                isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-agent");
     }
 
     /**
