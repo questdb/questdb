@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
+import io.questdb.cutlass.http.HttpConstants;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
@@ -218,9 +219,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
     private final HttpFullFatServerConfiguration httpConfiguration;
+    private final boolean isBrowserTlsTerminationEnabled;
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
-    private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
     // builds the principal-qualified select cache key, see SelectCacheKey
     private final StringSink scopedSelectCacheKeySink = new StringSink();
@@ -245,7 +246,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
-        this.qwpBrowserTlsTerminationEnabled = httpConfiguration.isQwpBrowserTlsTerminationEnabled();
+        this.isBrowserTlsTerminationEnabled = httpConfiguration.isBrowserTlsTerminationEnabled();
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
@@ -430,13 +431,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     @Override
     public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
         final HttpRequestHeader requestHeader = context.getRequestHeader();
-        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(HttpConstants.HEADER_ORIGIN))
                 && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
     }
 
     @Override
     public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
         return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
+    public boolean isCrossSiteRequestAccepted() {
+        // validateHandshake() admits browser origins by the QWP policy, which
+        // includes the origins listed in qwp.browser.allowed.origins
+        return true;
     }
 
     @Override
@@ -1567,7 +1575,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     private boolean isSecureConnection(HttpConnectionContext context) {
-        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
+        return context.getSocket().isTlsSessionStarted() || isBrowserTlsTerminationEnabled;
     }
 
     private byte mapErrorStatusAndMark(Throwable e) {
