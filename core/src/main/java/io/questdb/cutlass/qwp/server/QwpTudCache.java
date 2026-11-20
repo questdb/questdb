@@ -58,7 +58,6 @@ import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.WeakClosableObjectPool;
 import io.questdb.std.str.Path;
@@ -1052,19 +1051,24 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
 
     // Checks the owner of a table this connection is about to auto-create, ahead of createTable(), whose DDL
     // listener grants the new table to that owner, see SecurityContext.authorizeAutoCreateOwner(). The refusal
-    // stands only when this connection would create the table. One that another connection is creating, or
-    // has just created, needs no owner from this connection, so wait for it as createTable(ifNotExists) would,
-    // and return it. Returns null when this connection may create the table.
-    private TableToken authorizeOwnerOrAwaitTable(SecurityContext securityContext, CharSequence tableName) {
+    // stands only when this connection would create the table. A table another connection has just created
+    // needs no owner from this connection, so this method returns it. A table another operation is still
+    // creating gets a retriable refusal instead of a wait: nothing bounds how long the operation holds the
+    // name, and a wait would pin this I/O thread for all that time. The client replays the frame, which then
+    // finds the table. Returns null when this connection may create the table.
+    private TableToken authorizeOwnerOrGetTable(SecurityContext securityContext, CharSequence tableName) {
         try {
             securityContext.authorizeAutoCreateOwner();
             return null;
         } catch (CairoException e) {
-            final TableNameRegistry tableNameRegistry = engine.getTableNameRegistry();
-            TableToken tableToken;
-            while ((tableToken = tableNameRegistry.getTableToken(tableName)) == TableNameRegistry.LOCKED_TOKEN) {
-                // another connection holds the name while it creates the table
-                Os.pause();
+            final TableToken tableToken = engine.getTableNameRegistry().getTableToken(tableName);
+            if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
+                // neither an authorization error nor a schema mismatch, so the client retries it, see
+                // QwpIngressProcessorState.cairoExceptionStatus()
+                throw CairoException.nonCritical()
+                        .put("table is being created, cannot ingest [table=")
+                        .put(tableName)
+                        .put(']');
             }
             if (tableToken == null || tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
                 throw e;
@@ -1185,7 +1189,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                     return null;
                 }
             }
-            tableToken = authorizeOwnerOrAwaitTable(securityContext, tableNameUtf16);
+            tableToken = authorizeOwnerOrGetTable(securityContext, tableNameUtf16);
             if (tableToken == null) {
                 tableToken = engine.createTable(securityContext, ddlMem, path, true, tsa, false, TableUtils.TABLE_KIND_REGULAR_TABLE);
             }

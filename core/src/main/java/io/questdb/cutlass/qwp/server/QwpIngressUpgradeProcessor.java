@@ -141,15 +141,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     // block would leave it null at the time the precomputation runs.
     private static final byte[] HTTP_HEADER_END = "\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
     // Precomputed full 400 Bad Request responses for each handshake validation
-    // error. validateHandshake returns one of the ERROR_ singletons by reference,
-    // and the reject path memcpys the matching response directly into the send
-    // buffer. Replaces a per-reject triple-allocation (reason.getBytes +
-    // Integer.toString + contentLength.getBytes) with a zero-GC lookup so
-    // probe / attack traffic does not produce GC pressure on the connect path.
+    // error and for a malformed X-QWP-Owned-By. validateHandshake returns one of
+    // the ERROR_ singletons by reference, negotiateOwnedBy passes
+    // ERROR_INVALID_OWNED_BY, and the reject path memcpys the matching response
+    // directly into the send buffer. Replaces a per-reject triple-allocation
+    // (reason.getBytes + Integer.toString + contentLength.getBytes) with a zero-GC
+    // lookup so probe / attack traffic does not produce GC pressure on the
+    // connect path.
     private static final byte[] BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CONNECTION_MUST_CONTAIN_UPGRADE);
     private static final byte[] BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED);
+    private static final byte[] BAD_REQUEST_RESPONSE_INVALID_OWNED_BY =
+            precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY =
             precomputeBadRequestResponse(QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY);
     private static final byte[] BAD_REQUEST_RESPONSE_INVALID_UPGRADE_HEADER_VALUE =
@@ -1099,7 +1103,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
     }
 
     // Reference-identity switch on the singleton ERROR_ String constants
-    // returned by QwpWebSocketHttpProcessor.validateHandshake. Returns the
+    // returned by QwpWebSocketHttpProcessor.validateHandshake, and on
+    // ERROR_INVALID_OWNED_BY of negotiateOwnedBy. Returns the
     // pre-built 400 response for known errors, null for arbitrary text. The
     // returned byte[] is shared and read-only -- copy bytes into the response
     // buffer, do not mutate.
@@ -1112,6 +1117,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     BAD_REQUEST_RESPONSE_CONNECTION_MUST_CONTAIN_UPGRADE;
             case QwpIngressHttpProcessor.ERROR_CROSS_ORIGIN_NOT_ALLOWED ->
                     BAD_REQUEST_RESPONSE_CROSS_ORIGIN_NOT_ALLOWED;
+            case QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY -> BAD_REQUEST_RESPONSE_INVALID_OWNED_BY;
             case QwpIngressHttpProcessor.ERROR_INVALID_SEC_WEBSOCKET_KEY ->
                     BAD_REQUEST_RESPONSE_INVALID_SEC_WEBSOCKET_KEY;
             case QwpIngressHttpProcessor.ERROR_INVALID_UPGRADE_HEADER_VALUE ->
@@ -2531,7 +2537,12 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         ownedByEchoSink.clear();
         if (!QwpIngressHttpProcessor.decodeOwnedBy(requestHeader, ownedByUtf8Sink, ownedBySink)) {
             LOG.error().$("WebSocket upgrade names a malformed owner [fd=").$(context.getFd()).I$();
-            stageTextReject(context, bufferAddr, bufferSize, false, QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY);
+            // a precomputed response, so a malformed owner allocates nothing
+            final int bytesWritten = writeBadRequestResponse(bufferAddr, bufferSize, QwpIngressHttpProcessor.ERROR_INVALID_OWNED_BY);
+            if (bytesWritten < 0) {
+                throw responseDoesNotFitSendBuffer(context.getFd(), "400 bad request response", bufferSize, BAD_REQUEST_RESPONSE_INVALID_OWNED_BY.length);
+            }
+            stageReject(context, bytesWritten);
             return false;
         }
         if (ownedBySink.length() == 0) {

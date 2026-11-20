@@ -476,6 +476,15 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyFailsHardWhenMalformedOwnedByResponseDoesNotFitBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            assertOwnedByRejectDoesNotFitBuffer(securityContext, "%zz", "400 bad request response");
+            Assert.assertNull(securityContext.owner);
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyFailsHardWhenMisdirectedRequestResponseDoesNotFitBuffer() throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(QwpEgressMsgKind.ROLE_REPLICA));
@@ -502,6 +511,21 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    @Test
+    public void testOnHeadersReadyFailsHardWhenRefusedOwnedByResponseDoesNotFitBuffer() throws Exception {
+        assertMemoryLeak(() -> {
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext("bob is not part of group team");
+            assertOwnedByRejectDoesNotFitBuffer(securityContext, "team", "403 forbidden response");
+            Assert.assertNull(securityContext.owner);
+        });
+    }
+
+    @Test
+    public void testOnHeadersReadyFailsHardWhenUnsupportedOwnedByResponseDoesNotFitBuffer() throws Exception {
+        // without access control the owner cannot be set: a 400, which does not fit either
+        assertMemoryLeak(() -> assertOwnedByRejectDoesNotFitBuffer(AllowAllSecurityContext.INSTANCE, "team", "400 bad request response"));
     }
 
     @Test
@@ -578,8 +602,9 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     @Test
     public void testOnHeadersReadyRejectsMalformedOwnedBy() throws Exception {
         assertMemoryLeak(() -> {
-            // a bad or truncated percent escape, a lone UTF-8 lead byte, an empty name
-            for (String value : new String[]{"%zz", "team%4", "%", "%C3", ""}) {
+            // a bad or truncated percent escape, a lone UTF-8 lead byte, an empty name; '/' sorts below every hex digit,
+            // and in "%4g" only the second digit is bad
+            for (String value : new String[]{"%zz", "%/0", "%4g", "team%4", "%", "%C3", ""}) {
                 OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
                 String response = ownedByHandshake(securityContext, value, null, false);
                 assertTextReject(response, "400 Bad Request",
@@ -1044,6 +1069,39 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    // Drives one handshake that names an owner in X-QWP-Owned-By against a send buffer too small for the reject,
+    // and asserts that the upgrade fails hard before it sends anything or allocates processor state.
+    private static void assertOwnedByRejectDoesNotFitBuffer(
+            SecurityContext securityContext,
+            String ownedByHeaderValue,
+            String expectedResponseType
+    ) throws Exception {
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, TINY_BUFFER_SIZE))
+        ) {
+            context.securityContext = securityContext;
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            header.setHeader("X-QWP-Owned-By", ownedByHeaderValue);
+
+            assertBufferTooSmallFailure(processor, context, expectedResponseType);
+
+            Assert.assertEquals(0, context.getMockRawSocket().sentSize);
+            Assert.assertFalse(context.isSwitchProtocolCalled());
+            Assert.assertNull(lv.get(context));
+        } finally {
+            Unsafe.free(bufferAddr, TINY_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     private static void assertTextReject(String response, String status, String reason) {
         Assert.assertEquals(
                 "HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
@@ -1166,7 +1224,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             SecurityContext securityContext,
             @Nullable String headerValue,
             @Nullable String urlParamValue,
-            boolean expectAccepted
+            boolean isAcceptExpected
     ) throws Exception {
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
         QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
@@ -1190,7 +1248,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             }
 
             processor.onHeadersReady(context);
-            if (expectAccepted) {
+            if (isAcceptExpected) {
                 processor.onRequestComplete(context);
                 Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
                 Assert.assertNotNull("state must be populated after successful handshake", lv.get(context));
