@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -2176,6 +2177,36 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholePastWorkLimitByFilteredOutputs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w_filtered (x LONG, b LONG)");
+            // A read that filters on one of the constants gives the sub-query under them the column of the same name
+            // alone, and each of the 2048 outputs reads all 1024 constants through m. The second compile runs out of
+            // work as it walks the outputs of the constants, and keeps whole every sub-query it decides on from then on,
+            // so the outputs of the columns of that sub-query no longer matter: the sets of the propagation hold
+            // entries in proportion to the constants and the outputs, not to their product.
+            final ObjList<IntHashSet> sets = new ObjList<>();
+            SqlOptimiser.setKeptWholePoolListenerForTesting(object -> {
+                if (object instanceof IntHashSet set) {
+                    sets.add(set);
+                }
+            });
+            try {
+                execute("CREATE VIEW v AS (" + filteredConstants(1024, 2048) + ")");
+            } finally {
+                SqlOptimiser.setKeptWholePoolListenerForTesting(null);
+            }
+            drainWalAndViewQueues();
+            Assert.assertEquals("{w_filtered=[?x, b]}", dependenciesOf("v"));
+            long entryCount = 0;
+            for (int i = 0, n = sets.size(); i < n; i++) {
+                entryCount += sets.getQuick(i).size();
+            }
+            Assert.assertTrue(entryCount + " entries in the sets of the propagation", entryCount < 16 * (1024 + 2048));
+        });
+    }
+
+    @Test
     public void testSubQueryKeptWholePastWorkLimitByNoRead() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE w_chain (ts TIMESTAMP, c1 LONG, c2 LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -3124,6 +3155,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         Assert.assertTrue(visits16 + " visits with 16 LATERAL joins, " + visits8 + " with 8", visits16 < 3 * visits8);
     }
 
+    // the sum of the columns a(lo) to a(hi - 1), added in pairs
+    private static void balancedSum(StringSink sink, int lo, int hi) {
+        if (hi - lo == 1) {
+            sink.put('a').put(lo);
+            return;
+        }
+        final int mid = (lo + hi) >>> 1;
+        sink.put('(');
+        balancedSum(sink, lo, mid);
+        sink.put(" + ");
+        balancedSum(sink, mid, hi);
+        sink.put(')');
+    }
+
     // the SELECT of the columns a1 to a(n-1) of a sub-query whose column a(i+1) adds the term to ai, and a constant
     private static String chainedColumns(int columnCount, String term) {
         final StringSink viewSql = new StringSink();
@@ -3186,6 +3231,27 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             return e.getPosition() + ": " + e.getFlyweightMessage();
         }
         throw new AssertionError("the statement did not fail: " + sql);
+    }
+
+    // The SELECT of outputs that each add their number to m, the sum of the constants a1 to an of a SELECT that names
+    // them like the columns of the sub-query under it, each of which takes x of w_filtered. The sum adds the constants
+    // in pairs: a chain of a thousand additions takes seconds to compile.
+    private static String filteredConstants(int constantCount, int outputCount) {
+        final StringSink viewSql = new StringSink();
+        for (int i = 1; i <= outputCount; i++) {
+            viewSql.put(i == 1 ? "SELECT " : ", ").put("m + ").put(i).put(" o").put(i);
+        }
+        viewSql.put(", b FROM (SELECT ");
+        balancedSum(viewSql, 1, constantCount + 1);
+        viewSql.put(" m, b FROM (SELECT ");
+        for (int i = 1; i <= constantCount; i++) {
+            viewSql.put("1 a").put(i).put(", ");
+        }
+        viewSql.put("b FROM (SELECT ");
+        for (int i = 1; i <= constantCount; i++) {
+            viewSql.put("x a").put(i).put(", ");
+        }
+        return viewSql.put("b FROM w_filtered)))").toString();
     }
 
     // Records the SELECT as the definition of the view v with CREATE VIEW, ALTER VIEW and CREATE OR REPLACE

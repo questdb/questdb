@@ -10133,7 +10133,11 @@ public class SqlOptimiser implements Mutable {
                 recordKeptWholeOrigins(joinModel, joinColumnNames.getQuick(i), keptOutputs);
             }
         }
-        if (keptOutputs == outputs) {
+        // The loop below walks the outputs of the columns the loop above took the work of, see takeKeptWholeWork(). Past
+        // the limit of the work, the loop above may have walked only some of them, and the propagation keeps whole every
+        // sub-query it decides on from then on, see emitKeptWholeProjection(), so no decision reads the outputs the loop
+        // below would give the columns of the join model.
+        if (keptOutputs == outputs || isKeptWholeWorkExhausted()) {
             return;
         }
         // the column of the join model a filter names serves the outputs of the filtered column
