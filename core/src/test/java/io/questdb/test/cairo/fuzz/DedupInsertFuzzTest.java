@@ -1657,8 +1657,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 }
 
                 final int dedupMode = isSkipMode ? TableUtils.DEDUP_MODE_SKIP : TableUtils.DEDUP_MODE_UPSERT;
-                // initial rows are 1 second apart, see FuzzRunner.createInitialTable()
-                long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1);
+                // initial rows are 1 second / partitions-per-day apart, see FuzzRunner.createInitialTable()
+                long initialStep = ColumnType.getTimestampDriver(fuzzer.getTimestampType()).fromSeconds(1) / fuzzer.getPartitionsPerDay();
                 transactions = uniqueInserts(transactions, initialMinTs, initialMaxTs, initialStep, dedupMode);
                 setupWriterJobs();
                 sharedWorkerPool.start(LOG);

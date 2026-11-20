@@ -430,12 +430,13 @@ public class PartitionByTest {
                 timestampDriver.parseFloorLiteral("2013-03-31T17:55"),
                 PartitionBy.parsePartitionDirName("2013-03-31T17:57:30", timestampType, PartitionBy.MINUTE_5, 0, -1)
         );
-        assertParseFails("2013-03-31T17", PartitionBy.MINUTE_15);
-        try {
-            PartitionBy.parsePartitionDirName("2013-03-31T17:6", timestampType, PartitionBy.MINUTE_15, 0, -1);
-            Assert.fail();
-        } catch (CairoException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-ddTHHmm' expected");
+        for (String name : new String[]{"2013-03-31T17", "2013-03-31T17:6"}) {
+            try {
+                PartitionBy.parsePartitionDirName(name, timestampType, PartitionBy.MINUTE_15, 0, -1);
+                Assert.fail(name);
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "'yyyy-MM-ddTHHmm' expected");
+            }
         }
     }
 

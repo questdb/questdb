@@ -898,8 +898,8 @@ public class FuzzTransactionGenerator {
     }
 
     /**
-     * Converts the day {@link #convertCutoffTimestamp} picks, or with {@code isBeforeLastPartition} the day before
-     * the one taking writes, two days before it one time in five, and returns the cutoff timestamp.
+     * Converts the partition {@link #convertCutoffTimestamp} picks, or with {@code isBeforeLastPartition} the partition
+     * before the one taking writes, two partitions before it one time in five, and returns the cutoff timestamp.
      */
     private static long generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
@@ -907,10 +907,10 @@ public class FuzzTransactionGenerator {
     ) {
         final long cutoffTimestamp;
         if (isBeforeLastPartition) {
-            // The WHERE clause matches partition timestamps in (cutoff - 1 day, cutoff), and the tables partition
-            // by DAY: a cutoff just before the day of lastTimestamp selects the partition before the one taking writes
-            final long dayBeforeLastPartition = lastTimestamp - lastTimestamp % partitionDuration - 1;
-            cutoffTimestamp = rnd.nextInt(100) <= 20 ? dayBeforeLastPartition - partitionDuration : dayBeforeLastPartition;
+            // The WHERE clause matches partition timestamps in (cutoff - partitionDuration, cutoff): a cutoff just
+            // before the partition of lastTimestamp selects the partition before the one taking writes
+            final long partitionBeforeLast = lastTimestamp - lastTimestamp % partitionDuration - 1;
+            cutoffTimestamp = rnd.nextInt(100) <= 20 ? partitionBeforeLast - partitionDuration : partitionBeforeLast;
         } else {
             cutoffTimestamp = convertCutoffTimestamp(minTimestamp, lastTimestamp, partitionDuration, rnd);
         }
@@ -925,8 +925,8 @@ public class FuzzTransactionGenerator {
 
 
     /**
-     * Converts every day before the one that {@code lastTimestamp} falls in, to parquet or to native, one transaction a
-     * day, and returns the next wait barrier version.
+     * Converts every partition before the one that {@code lastTimestamp} falls in, to parquet or to native, one
+     * transaction a partition, and returns the next wait barrier version.
      */
     private static int generateConvertEveryDay(
             ObjList<FuzzTransaction> transactionList,
@@ -937,10 +937,10 @@ public class FuzzTransactionGenerator {
             long partitionDuration,
             boolean isToParquet
     ) {
-        for (long day = minTimestamp - minTimestamp % partitionDuration, frontDay = lastTimestamp - lastTimestamp % partitionDuration; day < frontDay; day += partitionDuration) {
+        for (long partitionTs = minTimestamp - minTimestamp % partitionDuration, frontPartitionTs = lastTimestamp - lastTimestamp % partitionDuration; partitionTs < frontPartitionTs; partitionTs += partitionDuration) {
             final FuzzTransaction transaction = new FuzzTransaction();
-            // the operations convert the day that starts in (cutoff - 1 day, cutoff)
-            final long cutoffTimestamp = day + partitionDuration - 1;
+            // the operations convert the partition that starts in (cutoff - partitionDuration, cutoff)
+            final long cutoffTimestamp = partitionTs + partitionDuration - 1;
             transaction.operationList.add(isToParquet
                     ? new FuzzConvertPartitionToParquetOperation(cutoffTimestamp, partitionDuration)
                     : new FuzzConvertPartitionToNativeOperation(cutoffTimestamp, partitionDuration));

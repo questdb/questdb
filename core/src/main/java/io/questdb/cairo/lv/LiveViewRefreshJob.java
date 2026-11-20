@@ -6253,10 +6253,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // one: the head, the cadence counters and the batch-minimum the next seal
             // shares chunks against all stay where they are, and the next cycle to
             // reach a higher timestamp seals this cycle's rows along with its own.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.debug().$("live view head checkpoint boundary not above head, seal skipped [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", head=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), instance.getHeadCheckpointMaxTs())
-                    .$(", candidate=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), batchMaxTs).I$();
+                    .$(", head=").$ts(driver, instance.getHeadCheckpointMaxTs())
+                    .$(", candidate=").$ts(driver, batchMaxTs).I$();
         } catch (Throwable t) {
             // Derived state: the seal failed, so the head and the cadence counters
             // stay parked on the previous root and the next eligible cycle seals
@@ -6313,6 +6314,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long durableBaseSeqTxn
     ) {
         final String viewName = instance.getDefinition().getViewName();
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final long predecessorMaxTs = restored.maxTimestamp;
         final long predecessorCheckpointId = restored.checkpointId;
         final long corruptCeilingMaxTs = restored.corruptCeilingMaxTs;
@@ -6470,14 +6472,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             capture = Misc.free(capture);
             LOG.info().$("reconstructed corrupt live view checkpoint roots [view=")
                     .$(viewName)
-                    .$(", predecessorMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), predecessorMaxTs)
-                    .$(", corruptCeilingMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), corruptCeilingMaxTs)
+                    .$(", predecessorMaxTs=").$ts(driver, predecessorMaxTs)
+                    .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
                     .$(", roots=").$(boundaries.size()).I$();
             return true;
         } catch (Throwable t) {
             LOG.critical().$("could not reconstruct corrupt live view checkpoint roots [view=")
                     .$(viewName)
-                    .$(", corruptCeilingMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), corruptCeilingMaxTs)
+                    .$(", corruptCeilingMaxTs=").$ts(driver, corruptCeilingMaxTs)
                     .$(", error=").$(t).I$();
             return false;
         } finally {
@@ -6632,6 +6634,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long anchorMaxTs,
             long anchorCheckpointId
     ) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         try (Path checkpointsDir = new Path()) {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -6652,14 +6655,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (CairoException ce) {
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$safe(ce.getFlyweightMessage()).I$();
             return Numbers.LONG_NULL;
         } catch (Throwable t) {
             LOG.critical().$("could not restore live view O3 resume anchor [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", anchorMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), anchorMaxTs)
+                    .$(", anchorMaxTs=").$ts(driver, anchorMaxTs)
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
@@ -6917,6 +6920,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * one generation pin inside the timeline reader.
      */
     private void tryRestoreFromTimeline(LiveViewInstance instance, WindowRecordCursorFactory windowFactory) {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
         final long durableBaseSeqTxn = instance.getAppliedWatermark();
         final long durableFrontierTimestamp;
         final long durableLvRowCount;
@@ -7022,8 +7026,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // below, which still derives a correct view from the applied base.
                 LOG.error().$("live view checkpoint restore fell back past corrupt roots, reconstructing [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", predecessorMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), restored.maxTimestamp)
-                        .$(", corruptCeilingMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), restored.corruptCeilingMaxTs).I$();
+                        .$(", predecessorMaxTs=").$ts(driver, restored.maxTimestamp)
+                        .$(", corruptCeilingMaxTs=").$ts(driver, restored.corruptCeilingMaxTs).I$();
                 if (!reconstructCorruptCheckpointRoots(instance, windowFactory, restored, durableBaseSeqTxn)) {
                     throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                             .put("live view checkpoint corrupt-root reconstruction failed");
@@ -7112,8 +7116,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(instance.getDefinition().getViewName())
                     .$(", generation=").$(restored.generation)
                     .$(", checkpointId=").$(restored.checkpointId)
-                    .$(", boundary=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), restored.maxTimestamp)
-                    .$(", frontier=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), durableFrontierTimestamp)
+                    .$(", boundary=").$ts(driver, restored.maxTimestamp)
+                    .$(", frontier=").$ts(driver, durableFrontierTimestamp)
                     .$(", baseSeqTxn=").$(durableBaseSeqTxn)
                     .$(", replayedRows=").$(replayedRows).I$();
         } catch (Throwable t) {
@@ -8191,9 +8195,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // sealedMaxTs gate above normally catches that, so reaching here means the
             // mirror trails the timeline; either way there is nothing to seal and the
             // next turn that reaches a higher timestamp seals this turn's rows too.
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             LOG.debug().$("live view seed checkpoint boundary not above head, seal skipped [view=")
                     .$(instance.getDefinition().getViewName())
-                    .$(", candidate=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), batchMaxTs).I$();
+                    .$(", candidate=").$ts(driver, batchMaxTs).I$();
         } catch (Throwable t) {
             LOG.critical().$("could not write live view seed checkpoint [view=")
                     .$(instance.getDefinition().getViewName())
@@ -9845,6 +9850,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         @Override
         public boolean findAnchorBelow(long ceilTs, @NotNull LiveViewCheckpointTimelineEntry out) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType());
             long ceiling = ceilTs;
             try (Path checkpointsDir = new Path()) {
                 checkpointsDir.of(engine.getConfiguration().getDbRoot())
@@ -9863,7 +9869,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                         LOG.info().$("live view resume anchor no longer covers its timestamp group, re-anchoring below it [view=")
                                 .$(instance.getDefinition().getViewName())
-                                .$(", anchorMaxTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), out.maxTimestamp)
+                                .$(", anchorMaxTs=").$ts(driver, out.maxTimestamp)
                                 .$(", anchorCheckpointId=").$(out.checkpointId)
                                 .$(", lvRowPosition=").$(lvRowPosition).I$();
                         // Strictly below the boundary just rejected, which is the
@@ -9878,7 +9884,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } catch (Throwable t) {
                 LOG.info().$("live view checkpoint timeline holds no resume anchor [view=")
                         .$(instance.getDefinition().getViewName())
-                        .$(", ceilTs=").$ts(ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()), ceilTs)
+                        .$(", ceilTs=").$ts(driver, ceilTs)
                         .$(", reason=").$(t).I$();
                 return false;
             }
