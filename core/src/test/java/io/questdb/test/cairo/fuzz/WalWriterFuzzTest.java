@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -590,7 +591,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // there. The purge log kept that timestamp in microseconds only, and the purge job after the run looked for
         // the files in a directory that does not exist. The fuzz test drew the default symbol index type from other
         // seeds. The fuzz plants no IO failure: one that hit the purge job would lose the purge log, and the check
-        // before VACUUM TABLE would skip.
+        // before VACUUM TABLE would skip. The seeds were found on DAY partitions.
+        fuzzer.setPartitionBy(PartitionBy.DAY);
         runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 2414605847469761L, 1794246069604L), "POSTING EF", null, 0, false);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
     }
@@ -600,6 +602,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // The run above, with a purge log as a version before partition_timestamp_raw left it: its rows keep the
         // timestamp of the split partition 2022-02-27T093239-229558942.98 of the non-WAL table in microseconds only,
         // and the purge job after the run locates the partition in a snapshot of the table.
+        fuzzer.setPartitionBy(PartitionBy.DAY);
         runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 2414605847469761L, 1794246069604L), "POSTING EF", null, 0, true);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
     }
@@ -1529,6 +1532,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // runs they pin.
     private void replayPinnedSeedsWithoutVacuum() {
         fuzzer.setVacuumProbability(0);
+        // the seeds were found on DAY partitions, from before the fuzz picked the partitioning
+        fuzzer.setPartitionBy(PartitionBy.DAY);
     }
 
     private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {
