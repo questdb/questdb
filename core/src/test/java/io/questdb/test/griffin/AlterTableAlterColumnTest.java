@@ -1086,6 +1086,29 @@ public class AlterTableAlterColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSetParquetEncodingReachesPooledReader() throws Exception {
+        // A pooled reader opened before SET PARQUET reloads its metadata on reuse. SET PARQUET changes
+        // no column file, so the reload keeps the column object and must still pick up the new config.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals(0, reader.getMetadata().getColumnMetadata(1).getParquetEncodingConfig());
+            }
+
+            execute("ALTER TABLE t ALTER COLUMN v SET PARQUET(DELTA_BINARY_PACKED, ZSTD(3))");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("t")) {
+                int config = reader.getMetadata().getColumnMetadata(1).getParquetEncodingConfig();
+                Assert.assertTrue(TableUtils.isParquetConfigExplicit(config));
+                Assert.assertEquals(ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, TableUtils.getParquetConfigEncoding(config));
+                Assert.assertEquals(5, TableUtils.getParquetConfigCompression(config));
+                Assert.assertEquals(4, TableUtils.getParquetConfigCompressionLevel(config));
+            }
+        });
+    }
+
+    @Test
     public void testSetParquetEncodingThenConvert() throws Exception {
         assertMemoryLeak(() -> {
             inputRoot = root;
