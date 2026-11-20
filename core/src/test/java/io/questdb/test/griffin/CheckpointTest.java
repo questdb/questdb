@@ -7028,9 +7028,12 @@ public class CheckpointTest extends AbstractCairoTest {
             // The marker is created before the rebuild starts; every other failure waits for the rebuild
             // to remove the old .pk
             final boolean isMarkerFailure = failingFile.endsWith(".rebuild");
+            // The restore checks the other partition on a parallel worker, which opens its own .pk while
+            // this one rebuilds; only the files of the partition under rebuild arm and fail
+            final String keyFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + "s.pk";
+            final String failingFileSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR + failingFile;
             final AtomicBoolean isArmed = new AtomicBoolean(isMarkerFailure);
             final AtomicInteger failures = new AtomicInteger();
-            final String partDirSuffix = Files.SEPARATOR + partDir.getName() + Files.SEPARATOR;
             final FilesFacade failingFacade = new TestFilesFacadeImpl() {
                 @Override
                 public long openRO(LPSZ name) {
@@ -7044,7 +7047,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
                 @Override
                 public boolean removeQuiet(LPSZ name) {
-                    if (Utf8s.endsWithAscii(name, partDirSuffix + "s.pk")) {
+                    if (Utf8s.endsWithAscii(name, keyFileSuffix)) {
                         isArmed.set(true);
                     }
                     return super.removeQuiet(name);
@@ -7056,7 +7059,7 @@ public class CheckpointTest extends AbstractCairoTest {
                 }
 
                 private boolean fails(LPSZ name) {
-                    if (isArmed.get() && Utf8s.endsWithAscii(name, partDirSuffix + failingFile)) {
+                    if (isArmed.get() && Utf8s.endsWithAscii(name, failingFileSuffix)) {
                         failures.incrementAndGet();
                         return true;
                     }
