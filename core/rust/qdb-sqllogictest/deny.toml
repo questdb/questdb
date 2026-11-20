@@ -25,6 +25,8 @@ ignore = [
     { id = "RUSTSEC-2026-0179", reason = "postgres-protocol SCRAM iteration-count DoS from a malicious server; harness talks only to a trusted local QuestDB" },
     { id = "RUSTSEC-2026-0180", reason = "postgres-protocol hstore decode panic, DoS from a malicious server; harness talks only to a trusted local QuestDB" },
     { id = "RUSTSEC-2026-0190", reason = "anyhow Error::downcast_mut unsoundness, not called in test harness" },
+    { id = "RUSTSEC-2026-0542", reason = "humantime is used by the vendored sqllogictest crate, test-only" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono comes from pg_interval, postgres-types and sqllogictest-engines, test-only" },
 ]
 
 [licenses]

@@ -416,8 +416,20 @@ public class PartitionGeometry implements Closeable, Mutable {
 
     public void addPiece(long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros) {
         assert pendingRec != NO_PARTITION : "addPiece outside beginUpdate/commitUpdate";
-        assert pending.size() == 0 || tsLo > pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO)
-                : "pieces must ascend by tsLo";
+        // Pieces are looked up by tsLo, so two pieces starting on one timestamp would be ambiguous to readers.
+        // A hard check, not an assert: publishing such a list in production would corrupt reads silently.
+        if (pending.size() > 0) {
+            final long prevTsLo = pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_TS_LO);
+            if (tsLo <= prevTsLo) {
+                final int partitionIndex = pendingRec;
+                abandonUpdate();
+                throw CairoException.critical(0)
+                        .put("pieces must ascend by tsLo [partitionIndex=").put(partitionIndex)
+                        .put(", tsLo=").put(tsLo)
+                        .put(", prevTsLo=").put(prevTsLo)
+                        .put(']');
+            }
+        }
         final long cumulativeLo = pending.size() == 0
                 ? 0
                 : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)

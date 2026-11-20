@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
@@ -201,7 +202,6 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(setUpRnd));
         super.setUp();
         fuzzer.withDb(engine, sqlExecutionContext);
-        fuzzer.clearSeeds();
     }
 
     @After
@@ -300,10 +300,15 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 .replace('=', '_');
     }
 
+    protected void haltWorkerPool() {
+        sharedWorkerPool.halt();
+        fuzzer.setHasPoolColumnPurgeJob(false);
+    }
+
     protected void runFuzz(Rnd rnd) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
@@ -312,7 +317,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(getTestName(), rnd);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -320,14 +325,14 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void runFuzz(Rnd rnd, String tableNameBase, int tableCount) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
-                WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+                setupWriterJobs();
                 WorkerPoolUtils.setupAsyncMunmapJob(sharedWorkerPool, engine);
                 sharedWorkerPool.start(LOG);
 
                 setZeroWalPurgeInterval();
                 fuzzer.runFuzz(rnd, tableNameBase, tableCount, false, false);
             } finally {
-                sharedWorkerPool.halt();
+                haltWorkerPool();
             }
         });
     }
@@ -525,6 +530,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
         long dataAppendPageSize = configuration.getDataAppendPageSize();
         LOG.info().$("dataAppendPageSize=").$(dataAppendPageSize).$();
+    }
+
+    protected void setupWriterJobs() throws SqlException {
+        WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
+        fuzzer.setHasPoolColumnPurgeJob(!engine.getConfiguration().disableColumnPurgeJob());
     }
 
     // Joins every job the caller started, including a partially started batch, so a failure mid-run

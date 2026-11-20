@@ -124,8 +124,10 @@ final class ParquetPartitionConverter implements QuietCloseable {
         long writer = 0;
         try {
             dstPartitionDir.trimTo(dstDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
-            parquetMetaFd = TableUtils.openRW(ff, dstPartitionDir.$(), LOG, configuration.getWriterFileOpenOpts());
+            parquetMetaFd = TableUtils.openRWFresh(ff, dstPartitionDir.$(), LOG, configuration.getWriterFileOpenOpts());
             dstPartitionDir.trimTo(dstDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+            // the encoder creates data.parquet by path
+            TableUtils.removeExistingOrFail(ff, dstPartitionDir.$());
             writer = PartitionFrameEncoder.create(
                     activeColumnCount,
                     columnNames.ptr(),

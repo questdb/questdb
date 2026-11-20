@@ -29,16 +29,26 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Files;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.AbstractAlterTableAttachPartitionTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * ATTACH PARTITION is the second producer of a column top, and it does not look like the first.
@@ -104,6 +114,122 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
     }
 
     @Test
+    public void testAttachRemovesCoveringIndexFilesOfNameTxnZeroDroppedWhileDetached() throws Exception {
+        // s is the first column added to the empty table, so its column name txn is 0, and its .pc
+        // files carry the token 0 that txn NONE also writes. 2024-01-01 leaves with the covering index
+        // of s; the index is dropped while the partition is detached. ATTACH removes every index file
+        // of s that the partition brings back, the .pc files included.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_att (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t_att ADD COLUMN s SYMBOL");
+            execute("ALTER TABLE t_att ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("""
+                    INSERT INTO t_att VALUES
+                    ('2024-01-01T00:00:00', 10.0, 'A'),
+                    ('2024-01-01T01:00:00', 20.0, 'B'),
+                    ('2024-01-02T00:00:00', 30.0, 'A')
+                    """);
+            try (TableReader reader = engine.getReader("t_att")) {
+                final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+                Assert.assertEquals(0, reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex));
+            }
+            execute("ALTER TABLE t_att DETACH PARTITION LIST '2024-01-01'");
+            execute("ALTER TABLE t_att ALTER COLUMN s DROP INDEX");
+            final TableToken token = engine.verifyTableName("t_att");
+            path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            // s.pc0 for val and s.pc1 for ts, each s.pc<N>.0[.<covered txn>].<seal>
+            final String[] coverFiles = listIndexFilesOfS(other.toString(), "s.pc");
+            Assert.assertEquals(Arrays.toString(coverFiles), 2, coverFiles.length);
+            for (String name : coverFiles) {
+                Assert.assertTrue(name, name.matches("s\\.pc[01]\\.0(\\.[0-9]+)?\\.[0-9]+"));
+            }
+
+            execute("ALTER TABLE t_att ATTACH PARTITION LIST '2024-01-01'");
+
+            final File[] partitionDirs = new File(configuration.getDbRoot().toString(), token.getDirName())
+                    .listFiles((_, name) -> name.matches("2024-01-01(\\.[0-9]+)?"));
+            Assert.assertNotNull(partitionDirs);
+            Assert.assertEquals(Arrays.toString(partitionDirs), 1, partitionDirs.length);
+            Assert.assertEquals("[]", Arrays.toString(listIndexFilesOfS(partitionDirs[0].getPath(), "s.p")));
+            assertQuery("SELECT ts, val, s FROM t_att WHERE s = 'A'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanNotContaining("Index")
+                    .returns("""
+                            ts\tval\ts
+                            2024-01-01T00:00:00.000000Z\t10.0\tA
+                            2024-01-02T00:00:00.000000Z\t30.0\tA
+                            """);
+        });
+    }
+
+    @Test
+    public void testAttachRefusesUnreadablePostingKeyFileOfNameTxnZeroWithValueFiles() throws Exception {
+        // s is the first column added to the empty table, so its column name txn is 0. ATTACH cannot
+        // read the live seal of s from s.pk.0 twice, while the header of the file is intact and the
+        // partition holds s.pv.0.<seal>: it refuses the partition rather than drop the sealed data, and
+        // attaches it once the key file reads again.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger keyFileOpens = new AtomicInteger();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isArmed.get() && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.pk.0") && keyFileOpens.getAndIncrement() < 2) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t_att (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t_att ADD COLUMN s SYMBOL");
+            execute("ALTER TABLE t_att ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (val)");
+            execute("""
+                    INSERT INTO t_att VALUES
+                    ('2024-01-01T00:00:00', 10.0, 'A'),
+                    ('2024-01-01T01:00:00', 20.0, 'B'),
+                    ('2024-01-02T00:00:00', 30.0, 'A')
+                    """);
+            execute("ALTER TABLE t_att DETACH PARTITION LIST '2024-01-01'");
+            final TableToken token = engine.verifyTableName("t_att");
+            path.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(token).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            Assert.assertTrue(listIndexFilesOfS(other.toString(), "s.pv.0.").length > 0);
+            // without the detached _meta, ATTACH validates the partition files against the table
+            Assert.assertTrue(new File(other.toString(), TableUtils.META_FILE_NAME).delete());
+
+            isArmed.set(true);
+            try {
+                execute("ALTER TABLE t_att ATTACH PARTITION LIST '2024-01-01'");
+                Assert.fail("ATTACH must refuse a partition whose posting key file cannot be read");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not read live sealTxn from posting key file but .pv files exist");
+                TestUtils.assertContains(e.getFlyweightMessage(), "s.pk.0");
+            } finally {
+                isArmed.set(false);
+            }
+            // two failed reads of the live seal, then the header check, which reads
+            Assert.assertEquals(3, keyFileOpens.get());
+
+            execute("ALTER TABLE t_att ATTACH PARTITION LIST '2024-01-01'");
+            assertQuery("SELECT ts, val, s FROM t_att WHERE s = 'A'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            ts\tval\ts
+                            2024-01-01T00:00:00.000000Z\t10.0\tA
+                            2024-01-02T00:00:00.000000Z\t30.0\tA
+                            """);
+        });
+    }
+
+    @Test
     public void testStandInIndexReaderServesPartitionThatLostTheColumn() throws Exception {
         // A pooled reader holds a real index reader for 2024-01-01; detaching that partition
         // and attaching a same-dated one without sym leaves the partition count and the slot
@@ -145,6 +271,13 @@ public class CoveringIndexAttachPartitionTest extends AbstractAlterTableAttachPa
                 Assert.assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD) instanceof IndexBwdNullReader);
             }
         });
+    }
+
+    private static String[] listIndexFilesOfS(String dir, String prefix) {
+        final String[] names = new File(dir).list((_, name) -> name.startsWith(prefix) && !(prefix.equals("s.pc") && name.startsWith("s.pci")));
+        Assert.assertNotNull(dir, names);
+        Arrays.sort(names);
+        return names;
     }
 
     private static void assertThrowsForcedNullKey(String sql) throws Exception {

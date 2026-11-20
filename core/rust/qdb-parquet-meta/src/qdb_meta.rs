@@ -33,7 +33,7 @@
 use crate::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use crate::parquet_meta_err;
 use parquet2::metadata::FileMetaData;
-use qdb_core::col_type::ColumnType;
+use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
 
@@ -232,6 +232,81 @@ pub fn extract_qdb_meta(file_metadata: &FileMetaData) -> ParquetMetaResult<Optio
         return Ok(None);
     };
     Ok(Some(QdbMeta::deserialize(json)?))
+}
+
+/// What the chunk null counts of a parquet file say about the column top that its QuestDB
+/// metadata gives a column, see [`column_top_evidence`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnTopEvidence {
+    /// Every chunk below the top counts its rows below the top as NULLs.
+    Verified,
+    /// A chunk below the top counts fewer NULLs than it has rows below the top, so it holds a
+    /// value below the top: the top is stale.
+    Contradicted,
+    /// The null counts cannot tell.
+    Unverifiable,
+}
+
+/// Checks the column top that the QuestDB metadata gives column `column_index`, of type
+/// `column_type`, against the chunk null counts of the file.
+///
+/// QuestDB 8.3.0 to 9.3.3 merged O3 rows into a parquet row group in place and kept the footer
+/// metadata of the file, so its top can cover rows that a merge gave values. A column without a
+/// NULL sentinel (BOOLEAN, BYTE, SHORT, CHAR) is NULL only in its column top, and the chunk null
+/// count is the column top of the chunk, the count the `_pm` decoder reads as such
+/// (`prepare_chunk`): an Optional chunk counts its NULL definition levels, and a Required BYTE,
+/// SHORT or CHAR chunk counts the column top it was encoded with, 0 for a row group that a merge
+/// re-encoded from its first row. A Required BOOLEAN chunk counts no NULL even below its top, and
+/// a type with a NULL sentinel also counts its NULLs past the top, so the counts cannot tell for
+/// these, nor for a chunk without a null count. A negative count is unknown, as in the `_pm`.
+pub fn column_top_evidence(
+    file_metadata: &FileMetaData,
+    column_index: usize,
+    column_type: ColumnType,
+    column_top: usize,
+) -> ColumnTopEvidence {
+    if column_top == 0 {
+        return ColumnTopEvidence::Verified;
+    }
+    let tag = column_type.tag();
+    if !matches!(
+        tag,
+        ColumnTypeTag::Boolean | ColumnTypeTag::Byte | ColumnTypeTag::Short | ColumnTypeTag::Char
+    ) {
+        return ColumnTopEvidence::Unverifiable;
+    }
+    let is_required = file_metadata
+        .schema_descr
+        .columns()
+        .get(column_index)
+        .is_none_or(|column| column.descriptor.max_def_level == 0);
+    if tag == ColumnTypeTag::Boolean && is_required {
+        return ColumnTopEvidence::Unverifiable;
+    }
+    let mut evidence = ColumnTopEvidence::Verified;
+    let mut row_group_lo = 0usize;
+    for row_group in &file_metadata.row_groups {
+        if row_group_lo >= column_top {
+            break;
+        }
+        let row_group_hi = row_group_lo + row_group.num_rows();
+        let rows_below_top = (column_top.min(row_group_hi) - row_group_lo) as u64;
+        let null_count = row_group
+            .columns()
+            .get(column_index)
+            .and_then(|chunk| chunk.metadata().statistics.as_ref())
+            .and_then(|statistics| statistics.null_count)
+            .and_then(|null_count| u64::try_from(null_count).ok());
+        match null_count {
+            Some(null_count) if null_count < rows_below_top => {
+                return ColumnTopEvidence::Contradicted;
+            }
+            Some(_) => {}
+            None => evidence = ColumnTopEvidence::Unverifiable,
+        }
+        row_group_lo = row_group_hi;
+    }
+    evidence
 }
 
 #[cfg(test)]
@@ -496,5 +571,253 @@ mod tests {
         let deserialized = QdbMeta::deserialize(json_str)?;
         assert_eq!(deserialized.unused_bytes, 0);
         Ok(())
+    }
+
+    /// The footer metadata of a file with one column of physical type `physical_type` and the
+    /// given row groups, each its row count and the chunk null count.
+    fn single_column_file(
+        physical_type: parquet2::thrift_format::Type,
+        repetition: parquet2::thrift_format::FieldRepetitionType,
+        row_groups: &[(i64, Option<i64>)],
+    ) -> FileMetaData {
+        use parquet2::thrift_format as thrift;
+        let schema = vec![
+            thrift::SchemaElement::new(
+                None,
+                None,
+                None,
+                "t".to_string(),
+                1,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            thrift::SchemaElement::new(
+                physical_type,
+                None,
+                repetition,
+                "c".to_string(),
+                None,
+                None,
+                None,
+                None,
+                0,
+                None,
+            ),
+        ];
+        let row_groups = row_groups
+            .iter()
+            .map(|&(num_rows, null_count)| {
+                let statistics = thrift::Statistics {
+                    max: None,
+                    min: None,
+                    null_count,
+                    distinct_count: None,
+                    max_value: None,
+                    min_value: None,
+                    is_max_value_exact: None,
+                    is_min_value_exact: None,
+                };
+                let meta_data = thrift::ColumnMetaData::new(
+                    physical_type,
+                    vec![thrift::Encoding::PLAIN],
+                    vec!["c".to_string()],
+                    thrift::CompressionCodec::UNCOMPRESSED,
+                    num_rows,
+                    0,
+                    0,
+                    None,
+                    4,
+                    None,
+                    None,
+                    statistics,
+                    None,
+                    None,
+                    None,
+                );
+                let chunk = thrift::ColumnChunk::new(
+                    None, 4, meta_data, None, None, None, None, None, None,
+                );
+                thrift::RowGroup::new(vec![chunk], 0, num_rows, None, None, None, None)
+            })
+            .collect::<Vec<_>>();
+        let num_rows = row_groups.iter().map(|rg| rg.num_rows).sum();
+        FileMetaData::try_from_thrift(thrift::FileMetaData::new(
+            1, schema, num_rows, row_groups, None, None, None, None, None,
+        ))
+        .expect("valid footer")
+    }
+
+    fn evidence(
+        tag: ColumnTypeTag,
+        repetition: parquet2::thrift_format::FieldRepetitionType,
+        row_groups: &[(i64, Option<i64>)],
+        column_top: usize,
+    ) -> ColumnTopEvidence {
+        use parquet2::thrift_format::Type;
+        let physical_type = if tag == ColumnTypeTag::Boolean {
+            Type::BOOLEAN
+        } else {
+            Type::INT32
+        };
+        let file = single_column_file(physical_type, repetition, row_groups);
+        column_top_evidence(&file, 0, tag.into_type(), column_top)
+    }
+
+    #[test]
+    fn column_top_evidence_verifies_required_chunks_counting_their_top() {
+        use parquet2::thrift_format::FieldRepetitionType;
+        // 9.3.3 and 9.4.x encode a Required BYTE, SHORT or CHAR top with its rows as the null
+        // count: top 6 over row groups of 4 rows
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+        ] {
+            assert_eq!(
+                evidence(
+                    tag,
+                    FieldRepetitionType::REQUIRED,
+                    &[(4, Some(4)), (4, Some(2)), (4, Some(0))],
+                    6
+                ),
+                ColumnTopEvidence::Verified,
+                "{tag:?}"
+            );
+        }
+        // the top ends at a row group boundary, and past the last row
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Byte,
+                FieldRepetitionType::REQUIRED,
+                &[(4, Some(4)), (4, Some(0))],
+                4
+            ),
+            ColumnTopEvidence::Verified
+        );
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Byte,
+                FieldRepetitionType::REQUIRED,
+                &[(4, Some(4)), (4, Some(4))],
+                100
+            ),
+            ColumnTopEvidence::Verified
+        );
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Byte,
+                FieldRepetitionType::REQUIRED,
+                &[(4, None)],
+                0
+            ),
+            ColumnTopEvidence::Verified
+        );
+    }
+
+    #[test]
+    fn column_top_evidence_contradicts_top_of_chunk_a_merge_rewrote() {
+        use parquet2::thrift_format::FieldRepetitionType;
+        // a 9.3.3 merge re-encodes the row group from its first row: null count 0
+        for tag in [
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+        ] {
+            assert_eq!(
+                evidence(tag, FieldRepetitionType::REQUIRED, &[(7, Some(0))], 4),
+                ColumnTopEvidence::Contradicted,
+                "{tag:?}"
+            );
+        }
+        // row group 1 straddles the top and lost its 2 NULLs
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Byte,
+                FieldRepetitionType::REQUIRED,
+                &[(4, Some(4)), (5, Some(0)), (4, Some(0))],
+                6
+            ),
+            ColumnTopEvidence::Contradicted
+        );
+        // one NULL short of the overlap
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Short,
+                FieldRepetitionType::OPTIONAL,
+                &[(4, Some(4)), (4, Some(1))],
+                6
+            ),
+            ColumnTopEvidence::Contradicted
+        );
+        // an Optional BOOLEAN counts its NULL definition levels
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Boolean,
+                FieldRepetitionType::OPTIONAL,
+                &[(7, Some(0))],
+                4
+            ),
+            ColumnTopEvidence::Contradicted
+        );
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Boolean,
+                FieldRepetitionType::OPTIONAL,
+                &[(7, Some(4))],
+                4
+            ),
+            ColumnTopEvidence::Verified
+        );
+        // a contradicting chunk outweighs one without a null count
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Byte,
+                FieldRepetitionType::REQUIRED,
+                &[(4, None), (4, Some(0))],
+                6
+            ),
+            ColumnTopEvidence::Contradicted
+        );
+    }
+
+    #[test]
+    fn column_top_evidence_cannot_verify_without_counted_nulls() {
+        use parquet2::thrift_format::FieldRepetitionType;
+        // a Required BOOLEAN chunk counts no NULL below its top, legit or stale
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Boolean,
+                FieldRepetitionType::REQUIRED,
+                &[(7, Some(0))],
+                4
+            ),
+            ColumnTopEvidence::Unverifiable
+        );
+        // a type with a NULL sentinel counts its other NULLs too
+        assert_eq!(
+            evidence(
+                ColumnTypeTag::Int,
+                FieldRepetitionType::OPTIONAL,
+                &[(7, Some(0))],
+                4
+            ),
+            ColumnTopEvidence::Unverifiable
+        );
+        // no null count, or a negative one, which the `_pm` reads as unknown
+        for null_count in [None, Some(-1), Some(i64::MIN)] {
+            assert_eq!(
+                evidence(
+                    ColumnTypeTag::Byte,
+                    FieldRepetitionType::REQUIRED,
+                    &[(4, Some(4)), (4, null_count)],
+                    6
+                ),
+                ColumnTopEvidence::Unverifiable,
+                "{null_count:?}"
+            );
+        }
     }
 }
