@@ -52,8 +52,6 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
  * }</pre>
  */
 public class QwpTableBlockCursor implements Mutable {
-    private static final int SCHEMA_CACHE_INITIAL_BYTES = 64;
-
     // Column cursors (reused across table blocks)
     private final ObjList<QwpColumnCursor> columnCursors = new ObjList<>();
     private final QwpSchema.ParseResult parseResult = new QwpSchema.ParseResult();
@@ -63,15 +61,6 @@ public class QwpTableBlockCursor implements Mutable {
     private int booleanColumnCount;
     // Type-bucketed column indices for monomorphic advanceRow() calls
     private int[] booleanColumnIndices = new int[16];
-    // The previous block's schema section and its parse. A client sends the same
-    // columns message after message, and parsing allocates a String, two byte[]s
-    // and a QwpColumnDef per column. Survives clear(): it is a cache, not block
-    // state. A byte-identical section with the same column count is the same
-    // schema, because the section is exactly columnCount self-delimiting definitions.
-    private QwpSchema cachedSchema;
-    private byte[] cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
-    private int cachedSchemaColumnCount = -1;
-    private int cachedSchemaLen;
     // Wire position tracking
     private int columnCount;
     // Column definitions from schema
@@ -93,6 +82,9 @@ public class QwpTableBlockCursor implements Mutable {
     // message starts and again before each table block; the second clear of an
     // untouched cursor has nothing to reset.
     private boolean isDirty;
+    // Each table's last schema parse; null to parse every block. The cache owns the
+    // entries, so a parse lives as long as the cache keeps its table.
+    private QwpSchemaCache schemaCache;
     // Table state
     private int rowCount;
     private int stringColumnCount;
@@ -355,25 +347,35 @@ public class QwpTableBlockCursor implements Mutable {
         this.columnCount = tableHeader.getColumnCount();
 
         // Parse schema section (inline columns; zero-alloc: reuses parseResult)
+        final QwpSchemaCacheEntry entry = schemaCache != null ? schemaCache.getSchemaCacheEntry(tableHeader.getTableNameUtf8()) : null;
         final QwpSchema schema;
-        if (cachedSchema != null
-                && columnCount == cachedSchemaColumnCount
-                && dataLength - offset >= cachedSchemaLen
-                && isSameBytes(dataAddress + offset, cachedSchemaBytes, cachedSchemaLen)) {
-            schema = cachedSchema;
-            offset += cachedSchemaLen;
+        if (entry != null
+                && entry.schema != null
+                && columnCount == entry.columnCount
+                && dataLength - offset >= entry.len
+                && isSameBytes(dataAddress + offset, entry.bytes, entry.len)) {
+            schema = entry.schema;
+            offset += entry.len;
         } else {
+            if (entry != null) {
+                // Forget the old parse first: a parse that throws must not leave the
+                // entry pairing it with this block's bytes, nor keep it alive.
+                entry.schema = null;
+            }
             QwpSchema.parse(dataAddress + offset, dataLength - offset, columnCount, parseResult);
             final int n = parseResult.bytesConsumed;
-            if (cachedSchemaBytes.length < n) {
-                cachedSchemaBytes = new byte[Math.max(n, cachedSchemaBytes.length * 2)];
+            schema = parseResult.schema;
+            if (entry != null) {
+                if (entry.bytes.length < n) {
+                    entry.bytes = new byte[Math.max(n, entry.bytes.length * 2)];
+                }
+                for (int i = 0; i < n; i++) {
+                    entry.bytes[i] = Unsafe.getByte(dataAddress + offset + i);
+                }
+                entry.len = n;
+                entry.columnCount = columnCount;
+                entry.schema = schema;
             }
-            for (int i = 0; i < n; i++) {
-                cachedSchemaBytes[i] = Unsafe.getByte(dataAddress + offset + i);
-            }
-            cachedSchemaLen = n;
-            cachedSchemaColumnCount = columnCount;
-            cachedSchema = schema = parseResult.schema;
             offset += n;
         }
 
@@ -423,8 +425,8 @@ public class QwpTableBlockCursor implements Mutable {
     }
 
     long getRetainedCacheBytes() {
-        // The cached schema section; the parsed QwpSchema it backs is of the same order.
-        long bytes = cachedSchema != null ? cachedSchemaBytes.length : 0;
+        // Schema parses live in the schema cache, with their tables, not here.
+        long bytes = 0;
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
@@ -441,13 +443,6 @@ public class QwpTableBlockCursor implements Mutable {
 
     void releaseCachedResources() {
         clear();
-        // A failed parse may have just cached a wide schema: let it go with the rest.
-        cachedSchema = null;
-        cachedSchemaColumnCount = -1;
-        cachedSchemaLen = 0;
-        if (cachedSchemaBytes.length > SCHEMA_CACHE_INITIAL_BYTES) {
-            cachedSchemaBytes = new byte[SCHEMA_CACHE_INITIAL_BYTES];
-        }
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
             if (cursor instanceof QwpArrayColumnCursor arrayCursor) {
@@ -458,6 +453,10 @@ public class QwpTableBlockCursor implements Mutable {
                 timestampCursor.releaseCachedResources();
             }
         }
+    }
+
+    void setSchemaCache(QwpSchemaCache schemaCache) {
+        this.schemaCache = schemaCache;
     }
 
     private static boolean isFixedWidthType(byte typeCode) {
