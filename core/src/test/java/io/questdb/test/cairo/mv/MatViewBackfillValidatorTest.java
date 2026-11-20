@@ -444,6 +444,81 @@ public class MatViewBackfillValidatorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalWriterPreparedCommitMarksDistressedOnNonCairoExceptionFromValidator() throws Exception {
+        // prepareCommit() runs the validator as commit0 does: a fault other than CairoException distresses the
+        // writer, which prepares nothing.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            final long viewSeqTxn = viewSeqTxn();
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("price_1h"))) {
+                walWriter.setPreCommitValidator((txnType, dedupMode, txnMinTs, txnMaxTs) -> {
+                    throw new RuntimeException("simulated validator fault");
+                });
+                appendViewRow(walWriter, 2.0, "2024-09-10T09:00");
+                try {
+                    walWriter.prepareCommit();
+                    Assert.fail("expected the validator's runtime exception to propagate");
+                } catch (RuntimeException expected) {
+                    Assert.assertEquals("simulated validator fault", expected.getMessage());
+                }
+                Assert.assertTrue(walWriter.isDistressed());
+                Assert.assertFalse(walWriter.isCommitPrepared());
+            }
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testWalWriterPreparedCommitRejectsManagedZoneRow() throws Exception {
+        // A QWP commit batch under SYNC or ADAPTIVE prepares each table's commit before it sequences it. The prepare
+        // runs the check a plain commit runs: it refuses a managed-zone row and rolls the transaction back, nothing
+        // reaches the view's WAL, and the writer stays healthy and prepares a frozen-zone row next.
+        assertMemoryLeak(() -> {
+            createRefreshedView();
+            setRefreshLimit("1 HOUR");
+            try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("price_1h"))) {
+                appendViewRow(walWriter, 2.0, "2024-09-10T09:00");
+                appendViewRow(walWriter, 3.0, "2024-09-10T11:30");
+                final long viewSeqTxn = viewSeqTxn();
+                try {
+                    walWriter.prepareCommit();
+                    Assert.fail("expected the prepare to refuse a managed-zone row");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals(
+                            managedZoneMessage("2024-09-10T11:30:00", "2024-09-10T11:00:00", "2024-09-10T12:00:00", "2024-09-10T11:00:00"),
+                            e.getFlyweightMessage()
+                    );
+                    Assert.assertFalse(e.isCritical());
+                }
+                Assert.assertFalse(walWriter.isDistressed());
+                Assert.assertFalse(walWriter.isCommitPrepared());
+                Assert.assertEquals(0, walWriter.getUncommittedRowCount());
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                appendViewRow(walWriter, 4.0, "2024-09-10T09:00");
+                walWriter.prepareCommit();
+                Assert.assertTrue(walWriter.isCommitPrepared());
+                walWriter.commit();
+                Assert.assertEquals(viewSeqTxn + 1, viewSeqTxn());
+            }
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    sym\tprice\tts
+                    a\t4.0\t2024-09-10T09:00:00.000000Z
+                    a\t8.0\t2024-09-10T10:00:00.000000Z
+                    a\t9.0\t2024-09-10T12:00:00.000000Z
+                    """);
+        });
+    }
+
+    @Test
     public void testWalWriterRejectsCommitAfterRefreshLimitRemoved() throws Exception {
         // A transaction that a writer opened while the view had REFRESH LIMIT commits under the definition applied at
         // commit: once SET REFRESH LIMIT 0 has applied, the commit is refused with the gate's message and rolled

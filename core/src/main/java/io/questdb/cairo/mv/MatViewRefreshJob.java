@@ -3340,9 +3340,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         ? compositeTimestampFinder.of(viewReader, i, timestampIndex, rowCount)
                         : nativeTimestampFinder.of(viewReader, i, timestampIndex, rowCount);
                 finder.prepare();
-                // the partition's last row at or before hi, or -1 when all its rows lie after hi
-                final long row = finder.findTimestamp(hi, 0, rowCount - 1);
-                if (row > -1 && finder.timestampAt(row) >= lo) {
+                // the rows at or before hi outnumber those before lo only when a row lies in [lo, hi]
+                if (finder.countThrough(hi) > finder.countBefore(lo)) {
                     return true;
                 }
             }
