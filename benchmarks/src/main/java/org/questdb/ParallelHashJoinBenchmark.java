@@ -152,7 +152,8 @@ import java.util.concurrent.locks.LockSupport;
  *       one per row over January and February 2024, and 3,000 more rows in the first hour of March,
  *       with dimensions of 1,000 and 50,000 of its texts: {@code SYMBOL_10M_INTERVAL_D1K} and
  *       {@code SYMBOL_10M_INTERVAL_D50K} the March hour, {@code SYMBOL_10M_LIMIT_10} the first ten
- *       rows that match, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
+ *       rows that match, {@code SYMBOL_10M_LIMIT_1001} the first 1,001, of which the last lies in
+ *       March, past every January and February row, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
  *       table's first 39,062 and 39,063 rows, one key each, either side of the 256 texts per probe row
  *       below which the fused GROUP BY translates the key through each worker's own cache rather than
  *       a cache that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row.
@@ -163,7 +164,9 @@ import java.util.concurrent.locks.LockSupport;
  *       {@code PAGE_1K} and {@code PAGE_LARGE} read the first 1,001 rows of {@code SINGLE_1K} and
  *       {@code SINGLE_LARGE}, as an HTTP page of 1,000 rows without a row count does, and
  *       {@code FETCH_1K} and {@code FETCH_LARGE} read every row of them, as a JDBC client of fetch
- *       size 1,000 does, through a portal that it resumes.
+ *       size 1,000 does, through a portal that it resumes. {@code PAGE_SYMBOL_10M} and
+ *       {@code FETCH_SYMBOL_10M} read {@code SYMBOL_10M_FULL}'s join so, whose rows past the
+ *       1,000th lie in March.
  *       {@code SHORT_*_SYM} and {@code SHORT_*_VARCHAR} read ten rows of the whole fact table joined
  *       on its SYMBOL column with a dimension of its 64 texts, and on its VARCHAR column with a
  *       dimension of its thousand texts, one match per fact row, under an operator that the LIMIT
@@ -204,6 +207,8 @@ import java.util.concurrent.locks.LockSupport;
  *   <li>{@code hasFirstReadHint}: whether the {@code PAGE_*} and {@code FETCH_*} shapes open their
  *       cursors under the rows that the client reads first, 1,001 and 1,000, as the HTTP and PG
  *       servers pass them; false opens them as the servers did before they passed them.</li>
+ *   <li>{@code pageRows}: the rows that the {@code PAGE_*} shapes read, and that the
+ *       {@code FETCH_*} shapes' client reads first; -1 keeps 1,001 and 1,000.</li>
  * </ul>
  * {@code plan=OPERATOR_TEMPLATE} runs the operator with the shared stepper template in place of a
  * hidden class per stage, whichever the warm-up picks. The report line names the ring budget and the
@@ -294,6 +299,10 @@ public class ParallelHashJoinBenchmark {
     @Param({"-1"})
     public int probeFrameMaxRows;
 
+    // The rows that the client of a PAGE_ or FETCH_ shape reads first, -1 for 1,001 and 1,000.
+    @Param({"-1"})
+    public long pageRows;
+
     @Param({"50000"})
     public long probeRows;
 
@@ -313,6 +322,7 @@ public class ParallelHashJoinBenchmark {
             "LIMIT_SUBQUERY", "LIMIT_CTE", "LIMIT_ORDER_QUALIFIED", "LIMIT_ASOF", "LIMIT_UNION_ALL",
             "LIMIT_WINDOW", "LIMIT_CROSS", "LIMIT_SNOWFLAKE",
             "PAGE_1K", "PAGE_LARGE", "FETCH_1K", "FETCH_LARGE",
+            "PAGE_SYMBOL_10M", "FETCH_SYMBOL_10M",
             "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
             "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
             "COUNT_STAR",
@@ -328,7 +338,7 @@ public class ParallelHashJoinBenchmark {
             "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
             "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE",
             "FANOUT_1000_RESIDUAL_ALL",
-            "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10",
+            "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10", "SYMBOL_10M_LIMIT_1001",
             "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL",
             "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K",
             "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",
@@ -651,9 +661,12 @@ public class ParallelHashJoinBenchmark {
             return Long.MAX_VALUE;
         }
         if (shape.startsWith("PAGE_")) {
-            return PAGE_ROWS;
+            return pageRows > 0 ? pageRows : PAGE_ROWS;
         }
-        return shape.startsWith("FETCH_") ? FETCH_ROWS : Long.MAX_VALUE;
+        if (shape.startsWith("FETCH_")) {
+            return pageRows > 0 ? pageRows : FETCH_ROWS;
+        }
+        return Long.MAX_VALUE;
     }
 
     // True for a shape that counts the join's rows through the cursor rather than reads them.
@@ -780,7 +793,7 @@ public class ParallelHashJoinBenchmark {
 
     // The rows that the shape reads: a PAGE_ shape's page, every row otherwise.
     private long readRows() {
-        return shape.startsWith("PAGE_") ? PAGE_ROWS : Long.MAX_VALUE;
+        return shape.startsWith("PAGE_") ? (pageRows > 0 ? pageRows : PAGE_ROWS) : Long.MAX_VALUE;
     }
 
     private void report() throws SqlException, IOException, InterruptedException {
@@ -803,6 +816,7 @@ public class ParallelHashJoinBenchmark {
                 .append(" parquetCacheSize=").append(parquetCacheSize)
                 .append(" warmUpRows=").append(warmUpRows)
                 .append(" hasFirstReadHint=").append(hasFirstReadHint)
+                .append(" pageRows=").append(pageRows)
                 .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
 
         final long workerCpu0 = cpuNanos(threads, workerThreadIds);
@@ -927,6 +941,7 @@ public class ParallelHashJoinBenchmark {
                     "SELECT f.id, f.v, d3.w, d1.w w1 FROM fact f JOIN d3 ON f.k3 = d3.k LEFT JOIN d1 ON d3.k = d1.k LIMIT 100";
             case "PAGE_1K", "FETCH_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
             case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
+            case "PAGE_SYMBOL_10M", "FETCH_SYMBOL_10M" -> SYMBOL_10M_JOIN;
             // A quarter of the fact rows meet a hot key with eight matches.
             case "FANOUT_DEFERRED" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k";
             case "FANOUT_RESIDUAL" ->
@@ -1029,6 +1044,8 @@ public class ParallelHashJoinBenchmark {
             case "SYMBOL_10M_INTERVAL_D50K" ->
                     "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
             case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
+            // The join yields the first 1,000 rows of fsym, then 3,000 rows in its last partition.
+            case "SYMBOL_10M_LIMIT_1001" -> SYMBOL_10M_JOIN + " LIMIT 1001";
             case "FULL_SYM" -> SHORT_SYM_JOIN;
             case "FULL_VARCHAR" -> SHORT_VARCHAR_JOIN;
             case "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",

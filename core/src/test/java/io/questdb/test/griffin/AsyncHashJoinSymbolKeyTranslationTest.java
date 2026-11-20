@@ -38,6 +38,8 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
@@ -48,12 +50,14 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
 
@@ -166,6 +170,58 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCancellationAtEachCheckOfTheWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The LIMIT's first window translates its probe rows through the slots, and the join reads
+            // past them, see testReadPastTheFirstWindowWidensTheTranslation(): the widening clears the
+            // shared cache in chunks of a MiB and fills it from d's texts, and checks the breaker
+            // before each. A cancellation at each check fails the execution, which leaves nothing
+            // behind, and the factory runs on.
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym LIMIT 1171";
+            final String expected = ordinary(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final SqlExecutionCircuitBreaker previous = sqlExecutionContext.getCircuitBreaker();
+                final TrippingCircuitBreaker counting = new TrippingCircuitBreaker(previous, Long.MAX_VALUE, TrippingCircuitBreaker::isWidening);
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(counting);
+                try {
+                    Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+                } finally {
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                }
+                // Two chunks of the 1,200,000 bytes, and the first of d's texts.
+                final long checks = counting.checks.get();
+                Assert.assertEquals(3, checks);
+                for (long tripAt = 1; tripAt <= checks; tripAt++) {
+                    final TrippingCircuitBreaker breaker = new TrippingCircuitBreaker(previous, tripAt, TrippingCircuitBreaker::isWidening);
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                    MemoryTracker tracker = null;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected a cancellation at check " + tripAt);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isCancellation());
+                        Assert.assertTrue(isThrownInWidening(e));
+                    } finally {
+                        ((SqlExecutionContextImpl) sqlExecutionContext).with(previous);
+                    }
+                    Assert.assertNotNull(tracker);
+                    Assert.assertEquals("tracked after check " + tripAt, 0, tracker.getUsed());
+                    Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                    Assert.assertEquals(0, engine.getBusyReaderCount());
+                }
+                Assert.assertEquals(expected, result(factory, sqlExecutionContext));
+            }
+        });
+    }
+
+    @Test
     public void testCancellationAtEachCheckWithSlotCaches() throws Exception {
         assertMemoryLeak(() -> executeOnWorkers(WorkerPoolMode.LEGACY, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
             createTables(db, context);
@@ -246,6 +302,65 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                     Assert.assertTrue("continuations: " + join.getAtom().getContinuationCount(), join.getAtom().getContinuationCount() > 0);
                     Assert.assertTrue("frames: " + join.getProbeFrameCount(), join.getProbeFrameCount() > 1);
                 });
+            }
+        });
+    }
+
+    @Test
+    public void testCountWidensTheTranslationBeforeItDispatches() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            final long rowCount = ordinaryRowCount(sql, sqlExecutionContext);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // The build narrows the translation to the first frame's head, and a count from the top
+                // widens it before its first count-only task: every frame's task counts.
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(rowCount, counter.get());
+                    assertSharedFilledCache(join);
+                    Assert.assertEquals(join.getProbeFrameCount(), join.getCountOnlyFrameCount());
+                }
+                // Ten rows of the head translate through the slots, and the count of the rest widens.
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(10, printRows(cursor, factory, 10, new StringSink()));
+                    assertSlotCached(join);
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                    Assert.assertEquals(rowCount - 10, counter.get());
+                    assertSharedFilledCache(join);
+                    Assert.assertEquals(1, join.getCountedTupleFrameCount());
+                    Assert.assertEquals(join.getProbeFrameCount() - 1, join.getCountOnlyFrameCount());
+                }
+            }
+            // Frames of 64 rows, under the 100 rows that a client reads first: the first window's two
+            // frames, of 64 rows and of the first 36 of the next frame, go out at once. A count after
+            // the first row collects the second one, which the cursor dispatched before the count
+            // began, then widens the translation and dispatches the rest.
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int execution = 0; execution < 2; execution++) {
+                    final MemoryTracker tracker;
+                    try (RecordCursor cursor = openCursor(factory, 100, sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        assertSlotCached(join);
+                        Assert.assertTrue(join.getAtom().getRing().getDispatchLimit() >= 2);
+                        Assert.assertEquals(2, join.getDispatchedFrameCount());
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(rowCount - 1, counter.get());
+                        assertSharedFilledCache(join);
+                        Assert.assertEquals(2, join.getCountedTupleFrameCount());
+                        Assert.assertEquals(join.getProbeFrameCount() - 2, join.getCountOnlyFrameCount());
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
             }
         });
     }
@@ -343,9 +458,13 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // The rows that the client reads first bound the execution's reach, as a LIMIT does: one
-            // factory reads every row under each, and 18,749 rows read first translate through the
-            // slots, 18,750 open the shared cache, as does no bound, and 18,749 go back to the slots.
-            // The join alone, as the master of an ASOF join, and as both branches of a UNION ALL.
+            // factory reads them under each bound, and 18,749 rows read first translate through the
+            // slots, 18,750 open the shared cache, and 18,749 go back to the slots. A client that then
+            // reads on, as a PostgreSQL portal does, reads past the first window, and every join's
+            // translation widens to f's 300,947 rows, which open the shared cache. Without a bound,
+            // the first rows are those of the first frame's head, which a full read reads past too.
+            // The join alone, as the master of an ASOF join, and as both branches of a UNION ALL,
+            // whose first rows come from the first branch.
             final String join = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
             for (String sql : new String[]{
                     join,
@@ -357,27 +476,25 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                     final ObjList<AsyncHashJoinRecordCursorFactory> joins = findAll(factory, sqlExecutionContext);
                     Assert.assertEquals(sql, sql.contains(" UNION ALL ") ? 2 : 1, joins.size());
                     for (long firstRead : new long[]{18_749, 18_750, Long.MAX_VALUE, 18_749}) {
-                        sqlExecutionContext.setFirstReadRows(firstRead);
-                        final RecordCursor cursor;
-                        try {
-                            cursor = factory.getCursor(sqlExecutionContext);
-                        } finally {
-                            sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
-                        }
                         final MemoryTracker tracker;
-                        try (cursor) {
-                            Assert.assertEquals(sql, expected, printRows(cursor, factory));
+                        try (RecordCursor cursor = openCursor(factory, firstRead, sqlExecutionContext)) {
+                            final StringSink rows = new StringSink();
+                            if (firstRead < Long.MAX_VALUE) {
+                                Assert.assertEquals(sql, firstRead, printRows(cursor, factory, firstRead, rows));
+                                final AsyncHashJoinRecordCursorFactory firstJoin = joins.getQuick(0);
+                                Assert.assertTrue(sql, firstJoin.isClientRowSource());
+                                if (firstRead < 18_750) {
+                                    assertSlotCached(firstJoin);
+                                } else {
+                                    assertSharedFilledCache(firstJoin);
+                                }
+                            }
+                            printRows(cursor, factory, Long.MAX_VALUE, rows);
+                            TestUtils.assertEquals(sql, expected, rows);
                             tracker = sqlExecutionContext.getMemoryTracker();
                             Assert.assertNotNull(tracker);
                             for (int i = 0, n = joins.size(); i < n; i++) {
-                                final AsyncHashJoinRecordCursorFactory asyncJoin = joins.getQuick(i);
-                                Assert.assertTrue(sql, asyncJoin.isClientRowSource());
-                                if (firstRead < 18_750) {
-                                    assertSlotCached(asyncJoin);
-                                } else {
-                                    assertSharedCache(asyncJoin);
-                                    Assert.assertTrue(sql, asyncJoin.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
-                                }
+                                assertSharedFilledCache(joins.getQuick(i));
                             }
                         }
                         Assert.assertEquals(sql, 0, tracker.getUsed());
@@ -398,6 +515,78 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                     Assert.assertTrue(join1.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
                 });
             }
+        });
+    }
+
+    @Test
+    public void testHeadOfAnExecutionWithoutALimitTranslatesThroughTheSlots() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Without a LIMIT, the first frame's task joins the frame's first 4,096 rows alone, whose
+            // keys translate through the slots: 4,096 < 18,750. Those probe rows yield 4,192 rows, as
+            // d holds k1 to k96 twice. A reader that stops within them opens no shared cache; one that
+            // reads on widens the translation to f's 300,947 rows, which open the shared cache,
+            // before the owner joins the rest of the frame. toTop() reads the head again, and keeps
+            // the translation as it found it.
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
+            final long headRows = AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS + 96;
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int execution = 0; execution < 2; execution++) {
+                    final MemoryTracker tracker;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final StringSink head = new StringSink();
+                        Assert.assertEquals(headRows, printRows(cursor, factory, headRows, head));
+                        Assert.assertTrue(join.getProbeFrameRowCount(0) > AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS);
+                        assertSlotCached(join);
+                        cursor.toTop();
+                        final StringSink rows = new StringSink();
+                        Assert.assertEquals(headRows, printRows(cursor, factory, headRows, rows));
+                        TestUtils.assertEquals(head, rows);
+                        assertSlotCached(join);
+                        Assert.assertEquals(1, printRows(cursor, factory, 1, rows));
+                        assertSharedFilledCache(join);
+                        printRows(cursor, factory, Long.MAX_VALUE, rows);
+                        TestUtils.assertEquals(expected, rows);
+                        cursor.toTop();
+                        rows.clear();
+                        printRows(cursor, factory, Long.MAX_VALUE, rows);
+                        TestUtils.assertEquals(expected, rows);
+                        assertSharedFilledCache(join);
+                        tracker = sqlExecutionContext.getMemoryTracker();
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                }
+            }
+            // A window function, which no LIMIT reaches, reads ten rows of the head.
+            Assert.assertEquals(10, rowCount(assertTranslation(
+                    "SELECT f.ts, f.sym, d.w, row_number() OVER () rn FROM f LEFT JOIN d ON f.sym = d.sym LIMIT 10",
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached
+            )));
+        });
+    }
+
+    @Test
+    public void testLimitBeyondTheWindowTranslatesForTheWholeProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // Frames of 64 rows: the window's frames hold fewer rows than a LIMIT of 18,749, so the
+            // execution sends the whole window out at once, with no first window that would narrow
+            // the translation, which opens for f's 300,947 rows from the start.
+            sqlExecutionContext.changePageFrameSizes(64, 64);
+            assertTranslationAcrossRead(
+                    "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym LIMIT 18_749",
+                    Long.MAX_VALUE,
+                    1,
+                    join -> {
+                        Assert.assertTrue(64L * join.getAtom().getRing().getEntryCount() < 18_749);
+                        assertSharedFilledCache(join);
+                    },
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSharedFilledCache,
+                    sqlExecutionContext
+            );
         });
     }
 
@@ -436,6 +625,60 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitAtTheWidening() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A client reads the 18,749 rows that it reads first, and the 96 more rows of their probe
+            // rows' second matches, through the slots. The next row widens the translation, whose
+            // shared cache of 1,200,000 bytes a per-query limit of one byte less than the memory held
+            // then and the cache refuses. The execution fails with nothing left behind, and the
+            // factory runs on under no limit.
+            final String sql = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            final String expected = ordinaryRows(sql, sqlExecutionContext);
+            final long firstRows = 18_749 + 96;
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                final long used;
+                try (RecordCursor cursor = openCursor(factory, 18_749, sqlExecutionContext)) {
+                    Assert.assertEquals(firstRows, printRows(cursor, factory, firstRows, new StringSink()));
+                    assertSlotCached(join);
+                    used = sqlExecutionContext.getMemoryTracker().getUsed();
+                }
+                final MemoryTracker tracker;
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, used + SHARED_CACHE_SIZE - 1);
+                try (RecordCursor cursor = openCursor(factory, 18_749, sqlExecutionContext)) {
+                    Assert.assertEquals(firstRows, printRows(cursor, factory, firstRows, new StringSink()));
+                    tracker = sqlExecutionContext.getMemoryTracker();
+                    Assert.assertEquals(used, tracker.getUsed());
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected the widening to breach the limit");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                        Assert.assertTrue(isThrownInWidening(e));
+                    }
+                    // The widening released the cache that it failed to open.
+                    Assert.assertEquals(0, join.getAtom().getStage(0).getSymbolKeyCacheSizeInBytes(0));
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertNull(join.getAtom().getStage(0).getFrozenBuild());
+                Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertEquals(0, engine.getBusyReaderCount());
+                try (RecordCursor cursor = openCursor(factory, 18_749, sqlExecutionContext)) {
+                    final StringSink rows = new StringSink();
+                    printRows(cursor, factory, Long.MAX_VALUE, rows);
+                    TestUtils.assertEquals(expected, rows);
+                    assertSharedFilledCache(join);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testProbeDictionaryShapes() throws Exception {
         // Without auto-scaling, a column keeps its declared capacity, and f_small's 300,000 texts at a
         // capacity of 65,536, more than two per unit, make its dictionary ineligible for a fill from the
@@ -459,6 +702,90 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
                 assertSharedCache(join);
                 Assert.assertFalse(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
             });
+        });
+    }
+
+    @Test
+    public void testReadPastTheFirstWindowWidensTheTranslation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // f's first 1,171 rows, k1 to k1171, yield the 996 rows of d's k1 to k900, k1 to k96 twice,
+            // and f's later January rows miss d. A LIMIT of 1,171 rows translates its first window's
+            // 1,171 probe rows through the slots, and once the reader has read their 996 rows, the
+            // join reads the rest of the first frame, then every later frame, for the 175 rows that
+            // the March rows hold. The translation widens to f's 300,947 rows before the first frame
+            // past the first window goes out, and opens the shared cache, filled from d's texts.
+            final String inner = "SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym";
+            assertTranslationAcrossRead(inner + " LIMIT 1171", Long.MAX_VALUE, 996,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSharedFilledCache,
+                    sqlExecutionContext
+            );
+            // The rows that a client reads first narrow the first window as the LIMIT does.
+            assertTranslationAcrossRead(inner, 1_171, 996,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSharedFilledCache,
+                    sqlExecutionContext
+            );
+            // dl's 40,000 texts open the shared cache unresolved, for a probe of a row per text: f's
+            // first 40,001 rows yield dl's 40,000, and the join reads every later row for one more.
+            execute("CREATE TABLE dl AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(40_000))");
+            assertTranslationAcrossRead("SELECT f.ts, f.sym, dl.w FROM f JOIN dl ON f.sym = dl.sym LIMIT 40_001", Long.MAX_VALUE, 40_000,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached,
+                    join -> {
+                        assertSharedCache(join);
+                        Assert.assertFalse(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
+                    },
+                    sqlExecutionContext
+            );
+            // Two SYMBOL pairs of one stage, whose texts never match together: the join reads every
+            // probe row. f.sym's translation widens, and f.sym3's 50 texts shared their cache all along.
+            assertTranslationAcrossRead(inner + " AND f.sym3 = d.sym3 LIMIT 1171", Long.MAX_VALUE, 0, null, join -> {
+                final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                final int symKey = stage.getSymbolKeyCacheSizeInBytes(0) == SHARED_CACHE_SIZE ? 0 : 1;
+                assertSharedCache(stage, symKey, SHARED_CACHE_SIZE);
+                Assert.assertTrue(stage.isSymbolKeyCacheFilledFromBuild(symKey));
+                assertSharedCache(stage, 1 - symKey, 4L * 50);
+            }, sqlExecutionContext);
+            // A star of two SYMBOL stages: f.sym's translation widens, and f.sym3's 50 texts shared
+            // their cache all along.
+            execute("CREATE TABLE e AS (SELECT ('s3_' || x)::SYMBOL sym3, x u FROM long_sequence(25))");
+            assertTranslationAcrossRead("SELECT f.ts, d.w, e.u FROM f JOIN d ON f.sym = d.sym JOIN e ON f.sym3 = e.sym3 LIMIT 1171",
+                    Long.MAX_VALUE, 0, null, join -> {
+                        assertSharedFilledCache(join);
+                        assertSharedCache(join.getAtom().getStage(1), 0, 4L * 50);
+                    }, sqlExecutionContext
+            );
+            // The INNER join of d with f swaps, so that it builds d and probes f's keys.
+            assertTranslationAcrossRead("SELECT f.ts, f.sym, d.w FROM d JOIN f ON d.sym = f.sym LIMIT 1171", Long.MAX_VALUE, 0, null, join -> {
+                Assert.assertTrue(join.getAtom().isSwapped());
+                assertSharedFilledCache(join);
+            }, sqlExecutionContext);
+            // d2 holds the even keys k2 to k5000: f's first 1,000 rows yield 500 rows, and the LIMIT of
+            // 1,000 rows needs 1,000 more probe rows, which the owner joins in a chunk of the rest of
+            // the first window's frame. The reader stops there, before any frame past the first
+            // window, and the translation stays with the slots.
+            execute("CREATE TABLE d2 AS (SELECT ('k' || (x * 2))::SYMBOL sym, x w FROM long_sequence(2_500))");
+            assertTranslationAcrossRead("SELECT f.ts, f.sym, d2.w FROM f JOIN d2 ON f.sym = d2.sym LIMIT 1000", Long.MAX_VALUE, 500,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached,
+                    join -> {
+                        assertSlotCached(join);
+                        Assert.assertEquals(1, join.getAtom().getContinuationCount());
+                        Assert.assertEquals(1, join.getDispatchedFrameCount());
+                    }, sqlExecutionContext
+            );
+            // f's first 10,000 rows in frames of 1,000 rows: the join reads past the first window's
+            // frame, and the widening to 10,000 rows, fewer than ceil(300,000 / 16), leaves the
+            // translation with the slots.
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            assertTranslationAcrossRead(inner + " WHERE f.ts < '2024-01-01T02:46:40' LIMIT 1171", Long.MAX_VALUE, 996,
+                    AsyncHashJoinSymbolKeyTranslationTest::assertSlotCached,
+                    join -> {
+                        assertSlotCached(join);
+                        Assert.assertEquals(10, join.getProbeFrameCount());
+                        Assert.assertEquals(10, join.getDispatchedFrameCount());
+                    }, sqlExecutionContext
+            );
         });
     }
 
@@ -551,10 +878,12 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     public void testSlotCacheCapacityIsReadPerExecution() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // LIMIT 1,171 translates through the slots, and f's January rows past k900 miss d, so the join
-            // reads every January row, 299,947 keys, past its reach. The owner runs every task, on its own
-            // slot, so the executions differ in the owner's cache alone.
-            final String sql = "SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym LIMIT 1171";
+            // f's January rows, 299,947 of its 300,000 texts, one per row, translate through the slots:
+            // dl's 40,000 texts are too many to fill the cache from, and the cache that opens
+            // unresolved needs a probe row per text. The owner runs every task, on its own slot, so the
+            // executions differ in the owner's cache alone.
+            execute("CREATE TABLE dl AS (SELECT ('k' || x)::SYMBOL sym, x w FROM long_sequence(40_000))");
+            final String sql = "SELECT f.ts, f.sym, dl.w FROM f JOIN dl ON f.sym = dl.sym WHERE f.ts < '2024-03-01'";
             final String expected = ordinary(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -687,6 +1016,16 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWideningOnFiberWorkers() throws Exception {
+        assertWideningOnWorkers(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testWideningOnThreadWorkers() throws Exception {
+        assertWideningOnWorkers(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
     public void testWorkerPoolsAndAConcurrentWriterOnFiberWorkers() throws Exception {
         assertWorkerPoolsAndAConcurrentWriter(WorkerPoolMode.FIBER_HOST);
     }
@@ -770,6 +1109,13 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     // The first stage's first SYMBOL key translates through the shared cache of f.sym's 300,000 texts.
     private static void assertSharedCache(AsyncHashJoinRecordCursorFactory join) {
         assertSharedCache(join.getAtom().getStage(0), 0, SHARED_CACHE_SIZE);
+    }
+
+    // The first stage's first SYMBOL key translates through the shared cache of f.sym's 300,000 texts,
+    // which d's texts filled.
+    private static void assertSharedFilledCache(AsyncHashJoinRecordCursorFactory join) {
+        assertSharedCache(join);
+        Assert.assertTrue(join.getAtom().getStage(0).isSymbolKeyCacheFilledFromBuild(0));
     }
 
     // The shared cache is open, at four bytes per text of the probe dictionary.
@@ -902,6 +1248,134 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         }
     }
 
+    // Executes the query twice, under the rows that the client reads first, Long.MAX_VALUE for none:
+    // reads the first rows, checks the translation, unless the check is null, reads the rest and checks
+    // it again, then compares every row, in order, with the ordinary plan's. Each execution releases
+    // what it took.
+    private static void assertTranslationAcrossRead(
+            String sql,
+            long firstReadRows,
+            long firstRows,
+            @Nullable TranslationCheck firstCheck,
+            TranslationCheck lastCheck,
+            SqlExecutionContext context
+    ) throws SqlException {
+        final String expected = ordinaryRows(sql, context);
+        final boolean isEnabledBefore = context.isParallelHashJoinEnabled();
+        context.setParallelHashJoinEnabled(true);
+        try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
+            final AsyncHashJoinRecordCursorFactory join = find(factory);
+            Assert.assertNotNull(sql, join);
+            for (int execution = 0; execution < 2; execution++) {
+                final MemoryTracker tracker;
+                try (RecordCursor cursor = openCursor(factory, firstReadRows, context)) {
+                    final StringSink rows = new StringSink();
+                    Assert.assertEquals(sql, firstRows, printRows(cursor, factory, firstRows, rows));
+                    if (firstCheck != null) {
+                        firstCheck.check(join);
+                    }
+                    printRows(cursor, factory, Long.MAX_VALUE, rows);
+                    TestUtils.assertEquals(sql, expected, rows);
+                    lastCheck.check(join);
+                    tracker = context.getMemoryTracker();
+                    Assert.assertNotNull(tracker);
+                }
+                Assert.assertEquals(sql, 0, tracker.getUsed());
+                Assert.assertEquals(sql, 0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+            }
+        } finally {
+            context.setParallelHashJoinEnabled(isEnabledBefore);
+        }
+    }
+
+    // Reads the rows that widen the translation on a pool of four workers of the mode, in frames that
+    // spread the first windows over them: the frames of the first window go out at once, and their
+    // tasks run on the workers.
+    private static void assertWideningOnWorkers(WorkerPoolMode mode) throws Exception {
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
+            createTables(db, context);
+            final String inner = "SELECT f.ts, f.sym, d.w FROM f JOIN d ON f.sym = d.sym";
+            final String left = "SELECT f.ts, f.sym, d.w FROM f LEFT JOIN d ON f.sym = d.sym";
+            final TranslationCheck isNarrowed = join -> {
+                Assert.assertTrue(join.getAtom().getRing().getDispatchLimit() >= 2);
+                assertSlotCached(join);
+            };
+            // Frames of 1,000 rows: the LIMIT's first window spans two frames, and the join reads past
+            // it once the consumer has collected them.
+            context.changePageFrameSizes(1_000, 1_000);
+            for (int i = 0; i < 5; i++) {
+                assertTranslationAcrossRead(inner + " LIMIT 1171", Long.MAX_VALUE, 996, isNarrowed,
+                        AsyncHashJoinSymbolKeyTranslationTest::assertSharedFilledCache, context);
+            }
+            // Frames of 64 rows: the 200 rows that a client reads first span four frames, and the
+            // client reads on past them, through the rest of the last one, whose owner joins it once
+            // the translation widened, while the workers join the frames after it.
+            context.changePageFrameSizes(64, 64);
+            final TranslationCheck isNarrowedOverFourFrames = join -> {
+                Assert.assertTrue(join.getAtom().getRing().getDispatchLimit() >= 4);
+                assertSlotCached(join);
+            };
+            for (int i = 0; i < 5; i++) {
+                assertTranslationAcrossRead(left, 200, 200, isNarrowedOverFourFrames,
+                        AsyncHashJoinSymbolKeyTranslationTest::assertSharedFilledCache, context);
+            }
+            // A count after the first row collects the first window's frames that the workers join,
+            // then widens the translation and dispatches the rest.
+            final long rowCount = ordinaryRowCount(left, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(left, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                for (int i = 0; i < 5; i++) {
+                    final MemoryTracker tracker;
+                    try (RecordCursor cursor = openCursor(factory, 200, context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        isNarrowedOverFourFrames.check(join);
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(context.getCircuitBreaker(), counter);
+                        Assert.assertEquals(rowCount - 1, counter.get());
+                        assertSharedFilledCache(join);
+                        Assert.assertEquals(4, join.getCountedTupleFrameCount());
+                        tracker = context.getMemoryTracker();
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                    Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                }
+            }
+        }));
+    }
+
+    // True when the failure came from the widening of a SYMBOL key translation.
+    private static boolean isThrownInWidening(Throwable e) {
+        for (StackTraceElement element : e.getStackTrace()) {
+            if (element.getClassName().equals(SymbolKeyTranslator.class.getName()) && element.getMethodName().equals("widen")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Opens the factory's cursor under the rows that the client reads first, as the HTTP and
+    // PostgreSQL servers do; Long.MAX_VALUE opens it under none.
+    private static RecordCursor openCursor(RecordCursorFactory factory, long firstReadRows, SqlExecutionContext context) throws SqlException {
+        context.setFirstReadRows(firstReadRows);
+        try {
+            return factory.getCursor(context);
+        } finally {
+            context.setFirstReadRows(Long.MAX_VALUE);
+        }
+    }
+
+    // Prints up to maxRows more rows of the cursor to the sink and returns how many it printed.
+    private static long printRows(RecordCursor cursor, RecordCursorFactory factory, long maxRows, StringSink sink) {
+        long rows = 0;
+        while (rows < maxRows && cursor.hasNext()) {
+            CursorPrinter.println(cursor.getRecord(), factory.getMetadata(), sink, true);
+            rows++;
+        }
+        return rows;
+    }
+
     private static String printRows(RecordCursor cursor, RecordCursorFactory factory) {
         final StringSink sink = new StringSink();
         while (cursor.hasNext()) {
@@ -925,11 +1399,25 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
     // Counts the stateful checks of the breaker, which throw on a trip, and cancels at the given one.
     static final class TrippingCircuitBreaker extends CountingSqlExecutionCircuitBreaker {
         final AtomicLong checks = new AtomicLong();
+        // Tells the checks that count from those that do not.
+        private final BooleanSupplier isCounted;
         private final long tripAt;
 
         TrippingCircuitBreaker(SqlExecutionCircuitBreaker delegate, long tripAt) {
+            this(delegate, tripAt, () -> true);
+        }
+
+        TrippingCircuitBreaker(SqlExecutionCircuitBreaker delegate, long tripAt, BooleanSupplier isCounted) {
             super(delegate);
             this.tripAt = tripAt;
+            this.isCounted = isCounted;
+        }
+
+        // True for a check that a SYMBOL key translation's widening makes, on the checking thread.
+        static boolean isWidening() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().equals(SymbolKeyTranslator.class.getName()) && frame.getMethodName().equals("widen")
+            ));
         }
 
         @Override
@@ -951,7 +1439,7 @@ public class AsyncHashJoinSymbolKeyTranslationTest extends AbstractCairoTest {
         }
 
         private void onCheck() {
-            if (checks.incrementAndGet() == tripAt) {
+            if (isCounted.getAsBoolean() && checks.incrementAndGet() == tripAt) {
                 throw CairoException.queryCancelled(1);
             }
         }

@@ -1613,9 +1613,10 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
      * dictionaries alone, so every worker does share that. On failure the caller runs
      * {@link #clear()}, which releases both. Runs once per execution, after the build and once the
      * probe scan has cut its frames, on the thread that then dispatches the probes, before the
-     * payload copy and the first probe task.
+     * first probe task. A parallel hash join that binds it for the rows that it joins first widens
+     * it once it joins more; see {@link #widenSymbolKeyTranslation(long, SqlExecutionCircuitBreaker)}.
      *
-     * @param probeRowCount      the probe's frame rows, or fewer when the execution reads fewer first
+     * @param probeRowCount      the probe's frame rows, or fewer when the execution joins fewer first
      * @param isParallelHashJoin true for a parallel hash join's stage, false for the fused GROUP BY's
      */
     void bindSymbolKeyTranslation(long probeRowCount, boolean isParallelHashJoin, SqlExecutionCircuitBreaker circuitBreaker) {
@@ -1638,6 +1639,27 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
                         ? ownerBuildTable
                         : (StaticSymbolTable) buildFrames.getSymbolTableSource().newSymbolTable(buildColumn);
                 slots.getQuick(i).getSymbolKeyView(key, isKeySourceSwapped).of(cache, probeTable, buildTable);
+            }
+        }
+    }
+
+    /**
+     * Widens each SYMBOL key column's translation, which
+     * {@link #bindSymbolKeyTranslation(long, boolean, SqlExecutionCircuitBreaker)} bound for fewer
+     * rows, to a probe of {@code probeRowCount} rows: a key whose slots translate through caches of
+     * their own opens the shared cache, once the rows reach it, and points every slot's view at it,
+     * with the slot's own symbol tables. The owner of a parallel hash join calls it only while no
+     * probe task runs, so that no slot translates meanwhile; the probe task that it publishes next
+     * publishes the cache to the workers. On failure the caller runs {@link #clear()}, which releases
+     * what any key opened.
+     */
+    void widenSymbolKeyTranslation(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        for (int key = 0, keyCount = symbolKeyCaches.size(); key < keyCount; key++) {
+            final SymbolKeyTranslator cache = symbolKeyCaches.getQuick(key);
+            if (cache.widen(probeRowCount, circuitBreaker)) {
+                for (int i = 0, n = slots.size(); i < n; i++) {
+                    slots.getQuick(i).getSymbolKeyView(key, isKeySourceSwapped).rebind(cache);
+                }
             }
         }
     }

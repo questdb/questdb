@@ -66,6 +66,9 @@ import org.jetbrains.annotations.TestOnly;
  * it opens on the view's first miss, keeps each probe key it resolves, and stops allocating once
  * it holds {@code cairo.sql.join.symbol.translation.cache.capacity} entries. A view's cache is
  * the view's slot's alone, which one thread uses at a time, and charges the translator's tracker.
+ * A caller that opened the translation for the first rows of a probe, which may read on, widens it
+ * to the rows it then reads, see {@link #widen(long, SqlExecutionCircuitBreaker)}, which opens the
+ * shared cache once those rows reach it.
  * <p>
  * The dictionaries are not shared. Each worker translates through its own {@link View}, which
  * holds that worker's pair of symbol tables and reads the shared cache, or its own.
@@ -112,14 +115,24 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     private static final int SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW = 256;
     // Translated keys are nonnegative, VALUE_IS_NULL or VALUE_NOT_FOUND, never -1.
     private static final int UNRESOLVED = -1;
+    // The dictionaries of a translation that left the views to their own caches, which widen() opens
+    // the shared cache over; null otherwise.
+    @Nullable
+    private StaticSymbolTable buildKeyTable;
     private long cacheAddress;
     private int cacheKeyCount;
     private long cacheSize;
     private boolean isFilledFromBuild;
+    // How the translation that left the views to their own caches was opened, which widen() opens
+    // the shared cache by; false otherwise.
+    private boolean isParallelHashJoin;
+    private boolean isProbeDictionaryEligible;
     // True when the probe reads too few rows for the shared cache, so each view caches on its own.
     private boolean isSlotCached;
     @Nullable
     private MemoryTracker memoryTracker;
+    @Nullable
+    private StaticSymbolTable probeKeyTable;
     // The entries past which a view's own cache stops allocating.
     private int slotCacheCapacity;
 
@@ -158,6 +171,10 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         isSlotCached = false;
         slotCacheCapacity = 0;
         memoryTracker = null;
+        probeKeyTable = null;
+        buildKeyTable = null;
+        isProbeDictionaryEligible = false;
+        isParallelHashJoin = false;
     }
 
     public long getSizeInBytes() {
@@ -252,6 +269,10 @@ public final class SymbolKeyTranslator implements QuietCloseable {
             close();
             this.memoryTracker = memoryTracker;
             this.slotCacheCapacity = slotCacheCapacity;
+            this.probeKeyTable = probeKeyTable;
+            this.buildKeyTable = buildKeyTable;
+            this.isProbeDictionaryEligible = isProbeDictionaryEligible;
+            this.isParallelHashJoin = isParallelHashJoin;
             isSlotCached = true;
             return;
         }
@@ -300,6 +321,36 @@ public final class SymbolKeyTranslator implements QuietCloseable {
             close();
             throw th;
         }
+    }
+
+    /**
+     * Reopens a translation that left the views to their own caches for a probe of more rows,
+     * {@code probeRowCount}, over the same dictionaries, by the rule of
+     * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}:
+     * the shared cache opens, filled from the build or unresolved, once the rows reach it, and the
+     * translation stays as it is otherwise. Returns true when the shared cache opened, after which
+     * the caller points every view at it, see {@link View#rebind(SymbolKeyTranslator)}, and false
+     * when the translation already shares a cache, or still leaves the views to their own. The
+     * caller widens only while no view translates. On failure the translator closes, as {@code of()}
+     * does, and the views keep translating through their own caches.
+     */
+    public boolean widen(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!isSlotCached) {
+            return false;
+        }
+        assert probeKeyTable != null && buildKeyTable != null;
+        // of() closes the translator first, which clears what it reopens from.
+        of(
+                probeKeyTable,
+                buildKeyTable,
+                isProbeDictionaryEligible,
+                probeRowCount,
+                isParallelHashJoin,
+                slotCacheCapacity,
+                memoryTracker,
+                circuitBreaker
+        );
+        return !isSlotCached;
     }
 
     private static boolean isFillableFromBuild(int probeKeyCount, int buildKeyCount) {
@@ -356,6 +407,16 @@ public final class SymbolKeyTranslator implements QuietCloseable {
             this.buildKeyTable = buildKeyTable;
             slotCache.close();
             slotCache.setMemoryTracker(translator.memoryTracker);
+        }
+
+        /**
+         * Points the view at the shared cache that the translator's
+         * {@link SymbolKeyTranslator#widen(long, SqlExecutionCircuitBreaker)} opened, over the view's
+         * own tables, and releases the view's own cache, which the shared one supersedes.
+         */
+        public void rebind(SymbolKeyTranslator translator) {
+            assert !translator.isSlotCached;
+            of(translator, probeKeyTable, buildKeyTable);
         }
 
         @Override

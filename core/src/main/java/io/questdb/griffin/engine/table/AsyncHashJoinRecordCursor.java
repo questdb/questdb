@@ -108,6 +108,19 @@ import io.questdb.std.Os;
  * chunk of the capped frame that it reads on into takes a step of the ramp, and the workers join
  * the frames after the capped one, within the ramp, while the consumer continues it.
  * <p>
+ * The probe rows of the first window, the LIMIT's or the head's, bound the SYMBOL keys that the
+ * execution translates first, so that, next to a large probe dictionary, a short read translates
+ * through each slot's own cache rather than opening a shared one; see
+ * {@link AsyncHashJoinAtom#bindSymbolKeyTranslation}. A LIMIT counts the joined rows, not the probe
+ * rows that yield them, and an INNER join that drops most rows may read every probe row for them.
+ * The cursor thus widens the translation to the whole probe's rows, see
+ * {@link AsyncHashJoinAtom#widenSymbolKeyTranslation}, which opens the shared cache once they reach
+ * it: when the reader has read the rows that the first window was cut for and reads on, when it
+ * has collected the first window's frames and fetches the next one, and before a count dispatches
+ * its first task. No probe task runs then: no frame past the first window went out, the count
+ * first collects the frames in flight, and the frame that the consumer holds is one whose task is
+ * done.
+ * <p>
  * An execution that swapped the first join's inputs, see {@link AsyncHashJoinAtom#isSwapped()}, probes
  * the right input's frames and reads the left input's columns from the first stage's matches; the
  * joined row keeps its columns, and each column's symbol tables come from the open scan whose frames
@@ -166,9 +179,14 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private boolean isAllFramesActive;
     private boolean isBuilt;
     private boolean isOpen;
+    // True while the SYMBOL key translation covers the first window's probe rows alone, fewer than
+    // the probe's; see widenSymbolKeyTranslation().
+    private boolean isSymbolKeyTranslationNarrowed;
     // The rows of the query's LIMIT, or that the client reads first, Long.MAX_VALUE when neither
     // bounds them.
     private long limitRows = Long.MAX_VALUE;
+    // The rows of the execution's probe frames, which the SYMBOL key translation widens to.
+    private long probeRowCount;
     // Where rampWindow starts, for the execution and after toTop(); see computeRampStart().
     private int rampStart = 1;
     // The frames the execution may keep in flight before the ring's window narrows them: rampStart
@@ -219,7 +237,13 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             countTupleFrame(counter);
         }
         while (frameIndex < frameLimit) {
-            cursor = frameSequence.next(Integer.MAX_VALUE, true);
+            // A translation that the first window narrowed widens before the count dispatches a
+            // task, once the count collected the frames in flight: until then, a dispatch limit of
+            // one keeps next() from publishing a task or reducing one locally.
+            if (isSymbolKeyTranslationNarrowed && frameSequence.getDispatchedFrameCount() <= frameIndex + 1) {
+                widenSymbolKeyTranslation();
+            }
+            cursor = frameSequence.next(isSymbolKeyTranslationNarrowed ? 1 : Integer.MAX_VALUE, true);
             if (cursor > -1) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
                 if (task.hasError()) {
@@ -392,15 +416,21 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 for (int i = 0, n = frameSequence.getFrameCount(); i < n; i++) {
                     probeRows += frameSequence.getFrameRowCount(i);
                 }
-                // The frames' rows, or the LIMIT's when fewer, bound the keys that the execution
-                // translates first.
-                atom.bindSymbolKeyTranslation(Math.min(probeRows, limitRows), circuitBreaker);
+                probeRowCount = probeRows;
                 atom.maybeCopyPayload(probeRows, circuitBreaker, buildRounds);
                 final HashJoinTupleRing ring = atom.getRing();
                 // Where the builds cap the frames' rows, a probe row may yield several tuples, and a
                 // task may write its cap of them.
                 ring.of(frameSequence, true, fanOutFrameRowCap != Long.MAX_VALUE);
                 firstWindow(ring.getDispatchLimit());
+                // The first window's probe rows, its LIMIT's or its head's, bound the keys that the
+                // execution translates until it joins past them; every probe row's bound them
+                // without a first window.
+                final long translationRows = firstWindowEnd > -1
+                        ? (limitRows == Long.MAX_VALUE ? firstTaskRows : limitRows)
+                        : probeRows;
+                atom.bindSymbolKeyTranslation(translationRows, circuitBreaker);
+                isSymbolKeyTranslationNarrowed = translationRows < probeRows;
                 rampStart = computeRampStart(ring);
                 rampWindow = rampStart;
                 tupleStride = ring.getTupleStride();
@@ -438,7 +468,9 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 // and the frames after this one go out within it, past the first window, so that
                 // the workers join them while the consumer continues this one. A reader that still
                 // lacks some of those rows, which an INNER join or a probe filter dropped,
-                // continues this frame first.
+                // continues this frame first. The translation widens first, as the reader joins
+                // past the probe rows of the first window.
+                widenSymbolKeyTranslation();
                 growRamp();
                 frameSequence.dispatchAhead(getWindow());
             }
@@ -558,6 +590,10 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
 
     private void fetchNextFrame() {
         do {
+            if (frameIndex >= firstWindowEnd) {
+                // The next frame lies past the first window, whose frames the consumer collected.
+                widenSymbolKeyTranslation();
+            }
             cursor = frameSequence.next(getDispatchLimit(frameIndex + 1), false);
             if (cursor > -1) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
@@ -729,6 +765,20 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         isAllFramesActive = true;
     }
 
+    /**
+     * Widens the SYMBOL key translation that the first window narrowed to the whole probe's rows,
+     * see {@link AsyncHashJoinAtom#widenSymbolKeyTranslation}, once per execution, while no probe
+     * task runs: every frame that the sequence handed out is one that the consumer collected or holds,
+     * whose task is done.
+     */
+    private void widenSymbolKeyTranslation() {
+        if (isSymbolKeyTranslationNarrowed) {
+            assert frameSequence.getDispatchedFrameCount() <= frameIndex + 1 : "probe tasks in flight";
+            atom.widenSymbolKeyTranslation(probeRowCount, circuitBreaker);
+            isSymbolKeyTranslationNarrowed = false;
+        }
+    }
+
     // The frames whose count-only tasks the open execution's counts collected.
     int getCountOnlyFrameCount() {
         return countOnlyFrameCount;
@@ -760,6 +810,8 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         this.circuitBreaker = circuitBreaker;
         this.limitRows = limitRows;
         this.firstWindowEnd = -1;
+        // The build binds the translation.
+        this.isSymbolKeyTranslationNarrowed = false;
         // The build picks where the ramp starts.
         this.rampStart = 1;
         // The build binds the stages' payload readers to the record.
