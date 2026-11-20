@@ -84,12 +84,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     private final IODispatcherConfiguration configuration;
     private final AtomicInteger connectionCount = new AtomicInteger();
     private final LongGauge connectionCountGauge;
+    // the listener joins its port's SO_REUSEPORT group, shared with the dispatchers of the other
+    // worker groups of the same server
+    private final boolean isPortShared;
     private final Counter listenerStateChangeCounter;
     private final boolean peerNoLinger;
     private final long queuedConnectionTimeoutMs;
-    // the listener joins its port's SO_REUSEPORT group, shared with the dispatchers of the other
-    // worker groups of the same server
-    private final boolean reusePort;
     protected volatile boolean closed = false;
     protected long heartbeatIntervalMs;
     protected long serverFd;
@@ -103,11 +103,11 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     public AbstractIODispatcher(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean isPortShared
     ) {
         this.LOG = LogFactory.getLog(configuration.getDispatcherLogName());
         this.configuration = configuration;
-        this.reusePort = reusePort;
+        this.isPortShared = isPortShared;
         this.connectionCountGauge = configuration.getConnectionCountGauge();
         this.listenerStateChangeCounter = configuration.listenerStateChangeCounter();
         this.nf = configuration.getNetworkFacade();
@@ -328,7 +328,7 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
         this.serverFd = nf.socketTcp(false);
         final int backlog = configuration.getListenBacklog();
         // outside the port == 0 block, so a listener reopened after the connection limit rejoins the group
-        if (reusePort && nf.setReusePort(serverFd) != 0) {
+        if (isPortShared && nf.setReusePort(serverFd) != 0) {
             throw NetworkError.instance(nf.errno()).put("could not set SO_REUSEPORT [who=")
                     .put(configuration.getDispatcherLogName())
                     .put(", fd=").put(serverFd)

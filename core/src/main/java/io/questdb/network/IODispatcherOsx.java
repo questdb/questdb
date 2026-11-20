@@ -38,9 +38,9 @@ public class IODispatcherOsx<C extends IOContext<C>> extends AbstractIODispatche
     public IODispatcherOsx(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean isPortShared
     ) {
-        super(configuration, ioContextFactory, reusePort);
+        super(configuration, ioContextFactory, isPortShared);
         this.capacity = configuration.getEventCapacity();
         // bind socket
         try {

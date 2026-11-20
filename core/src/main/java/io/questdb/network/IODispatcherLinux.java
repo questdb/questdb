@@ -33,9 +33,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     public IODispatcherLinux(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean isPortShared
     ) {
-        super(configuration, ioContextFactory, reusePort);
+        super(configuration, ioContextFactory, isPortShared);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
         registerListenerFd();
     }

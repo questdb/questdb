@@ -66,22 +66,22 @@ public class IODispatchers {
     }
 
     /**
-     * Creates a dispatcher whose listener, when {@code reusePort} is set, joins the SO_REUSEPORT
+     * Creates a dispatcher whose listener, when {@code isPortShared} is set, joins the SO_REUSEPORT
      * group of its port.
      */
     public static <C extends IOContext<C>> IODispatcher<C> create(
             IODispatcherConfiguration configuration,
             IOContextFactory<C> ioContextFactory,
-            boolean reusePort
+            boolean isPortShared
     ) {
         switch (Os.type) {
             case Os.LINUX:
-                return new IODispatcherLinux<>(configuration, ioContextFactory, reusePort);
+                return new IODispatcherLinux<>(configuration, ioContextFactory, isPortShared);
             case Os.DARWIN:
             case Os.FREEBSD:
-                return new IODispatcherOsx<>(configuration, ioContextFactory, reusePort);
+                return new IODispatcherOsx<>(configuration, ioContextFactory, isPortShared);
             case Os.WINDOWS:
-                return new IODispatcherWindows<>(configuration, ioContextFactory, reusePort);
+                return new IODispatcherWindows<>(configuration, ioContextFactory, isPortShared);
             default:
                 throw new RuntimeException();
         }
