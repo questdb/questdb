@@ -113,7 +113,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
  * probe row's pairs always finish in one chunk, so a key with more matches than the cap overruns it
  * by its own matches, in memory that the execution's tracker counts. To keep that rare, the builds
  * tell the cursor how many rows of a probe frame fit the cap at the fan-out they lead one to expect,
- * down to 100 rows a frame, see {@link #getProbeFrameRowCap()}, before the probe scan cuts its
+ * down to 1,000 rows a frame, see {@link #getProbeFrameRowCap()}, before the probe scan cuts its
  * frames; whatever the fan-out, a native probe frame holds no more than
  * {@code cairo.sql.parallel.hash.join.page.frame.max.rows}, see {@link #getProbeFrameMaxRows()}.
  * Under a LIMIT, the task of the last frame of the first window joins only the rows that the LIMIT
@@ -169,13 +169,14 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      */
     public static final long STEPPER_WARM_UP_ROWS = 50_000_000;
     // The fewest rows that the fan-out of the builds lowers a probe frame's rows to, or the context's
-    // cairo.sql.page.frame.min.rows when that is fewer; see getProbeFrameRowCap(). At the default task
-    // cap of 100,000 tuples, frames of this many rows hold up to 1,000 matches per probe row with no
-    // continuation, which would join the rest of a frame on the consumer. A frame costs the owner
-    // well under a microsecond of dispatch, collection and ring work, so frames of this many rows
-    // cost a few nanoseconds per probe row, also when the builds lead the join to expect far more
-    // matches per probe row than the rows meet.
-    private static final long FAN_OUT_FRAME_MIN_ROWS = 100;
+    // cairo.sql.page.frame.min.rows when that is fewer; see getProbeFrameRowCap(). The probe scan
+    // records every frame before the execution returns its first row, in time and memory that grow
+    // with the frame count, also when the builds lead the join to expect far more matches per probe
+    // row than the rows meet; frames of this many rows keep that cost at about a frame per thousand
+    // probe rows. The price is continuations: at the default task cap of 100,000 tuples, such a
+    // frame holds up to 100 matches per probe row, and the consumer joins the rest of a frame whose
+    // rows meet more.
+    private static final long FAN_OUT_FRAME_MIN_ROWS = 1_000;
     // Set by tests alone; see AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting().
     private static volatile long stepperWarmUpRowsForTesting = STEPPER_WARM_UP_ROWS;
     // The runtime stages in the execution's orientation: those of the query's, the first one swapped
@@ -875,7 +876,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      * The most rows of a probe frame whose tuples fit a task's cap,
      * {@code cairo.sql.parallel.hash.join.task.output.max.rows}, at the fan-out that the execution's
      * builds lead one to expect: the cap divided by the product of the rows per key of each build
-     * whose matches the workers walk in the execution, and no fewer than 100 rows, or
+     * whose matches the workers walk in the execution, and no fewer than 1,000 rows, or
      * {@code cairo.sql.page.frame.min.rows} when that is fewer. A probe row that meets a key yields as
      * many pairs as the key has rows, while the stages that hand their chains to the consumer write
      * one entry per probe row, so their builds do not count.

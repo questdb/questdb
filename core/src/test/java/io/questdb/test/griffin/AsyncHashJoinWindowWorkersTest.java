@@ -117,14 +117,16 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
         // The server's defaults on eight workers: a dispatch limit of eight, a reduce queue of 32,
         // page frames of 100_000 to 1_000_000 rows, probe frames of at most 100_000 rows, and a task
         // cap of a probe frame's 100_000 rows. b holds 1_000 rows of each of a's eight keys, every
-        // pair of which the residual keeps: a's 32_000 rows make 320 frames of 100_000 / 1_000 =
-        // 100 rows, the floor, whose tasks each write the cap, which grows their entries, doubling
-        // from the frame's 200 longs, to 204_800 longs, 1_638_400 bytes. A query memory limit of
-        // 64 MiB leaves the ring a quarter, 16 MiB, which holds ten such tasks' tuples: the ring's
-        // first window holds the dispatch limit's eight frames, of which the ramp sends two out by
-        // the first row, frame 0 and the frame after it. A limit of 4 MiB leaves 1 MiB, less than
-        // one task's tuples: the first window holds one frame, whose entry, with the build, fits
-        // the limit.
+        // pair of which the residual keeps: the cap holds 100_000 / 1_000 = 100 rows of a, fewer
+        // than the floor of 1_000 rows, so a's 32_000 rows make 32 frames of 1_000 rows. A frame's
+        // task stops at the cap, after 100 rows, and the consumer joins the rest of the frame in
+        // nine chunks of 100 rows: 288 continuations. The cap grows a frame's entry, doubling from
+        // the frame's 2_000 longs, to 256_000 longs, 2_048_000 bytes. A query memory limit of
+        // 64 MiB leaves the ring a quarter, 16 MiB, which holds ten tasks' caps of tuples,
+        // 1_600_000 bytes each: the ring's first window holds the dispatch limit's eight frames,
+        // of which the ramp sends two out by the first row, frame 0 and the frame after it. A
+        // limit of 4 MiB leaves 1 MiB, less than one task's tuples: the first window holds one
+        // frame, whose entry, with the build, fits the limit.
         final int workerCount = 8;
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, workerCount);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 32);
@@ -154,8 +156,8 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             final Record record = cursor.getRecord();
                             Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(320, join.getProbeFrameCount());
-                            Assert.assertEquals(100, join.getProbeFrameRowCount(0));
+                            Assert.assertEquals(32, join.getProbeFrameCount());
+                            Assert.assertEquals(1_000, join.getProbeFrameRowCount(0));
                             Assert.assertEquals(limitAndWindow[1], join.getAtom().getRing().getDispatchLimit());
                             Assert.assertEquals(limitAndWindow[2], join.getDispatchedFrameCount());
                             do {
@@ -163,8 +165,8 @@ public class AsyncHashJoinWindowWorkersTest extends AbstractCairoTest {
                                 vSum += record.getLong(0);
                                 wSum += record.getLong(1);
                             } while (cursor.hasNext());
-                            // No task wrote more than its cap, so no frame continued.
-                            Assert.assertEquals(0, join.getAtom().getContinuationCount());
+                            // Every frame's task stopped at its cap, and nine chunks joined the rest.
+                            Assert.assertEquals(32 * 9, join.getAtom().getContinuationCount());
                         }
                         // Each of a's rows, v from 1 to 32_000, meets b's 1_000 rows of its key, so the
                         // 4_000 rows of a of each key meet b's rows of that key, and between them all

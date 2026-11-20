@@ -57,7 +57,7 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * that the builds lead one to expect, the product of the rows per key of every build whose matches
  * the workers walk, under an ON residual that the pairs run or a post-join filter. Such a frame
  * needs no continuation, where a frame of the configured rows leaves its rest to the consumer. The
- * frames never get fewer rows than 100, or {@code cairo.sql.page.frame.min.rows} when that is
+ * frames never get fewer rows than 1,000, or {@code cairo.sql.page.frame.min.rows} when that is
  * fewer; a stage that hands its chains to the consumer, a LEFT join's among them whose build ran its
  * whole ON residual, a build of one row per key and an empty one lower nothing; a Parquet partition
  * keeps its row groups; and each execution of a cached factory sizes its frames from its own
@@ -154,19 +154,19 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     @Test
     public void testContinuedFramesFirstWindowHoldsTheTaskCap() throws Exception {
         // t holds 8_000 probe rows over a hundred keys, and d ten rows of each key: frames of the
-        // 100-row floor, whose tasks stop at the cap of 500 tuples and leave the rest of their
-        // frames to continuations. A ring budget of 16_000 bytes holds two such tasks' tuples of two
-        // longs, 8_000 bytes each, where the frames' rows, 1_600 bytes, would let the dispatch
+        // 1_000-row floor, whose tasks stop at the cap of 5_000 tuples and leave the rest of their
+        // frames to continuations. A ring budget of 160_000 bytes holds two such tasks' tuples of two
+        // longs, 80_000 bytes each, where the frames' rows, 16_000 bytes, would let the dispatch
         // limit's eight frames in.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 500);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 16_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 160_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT (x % 100)::INT k, 100_000 + x w FROM long_sequence(1_000))");
             sqlExecutionContext.changePageFrameSizes(2_000, 8_000);
             for (String sql : ENUMERATED) {
-                assertFrames(sql, 80, -1);
+                assertFrames(sql, 8, -1);
                 assertFirstWindow(sql, 2, 2, false);
             }
         });
@@ -199,15 +199,17 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     public void testFanOutFramesBelowTheConfiguredMinimum() throws Exception {
         assertMemoryLeak(() -> {
             // t holds 8_000 probe rows over a hundred keys, which frames of at least 2_000 rows would
-            // cut into four. The frames of a walking stage keep at least 100 rows instead, and a cap
-            // of 500 tuples at f rows of d per key caps them at 500 / f rows: 166 rows at f = 3,
-            // 48 frames and one of the 32 rows left, whose 498 tuples fit the cap; 100 rows at f = 5,
-            // eighty frames whose 500 tuples fill the cap exactly, which ends the frame with its last
-            // row, so that no frame continues; and 100 rows, the floor, at f = 10, eighty frames
-            // whose 1_000 tuples pass the cap and continue.
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 500);
+            // cut into four. The frames of a walking stage keep at least 1_000 rows instead, and a
+            // cap of 5_000 tuples at f rows of d per key caps them at 5_000 / f rows: 1_666 rows at
+            // f = 3, four frames and one of the 1_336 rows left, whose 4_998 tuples fit the cap;
+            // 1_250 rows at f = 4, six frames and one of the 500 rows left, whose 5_000 tuples fill
+            // the cap exactly, which ends the frame with its last row, so that no frame continues;
+            // 1_000 rows at f = 5, eight frames that fill the cap as exactly; and 1_000 rows, the
+            // floor, where the cap holds 833 at f = 6 and 500 at f = 10, eight frames whose 6_000
+            // and 10_000 tuples pass the cap and continue.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
             sqlExecutionContext.changePageFrameSizes(2_000, 8_000);
-            final int[][] fanOutsFramesAndContinuations = {{3, 49, 0}, {5, 80, 0}, {10, 80, -1}};
+            final int[][] fanOutsFramesAndContinuations = {{3, 5, 0}, {4, 7, 0}, {5, 8, 0}, {6, 8, -1}, {10, 8, -1}};
             // A partitioned probe, one partition, and a probe without partitions cut the same frames.
             for (String partitionBy : new String[]{" PARTITION BY DAY", ""}) {
                 execute("DROP TABLE IF EXISTS t");
@@ -223,10 +225,9 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
                 }
             }
             // A column that t gained once its partition held 8_000 rows starts there, and so does the
-            // frame of the probe scan that reads it, in the middle of a frame of 1_250 rows, at a cap
-            // of 5_000 tuples and f = 4: six frames of 1_250 rows, one of the 500 rows up to the
-            // column's top, and one of the 1_000 rows after it.
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
+            // frame of the probe scan that reads it, in the middle of a frame of 1_250 rows at f = 4:
+            // six frames of 1_250 rows, one of the 500 rows up to the column's top, and one of the
+            // 1_000 rows after it.
             execute("DROP TABLE t");
             execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("ALTER TABLE t ADD COLUMN v2 LONG");
