@@ -24,10 +24,81 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.columns.DecimalColumn;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class CaseFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testAllNullBranchesCast() throws Exception {
+        // a CASE whose every branch is NULL has the NULL type; a cast reads it through a
+        // getter, which must return NULL
+        assertQuery("""
+                SELECT
+                    x,
+                    (CASE WHEN x > 1 THEN null END)::SYMBOL a,
+                    (CASE x WHEN 2 THEN null END)::VARCHAR b,
+                    (CASE WHEN x > 1 THEN null ELSE null END)::STRING c,
+                    (CASE WHEN x > 1 THEN null END)::INT d,
+                    (CASE WHEN x > 1 THEN null END)::LONG e,
+                    (CASE WHEN x > 1 THEN null END)::DOUBLE f,
+                    (CASE WHEN x > 1 THEN null END)::TIMESTAMP g,
+                    (CASE WHEN x > 1 THEN null END)::SYMBOL <= '5' h
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf\tg\th
+                        1\t\t\t\tnull\tnull\tnull\t\tfalse
+                        2\t\t\t\tnull\tnull\tnull\t\tfalse
+                        """);
+    }
+
+    @Test
+    public void testAllNullBranchValueClosedTwiceOnError() throws Exception {
+        // The SYMBOL branch has no cast to IPv4, so the CASE fails after the cast to the common type
+        // closed the all-NULL branch, and FunctionParser closes that branch again.
+        assertQuery("""
+                SELECT CASE
+                    WHEN x > 1 THEN (CASE WHEN trim(v) = 'a' THEN null END)
+                    WHEN x > 2 THEN 'a'::SYMBOL
+                    WHEN x > 3 THEN 'b'::STRING
+                    ELSE '1.1.1.1'::IPv4
+                END FROM tab
+                """)
+                .ddl("CREATE TABLE tab AS (SELECT x, ' a'::VARCHAR v FROM long_sequence(2))")
+                .fails(95, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+    }
+
+    @Test
+    public void testAllNullBranchValueIsClosed() throws Exception {
+        // The cast to the common type replaces a branch whose every value is NULL with a NULL
+        // constant. The replaced CASE still owns trim(), whose buffers are native memory.
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE WHEN x > 1 THEN (CASE WHEN trim(v) = 'a' THEN null END) ELSE 1 END t,
+                    CASE WHEN x > 1 THEN 1 ELSE (CASE WHEN trim(v) = 'a' THEN null END) END e,
+                    CASE x WHEN 2 THEN (CASE WHEN trim(v) = 'a' THEN null END) ELSE 1 END s,
+                    coalesce((CASE WHEN trim(v) = 'a' THEN null END), 1) c
+                FROM tab
+                """)
+                .ddl("CREATE TABLE tab AS (SELECT x, ' a'::VARCHAR v FROM long_sequence(2))")
+                .expectSize()
+                .returns("""
+                        x\tt\te\ts\tc
+                        1\t1\tnull\t1\t1
+                        2\tnull\t1\tnull\t1
+                        """);
+    }
 
     @Test
     public void testBinary() throws Exception {
@@ -373,11 +444,22 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseEmptyOperand() throws Exception {
+        // an empty bracket after CASE is an operand that delivers no value
+        assertQuery("select case () when 1 then 2 end from long_sequence(1)")
+                .fails(15, "missing arguments");
+        assertQuery("select 10 - case () when 1 then 2 end from long_sequence(1)")
+                .fails(20, "missing arguments");
+        assertQuery("select case ( ) when true then 2 end from long_sequence(1)")
+                .fails(16, "missing arguments");
+    }
+
+    @Test
     public void testCaseErrors() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select case from long_sequence(1)")
                     .noLeakCheck()
-                    .fails(7, "unbalanced 'case'");
+                    .fails(17, "'when' expected");
             assertQuery("select case end from long_sequence(1)")
                     .noLeakCheck()
                     .fails(12, "'when' expected");
@@ -395,7 +477,7 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .fails(16, "'when' expected");
             assertQuery("select case x/2 z end from long_sequence(1)")
                     .noLeakCheck()
-                    .fails(18, "'when' expected");
+                    .fails(16, "'when' expected");
             assertQuery("select case 1+5 end from long_sequence(1)")
                     .noLeakCheck()
                     .fails(16, "'when' expected");
@@ -457,6 +539,16 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMissingEnd() throws Exception {
+        assertQuery("select case when x > 1 then 'a' from long_sequence(1)")
+                .fails(32, "'when', 'else' or 'end' expected");
+        assertQuery("select case when x > 1 then 'a' else 'b' from long_sequence(1)")
+                .fails(41, "'then' or 'end' expected");
+        assertQuery("select case x when 1 then 'a' end k, case x when 2 then 'b' k from long_sequence(1)")
+                .fails(60, "'when', 'else' or 'end' expected");
+    }
+
+    @Test
     public void testCaseWithNoElseInSelectClause() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select case x when 1 then 0 end c from long_sequence(3)")
@@ -505,6 +597,25 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("x\n");
         });
+    }
+
+    @Test
+    public void testCastWithMultiWordTypeInBranches() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE WHEN x > 1 THEN cast(x AS double precision) END a,
+                    CASE WHEN cast(x AS double precision) > 1 THEN 'big' ELSE 'small' END b,
+                    CASE WHEN x > 1 THEN cast('2021-12-31T15:15:51.663Z' AS timestamp with time zone) END c,
+                    CASE WHEN x > 1 THEN '2021-12-31T15:15:51.663Z'::timestamp with time zone END d
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td
+                        1\tnull\tsmall\t\t
+                        2\t2.0\tbig\t2021-12-31T15:15:51.663000Z\t2021-12-31T15:15:51.663000Z
+                        """);
     }
 
     @Test
@@ -1117,6 +1228,40 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         150\t5.6
                         250\t9.9
                         """);
+    }
+
+    @Test
+    public void testDecimalValueCastIsReportedNotThreadSafe() throws Exception {
+        // CASE casts a DECIMAL value of another type to the common type, and a decimal cast keeps
+        // a scratch value. A CASE that claims to be thread-safe over such a cast is shared between
+        // the workers of a parallel GROUP BY, which race on the scratch value and lose groups.
+        final ObjList<Function> args = new ObjList<>();
+        args.add(BooleanConstant.TRUE);
+        args.add(DecimalColumn.newInstance(0, ColumnType.getDecimalType(30, 2)));
+        args.add(DecimalColumn.newInstance(1, ColumnType.getDecimalType(30, 4)));
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        argPositions.add(0);
+        try (Function caseFunction = new CaseFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(args.getQuick(1).isThreadSafe());
+            Assert.assertTrue(args.getQuick(2).isThreadSafe());
+            Assert.assertFalse(caseFunction.isThreadSafe());
+        }
+    }
+
+    @Test
+    public void testDecimalValueOfCommonTypeIsNotCast() throws Exception {
+        // a value that already has the common type needs no cast, so the CASE stays thread-safe
+        final ObjList<Function> args = new ObjList<>();
+        args.add(BooleanConstant.TRUE);
+        args.add(DecimalColumn.newInstance(0, ColumnType.getDecimalType(30, 2)));
+        final IntList argPositions = new IntList();
+        argPositions.add(0);
+        argPositions.add(0);
+        try (Function caseFunction = new CaseFunctionFactory().newInstance(0, args, argPositions, configuration, sqlExecutionContext)) {
+            Assert.assertTrue(caseFunction.isThreadSafe());
+        }
     }
 
     @Test
@@ -2003,6 +2148,49 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     end\s
                 from tanc""")
                 .fails(107, "inconvertible types: SHORT -> VARCHAR [from=SHORT, to=VARCHAR]");
+    }
+
+    @Test
+    public void testSimpleCaseWithFunctionOperand() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE abs(x - 2) WHEN 1 THEN 'one' WHEN 0 THEN 'zero' ELSE 'other' END a,
+                    CASE (abs(x - 2)) WHEN 1 THEN 'one' ELSE 'other' END b,
+                    CASE cast(x AS int) WHEN 2 THEN 'two' END c,
+                    CASE (x) WHEN 3 THEN 'three' END d,
+                    CASE concat('v', x) WHEN 'v1' THEN 'first' ELSE 'rest' END e,
+                    CASE nullif(x, 2) WHEN 2 THEN 'two' WHEN 1 THEN 'one' ELSE 'none' END f
+                FROM long_sequence(4)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td\te\tf
+                        1\tone\tone\t\t\tfirst\tone
+                        2\tzero\tother\ttwo\t\trest\tnone
+                        3\tone\tone\t\tthree\trest\tnone
+                        4\tother\tother\t\t\trest\tnone
+                        """);
+    }
+
+    @Test
+    public void testSimpleCaseWithUnaryOperand() throws Exception {
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE -x WHEN -1 THEN 'minus one' WHEN -3 THEN 'minus three' ELSE 'other' END a,
+                    10 - CASE -x WHEN -2 THEN 1 ELSE 0 END b,
+                    CASE ~x WHEN -3 THEN 'two' END c
+                FROM long_sequence(4)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc
+                        1\tminus one\t10\t
+                        2\tother\t9\ttwo
+                        3\tminus three\t10\t
+                        4\tother\t10\t
+                        """);
     }
 
     @Test

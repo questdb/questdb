@@ -8651,6 +8651,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             WHEN col5 < '4045' FILL -3754167527262084558\s
                           END
                         FROM t1\s
+                        ORDER BY col1,,col2;""", 77,
+                "'then' or 'end' expected"
+        );
+
+        // the same statement with THEN in place of the stray FILL
+        assertSyntaxError(
+                """
+                        SELECT  a,
+                          CASE\s
+                            WHEN col10 > '3975' THEN col7\s
+                            WHEN col5 < '4045' THEN -3754167527262084558\s
+                          END
+                        FROM t1\s
                         ORDER BY col1,,col2;""", 133,
                 "literal or expression expected"
         );
@@ -13799,7 +13812,16 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
                         "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
                         "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
-                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 222,
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 112,
+                "'then' or 'end' expected"
+        );
+        // the same statement with 'qocvwy' in place of the stray qocvwy
+        assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +
+                        "WHEN ts <= 'qocvwy' THEN col4 ELSE sym END, col4, -109639495026, '1986-05-10T21:39:17Z', '" +
+                        "2026-07-22T10:32:41.213795Z',) col2 AS a2, 'p', 0.0 AS a3 FROM t1 a4 LT JOIN t2 " +
+                        "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
+                        "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
+                        " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 216,
                 "unexpected token [)]"
         );
 

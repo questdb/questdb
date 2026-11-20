@@ -459,6 +459,28 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseLikeSwitchFunctionOperand() throws SqlException {
+        // an operand that leaves nothing on the operator stack is still an operand
+        x("x abs 1 'a' 'b' case", "case abs(x) when 1 then 'a' else 'b' end");
+        x("x abs 1 'a' 'b' case", "case (abs(x)) when 1 then 'a' else 'b' end");
+        x("x 1 'a' case", "case (x) when 1 then 'a' end");
+        x("x int cast 1 'a' case", "case cast(x as int) when 1 then 'a' end");
+        x("x y f 1 'a' case", "case f(x, y) when 1 then 'a' end");
+        // a function call right after WHEN is still the searched form
+        x(" x abs 1 = 'a' case", "case when abs(x) = 1 then 'a' end");
+    }
+
+    @Test
+    public void testCaseLikeSwitchUnaryOperand() throws SqlException {
+        // '-' and '~' right after CASE are unary, as they are after WHEN, THEN and ELSE
+        x("x - 1 'a' case", "case -x when 1 then 'a' end");
+        x("5 - 1 'a' case", "case -5 when 1 then 'a' end");
+        x("x ~ 1 'a' case", "case ~x when 1 then 'a' end");
+        x("x - 1 + 1 'a' case", "case -x + 1 when 1 then 'a' end");
+        x("1 x - 2 'a' case -", "1 - case -x when 2 then 'a' end");
+    }
+
+    @Test
     public void testCaseLowercase() throws SqlException {
         x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
@@ -489,8 +511,11 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 .fails(20, "missing arguments");
         assertQuery("select (x) + case when x > 1 then () else 2 end from long_sequence(1)")
                 .fails(37, "missing arguments");
+        assertQuery("select case when x > 1 then case when (x = 1) then 'a' else () end when x > 2 then 'b' end from long_sequence(1)")
+                .fails(63, "missing arguments");
+        // the stray 'x' is the first error
         assertQuery("select case when 1 x > 1 then case when (x = 1) then 'a' else () end when x > 2 then 'b' end from long_sequence(1)")
-                .fails(65, "missing arguments");
+                .fails(19, "'then' or 'end' expected");
     }
 
     @Test
@@ -647,7 +672,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithCast() throws SqlException {
-        x("1 int cast  1 'th1' 2 'th2' 0 case 5 * 1 +",
+        x("1 int cast 1 'th1' 2 'th2' 0 case 5 * 1 +",
                 "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +
@@ -673,6 +698,37 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseWithDoublePrecisionCast() throws SqlException {
+        x(" x 0 > x double cast case", "case when x > 0 then cast(x as double precision) end");
+        x(" x double cast 0 > 1 case", "case when cast(x as double precision) > 0 then 1 end");
+    }
+
+    @Test
+    public void testCaseWithExtract() throws SqlException {
+        // WHEN condition
+        x(" day ts extract 5 > 'a' 'b' case", "case when extract(day from ts) > 5 then 'a' else 'b' end");
+        x(" day ts extract 1 - 7 % 5 6 in 'a' 'b' case",
+                "case when (extract(day from ts) - 1) % 7 in (5, 6) then 'a' else 'b' end");
+        // THEN and ELSE values
+        x(" x 0 > day ts extract year ts extract case", "case when x > 0 then extract(day from ts) else extract(year from ts) end");
+        // operand of the simple CASE
+        x("day ts extract 5 'a' case", "case extract(day from ts) when 5 then 'a' end");
+        // nested CASE
+        x(" x 0 >  hour ts extract 1 = 'a' case case",
+                "case when x > 0 then case when extract(hour from ts) = 1 then 'a' end end");
+        // quoted part
+        x(" 'day' ts extract 5 > 1 case", "case when extract('day' from ts) > 5 then 1 end");
+    }
+
+    @Test
+    public void testCaseWithExtractErrors() {
+        assertFail("case when extract(foo from ts) > 1 then 1 end", 18, "unsupported timestamp part: foo");
+        assertFail("case when extract(day from from ts) > 1 then 1 end", 27, "Unnecessary `from`. Typo?");
+        assertFail("case when extract(from ts) > 1 then 1 end", 18, "Huh? What would you like to extract?");
+        assertFail("case when extract(1+1 from ts) > 1 then 1 end", 20, "we expect timestamp part here");
+    }
+
+    @Test
     public void testCaseWithOuterBraces() throws SqlException {
         x("10  w1 1 + 10 = 'th1' w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(case" +
@@ -682,6 +738,26 @@ public class ExpressionParserTest extends AbstractCairoTest {
                         " then 'th2'" +
                         " else 0" +
                         " end + 1)");
+    }
+
+    @Test
+    public void testCaseWithStrayWord() {
+        // a word after a completed operand inside CASE is not taken for a column; the error
+        // names the keywords the CASE takes at that point
+        assertFail("case x y when 1 then 2 end", 7, "'when' expected");
+        assertFail("case when x y then 1 end", 12, "'then' or 'end' expected");
+        assertFail("case when x from y then 1 end", 12, "'then' or 'end' expected");
+        assertFail("case when x then 1 y end", 19, "'when', 'else' or 'end' expected");
+        assertFail("case when x then 1 else 2 y", 26, "'then' or 'end' expected");
+        assertFail("case when x then case when y then 1 z end end", 36, "'when', 'else' or 'end' expected");
+        // inside a bracket the bracket's own rule applies
+        assertFail("case when f(x y) then 1 end", 14, "dangling literal");
+    }
+
+    @Test
+    public void testCaseWithTimestampWithTimeZoneCast() throws SqlException {
+        x(" x 0 > '2021-12-31 15:15:51.663+00:00' timestamp cast case",
+                "case when x > 0 then cast('2021-12-31 15:15:51.663+00:00' as timestamp with time zone) end");
     }
 
     @Test
@@ -1530,6 +1606,34 @@ public class ExpressionParserTest extends AbstractCairoTest {
         assertFail(". is great", 2, "IS [NOT] not allowed here");
         assertFail("column is $1", 7, "IS must be followed by NULL, TRUE or FALSE");
         assertFail("column is", 7, "IS must be followed by [NOT] NULL");
+    }
+
+    @Test
+    public void testIsNullAfterTypedCastOrSubscript() throws Exception {
+        // IS follows any completed operand, including a cast to a parameterised or array type
+        // and a subscript
+        x("x decimal_18_3 :: NULL =", "x::decimal(18,3) IS NULL");
+        x("x decimal_18_3 :: NULL !=", "x::decimal(18,3) IS NOT NULL");
+        x("x geohash6c :: NULL =", "x::geohash(6c) IS NULL");
+        x("x 1 [] NULL !=", "x[1] IS NOT NULL");
+        x("x double[] :: NULL !=", "x::double[] IS NOT NULL");
+        assertFail("x::decimal(18,3) IS 1", 17, "IS must be followed by NULL, TRUE or FALSE");
+        assertFail("x[1] IS NOT 1", 5, "IS NOT must be followed by NULL, TRUE or FALSE");
+        assertQuery("""
+                SELECT
+                    x,
+                    (CASE WHEN x > 1 THEN x END)::DECIMAL(18, 3) IS NULL a,
+                    (CASE WHEN x > 1 THEN x END)::DECIMAL(18, 3) IS NOT NULL b,
+                    (CASE WHEN x > 1 THEN 'sp052w92' END)::GEOHASH(6c) IS NULL c,
+                    ARRAY[(CASE WHEN x > 1 THEN x END)::DOUBLE, 2.0][1] IS NULL d
+                FROM long_sequence(2)
+                """)
+                .expectSize()
+                .returns("""
+                        x\ta\tb\tc\td
+                        1\ttrue\tfalse\ttrue\ttrue
+                        2\tfalse\ttrue\tfalse\tfalse
+                        """);
     }
 
     @Test

@@ -164,6 +164,19 @@ public class ExpressionParser {
                 !moreCastTargetTypes.contains(targetTag);
     }
 
+    private static SqlException caseKeywordExpected(int position, int paramCount) {
+        if (paramCount == 0) {
+            // after the operand of 'case x'
+            return SqlException.$(position, "'when' expected");
+        }
+        if ((paramCount % 2) != 0) {
+            // in the value after THEN
+            return SqlException.$(position, "'when', 'else' or 'end' expected");
+        }
+        // in the condition after WHEN or the value after ELSE
+        return SqlException.$(position, "'then' or 'end' expected");
+    }
+
     private static boolean hasOffset(WindowExpression windowExpr) {
         int loKind = windowExpr.getRowsLoKind();
         int hiKind = windowExpr.getRowsHiKind();
@@ -174,6 +187,10 @@ public class ExpressionParser {
                     && windowExpr.getRowsHiExpr() != null;
         }
         return hasOffset;
+    }
+
+    private static boolean isCaseControlKeyword(CharSequence tok) {
+        return caseKeywords.get(tok) > -1 || SqlKeywords.isEndKeyword(tok);
     }
 
     private static SqlException missingArgs(int position) {
@@ -1026,7 +1043,7 @@ public class ExpressionParser {
         assert prevBranch != BRANCH_BETWEEN_START;
         switch (prevBranch) {
             case BRANCH_OPERATOR, BRANCH_LEFT_PARENTHESIS, BRANCH_LEFT_BRACKET, BRANCH_COMMA, BRANCH_NONE,
-                 BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
+                 BRANCH_CASE_START, BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
                 // we have unary minus or unary complement, update op completely because it will change precedence
                 if (thisChar == '-') {
                     op = activeRegistry.unaryMinus;
@@ -1816,7 +1833,9 @@ public class ExpressionParser {
                             // replace:
                             // <literal or constant> IS NULL     -> <literal or constant> = NULL
                             // <literal or constant> IS NOT NULL -> <literal or constant> != NULL
-                            if (prevBranch == BRANCH_LITERAL || prevBranch == BRANCH_CONSTANT || prevBranch == BRANCH_RIGHT_PARENTHESIS) {
+                            // The operand can also end in a parameterised type, an array type or a
+                            // subscript, as in 'x::decimal(18, 3)', 'x::double[]' and 'x[1]'.
+                            if (isCompletedOperand(prevBranch) || prevBranch == BRANCH_ARRAY_TYPE_QUALIFIER_END) {
                                 tok = validateIsKeyword(lexer, tok, lastPos);
                             } else {
                                 throw SqlException.$(lastPos, "IS [NOT] not allowed here");
@@ -1919,9 +1938,11 @@ public class ExpressionParser {
                             }
                         }
                         createOperation(op, lastPos, operatorType);
-                    } else if (caseCount > 0 || nonLiteralBranches.excludes(thisBranch)) {
+                    } else if (nonLiteralBranches.excludes(thisBranch) || (caseCount > 0 && isCaseControlKeyword(tok))) {
                         // here we handle literals, in case of "case" statement some of these literals
-                        // are going to flush operation stack
+                        // are going to flush operation stack. WHEN, THEN, ELSE and END come after an
+                        // operand; any other word after an operand, such as FROM in 'extract(day from ts)',
+                        // goes to the branch below.
                         if (Chars.toLowerCaseAscii(thisChar) == 'c' && SqlKeywords.isCaseKeyword(tok)) {
                             if (prevBranch == BRANCH_DOT_DEREFERENCE) {
                                 throw SqlException.$(lastPos, "'case' is not allowed here");
@@ -2026,10 +2047,8 @@ public class ExpressionParser {
 
                                         // we need to track argument consumption so that operators and functions
                                         // do no steal parameters outside of local 'case' scope
-                                        int argCount = 0;
                                         while ((node = opStack.pop()) != null && !SqlKeywords.isCaseKeyword(node.token)) {
                                             argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
-                                            argCount++;
                                         }
 
                                         // Past the first keyword, the tokens before this one are the operand
@@ -2037,15 +2056,18 @@ public class ExpressionParser {
                                         // each. The check above refuses a keyword that directly follows
                                         // another. An empty bracket, as in 'case when () then 1 end',
                                         // delivers no value either. Ahead of the first keyword no value is
-                                        // valid: it is the searched form, 'case when'.
-                                        if (paramCount > 0 && argStackDepth == 0) {
+                                        // valid only right after CASE: it is the searched form, 'case when'.
+                                        // Anything else there is the operand of the simple form, which must
+                                        // deliver a value: 'case () when' has none.
+                                        if ((paramCount > 0 || prevBranch != BRANCH_CASE_START) && argStackDepth == 0) {
                                             throw missingArgs(lastPos);
                                         }
 
                                         if (paramCount == 0) {
-                                            if (argCount == 0) {
+                                            if (prevBranch == BRANCH_CASE_START) {
                                                 // this is 'case when', we will indicate that this is regular 'case'
-                                                // to the rewrite logic
+                                                // to the rewrite logic. The operator stack cannot tell: the
+                                                // operand of 'case abs(x) when' leaves it at ')'.
                                                 onNode(listener, expressionNodePool.next().of(ExpressionNode.LITERAL,
                                                         null, Integer.MIN_VALUE, -1), argStackDepth, prevBranch);
                                             }
@@ -2259,6 +2281,10 @@ public class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         if (scopeStack.notEmpty()) {
+                            if (scopeStack.peek() == Scope.CASE) {
+                                // only an operator or a CASE keyword can follow an operand here
+                                throw caseKeywordExpected(lastPos, paramCount);
+                            }
                             throw SqlException.$(lastPos, "dangling literal");
                         }
                         lexer.unparseLast();

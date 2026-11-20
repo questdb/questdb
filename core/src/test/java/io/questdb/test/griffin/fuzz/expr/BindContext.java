@@ -36,11 +36,16 @@ import io.questdb.std.Rnd;
  * and registers the value; a "no" falls through to the literal text. Two parallel
  * lists track the placeholder names and string values; the runner later replays
  * them through {@code BindVariableService.setStr(name, value)}.
+ * <p>
+ * {@link #plainSpelling()} returns a context that binds nothing and instead asks
+ * {@link CaseExpr}, {@link ExtractExpr} and {@link CastExpr} for their plain spelling,
+ * which the spelling axis in {@code QueryRunner} compares with the keyword spelling.
  */
 public final class BindContext {
     public static final String BIND_NAME_PREFIX = "b";
     private final ObjList<String> bindNames = new ObjList<>();
     private final ObjList<String> bindValues = new ObjList<>();
+    private final boolean isPlainSpelling;
     // Per-constant bind probability, in percent. 50 means each bindable
     // constant has a 50% chance of becoming a bind variable; the rest stay
     // as literals so a query mixes both forms.
@@ -48,8 +53,21 @@ public final class BindContext {
     private final Rnd rnd;
 
     public BindContext(Rnd rnd, int probabilityPct) {
+        this(rnd, probabilityPct, false);
+    }
+
+    private BindContext(Rnd rnd, int probabilityPct, boolean isPlainSpelling) {
         this.rnd = rnd;
         this.probabilityPct = probabilityPct;
+        this.isPlainSpelling = isPlainSpelling;
+    }
+
+    public static BindContext plainSpelling() {
+        return new BindContext(null, 0, true);
+    }
+
+    public static boolean isPlainSpelling(BindContext ctx) {
+        return ctx != null && ctx.isPlainSpelling;
     }
 
     public String addBinding(String value) {
@@ -68,6 +86,6 @@ public final class BindContext {
     }
 
     public boolean shouldBind() {
-        return rnd.nextInt(100) < probabilityPct;
+        return probabilityPct > 0 && rnd.nextInt(100) < probabilityPct;
     }
 }

@@ -3437,7 +3437,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .expectSize()
                     .withPlan("""
                             GroupBy vectorized: false
-                              values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null]))]
+                              values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),nullL]))]
                                 Async Group By workers: 1
                                   keys: [year,name]
                                   values: [sum(population)]
@@ -3481,7 +3481,7 @@ public class PivotTest extends AbstractSqlParserTest {
                     .expectSize()
                     .withPlan("""
                             GroupBy vectorized: false
-                              values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2000 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2000 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2000 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2010 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2010 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2010 and name='Seattle'),AVG(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),null])),first_not_null(case([(year=2020 and name='Amsterdam'),AVG(population),null])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),null])),first_not_null(case([(year=2020 and name='New York City'),AVG(population),null])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),null])),first_not_null(case([(year=2020 and name='Seattle'),AVG(population),null]))]
+                              values: [first_not_null(case([(year=2000 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2000 and name='Amsterdam'),AVG(population),NaN])),first_not_null(case([(year=2000 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2000 and name='New York City'),AVG(population),NaN])),first_not_null(case([(year=2000 and name='Seattle'),SUM(population),nullL])),first_not_null(case([(year=2000 and name='Seattle'),AVG(population),NaN])),first_not_null(case([(year=2010 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='Amsterdam'),AVG(population),NaN])),first_not_null(case([(year=2010 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='New York City'),AVG(population),NaN])),first_not_null(case([(year=2010 and name='Seattle'),SUM(population),nullL])),first_not_null(case([(year=2010 and name='Seattle'),AVG(population),NaN])),first_not_null(case([(year=2020 and name='Amsterdam'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='Amsterdam'),AVG(population),NaN])),first_not_null(case([(year=2020 and name='New York City'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='New York City'),AVG(population),NaN])),first_not_null(case([(year=2020 and name='Seattle'),SUM(population),nullL])),first_not_null(case([(year=2020 and name='Seattle'),AVG(population),NaN]))]
                                 Async Group By workers: 1
                                   keys: [year,name]
                                   values: [sum(population),avg(population)]
@@ -3829,7 +3829,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
-                              values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='NL'),count_dis,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2000 and country='US'),count_dis,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='NL'),count_dis,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0])),sum(case([(year=2010 and country='US'),count_dis,0]))]
+                              values: [first_not_null(case([(year=2000 and country='NL'),total,nullL])),sum(case([(year=2000 and country='NL'),count,0])),sum(case([(year=2000 and country='NL'),count_dis,0])),first_not_null(case([(year=2000 and country='US'),total,nullL])),sum(case([(year=2000 and country='US'),count,0])),sum(case([(year=2000 and country='US'),count_dis,0])),first_not_null(case([(year=2010 and country='NL'),total,nullL])),sum(case([(year=2010 and country='NL'),count,0])),sum(case([(year=2010 and country='NL'),count_dis,0])),first_not_null(case([(year=2010 and country='US'),total,nullL])),sum(case([(year=2010 and country='US'),count,0])),sum(case([(year=2010 and country='US'),count_dis,0]))]
                                 Async Group By workers: 1
                                   keys: [name,year,country]
                                   values: [sum(population),count(population),count_distinct(population)]
@@ -3867,7 +3867,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [name]
                             GroupBy vectorized: false
                               keys: [name]
-                              values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
+                              values: [first_not_null(case([(year=2000 and country='NL'),total,nullL])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,nullL])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,nullL])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,nullL])),sum(case([(year=2010 and country='US'),count,0]))]
                                 Async Group By workers: 1
                                   keys: [name,year,country]
                                   values: [sum(population),count(population)]
@@ -3902,7 +3902,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .expectSize()
                 .withPlan("""
                         GroupBy vectorized: false
-                          values: [first_not_null(case([(year=2000 and country='NL'),total,null])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,null])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,null])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,null])),sum(case([(year=2010 and country='US'),count,0]))]
+                          values: [first_not_null(case([(year=2000 and country='NL'),total,nullL])),sum(case([(year=2000 and country='NL'),count,0])),first_not_null(case([(year=2000 and country='US'),total,nullL])),sum(case([(year=2000 and country='US'),count,0])),first_not_null(case([(year=2010 and country='NL'),total,nullL])),sum(case([(year=2010 and country='NL'),count,0])),first_not_null(case([(year=2010 and country='US'),total,nullL])),sum(case([(year=2010 and country='US'),count,0]))]
                             Async Group By workers: 1
                               keys: [year,country]
                               values: [sum(population),count(population)]
@@ -3940,7 +3940,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [country]
                             GroupBy vectorized: false
                               keys: [country]
-                              values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),null]))]
+                              values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),nullL]))]
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [country,year]
@@ -3977,7 +3977,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [country desc]
                             GroupBy vectorized: false
                               keys: [country]
-                              values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),null])),first_not_null(case([(year=2000 and country_2='NL'),AVG(population),null]))]
+                              values: [first_not_null(case([(year=2000 and country_2='NL'),SUM(population),nullL])),first_not_null(case([(year=2000 and country_2='NL'),AVG(population),NaN]))]
                                 SelectedRecord
                                     Async Group By workers: 1
                                       keys: [country,year]
@@ -4010,7 +4010,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .withPlan("""
                         GroupBy vectorized: false
                           keys: [name]
-                          values: [first_not_null(case([(year=2000 and country='NL'),SUM(population),null])),first_not_null(case([(year=2000 and country='US'),SUM(population),null])),first_not_null(case([(year=2010 and country='NL'),SUM(population),null])),first_not_null(case([(year=2010 and country='US'),SUM(population),null])),first_not_null(case([(year=2020 and country='NL'),SUM(population),null])),first_not_null(case([(year=2020 and country='US'),SUM(population),null]))]
+                          values: [first_not_null(case([(year=2000 and country='NL'),SUM(population),nullL])),first_not_null(case([(year=2000 and country='US'),SUM(population),nullL])),first_not_null(case([(year=2010 and country='NL'),SUM(population),nullL])),first_not_null(case([(year=2010 and country='US'),SUM(population),nullL])),first_not_null(case([(year=2020 and country='NL'),SUM(population),nullL])),first_not_null(case([(year=2020 and country='US'),SUM(population),nullL]))]
                             Async Group By workers: 1
                               keys: [name,year,country]
                               values: [sum(population)]
@@ -4046,7 +4046,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .expectSize()
                 .withPlan("""
                         GroupBy vectorized: false
-                          values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),null])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT(population),0]))]
+                          values: [first_not_null(case([(year=2000 and name='Amsterdam' and country='NL'),SUM(population),nullL])),sum(case([(year=2000 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Amsterdam' and country='US'),SUM(population),nullL])),sum(case([(year=2000 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='NL'),SUM(population),nullL])),sum(case([(year=2000 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='Seattle' and country='US'),SUM(population),nullL])),sum(case([(year=2000 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='NL'),SUM(population),nullL])),sum(case([(year=2000 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2000 and name='New York City' and country='US'),SUM(population),nullL])),sum(case([(year=2000 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='NL'),SUM(population),nullL])),sum(case([(year=2010 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Amsterdam' and country='US'),SUM(population),nullL])),sum(case([(year=2010 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='NL'),SUM(population),nullL])),sum(case([(year=2010 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='Seattle' and country='US'),SUM(population),nullL])),sum(case([(year=2010 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='NL'),SUM(population),nullL])),sum(case([(year=2010 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2010 and name='New York City' and country='US'),SUM(population),nullL])),sum(case([(year=2010 and name='New York City' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='NL'),SUM(population),nullL])),sum(case([(year=2020 and name='Amsterdam' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Amsterdam' and country='US'),SUM(population),nullL])),sum(case([(year=2020 and name='Amsterdam' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='NL'),SUM(population),nullL])),sum(case([(year=2020 and name='Seattle' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='Seattle' and country='US'),SUM(population),nullL])),sum(case([(year=2020 and name='Seattle' and country='US'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='NL'),SUM(population),nullL])),sum(case([(year=2020 and name='New York City' and country='NL'),COUNT(population),0])),first_not_null(case([(year=2020 and name='New York City' and country='US'),SUM(population),nullL])),sum(case([(year=2020 and name='New York City' and country='US'),COUNT(population),0]))]
                             Async Group By workers: 1
                               keys: [year,name,country]
                               values: [sum(population),count(population)]
@@ -4162,7 +4162,7 @@ public class PivotTest extends AbstractSqlParserTest {
                               keys: [timestamp]
                                 GroupBy vectorized: false
                                   keys: [timestamp]
-                                  values: [first_not_null(case([(symbol='ADA-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ADA-USD' and side='sell'),sum(price),null])),first_not_null(case([(symbol='ADA-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ADA-USDT' and side='sell'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
+                                  values: [first_not_null(case([(symbol='ADA-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ADA-USD' and side='sell'),sum(price),NaN])),first_not_null(case([(symbol='ADA-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ADA-USDT' and side='sell'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),NaN]))]
                                     GroupBy vectorized: false
                                       keys: [timestamp,symbol,side]
                                       values: [sum(price)]
@@ -4490,7 +4490,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
+                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
@@ -4529,7 +4529,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [timestamp asc]
                             GroupBy vectorized: false
                               keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
+                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async JIT Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
@@ -4565,7 +4565,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [timestamp]
                             GroupBy vectorized: false
                               keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
+                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async JIT Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
@@ -4604,7 +4604,7 @@ public class PivotTest extends AbstractSqlParserTest {
                           keys: [timestamp desc]
                             GroupBy vectorized: false
                               keys: [timestamp]
-                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),null])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),null]))]
+                              values: [first_not_null(case([(symbol='ETH-USDT' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='ETH-USDT' and side='sell'),sum(price),NaN]))]
                                 Async JIT Group By workers: 1
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
@@ -4680,7 +4680,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .withPlan("""
                         GroupBy vectorized: false
                           keys: [timestamp]
-                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
+                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),NaN]))]
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]
@@ -4735,7 +4735,7 @@ public class PivotTest extends AbstractSqlParserTest {
                         Filter filter: (25780<BTC-USD_buy or 25780<BTC-USD_sell)
                             GroupBy vectorized: false
                               keys: [timestamp]
-                              values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
+                              values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),NaN]))]
                                 GroupBy vectorized: false
                                   keys: [timestamp,symbol,side]
                                   values: [sum(price)]
@@ -4780,7 +4780,7 @@ public class PivotTest extends AbstractSqlParserTest {
                 .withPlan("""
                         GroupBy vectorized: false
                           keys: [timestamp]
-                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),null])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),null]))]
+                          values: [first_not_null(case([(symbol='BTC-USD' and side='buy'),sum(price),NaN])),first_not_null(case([(symbol='BTC-USD' and side='sell'),sum(price),NaN]))]
                             GroupBy vectorized: false
                               keys: [timestamp,symbol,side]
                               values: [sum(price)]

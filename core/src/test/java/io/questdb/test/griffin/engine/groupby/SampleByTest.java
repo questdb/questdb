@@ -12455,7 +12455,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts,k]
                               values: [count(*),sum(v)]
                                 VirtualRecord
-                                  functions: [case([v<3,null,ts]),k,v]
+                                  functions: [case([v<3,,ts]),k,v]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: e
