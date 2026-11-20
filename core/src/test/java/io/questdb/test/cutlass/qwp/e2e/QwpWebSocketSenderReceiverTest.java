@@ -31,6 +31,8 @@ import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
+import io.questdb.client.std.Decimal128;
+import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import org.junit.Assert;
 import org.junit.Ignore;
@@ -1017,6 +1019,35 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
         });
+    }
+
+    @Test
+    public void testDecimalNullBatchAfterColumnDropDefersColumns() throws Exception {
+        assertDecimalNullBatchAfterDropDefersColumns(
+                "ws_decimal_null_readd",
+                """
+                        x\td64\td128\td256
+                        1\t\t\t
+                        2\t\t\t
+                        3\t4.56\t4.56\t4.56
+                        """,
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d64",
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d128",
+                "ALTER TABLE ws_decimal_null_readd DROP COLUMN d256"
+        );
+    }
+
+    @Test
+    public void testDecimalNullBatchAfterTableDropDefersColumns() throws Exception {
+        assertDecimalNullBatchAfterDropDefersColumns(
+                "ws_decimal_null_recreate",
+                """
+                        x\td64\td128\td256
+                        2\t\t\t
+                        3\t4.56\t4.56\t4.56
+                        """,
+                "DROP TABLE ws_decimal_null_recreate"
+        );
     }
 
     @Test
@@ -4375,6 +4406,59 @@ public class QwpWebSocketSenderReceiverTest extends AbstractQwpWebSocketTest {
             assertQuery("SELECT count() FROM ws_test_zeros")
                     .noLeakCheck()
                     .returnsOnce("count\n1\n");
+        });
+    }
+
+    private static void sendDecimalRow(QwpWebSocketSender sender, String table, long x, long unscaled) {
+        sender.table(table)
+                .longColumn("x", x)
+                .decimalColumn("d64", Decimal64.fromLong(unscaled, 2))
+                .decimalColumn("d128", Decimal128.fromLong(unscaled, 2))
+                .decimalColumn("d256", Decimal256.fromLong(unscaled, 2))
+                .at(x, ChronoUnit.MICROS);
+    }
+
+    // The sender keeps its decimal columns after a flush, so once the server
+    // drops them, the sender's next batch carries them with only NULLs.
+    private void assertDecimalNullBatchAfterDropDefersColumns(
+            String table,
+            String expectedRows,
+            String... dropStatements
+    ) throws Exception {
+        runInContext((port) -> {
+            try (QwpWebSocketSender sender = createSender(port)) {
+                sendDecimalRow(sender, table, 1, 123);
+                Assert.assertTrue(sender.drain(30_000));
+                for (String sql : dropStatements) {
+                    execute(sql);
+                }
+
+                sender.table(table)
+                        .longColumn("x", 2)
+                        .at(2, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+                drainWalQueue();
+                assertQuery("SELECT \"column\" FROM table_columns('" + table + "') WHERE \"column\" LIKE 'd%'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("column\n");
+
+                sendDecimalRow(sender, table, 3, 456);
+                Assert.assertTrue(sender.drain(30_000));
+            }
+            drainWalQueue();
+            assertQuery("SELECT \"column\", type FROM table_columns('" + table + "') WHERE \"column\" LIKE 'd%' ORDER BY \"column\"")
+                    .noLeakCheck()
+                    .returns("""
+                            column\ttype
+                            d128\tDECIMAL(38,2)
+                            d256\tDECIMAL(76,2)
+                            d64\tDECIMAL(18,2)
+                            """);
+            assertQuery("SELECT x, d64, d128, d256 FROM " + table)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedRows);
         });
     }
 
