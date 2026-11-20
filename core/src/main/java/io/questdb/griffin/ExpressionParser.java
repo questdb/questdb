@@ -2056,8 +2056,10 @@ public class ExpressionParser {
                                         // each. The check above refuses a keyword that directly follows
                                         // another. An empty bracket, as in 'case when () then 1 end',
                                         // delivers no value either. Ahead of the first keyword no value is
-                                        // valid: it is the searched form, 'case when'.
-                                        if (paramCount > 0 && argStackDepth == 0) {
+                                        // valid only right after CASE: it is the searched form, 'case when'.
+                                        // Anything else there is the operand of the simple form, which must
+                                        // deliver a value: 'case () when' has none.
+                                        if ((paramCount > 0 || prevBranch != BRANCH_CASE_START) && argStackDepth == 0) {
                                             throw missingArgs(lastPos);
                                         }
 

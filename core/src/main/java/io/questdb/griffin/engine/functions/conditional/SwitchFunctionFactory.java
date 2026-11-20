@@ -46,6 +46,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -163,7 +164,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             argsToPoke.add(elseB);
             argsToPoke.add(keyFunction);
-            return CaseCommon.getCaseFunction(position, returnType, record -> branch, argsToPoke);
+            final Function caseFunction = CaseCommon.getCaseFunction(position, returnType, record -> branch, argsToPoke);
+            // The keys only picked the branch, and the CASE does not hold them. Free them once it
+            // exists: on an earlier error the caller frees them with the rest of args.
+            for (int i = 1; i < n; i += 2) {
+                args.setQuick(i, Misc.free(args.getQuick(i)));
+            }
+            return caseFunction;
         }
 
         return switch (ColumnType.tagOf(keyType)) {

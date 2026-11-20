@@ -38,6 +38,7 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -67,6 +68,9 @@ public class CaseCommon {
             return arg;
         }
         if (isNull(argType)) {
+            // The NULL constant replaces the argument, which the caller hands over. Close it: a
+            // CASE whose every branch is NULL still owns its conditions, which can hold native memory.
+            Misc.free(arg);
             return Constants.getNullConstant(toType);
         }
         if (ColumnType.isArray(argType)) {

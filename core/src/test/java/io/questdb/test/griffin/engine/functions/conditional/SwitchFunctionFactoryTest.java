@@ -1603,6 +1603,24 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullOperandArrayKeyIsClosed() throws Exception {
+        // A NULL operand picks its branch at compile time and leaves the keys unused. The CASE
+        // must still free them: an array key holds native memory.
+        assertQuery("""
+                SELECT
+                    CASE null WHEN ARRAY[1.0, 2.0] THEN 1 ELSE 3 END a,
+                    CASE (CASE WHEN x > 1 THEN null END) WHEN ARRAY[[1.0], [2.0]] THEN 1 ELSE 3 END b,
+                    CASE null WHEN null THEN 2 WHEN ARRAY[1.0] THEN 1 END c
+                FROM long_sequence(1)
+                """)
+                .expectSize()
+                .returns("""
+                        a\tb\tc
+                        3\t3\t2
+                        """);
+    }
+
+    @Test
     public void testShort() throws Exception {
         assertQuery("""
                 select\s

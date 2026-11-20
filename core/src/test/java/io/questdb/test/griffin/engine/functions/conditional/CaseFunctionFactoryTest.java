@@ -63,6 +63,44 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllNullBranchValueIsClosed() throws Exception {
+        // The cast to the common type replaces a branch whose every value is NULL with a NULL
+        // constant. The replaced CASE still owns trim(), whose buffers are native memory.
+        assertQuery("""
+                SELECT
+                    x,
+                    CASE WHEN x > 1 THEN (CASE WHEN trim(v) = 'a' THEN null END) ELSE 1 END t,
+                    CASE WHEN x > 1 THEN 1 ELSE (CASE WHEN trim(v) = 'a' THEN null END) END e,
+                    CASE x WHEN 2 THEN (CASE WHEN trim(v) = 'a' THEN null END) ELSE 1 END s,
+                    coalesce((CASE WHEN trim(v) = 'a' THEN null END), 1) c
+                FROM tab
+                """)
+                .ddl("CREATE TABLE tab AS (SELECT x, ' a'::VARCHAR v FROM long_sequence(2))")
+                .expectSize()
+                .returns("""
+                        x\tt\te\ts\tc
+                        1\t1\tnull\t1\t1
+                        2\tnull\t1\tnull\t1
+                        """);
+    }
+
+    @Test
+    public void testAllNullBranchValueIsClosedOnError() throws Exception {
+        // The SYMBOL branch has no cast to IPv4, so the CASE fails after it closed the all-NULL
+        // branch, and the caller frees that branch again with the rest of the arguments.
+        assertQuery("""
+                SELECT CASE
+                    WHEN x > 1 THEN (CASE WHEN trim(v) = 'a' THEN null END)
+                    WHEN x > 2 THEN 'a'::SYMBOL
+                    WHEN x > 3 THEN 'b'::STRING
+                    ELSE '1.1.1.1'::IPv4
+                END FROM tab
+                """)
+                .ddl("CREATE TABLE tab AS (SELECT x, ' a'::VARCHAR v FROM long_sequence(2))")
+                .fails(95, "inconvertible types: SYMBOL -> IPv4 [from=SYMBOL, to=IPv4]");
+    }
+
+    @Test
     public void testBinary() throws Exception {
         assertQuery("""
                 select\s
@@ -487,6 +525,17 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(31, "missing arguments");
         });
+    }
+
+    @Test
+    public void testCaseEmptyOperand() throws Exception {
+        // an empty bracket after CASE is an operand that delivers no value
+        assertQuery("select case () when 1 then 2 end from long_sequence(1)")
+                .fails(15, "missing arguments");
+        assertQuery("select 10 - case () when 1 then 2 end from long_sequence(1)")
+                .fails(20, "missing arguments");
+        assertQuery("select case ( ) when true then 2 end from long_sequence(1)")
+                .fails(16, "missing arguments");
     }
 
     @Test

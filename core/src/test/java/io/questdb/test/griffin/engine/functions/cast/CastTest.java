@@ -4601,7 +4601,8 @@ public class CastTest extends AbstractCairoTest {
                             true\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue\ttrue
                             """);
         }
-        assertQuery("SELECT count() FROM t WHERE s < (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::SYMBOL")
+        // nothing compares greater than NULL, while 'a' is greater than the text 'NaN'
+        assertQuery("SELECT count() FROM t WHERE s > (CASE 1 WHEN 2 THEN 0.5::FLOAT4 END)::SYMBOL")
                 .ddl("CREATE TABLE t AS (SELECT 'a' s FROM long_sequence(3))")
                 .noRandomAccess()
                 .expectSize()
