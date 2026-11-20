@@ -262,7 +262,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     case TRUNCATE -> params.add(new Object[]{history, operation, OperationPath.WAL});
                     // A rewind below the ATTACH loses the version it recorded for v, which the WAL replay must record
                     // again.
-                    case ATTACH_AFTER_RENAME_AWAY_AND_BACK -> params.add(new Object[]{history, operation, OperationPath.WAL});
+                    case ATTACH_AFTER_RENAME_AWAY_AND_BACK ->
+                            params.add(new Object[]{history, operation, OperationPath.WAL});
                     // These change the table outside the WAL by themselves.
                     case COPY_INTO_EXISTING_TABLE, RESUME_WAL_FROM_TXN ->
                             params.add(new Object[]{history, operation, OperationPath.OWN});
@@ -947,8 +948,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private String sql(CairoEngine e) throws Exception {
         return switch (operation) {
-            case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
-                 ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
+            case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR,
+                 ATTACH_SOFT_LINK,
+                 ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING ->
+                    "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
             case CONVERT_LIST_SECOND_FAILS, CONVERT_PARQUET_NO_OP_SECOND_FAILS ->
                     "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-09'";
@@ -1128,7 +1131,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         boolean attaches() {
             return switch (this) {
-                case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS,
+                case ATTACH_AFTER_RENAME_AWAY_AND_BACK, ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE,
+                     ATTACH_LIST_SECOND_FAILS,
                      ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
                      ATTACH_WITH_COPY_SETTING -> true;
                 default -> false;
