@@ -67,16 +67,20 @@ import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import java.util.function.IntUnaryOperator;
 
 /**
  * HTTP, PG wire and ILP/TCP servers on a network pool of two worker groups: each server creates
  * a dispatcher per group, all listening on one port through SO_REUSEPORT. The kernel spreads
- * connections over such listeners on Linux only, so these tests run there.
+ * connections over such listeners on Linux only, so the tests that rely on the spread run there.
  */
 public class ServerGroupsTest extends AbstractCairoTest {
     // with this many connections, all of them land on one of two listeners with probability 2^-39
     private static final int CONNECTIONS = 40;
+    // ILP/TCP runs its IO jobs 0 to 3 on the first two workers of each group, workers 0, 1, 4 and
+    // 5, so jobs 2 and 3, which serve group 1, run on workers whose index differs from theirs
+    private static final int ILP_WORKERS = 8;
     private static final Log LOG = LogFactory.getLog(ServerGroupsTest.class);
     private static final int PG_CONNECTIONS = 24;
     private static final int WORKERS = 4;
@@ -181,46 +185,30 @@ public class ServerGroupsTest extends AbstractCairoTest {
     @Test
     public void testIlpTcp() throws Exception {
         assumeSpreading();
-        assertMemoryLeak(() -> {
-            final int port = pickFreePort();
-            final DefaultLineTcpReceiverConfiguration lineConfig = new DefaultLineTcpReceiverConfiguration(configuration) {
-                @Override
-                public int getBindPort() {
-                    return port;
-                }
-            };
-            final TestWorkerPool networkPool = new TestWorkerPool(groupedPool(WorkerPoolMode.LEGACY));
-            final TestWorkerPool writePool = new TestWorkerPool(1);
-            try (LineTcpReceiver receiver = new LineTcpReceiver(lineConfig, engine, networkPool, writePool)) {
-                Assert.assertEquals(2, receiver.getGroupCount());
-                networkPool.start(LOG);
-                writePool.start(LOG);
-                try {
-                    final long[] fds = connect(port, CONNECTIONS);
-                    try {
-                        awaitSpread(receiver::getGroupConnectionCount, CONNECTIONS);
-                        for (int i = 0; i < CONNECTIONS; i++) {
-                            send(fds[i], "groups,conn=c" + i + " v=" + i + "i\n");
-                        }
-                    } finally {
-                        close(fds);
-                    }
-                    // every line lands, so both groups' dispatchers have network IO jobs
-                    TestUtils.assertEventually(() -> {
-                        Assert.assertNotNull("table not created yet", engine.getTableTokenIfExists("groups"));
-                        drainWalQueue();
-                        assertQuery("select count(), count_distinct(conn), sum(v) from groups")
-                                .noLeakCheck()
-                                .expectSize()
-                                .noRandomAccess()
-                                .returns("count\tcount_distinct\tsum\n" + CONNECTIONS + "\t" + CONNECTIONS + "\t" + (CONNECTIONS * (CONNECTIONS - 1) / 2) + "\n");
-                    }, 60);
-                } finally {
-                    networkPool.halt();
-                    writePool.halt();
-                }
+        assertIlpTcp(
+                NetworkFacadeImpl.INSTANCE,
+                receiver -> awaitSpread(receiver::getGroupConnectionCount, CONNECTIONS)
+        );
+    }
+
+    @Test
+    public void testIlpTcpOnSecondGroupOnly() throws Exception {
+        // Group 0's listener binds to an ephemeral port, so every connection lands on group 1's
+        // listener, on every platform. The lines land only if some IO job serves group 1's
+        // dispatcher.
+        final AtomicInteger binds = new AtomicInteger();
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public boolean bindTcp(long fd, int address, int port) {
+                // the port check binds first, then group 0, then group 1
+                return super.bindTcp(fd, address, binds.incrementAndGet() == 2 ? 0 : port);
             }
-        });
+        };
+        assertIlpTcp(
+                nf,
+                receiver -> awaitGroupConnections(receiver::getGroupConnectionCount, 0, CONNECTIONS)
+        );
+        Assert.assertEquals(3, binds.get());
     }
 
     @Test
@@ -252,6 +240,20 @@ public class ServerGroupsTest extends AbstractCairoTest {
 
     private static void assumeSpreading() {
         Assume.assumeTrue("SO_REUSEPORT spreads connections on Linux only", Os.isLinux());
+    }
+
+    // waits until group 0 holds `first` connections and group 1 holds `second`
+    private static void awaitGroupConnections(IntUnaryOperator groupConnectionCount, int first, int second) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
+        while (groupConnectionCount.applyAsInt(0) != first || groupConnectionCount.applyAsInt(1) != second) {
+            Assert.assertTrue(
+                    "connections not accepted [group0=" + groupConnectionCount.applyAsInt(0)
+                            + ", group1=" + groupConnectionCount.applyAsInt(1)
+                            + ", expected0=" + first + ", expected1=" + second + ']',
+                    System.nanoTime() < deadline
+            );
+            Os.sleep(1);
+        }
     }
 
     // waits until the two groups hold `total` connections between them, and checks each holds some
@@ -293,6 +295,10 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     private static WorkerPoolConfiguration groupedPool(WorkerPoolMode mode) {
+        return groupedPool(mode, WORKERS);
+    }
+
+    private static WorkerPoolConfiguration groupedPool(WorkerPoolMode mode, int workerCount) {
         return new WorkerPoolConfiguration() {
             @Override
             public int getGroupCount() {
@@ -311,7 +317,7 @@ public class ServerGroupsTest extends AbstractCairoTest {
 
             @Override
             public int getWorkerCount() {
-                return WORKERS;
+                return workerCount;
             }
 
             @Override
@@ -392,6 +398,56 @@ public class ServerGroupsTest extends AbstractCairoTest {
                     }
                 } finally {
                     pool.halt();
+                }
+            }
+        });
+    }
+
+    // Sends one line per connection to an ILP/TCP receiver on a pool of two groups, and checks
+    // that every line lands. awaitConnections waits until the receiver holds all connections.
+    private void assertIlpTcp(NetworkFacade nf, Consumer<LineTcpReceiver> awaitConnections) throws Exception {
+        assertMemoryLeak(() -> {
+            final int port = pickFreePort();
+            final DefaultLineTcpReceiverConfiguration lineConfig = new DefaultLineTcpReceiverConfiguration(configuration) {
+                @Override
+                public int getBindPort() {
+                    return port;
+                }
+
+                @Override
+                public NetworkFacade getNetworkFacade() {
+                    return nf;
+                }
+            };
+            final TestWorkerPool networkPool = new TestWorkerPool(groupedPool(WorkerPoolMode.LEGACY, ILP_WORKERS));
+            final TestWorkerPool writePool = new TestWorkerPool(1);
+            try (LineTcpReceiver receiver = new LineTcpReceiver(lineConfig, engine, networkPool, writePool)) {
+                Assert.assertEquals(2, receiver.getGroupCount());
+                networkPool.start(LOG);
+                writePool.start(LOG);
+                try {
+                    final long[] fds = connect(port, CONNECTIONS);
+                    try {
+                        awaitConnections.accept(receiver);
+                        for (int i = 0; i < CONNECTIONS; i++) {
+                            send(fds[i], "groups,conn=c" + i + " v=" + i + "i\n");
+                        }
+                    } finally {
+                        close(fds);
+                    }
+                    // every line lands, so every group holding connections has its dispatcher served
+                    TestUtils.assertEventually(() -> {
+                        Assert.assertNotNull("table not created yet", engine.getTableTokenIfExists("groups"));
+                        drainWalQueue();
+                        assertQuery("select count(), count_distinct(conn), sum(v) from groups")
+                                .noLeakCheck()
+                                .expectSize()
+                                .noRandomAccess()
+                                .returns("count\tcount_distinct\tsum\n" + CONNECTIONS + "\t" + CONNECTIONS + "\t" + (CONNECTIONS * (CONNECTIONS - 1) / 2) + "\n");
+                    }, 60);
+                } finally {
+                    networkPool.halt();
+                    writePool.halt();
                 }
             }
         });
