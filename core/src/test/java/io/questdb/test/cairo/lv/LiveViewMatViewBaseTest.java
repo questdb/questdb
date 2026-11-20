@@ -384,6 +384,84 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testATurnedOffGuardOverAMatViewRecordsItAsDisabled() throws Exception {
+        // With the guard switched off, a rebuild over a materialized view records the switch,
+        // not the base kind, and logs no stand-down line, as over any base: the switch decides
+        // ahead of the base kind.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REBUILD_RESTATEMENT_GUARD_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            seedViewOverTtlMatView();
+            shutdown();
+            removeTimeline();
+
+            final LogCapture capture = new LogCapture();
+            final LiveViewRebuildRestatementGuard guard;
+            capture.start();
+            try {
+                guard = restart();
+                capture.drain();
+            } finally {
+                capture.stop();
+            }
+
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_DISABLED, guard.getAbstention());
+            capture.assertNotLogged("runs without the restatement guard");
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+            assertRebuiltFromAppliedBase("lv_on_mv");
+            assertTtlViewActive();
+            assertTtlViewRows(TTL_REBUILT_ROWS);
+            assertTtlViewMatchesRecompute();
+            assertNoRefreshFaults("lv_on_mv");
+        });
+    }
+
+    @Test
+    public void testAViewOverAMatViewWithNoRowsRebuildsWithNothingRetained() throws Exception {
+        // A view whose filter rejects every mat-view row still consumes the mat view's commits,
+        // so a restart that finds no timeline rebuilds it. The view holds no row for the rebuild
+        // to drop, which the guard records ahead of the base kind, with no stand-down line.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues(engine);
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS "
+                    + "SELECT ts, k, sv, sum(sv) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS s "
+                    + "FROM mvbase WHERE sv > 1000");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-02T00:10:00.000000Z', 'a', 2.0)");
+            }
+            final LiveViewInstance seeded = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(seeded);
+            Assert.assertEquals(
+                    "the view must consume the mat view's commits",
+                    engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("mvbase")),
+                    seeded.getLastProcessedSeqTxn()
+            );
+            shutdown();
+            Assert.assertFalse("a view that never emitted a row has sealed no timeline", timelineFile().exists());
+
+            final LogCapture capture = new LogCapture();
+            final LiveViewRebuildRestatementGuard guard;
+            capture.start();
+            try {
+                guard = restart();
+                capture.drain();
+            } finally {
+                capture.stop();
+            }
+
+            assertRebuiltFromAppliedBase("lv_on_mv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED, guard.getAbstention());
+            capture.assertNotLogged("runs without the restatement guard");
+            assertTtlViewActive();
+            assertTtlViewRows("ts\tk\tsv\ts\n");
+        });
+    }
+
+    @Test
     public void testAViewRebuiltOverAMatViewKeepsRowsTheMatViewEvictsLater() throws Exception {
         // Once the restart's rebuild has followed the mat view, the view refreshes again, so a day
         // the mat view's TTL evicts after the rebuild stays in the view, as incremental refresh
@@ -1085,15 +1163,7 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
      * restore from and rebuilds the view from the applied mat view.
      */
     private void removeTimeline() {
-        final TableToken viewToken = engine.verifyTableName("lv_on_mv");
-        final File checkpointsDir = new File(
-                new File(engine.getConfiguration().getDbRoot(), viewToken.getDirName()),
-                LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
-        );
-        Assert.assertTrue(
-                "the fixture must have published a timeline to remove",
-                new File(checkpointsDir, LiveViewCheckpointLayout.TIMELINE_FILE_NAME).delete()
-        );
+        Assert.assertTrue("the fixture must have published a timeline to remove", timelineFile().delete());
     }
 
     /**
@@ -1179,5 +1249,14 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         engine.releaseInactive();
+    }
+
+    private File timelineFile() {
+        final TableToken viewToken = engine.verifyTableName("lv_on_mv");
+        final File checkpointsDir = new File(
+                new File(engine.getConfiguration().getDbRoot(), viewToken.getDirName()),
+                LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+        );
+        return new File(checkpointsDir, LiveViewCheckpointLayout.TIMELINE_FILE_NAME);
     }
 }

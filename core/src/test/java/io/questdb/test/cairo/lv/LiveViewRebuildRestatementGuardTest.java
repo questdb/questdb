@@ -4240,7 +4240,8 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                 LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
                 LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE,
-                LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH
+                LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH,
+                LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE
         };
         for (int abstention : abstentions) {
             // Armed over evidence both checks would refuse, then stood down: nothing it held
@@ -4250,10 +4251,16 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             guard.observe(ts("2026-01-01T12:00:00.000000Z"));
             Assert.assertEquals(abstention, guard.getAbstention());
             Assert.assertFalse(guard.isHistoryFloorBreached());
+            Assert.assertFalse(guard.isBasePartitionLost());
             Assert.assertFalse(guard.isRowShortfall());
             Assert.assertEquals(0, guard.getReproducedRows());
             Assert.assertNotEquals("not evaluated", LiveViewRebuildRestatementGuard.abstentionName(abstention));
         }
+        // The name the stand-down line of a rebuild over a materialized view reports.
+        Assert.assertEquals(
+                "materialized view base",
+                LiveViewRebuildRestatementGuard.abstentionName(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE)
+        );
     }
 
     @Test

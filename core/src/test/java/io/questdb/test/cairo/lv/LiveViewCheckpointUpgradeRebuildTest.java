@@ -1063,6 +1063,67 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     @Test
+    public void testAnUpgradeRebuildOverAMatViewThatLostRowsReportsTheUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            // A mat view with a one-day TTL over hourly buckets: TTL reads min(newest row, wall
+            // clock), so with the clock at 2026-01-04 the third commit's refresh evicts the mat
+            // view's 2026-01-01, whose row the live view keeps.
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base SAMPLE BY 1h) PARTITION BY DAY TTL 1 DAY");
+            drainWalAndMatViewQueues(engine);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, k, sv, "
+                    + "sum(sv) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS s FROM mvbase");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
+                drainWalAndMatViewQueues(engine);
+                driveRefreshToQuiescence(job);
+                execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-02T00:10:00.000000Z', 'a', 2.0)");
+                drainWalAndMatViewQueues(engine);
+                driveRefreshToQuiescence(job);
+                setCurrentMicros(ts("2026-01-04T00:00:00.000000Z"));
+                execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T05:10:00.000000Z', 'a', 4.0)");
+                drainWalAndMatViewQueues(engine);
+                driveRefreshToQuiescence(job);
+            }
+            final String matViewViewRowsQuery = "SELECT ts, k, sv, s FROM lv_on_mv";
+            assertQuery(matViewViewRowsQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tsv\ts
+                            2026-01-01T00:00:00.000000Z\ta\t1.0\t1.0
+                            2026-01-02T00:00:00.000000Z\ta\t2.0\t3.0
+                            2026-01-03T05:00:00.000000Z\ta\t4.0\t7.0
+                            """);
+            shutdown();
+            stampOlderFormat(checkpointsRootByDirName("lv_on_mv"));
+            loadCatalogue();
+
+            final LiveViewRebuildRestatementGuard guard = drive();
+
+            // The upgrade decides ahead of the base kind: the guard records the upgrade, not the
+            // materialized view, and the advisory line names the day the rebuild dropped.
+            capture.drain();
+            capture.assertLogged("live view upgrade rebuild restates rows the view retained [view=lv_on_mv"
+                    + ", viewMinTs=2026-01-01T00:00:00.000000Z, baseRows=2, baseMinTs=2026-01-02T00:00:00.000000Z]");
+            capture.assertNotLogged("runs without the restatement guard");
+            assertUpgradeRebuilt("lv_on_mv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+            assertQuery(matViewViewRowsQuery)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tsv\ts
+                            2026-01-02T00:00:00.000000Z\ta\t2.0\t2.0
+                            2026-01-03T05:00:00.000000Z\ta\t4.0\t6.0
+                            """);
+            assertNoRefreshFaults("lv_on_mv");
+        });
+    }
+
+    @Test
     public void testAnUpgradeRebuildWaitsForTheBaseApplyInsteadOfInvalidating() throws Exception {
         assertMemoryLeak(() -> {
             seedSixRows();
