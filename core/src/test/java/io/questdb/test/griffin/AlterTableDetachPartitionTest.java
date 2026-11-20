@@ -74,10 +74,8 @@ import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
-import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -118,23 +116,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     private static final int BEFORE_DETACH_DROP_AND_ADD = 2;
     private static final int BEFORE_DETACH_NOTHING = 0;
     private static final int BEFORE_DETACH_TYPE_CHANGE = 1;
-    private static O3PartitionPurgeJob purgeJob;
     private final TestTimestampType timestampType;
+    private O3PartitionPurgeJob purgeJob;
 
     public AlterTableDetachPartitionTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-    }
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
-    }
-
-    @AfterClass
-    public static void tearDownStatic() {
-        purgeJob = Misc.free(purgeJob);
-        AbstractCairoTest.tearDownStatic();
     }
 
     @Parameterized.Parameters(name = "{0}")
@@ -149,6 +135,18 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
+        // Every test numbers its tables from 1, so tab is tab~1 in each of them. A purge retry, or a purge
+        // notification, that an earlier test left behind names this test's table and carries the earlier test's
+        // timestamp type: the job then misses this test's partitions in _txn and deletes them as dropped. A job
+        // per test holds no retries, and its first drain discards the notifications, as their tables are gone.
+        purgeJob = new O3PartitionPurgeJob(engine);
+        purgeJob.drain(0);
+    }
+
+    @Override
+    public void tearDown() throws Exception {
+        purgeJob = Misc.free(purgeJob);
+        super.tearDown();
     }
 
     @Test
