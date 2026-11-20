@@ -960,11 +960,25 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testCreateRollbackAfterABaseInvalidationWhoseStateFileGrowthFailed() throws Exception {
+        // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, with a reason longer than a page: the
+        // base-table writer's open of the view's state file succeeds, and the growth of the file past its first page
+        // that the reason needs fails. The writer logs the failure once and closes the file it opened all the same
+        // before it lets the view's monitor go; the view flips invalid in memory, and the rollback still waits for the
+        // writer and leaves nothing behind.
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(
+                true,
+                BASE_REASON + ' ' + "x".repeat((int) Files.PAGE_SIZE),
+                StateFileWriteFailure.GROWTH
+        );
+    }
+
+    @Test
     public void testCreateRollbackAfterABaseInvalidationWhoseStateFileWriteFailed() throws Exception {
         // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, and the base-table writer's open of the
         // view's state file fails. The view flips invalid in memory all the same, the failure is logged once, and the
         // rollback still waits for the writer and leaves nothing behind.
-        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, true);
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, StateFileWriteFailure.OPEN);
     }
 
     @Test
@@ -1267,14 +1281,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // The base-table writer, which a base DROP, RENAME, UPDATE or schema change runs, invalidates lv0 and then
         // the view a failing CREATE LIVE VIEW published, and holds that view's monitor inside its open of the view's
         // state file when the CREATE's rollback marks the view dropped.
-        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, false);
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(true, BASE_REASON, StateFileWriteFailure.NONE);
     }
 
     @Test
     public void testCreateRollbackWaitsForAnInvalidationWritingTheStateFile() throws Exception {
         // As testCreateRollbackWaitsForABaseInvalidationWritingTheStateFile, through invalidateLiveView, which a
         // refresh worker runs off the refresh latch.
-        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(false, ROLLBACK_REASON, false);
+        assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(false, ROLLBACK_REASON, StateFileWriteFailure.NONE);
     }
 
     @Test
@@ -2553,12 +2567,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // and is inside its open of the view's state file, past its check for a drop: the base-table writer's, after it
     // invalidated lv0, with isBaseWriter, invalidateLiveView's without. The rollback's mark of the drop waits for the
     // monitor, so the invalidation's write, file closed, lands ahead of it, and nothing opens the file after it: the
-    // rollback removes a directory nothing writes to. With isWriteFailed the open fails, which the invalidation logs,
-    // and the view still flips invalid in memory.
+    // rollback removes a directory nothing writes to. A failure of the write, which the invalidation logs, leaves the
+    // view flipped invalid in memory all the same.
     private void assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile(
             boolean isBaseWriter,
             String reason,
-            boolean isWriteFailed
+            StateFileWriteFailure failure
     ) throws Exception {
         final LiveViewStateFileFault fault = new LiveViewStateFileFault();
         assertMemoryLeak(fault, () -> {
@@ -2581,8 +2595,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     fault.runAtNextStateFileOpen(() -> {
                         invalidatorInsideTheOpen.countDown();
                         isRollbackAtTheMark.set(awaitRollbackAtTheMark(createThread, partial));
-                        if (isWriteFailed) {
+                        if (failure == StateFileWriteFailure.OPEN) {
                             fault.failStateFileOpens(1);
+                        } else if (failure == StateFileWriteFailure.GROWTH) {
+                            fault.failStateFileGrowths(1);
                         }
                     });
                     invalidatorRef.set(startThread("lv-invalidator", invalidatorError, () -> {
@@ -2605,7 +2621,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Assert.assertEquals("nothing may open the state file once the rollback marked the view dropped", 0, fault.getStateFileOpensAfterDrop());
                 Assert.assertEquals(
                         "the invalidation must close the state file holding the view's monitor",
-                        isWriteFailed ? 0 : 1,
+                        failure == StateFileWriteFailure.OPEN ? 0 : 1,
                         fault.getStateFileClosesHoldingTheMonitor()
                 );
                 Assert.assertEquals(0, fault.getStateFileClosesWithoutTheMonitor());
@@ -2622,11 +2638,15 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     TestUtils.assertEquals(reason, sibling.getInvalidationReason());
                 }
                 capture.drain();
+                final int persistFailures = failure == StateFileWriteFailure.NONE ? 0 : 1;
+                // A log record keeps a line's first 4 KiB, which a reason longer than a page overflows, so the error
+                // after such a reason never shows: count its line by the reason's first 1,000 chars.
+                final String loggedReason = reason.length() > 1_000 ? reason.substring(0, 1_000) : reason + ", error=";
                 Assert.assertEquals(
-                        isWriteFailed ? 1 : 0,
-                        capture.countOccurrences(COULD_NOT_PERSIST_LINE + partialDirName + ", reason=" + reason + ", error=")
+                        persistFailures,
+                        capture.countOccurrences(COULD_NOT_PERSIST_LINE + partialDirName + ", reason=" + loggedReason)
                 );
-                assertCreateRolledBackCleanly(capture, partialDirName, isWriteFailed ? 1 : 0, isBaseWriter ? reason : null);
+                assertCreateRolledBackCleanly(capture, partialDirName, persistFailures, isBaseWriter ? reason : null);
             } finally {
                 capture.stop();
             }
@@ -5671,6 +5691,14 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // How the checkpoint soak ends its view while the agent cycles: not at all, by an invalidation, or by DROP LIVE VIEW.
     private enum CheckpointSoakTeardown {
         DROP, INVALIDATION, NONE
+    }
+
+    // Where the invalidation's write of the view's state file fails in
+    // assertCreateRollbackWaitsForAnInvalidationWritingTheStateFile: nowhere (NONE), at the open (OPEN), or, once the
+    // open succeeded, at the growth of the file past its first page (GROWTH), which only a reason longer than a page
+    // makes.
+    private enum StateFileWriteFailure {
+        GROWTH, NONE, OPEN
     }
 
     // Raises the engine's closing flag, once armed, at the next open of a file of the base's timestamp column that a

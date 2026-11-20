@@ -41,7 +41,8 @@ import java.util.concurrent.atomic.AtomicReference;
  * the view {@link #watchStateFile} names. Ahead of the next open of that file for writing it runs the action
  * {@link #runAtNextStateFileOpen} names; then it counts the open when the view is marked dropped by then, and
  * fails it, reporting a missing file, while {@link #failStateFileOpens} has failures left. It keeps the
- * descriptors the opens return until they are closed, and counts each close by whether the closing thread holds
+ * descriptors the opens return until they are closed, fails an allocation that grows the file through one of them
+ * while {@link #failStateFileGrowths} has failures left, and counts each close by whether the closing thread holds
  * the view's monitor.
  */
 class LiveViewStateFileFault extends LiveViewBaseAmountOpenFault {
@@ -50,12 +51,22 @@ class LiveViewStateFileFault extends LiveViewBaseAmountOpenFault {
     private final ConcurrentHashMap<Long, Boolean> openStateFileFds = new ConcurrentHashMap<>();
     private final AtomicInteger stateFileClosesHoldingTheMonitor = new AtomicInteger();
     private final AtomicInteger stateFileClosesWithoutTheMonitor = new AtomicInteger();
+    private final AtomicInteger stateFileGrowthFailures = new AtomicInteger();
     private final AtomicReference<Runnable> stateFileOpenAction = new AtomicReference<>();
     private final AtomicInteger stateFileOpenFailures = new AtomicInteger();
     private final AtomicInteger stateFileOpensAfterDrop = new AtomicInteger();
     // The file name, with the view's directory and the separators ahead of it, of the watched state file.
     private volatile String watchedFileName;
     private volatile LiveViewInstance watchedInstance;
+
+    @Override
+    public boolean allocate(long fd, long size) {
+        // TestFilesFacadeImpl routes the ranged allocation, which a mapped file's growth makes, through here.
+        if (openStateFileFds.containsKey(fd) && stateFileGrowthFailures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
+            return false;
+        }
+        return super.allocate(fd, size);
+    }
 
     @Override
     public boolean close(long fd) {
@@ -98,6 +109,13 @@ class LiveViewStateFileFault extends LiveViewBaseAmountOpenFault {
             openStateFileFds.put(fd, Boolean.TRUE);
         }
         return fd;
+    }
+
+    // Fails the next count allocations that grow the watched state file through a descriptor its opens returned. The
+    // open of a file that has content maps its length and allocates nothing, so the first one comes with a write that
+    // runs past the file's end.
+    void failStateFileGrowths(int count) {
+        stateFileGrowthFailures.set(count);
     }
 
     void failStateFileOpens(int count) {
