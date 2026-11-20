@@ -11,7 +11,7 @@ use parquet2::metadata::FileMetaData;
 use parquet2::read::read_metadata;
 use qdb_core::col_type::ColumnTypeTag;
 use questdbr::parquet_metadata::types::{
-    Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
+    ChunkFlags, Codec, ColumnFlags, EncodingMask, FieldRepetition, StatFlags,
 };
 use questdbr::parquet_metadata::ParquetMetaReader;
 use std::fs::File;
@@ -201,6 +201,9 @@ fn print_one_footer(reader: &ParquetMetaReader, depth: usize) {
     }
     if footer_flags.has_scratchpad() {
         print!(" [SCRATCHPAD]");
+    }
+    if footer_flags.has_header_ascii_valid() {
+        print!(" [HEADER_ASCII_VALID]");
     }
     if footer_flags.has_index_row_map() {
         print!(" [INDEX_ROW_MAP]");
@@ -396,8 +399,12 @@ fn print_row_group(reader: &ParquetMetaReader, rg_idx: usize) {
             println!("    Max: 0x{:016x} ({}, {})", chunk.max_stat, inline, exact);
         }
 
-        if chunk._reserved != 0 {
-            println!("    _reserved (should be 0): {}", chunk._reserved);
+        if chunk.flags != 0 {
+            print!("    flags: 0x{:08x}", chunk.flags);
+            if chunk.flags().is_ascii() {
+                print!(" (ascii)");
+            }
+            println!();
         }
     }
     println!();
@@ -658,11 +665,12 @@ fn check_row_group(reader: &ParquetMetaReader, parquet_meta: &FileMetaData, rg_i
             errors += 1;
         }
 
-        // bloom filter: column chunk _reserved must be 0 (offsets moved to footer section)
-        if pm_chunk._reserved != 0 {
+        // chunk flags: only the ascii bit is defined
+        let unknown_flags = pm_chunk.flags & !ChunkFlags::new().with_ascii().0;
+        if unknown_flags != 0 {
             println!(
-                "[FAIL] {} column chunk _reserved is {} (should be 0)",
-                prefix, pm_chunk._reserved
+                "[FAIL] {} column chunk flags carry unknown bits 0x{:08x}",
+                prefix, unknown_flags
             );
             errors += 1;
         }

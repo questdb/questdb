@@ -413,6 +413,42 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 }
 
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setSourceParquetMeta(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    parquet_meta_ptr: *const u8,
+    parquet_meta_file_size: jlong,
+) {
+    let env = &mut env;
+    let set_source_parquet_meta = || -> ParquetResult<()> {
+        if updater.is_null() {
+            return Err(fmt_err!(InvalidType, "ParquetUpdater pointer is null"));
+        }
+        if parquet_meta_ptr.is_null() || parquet_meta_file_size <= 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "invalid source _pm [addr={:?}, size={}]",
+                parquet_meta_ptr,
+                parquet_meta_file_size
+            ));
+        }
+        // SAFETY: Java passes the address of its read-only map of the source _pm and the size of
+        // the snapshot it resolved in it, which the map covers, and keeps the map for the call.
+        let parquet_meta =
+            unsafe { slice::from_raw_parts(parquet_meta_ptr, parquet_meta_file_size as usize) };
+        // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+        // Single-threaded JNI access guarantees no aliasing.
+        unsafe { &mut *updater }
+            .set_source_parquet_meta(parquet_meta, parquet_meta_file_size as u64)
+    };
+    if let Err(mut err) = set_source_parquet_meta() {
+        err.add_context("error in PartitionUpdater.setSourceParquetMeta");
+        err.into_cairo_exception().throw::<()>(env);
+    }
+}
+
 fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
     usize::try_from(row_offset)
         .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))

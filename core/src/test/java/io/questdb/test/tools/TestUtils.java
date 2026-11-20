@@ -2975,6 +2975,14 @@ public final class TestUtils {
     ) {
         int colTypeL = metaL.getColumnType(col);
         int colTypeR = metaR.getColumnType(col);
+        // Two values of equal bytes compare equal whatever their ASCII flags say, and a wrong flag
+        // makes string functions return wrong results.
+        if (colTypeL == ColumnType.VARCHAR) {
+            assertAsciiCompliance(lr.getVarcharA(col));
+        }
+        if (colTypeR == ColumnType.VARCHAR) {
+            assertAsciiCompliance(rr.getVarcharA(col));
+        }
         if (genericStringMatch && colTypeL != colTypeR) {
             if (colTypeL != ColumnType.VARCHAR && colTypeR != ColumnType.VARCHAR) {
                 CharSequence left = readAsCharSequence(colTypeL, lr, col);

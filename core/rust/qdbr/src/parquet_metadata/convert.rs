@@ -36,7 +36,7 @@ use std::collections::HashMap;
 use parquet2::thrift_format::{ColumnMetaData, RowGroup};
 
 use crate::parquet::error::{parquet_meta_err, ParquetError, ParquetResult};
-use qdb_parquet_meta::convert::{build_row_group_block, BloomFilterSource};
+use qdb_parquet_meta::convert::{build_row_group_block, set_chunk_ascii_flags, BloomFilterSource};
 use qdb_parquet_meta::error::{ParquetMetaErrorKind, ParquetMetaResult};
 use qdb_parquet_meta::types::SeqTxn;
 
@@ -113,6 +113,38 @@ pub fn generate_parquet_metadata(
     squash_tracker: i64,
     seq_txn: SeqTxn,
 ) -> ParquetResult<(Vec<u8>, u64)> {
+    generate_parquet_metadata_with_chunk_ascii(
+        columns,
+        thrift_row_groups,
+        designated_timestamp,
+        sorting_columns,
+        parquet_footer_offset,
+        parquet_footer_length,
+        bloom_bitsets,
+        unused_bytes,
+        squash_tracker,
+        seq_txn,
+        &[],
+    )
+}
+
+/// [`generate_parquet_metadata`] for a writer that knows which column chunks
+/// hold only ASCII values: `is_chunk_ascii`, by row group and column. A chunk
+/// it lacks carries no flag, unless `columns` flags its whole column.
+#[allow(clippy::too_many_arguments)]
+pub fn generate_parquet_metadata_with_chunk_ascii(
+    columns: &[ParquetMetaColumnInfo<'_>],
+    thrift_row_groups: &[RowGroup],
+    designated_timestamp: i32,
+    sorting_columns: &[u32],
+    parquet_footer_offset: u64,
+    parquet_footer_length: u32,
+    bloom_bitsets: &[Vec<Option<Vec<u8>>>],
+    unused_bytes: u64,
+    squash_tracker: i64,
+    seq_txn: SeqTxn,
+    is_chunk_ascii: &[Vec<bool>],
+) -> ParquetResult<(Vec<u8>, u64)> {
     let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
     qdb_parquet_meta::convert::generate_parquet_metadata(
         columns,
@@ -125,8 +157,20 @@ pub fn generate_parquet_metadata(
         squash_tracker,
         seq_txn,
         &bloom_source,
+        is_chunk_ascii,
     )
     .map_err(ParquetError::from)
+}
+
+/// The file offset of the first page of the row group's first column. A row
+/// group keeps it for as long as its bytes stay where they are, so it tells
+/// the row groups of one file apart.
+pub fn row_group_first_page_offset(row_group: &RowGroup) -> Option<u64> {
+    row_group
+        .columns
+        .first()
+        .and_then(|c| c.meta_data.as_ref())
+        .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64)
 }
 
 /// Updates an existing `_pm` file incrementally (append-only).
@@ -149,6 +193,16 @@ pub fn generate_parquet_metadata(
 ///
 /// `is_index_row_map_dropped` writes the identity index row map, for a table
 /// with no symbol index (see `ParquetMetaUpdateWriter::drop_index_row_map`).
+///
+/// The header keeps the column flags it was created with, so the ASCII flags
+/// of the new snapshot go where an append can put them, both slices indexed
+/// by column:
+/// - `is_column_ascii`: every value of the column in the updated file is
+///   ASCII. The new footer says whether the header flags still hold: they do
+///   when every column flagged there is still ASCII.
+/// - `is_chunk_ascii`: by row group of `thrift_row_groups`, then by column,
+///   whether every value of the chunk is ASCII. The blocks the update adds
+///   carry it; a row group or a column it lacks is not ASCII.
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
@@ -161,6 +215,8 @@ pub fn update_parquet_metadata(
     unused_bytes: u64,
     seq_txn: SeqTxn,
     is_index_row_map_dropped: bool,
+    is_column_ascii: &[bool],
+    is_chunk_ascii: &[Vec<bool>],
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // append_base (the published header, >= the parse anchor) bounds the new
     // footer's position; the buffer must reach it so finish folds any dead
@@ -191,6 +247,13 @@ pub fn update_parquet_metadata(
         existing_parquet_meta_file_size,
     )?;
     let existing_rg_count = existing_reader.row_group_count() as usize;
+
+    let mut is_header_ascii_valid = true;
+    for i in 0..existing_reader.column_count() as usize {
+        if existing_reader.column_descriptor(i)?.flags().is_ascii() {
+            is_header_ascii_valid &= is_column_ascii.get(i).copied().unwrap_or(false);
+        }
+    }
 
     let mut existing_fingerprints: Vec<Option<u64>> = Vec::with_capacity(existing_rg_count);
     for i in 0..existing_rg_count {
@@ -239,11 +302,7 @@ pub fn update_parquet_metadata(
 
     let bloom_source = VecBloomFilterSource::new(bloom_bitsets);
     for (i, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let new_fp: Option<u64> = thrift_rg
-            .columns
-            .first()
-            .and_then(|c| c.meta_data.as_ref())
-            .map(|m| m.dictionary_page_offset.unwrap_or(m.data_page_offset) as u64);
+        let new_fp = row_group_first_page_offset(thrift_rg);
 
         if i < existing_rg_count && existing_fingerprints[i] == new_fp {
             continue;
@@ -254,7 +313,10 @@ pub fn update_parquet_metadata(
             continue;
         }
 
-        let block = build_row_group_block(thrift_rg, i, &bloom_source)?;
+        let mut block = build_row_group_block(thrift_rg, i, &bloom_source)?;
+        if let Some(is_chunk_ascii) = is_chunk_ascii.get(i) {
+            set_chunk_ascii_flags(&mut block, is_chunk_ascii)?;
+        }
 
         if i < existing_rg_count {
             updater.replace_row_group(i, block)?;
@@ -266,6 +328,7 @@ pub fn update_parquet_metadata(
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
     updater.seq_txn(seq_txn);
+    updater.header_ascii_valid(is_header_ascii_valid);
     if is_index_row_map_dropped {
         updater.drop_index_row_map();
     }
@@ -1708,6 +1771,8 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
+            &[],
         )
         .unwrap();
 
@@ -1727,6 +1792,116 @@ mod tests {
 
         let old_reader = ParquetMetaReader::from_file_size(&initial_pm, initial_size).unwrap();
         assert_eq!(old_reader.row_group_count(), 1);
+    }
+
+    /// A `_pm` over the multi-column file with the header flag of column 1 set, and the thrift
+    /// row groups of an update that appends one more row group to it.
+    fn pm_with_ascii_flagged_column() -> (Vec<u8>, Vec<RowGroup>) {
+        let parquet_data = write_multi_column_parquet(80);
+        let mut cursor = Cursor::new(&parquet_data);
+        let metadata = read_metadata_with_size(&mut cursor, parquet_data.len() as u64).unwrap();
+        let qdb_meta = extract_qdb_meta_from(&metadata);
+        let schema_columns = metadata.schema_descr.columns().to_vec();
+        let thrift_meta = metadata.into_thrift();
+        let mut col_infos = col_infos_from_schema(&schema_columns, qdb_meta.as_ref());
+        col_infos[1].flags = col_infos[1].flags.with_ascii();
+        let (pm, _) = generate_parquet_metadata(
+            &col_infos,
+            &thrift_meta.row_groups,
+            0,
+            &[0],
+            100,
+            50,
+            &[],
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )
+        .unwrap();
+
+        let mut row_groups = thrift_meta.row_groups;
+        let mut new_rg = row_groups[0].clone();
+        for col in &mut new_rg.columns {
+            if let Some(ref mut meta) = col.meta_data {
+                meta.data_page_offset += 10_000;
+            }
+        }
+        row_groups.push(new_rg);
+        (pm, row_groups)
+    }
+
+    fn append_row_group(
+        pm: &[u8],
+        row_groups: &[RowGroup],
+        is_column_ascii: &[bool],
+        is_chunk_ascii: &[Vec<bool>],
+    ) -> ParquetResult<Vec<u8>> {
+        let size = pm.len() as u64;
+        let result = update_parquet_metadata(
+            pm,
+            size,
+            size,
+            row_groups,
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            false,
+            is_column_ascii,
+            is_chunk_ascii,
+        )?;
+        let mut full_file = pm.to_vec();
+        full_file.extend_from_slice(&result.bytes);
+        Ok(full_file)
+    }
+
+    #[test]
+    fn update_parquet_metadata_vouches_for_header_ascii_flags_that_hold() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        // column 1, the flagged one, is still ASCII; columns the header does not flag do not count
+        // the flags of row group 0 are ignored: the update keeps its block
+        let is_chunk_ascii = [vec![true, false], vec![false, true]];
+        let updated = append_row_group(&pm, &row_groups, &[false, true], &is_chunk_ascii).unwrap();
+        let reader = ParquetMetaReader::from_file_size(&updated, updated.len() as u64).unwrap();
+        assert!(reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(reader.is_header_ascii_valid());
+        let chunk_flags = |rg: usize, col: usize| {
+            let chunk = reader.row_group(rg).unwrap().column_chunk(col).unwrap();
+            chunk.flags().is_ascii()
+        };
+        // the committed block keeps the flags it was created with, the new block takes the update's
+        assert!(!chunk_flags(0, 0));
+        assert!(chunk_flags(0, 1));
+        assert!(!chunk_flags(1, 0));
+        assert!(chunk_flags(1, 1));
+    }
+
+    #[test]
+    fn update_parquet_metadata_does_not_vouch_for_header_ascii_flag_that_broke() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        for is_column_ascii in [&[true, false, true][..], &[true][..], &[][..]] {
+            let updated = append_row_group(&pm, &row_groups, is_column_ascii, &[]).unwrap();
+            let reader = ParquetMetaReader::from_file_size(&updated, updated.len() as u64).unwrap();
+            assert!(!reader.footer_feature_flags().has_header_ascii_valid());
+            assert!(!reader.is_header_ascii_valid());
+            let new_chunk = reader.row_group(1).unwrap().column_chunk(1).unwrap();
+            assert!(!new_chunk.flags().is_ascii());
+        }
+    }
+
+    #[test]
+    fn update_parquet_metadata_rejects_ascii_flag_for_column_the_file_lacks() {
+        let (pm, row_groups) = pm_with_ascii_flagged_column();
+        let column_count = row_groups[0].columns.len();
+        let mut is_new_chunk_ascii = vec![false; column_count + 1];
+        is_new_chunk_ascii[column_count] = true;
+        let is_chunk_ascii = [Vec::new(), is_new_chunk_ascii];
+        let err = append_row_group(&pm, &row_groups, &[], &is_chunk_ascii).unwrap_err();
+        assert!(
+            err.to_string().contains("column chunk index"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -1781,6 +1956,8 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1814,6 +1991,8 @@ mod tests {
             0,
             SeqTxn::UNSET,
             true,
+            &[],
+            &[],
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1893,6 +2072,8 @@ mod tests {
             0,
             SeqTxn::UNSET,
             false,
+            &[],
+            &[],
         );
 
         let err = match result {
@@ -1966,6 +2147,8 @@ mod tests {
                 0,
                 SeqTxn::UNSET,
                 false,
+                &[],
+                &[],
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),

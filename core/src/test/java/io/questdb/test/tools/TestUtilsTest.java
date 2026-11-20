@@ -24,11 +24,17 @@
 
 package io.questdb.test.tools;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -52,6 +58,25 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 AssertionError.class,
                 () -> TestUtils.assertAsciiCompliance(new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true))
         );
+    }
+
+    @Test
+    public void testAssertEqualsOfCursorsChecksAsciiFlagOfVarchar() {
+        final byte[] nonAscii = {(byte) 0xc3, (byte) 0xa9};
+        final GenericRecordMetadata varchar = new GenericRecordMetadata();
+        varchar.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        final GenericRecordMetadata string = new GenericRecordMetadata();
+        string.add(new TableColumnMetadata("v", ColumnType.STRING));
+
+        // equal bytes, flagged right on both sides
+        TestUtils.assertEquals(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, false), varchar, false);
+        // equal bytes, the expected side or the actual side flagged ASCII
+        assertAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, varcharCursor(nonAscii, false), varchar, false);
+        assertAsciiFlagRejected(varcharCursor(nonAscii, false), varchar, varcharCursor(nonAscii, true), varchar, false);
+        // against a STRING column, on either side
+        assertAsciiFlagRejected(varcharCursor(nonAscii, true), varchar, stringCursor(), string, true);
+        assertAsciiFlagRejected(stringCursor(), string, varcharCursor(nonAscii, true), varchar, true);
+        TestUtils.assertEquals(varcharCursor(nonAscii, false), varchar, stringCursor(), string, true);
     }
 
     @Test
@@ -165,12 +190,99 @@ public final class TestUtilsTest extends AbstractCairoTest {
         Assert.assertEquals("worker failure", error.getCause().getMessage());
     }
 
+    private static void assertAsciiFlagRejected(
+            RecordCursor expected,
+            RecordMetadata expectedMetadata,
+            RecordCursor actual,
+            RecordMetadata actualMetadata,
+            boolean genericStringMatch
+    ) {
+        try {
+            TestUtils.assertEquals(expected, expectedMetadata, actual, actualMetadata, genericStringMatch);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), "ascii flag set to 'true' for non-ASCII value 'é'");
+            return;
+        }
+        Assert.fail("a non-ASCII value flagged ASCII must fail the comparison");
+    }
+
+    // one row of the STRING "é"
+    private static RecordCursor stringCursor() {
+        return new SingleRowCursor(new Record() {
+            @Override
+            public CharSequence getStrA(int col) {
+                return "é";
+            }
+        });
+    }
+
+    // one row of a VARCHAR of the bytes, flagged as told
+    private static RecordCursor varcharCursor(byte[] bytes, boolean isAscii) {
+        final Utf8String value = new Utf8String(bytes, isAscii);
+        return new SingleRowCursor(new Record() {
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return value;
+            }
+        });
+    }
+
     private static void addAllRecordsToMap(String query, Map<String, Integer> map) throws SqlException {
         try (
                 RecordCursorFactory factory = select(query);
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             TestUtils.addAllRecordsToMap(sink, cursor, factory.getMetadata(), map);
+        }
+    }
+
+    private static class SingleRowCursor implements RecordCursor {
+        private final Record record;
+        private boolean hasNext = true;
+
+        private SingleRowCursor(Record record) {
+            this.record = record;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            final boolean result = hasNext;
+            hasNext = false;
+            return result;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return 1;
+        }
+
+        @Override
+        public void toTop() {
+            hasNext = true;
         }
     }
 }

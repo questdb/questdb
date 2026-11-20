@@ -320,39 +320,17 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquet() throws Exception {
-        Rnd rnd = generateRandom(LOG);
-        setTestParams(rnd);
+        runConvertPartitionToParquetFuzz(generateRandom(LOG));
+    }
 
-        setFuzzProbabilities(
-                0.01,
-                0.01,
-                0.01,
-                0.1,
-                0.05,
-                0.05,
-                0.1,
-                0.1,
-                1.0,
-                0.01,
-                0.01,
-                0.5,
-                0.5,
-                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
-                0.0,
-                0.05, // setTtlProb: rare, for the same reason
-                0.00,
-                0,
-                0.1,
-                0.1,
-                0.01, // addCoveringIndexProb
-                0.1 // SET FORMAT PARQUET|NATIVE probability
-        );
-        // Several days, so CONVERT PARTITION reaches days behind the active one too.
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
-        setFuzzProperties(rnd);
-        setRndConvertedDayShapeProperties(rnd, fuzzer);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
-        runFuzz(rnd);
+    @Test
+    public void testConvertPartitionToParquetAppendsNonAsciiVarcharInPlace() throws Exception {
+        // Pins the run that showed an in-place update of a Parquet partition keeping the ASCII flag of a
+        // VARCHAR column that had just received a non-ASCII value. The next rewrite of the partition
+        // corrected the flag, so only a reader that scans the table between the two sees it. The run
+        // takes that path under the ASYNC commit mode.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
+        runConvertPartitionToParquetFuzz(generateRandom(LOG, 3176735989029557L, 1795001355429L));
     }
 
     /**
@@ -1529,6 +1507,42 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     // runs they pin.
     private void replayPinnedSeedsWithoutVacuum() {
         fuzzer.setVacuumProbability(0);
+    }
+
+    private void runConvertPartitionToParquetFuzz(Rnd rnd) throws Exception {
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.01, // truncateProb: rare, so the days behind the active one outlive several conversions
+                0.0,
+                0.05, // setTtlProb: rare, for the same reason
+                0.00,
+                0,
+                0.1,
+                0.1,
+                0.01, // addCoveringIndexProb
+                0.1 // SET FORMAT PARQUET|NATIVE probability
+        );
+        // Several days, so CONVERT PARTITION reaches days behind the active one too.
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3 + rnd.nextInt(6));
+        setFuzzProperties(rnd);
+        setRndConvertedDayShapeProperties(rnd, fuzzer);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, getRndSmallParquetRowGroupSize(rnd));
+        fuzzer.setScanningTablesDuringParallelApply(true);
+        runFuzz(rnd);
     }
 
     private void runConvertSplitAndCompositeNoSentinelWideningFuzz(Rnd rnd) throws Exception {

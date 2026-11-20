@@ -132,6 +132,19 @@ struct PreparedChunk {
     col_len: usize,
     is_all_null: bool,
     col_top: usize,
+    /// Every value of the chunk is ASCII, by the chunk's own flag.
+    is_ascii: bool,
+}
+
+impl PreparedChunk {
+    /// The column info to decode this chunk with: the column's, with the ASCII flag the chunk
+    /// adds for itself.
+    fn col_info(&self, mut col_info: QdbMetaCol) -> QdbMetaCol {
+        if self.is_ascii {
+            col_info.ascii = Some(true);
+        }
+        col_info
+    }
 }
 
 /// Resolve the decode-time column type from the sidecar's stored column type
@@ -257,7 +270,13 @@ fn prepare_column_meta<'a>(
     } else {
         None
     };
-    let ascii = if flags.is_ascii() { Some(true) } else { None };
+    // The header flag covers the whole column, but only in a snapshot that still vouches for
+    // it; prepare_chunk() reads the flag each chunk carries for itself.
+    let ascii = if flags.is_ascii() && parquet_meta_reader.is_header_ascii_valid() {
+        Some(true)
+    } else {
+        None
+    };
 
     let col_info = QdbMetaCol {
         id: None,
@@ -321,6 +340,7 @@ fn prepare_chunk(
         col_len,
         is_all_null,
         col_top,
+        is_ascii: chunk.flags().is_ascii(),
     })
 }
 
@@ -338,7 +358,7 @@ fn prepare_column<'a>(
     let meta = prepare_column_meta(parquet_meta_reader, column_idx, to_column_type, col_count)?;
     let chunk = prepare_chunk(rg_block, column_idx)?;
     Ok(PreparedColumn {
-        col_info: meta.col_info,
+        col_info: chunk.col_info(meta.col_info),
         compression: chunk.compression,
         descriptor: meta.descriptor,
         num_values: chunk.num_values,
@@ -567,7 +587,7 @@ pub fn decode_row_group_range(
                 chunk.compression,
                 meta.descriptor.clone(),
                 chunk.num_values,
-                meta.col_info,
+                chunk.col_info(meta.col_info),
                 0,
                 chunk.num_values as usize,
                 meta.column_name,

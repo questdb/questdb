@@ -46,12 +46,15 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
@@ -62,6 +65,7 @@ import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.log.Log;
@@ -175,6 +179,7 @@ public class FuzzRunner {
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isNoSentinelWideningChecked;
     private boolean isO3;
+    private boolean isScanningTablesDuringParallelApply;
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
@@ -313,6 +318,12 @@ public class FuzzRunner {
                 Thread purgeJobThread = new Thread(() -> runWalPurgeJob(done, errors));
                 purgeJobThread.start();
                 applyThreads.add(purgeJobThread);
+
+                if (isScanningTablesDuringParallelApply) {
+                    Thread scanThread = new Thread(() -> runVarcharAsciiFlagScans(done, errors, tableNameBase, tableCount, multiTable));
+                    scanThread.start();
+                    applyThreads.add(scanThread);
+                }
 
                 Thread compactionJobThread = new Thread(() -> runPartitionCompactionJob(done, errors));
                 compactionJobThread.start();
@@ -1150,6 +1161,15 @@ public class FuzzRunner {
      */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
+    }
+
+    /**
+     * Makes the parallel WAL apply read every table over and over while it runs and check each VARCHAR value's
+     * ASCII flag against its bytes. Comparing the tables once the apply is over cannot replace it: an in-place
+     * update of a Parquet partition left a wrong flag that the next rewrite of the partition corrected.
+     */
+    public void setScanningTablesDuringParallelApply(boolean isScanningTablesDuringParallelApply) {
+        this.isScanningTablesDuringParallelApply = isScanningTablesDuringParallelApply;
     }
 
     /**
@@ -2548,6 +2568,44 @@ public class FuzzRunner {
     private void runColumnPurgeJob(@Nullable ColumnPurgeJob columnPurgeJob) {
         if (columnPurgeJob != null && !ff.isArmed()) {
             columnPurgeJob.run();
+        }
+    }
+
+    private void runVarcharAsciiFlagScans(
+            AtomicInteger done,
+            ConcurrentLinkedQueue<Throwable> errors,
+            String tableNameBase,
+            int tableCount,
+            boolean multiTable
+    ) {
+        try (SqlExecutionContextImpl scanContext = new SqlExecutionContextImpl(engine, 1)) {
+            scanContext.with(AllowAllSecurityContext.INSTANCE);
+            while (done.get() == 0 && errors.isEmpty()) {
+                for (int i = 0; i < tableCount; i++) {
+                    final String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
+                    try (
+                            RecordCursorFactory factory = engine.select(tableName, scanContext);
+                            RecordCursor cursor = factory.getCursor(scanContext)
+                    ) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            for (int col = 0, n = metadata.getColumnCount(); col < n; col++) {
+                                if (metadata.getColumnType(col) == ColumnType.VARCHAR) {
+                                    TestUtils.assertAsciiCompliance(record.getVarcharA(col));
+                                }
+                            }
+                        }
+                    } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
+                        // a concurrent DDL, a dropped table or a busy reader: the next round reads the table again
+                    }
+                }
+                Os.sleep(1);
+            }
+        } catch (Throwable e) {
+            errors.add(e);
+        } finally {
+            Path.clearThreadLocals();
         }
     }
 

@@ -519,6 +519,10 @@ pub fn convert_from_parquet(
 /// Generates a complete `_pm` file from pre-built column descriptors and raw
 /// thrift row groups. Used by the parquet write path which never materializes
 /// a parquet2 [`FileMetaData`].
+///
+/// `is_chunk_ascii` holds, by row group and column, whether every value of the
+/// chunk is ASCII; a row group or a column it lacks is not. The chunks of a
+/// column that `columns` flags ASCII carry the flag regardless.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo<'_>],
@@ -531,6 +535,7 @@ pub fn generate_parquet_metadata(
     squash_tracker: i64,
     seq_txn: SeqTxn,
     bloom_source: &dyn BloomFilterSource,
+    is_chunk_ascii: &[Vec<bool>],
 ) -> ParquetMetaResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
     writer.designated_timestamp(designated_timestamp);
@@ -557,11 +562,29 @@ pub fn generate_parquet_metadata(
     }
 
     for (rg_idx, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let block = build_row_group_block(thrift_rg, rg_idx, bloom_source)?;
+        let mut block = build_row_group_block(thrift_rg, rg_idx, bloom_source)?;
+        if let Some(is_chunk_ascii) = is_chunk_ascii.get(rg_idx) {
+            set_chunk_ascii_flags(&mut block, is_chunk_ascii)?;
+        }
         writer.add_row_group(block);
     }
 
     writer.finish()
+}
+
+/// Flags the column chunks of `block` that `is_chunk_ascii` marks, by column.
+pub fn set_chunk_ascii_flags(
+    block: &mut RowGroupBlockBuilder,
+    is_chunk_ascii: &[bool],
+) -> ParquetMetaResult<()> {
+    for (col_idx, _) in is_chunk_ascii
+        .iter()
+        .enumerate()
+        .filter(|(_, &is_ascii)| is_ascii)
+    {
+        block.set_column_chunk_ascii(col_idx)?;
+    }
+    Ok(())
 }
 
 /// Builds a row-group block from a raw thrift `RowGroup`, including inlining

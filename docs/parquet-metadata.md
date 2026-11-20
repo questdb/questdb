@@ -87,7 +87,7 @@ header is. A reader mmaps the 32-byte header prefix, reads `PARQUET_META_FILE_SI
                  |    byte_range_start  ----------+---------+
                  |    total_compressed            |
                  |    null_count                  |
-                 |    _reserved (0)               |
+                 |    flags                       |
                  |    min_stat, max_stat          |
                  |  chunk col 1: ...              |
                  |  ...                           |
@@ -214,11 +214,12 @@ file otherwise. Feature sections are ordered by bit position.
 
 **Footer flag bits:**
 
-| bit | name          | footer section                                                                                                                                   |
-| --- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0   | SEQ_TXN       | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
-| 1   | SCRATCHPAD    | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
-| 32  | INDEX_ROW_MAP | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
+| bit | name               | footer section                                                                                                                                   |
+| --- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0   | SEQ_TXN            | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
+| 1   | SCRATCHPAD         | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| 2   | HEADER_ASCII_VALID | None. The `IS_ASCII` column flags of the header hold for every row group of this snapshot. See "ASCII flags" below.                              |
+| 32  | INDEX_ROW_MAP      | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
 Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
 on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
@@ -300,10 +301,37 @@ Per-column metadata. Written once in the header, applies across all row groups.
 | bit offset | bit size | field               | type | description                              |
 | ---------- | -------- | ------------------- | ---- | ---------------------------------------- |
 | 0          | 1        | LOCAL_KEY_IS_GLOBAL | i1   | Symbol                                   |
-| 1          | 1        | IS_ASCII            | i1   | Varchar                                  |
+| 1          | 1        | IS_ASCII            | i1   | Varchar, see "ASCII flags"               |
 | 2          | 2        | FIELD_REPETITION    | u2   | 0 = Required, 1 = Optional, 2 = Repeated |
 | 4          | 1        | DESCENDING          | i1   | For sorted column, 1 = Descending        |
 | 5          | 27       | RESERVED            |      | Reserved, must be 0                      |
+
+#### ASCII flags
+
+A reader that knows every value of a VARCHAR chunk is ASCII skips UTF-8 handling. It may assume that
+only when the metadata says so, and a flag that says so wrongly gives wrong query results.
+
+The header is written once and every snapshot of the file shares it, so the `IS_ASCII` column flag
+is true for the snapshot the file was created with, and no later update can clear it. Two things
+that an update does write keep the flag true afterwards:
+
+- the `IS_ASCII` flag of a column chunk (see "Column chunk"): every value of that chunk is ASCII. A
+  row group block never changes, so the flag holds in every snapshot that refers to the block. A
+  writer sets it on each chunk whose values it wrote and found ASCII, whatever the rest of the
+  column holds, and on every chunk of a column the header flags. A writer that copies a row group
+  into a new file copies the flags of its chunks from the `_pm` of the old file; the parquet footer
+  keeps one flag per column, and without the old `_pm` a copied chunk has only that.
+- the `HEADER_ASCII_VALID` footer flag: every column the header flags is still ASCII in all row
+  groups of the snapshot. An update that adds or replaces row groups sets it only when it knows
+  that. A footer that keeps the row groups of the previous one inherits its answer.
+
+A reader takes a chunk for ASCII when the chunk flag is set, or when the header flags the column
+and the snapshot is the first of the chain (`PREV_PARQUET_META_FILE_SIZE` is 0) or carries
+`HEADER_ASCII_VALID`.
+
+QuestDB 10.2.0 and older wrote neither flag and trusted the header alone. A `_pm` they updated in
+place has a later footer without `HEADER_ASCII_VALID`, so its header flags are unproven and its
+values read as not ASCII, until an update that knows the columns of the file sets the flag again.
 
 ### Sorting column (4 bytes)
 
@@ -343,7 +371,7 @@ Per-column-chunk metadata needed to locate and decode data from the parquet file
 | 1      | 1    | ENCODINGS        | u8   | bitmask: bit 0=PLAIN, 1=RLE_DICTIONARY, 2=DELTA_BINARY_PACKED, 3=DELTA_LENGTH_BYTE_ARRAY, 4=DELTA_BYTE_ARRAY, 5=BYTE_STREAM_SPLIT |
 | 2      | 1    | STAT_FLAGS       | u8   |                                                                                                                                   |
 | 3      | 1    | STAT_SIZES       | u8   | low nibble = MIN_STAT byte size (inline only), high nibble = MAX_STAT byte size (inline only)                                     |
-| 4      | 4    | RESERVED         | u32  | must be 0. Previously held bloom filter offsets, now moved to footer feature sections. Exists for layout preservation.            |
+| 4      | 4    | FLAGS            | u32  | bit 0 = IS_ASCII (Varchar): every value of the chunk is ASCII, see "ASCII flags". Bits 1-31 are reserved, must be 0.              |
 | 8      | 8    | NUM_VALUES       | u64  | total values (may differ from row count for arrays)                                                                               |
 | 16     | 8    | BYTE_RANGE_START | u64  | byte offset in parquet file to chunk start (dictionary page offset if present, else data page offset)                             |
 | 24     | 8    | TOTAL_COMPRESSED | u64  | total compressed bytes of all pages                                                                                               |
