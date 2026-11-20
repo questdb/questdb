@@ -32,7 +32,6 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.PostingIndexUtils;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
@@ -81,8 +80,6 @@ public class DropIndexOperator {
                 long pVersion = tableWriter.getPartitionNameTxn(pIndex);
                 long columnVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
                 long columnTop = tableWriter.getColumnTop(pTimestamp, columnIndex, -1);
-                byte partitionFormat = tableWriter.getPartitionFormat(pIndex);
-
                 if (columnTop != -1) {
                     // read before the upsert names the column after this txn
                     final boolean isForeignParquetVersion = tableWriter.isForeignParquetColumnVersion(pIndex, columnIndex);
@@ -96,7 +93,8 @@ public class DropIndexOperator {
                     }
                     final long columnDropIndexVersion = tableWriter.getColumnNameTxn(pTimestamp, columnIndex);
 
-                    if (partitionFormat == PartitionFormat.NATIVE) {
+                    // An evicted Delta partition's base is remote: it has no native column file to link.
+                    if (tableWriter.isPartitionBaseNative(pIndex)) {
                         if (columnDropIndexVersion != columnVersion) {
                             // A rolled-back operation can leave files under the new version behind.
                             removeStaleFiles(timestampType, partitionBy, pTimestamp, pVersion, columnName, indexType, columnDropIndexVersion);

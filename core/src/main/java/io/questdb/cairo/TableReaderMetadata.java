@@ -441,6 +441,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         }
 
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, newColumnCount, columnOrderList);
+        boolean hasParquetEncodingConfig = TableUtils.hasParquetEncodingConfig(newMetaMem);
         for (int i = 0, n = columnOrderList.size(); i < n; i += 3) {
             int stableIndex = i / 3;
             int writerIndex = columnOrderList.get(i);
@@ -529,6 +530,10 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         transitionIndex.markReplaced(existingIndex);
                     }
                 }
+                // SET PARQUET changes no column file, so a reused column must take the new config here
+                columnMetadata.getQuick(outIndex).setParquetEncodingConfig(
+                        hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(newMetaMem, writerIndex) : 0
+                );
                 columnNameIndexMap.put(newName, outIndex);
                 if (timestampIndex == writerIndex) {
                     this.timestampIndex = outIndex;
