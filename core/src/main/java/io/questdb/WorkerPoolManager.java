@@ -67,7 +67,16 @@ public abstract class WorkerPoolManager implements Target {
         WorkerPool queryPool = null;
         WorkerPool writePool = null;
         try {
-            networkPool = config.createWorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
+            final WorkerPoolConfiguration networkConfiguration = config.getSharedWorkerPoolNetworkConfiguration();
+            networkPool = config.createWorkerPool(networkConfiguration);
+            // createWorkerPool() may wrap the configuration, and a wrapper that doesn't forward the group
+            // methods builds a pool without the groups the configuration reports
+            if (networkPool.getGroupCount() != networkConfiguration.getGroupCount()) {
+                throw new IllegalStateException("network pool does not have the configured worker groups [pool="
+                        + networkPool.getPoolName()
+                        + ", configured=" + networkConfiguration.getGroupCount()
+                        + ", actual=" + networkPool.getGroupCount() + ']');
+            }
             queryPool = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0
                     ? config.createWorkerPool(config.getSharedWorkerPoolQueryConfiguration())
                     : null;
@@ -144,6 +153,12 @@ public abstract class WorkerPoolManager implements Target {
                     .$(", workers=").$(dedicatedPool.getWorkerCount())
                     .$(", priority=").$(config.workerPoolPriority())
                     .I$();
+            if (sharedPool.getGroupCount() > 1) {
+                LOG.advisory().$("not split by CPU socket, the split applies to the shared network pool only [requester=")
+                        .$(requesterName)
+                        .$(", pool=").$(poolName)
+                        .I$();
+            }
             pool = dedicatedPool;
         }
         recordPoolRole(pool, requesterName);

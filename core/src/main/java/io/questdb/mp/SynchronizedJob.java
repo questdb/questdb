@@ -26,12 +26,16 @@ package io.questdb.mp;
 
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import jdk.internal.vm.annotation.Contended;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class SynchronizedJob implements Job {
     private static final long LOCKED_OFFSET = Unsafe.getFieldOffset(SynchronizedJob.class, "locked");
 
-    @SuppressWarnings({"unused", "FieldCanBeLocal"})
+    // With -XX:-RestrictContended, HotSpot pads the lock word on both sides, so the workers polling
+    // it don't share a cache line with the fields the lock holder writes.
+    @Contended
+    @SuppressWarnings("FieldCanBeLocal")
     private volatile int locked = 0;
 
     @Override
@@ -58,7 +62,9 @@ public abstract class SynchronizedJob implements Job {
 
     protected abstract boolean runSerially();
 
+    // A worker that reads the lock as held fails on its shared copy of the cache line, without
+    // taking the line exclusively for a CAS that would fail.
     private boolean tryAcquireRunLock() {
-        return Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
+        return locked == 0 && Unsafe.cas(this, LOCKED_OFFSET, 0, 1);
     }
 }

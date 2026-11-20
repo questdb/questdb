@@ -83,6 +83,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.postgresql.util.PSQLException;
@@ -106,7 +107,9 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_COOKIE_NAME;
@@ -1781,6 +1784,74 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     @Test
+    public void testReloadOnRestrictedThreadKeepsCpuDerivedDefaults() throws Exception {
+        // A worker of a network pool split by CPU socket runs reload_config() on its socket's CPUs.
+        Assume.assumeTrue("thread CPU sets apply on Linux only", Os.isLinux());
+        final int[] allowedCpus = TestUtils.getThreadAllowedCpus();
+        // restricted to one CPU, the defaults size each shared pool at 2 workers
+        Assume.assumeTrue("needs at least 3 allowed CPUs", allowedCpus.length > 2);
+        // a CPU quota caps the JVM's count below the cpuset, and the defaults follow the JVM's count
+        Assume.assumeTrue("needs a JVM CPU count of at least 3", Runtime.getRuntime().availableProcessors() > 2);
+        assertMemoryLeak(() -> {
+            try (FileWriter w = new FileWriter(serverConf)) {
+                w.write("pg.net.connection.limit=10\n");
+            }
+            try (ServerMain serverMain = new ServerMain(getBootstrap(false))) {
+                final DynamicPropServerConfiguration configuration =
+                        (DynamicPropServerConfiguration) serverMain.getConfiguration();
+                final WorkerPoolConfiguration network = configuration.getSharedWorkerPoolNetworkConfiguration();
+                final WorkerPoolConfiguration query = configuration.getSharedWorkerPoolQueryConfiguration();
+                final int networkWorkerCount = network.getWorkerCount();
+                final int networkMaxLiveCount = network.getFiberMaxLiveCount();
+                final int networkRetainedCount = network.getFiberRetainedCount();
+                final int queryWorkerCount = query.getWorkerCount();
+                final int queryMaxLiveCount = query.getFiberMaxLiveCount();
+                try (WorkerPool pool = new WorkerPool(network)) {
+                    final FiberRuntime runtime = pool.getFiberRuntime();
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+
+                    try (FileWriter w = new FileWriter(serverConf)) {
+                        w.write("pg.net.connection.limit=11\n");
+                    }
+                    final AtomicInteger seenCpuCount = new AtomicInteger();
+                    final AtomicBoolean isReloaded = new AtomicBoolean();
+                    final AtomicReference<Throwable> failure = new AtomicReference<>();
+                    final Thread reloader = new Thread(() -> {
+                        try {
+                            Assert.assertEquals(0, Os.setCurrentThreadCpus(new int[]{allowedCpus[0]}));
+                            // in a container, the JVM caches the CPU count across threads for a few milliseconds
+                            final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                            int cpuCount;
+                            while ((cpuCount = Runtime.getRuntime().availableProcessors()) != 1 && System.nanoTime() < deadline) {
+                                Os.pause();
+                            }
+                            seenCpuCount.set(cpuCount);
+                            isReloaded.set(configuration.reload());
+                        } catch (Throwable th) {
+                            failure.set(th);
+                        }
+                    });
+                    reloader.start();
+                    reloader.join();
+                    if (failure.get() != null) {
+                        throw new AssertionError(failure.get());
+                    }
+                    Assert.assertEquals("the reloading thread sees only its own CPU", 1, seenCpuCount.get());
+                    Assert.assertTrue(isReloaded.get());
+
+                    Assert.assertEquals(networkWorkerCount, network.getWorkerCount());
+                    Assert.assertEquals(networkMaxLiveCount, network.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkRetainedCount, network.getFiberRetainedCount());
+                    Assert.assertEquals(queryWorkerCount, query.getWorkerCount());
+                    Assert.assertEquals(queryMaxLiveCount, query.getFiberMaxLiveCount());
+                    Assert.assertEquals(networkMaxLiveCount, runtime.getMaxLiveFiberCount());
+                    Assert.assertEquals(networkRetainedCount, runtime.getMaxRetainedFiberCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRemovalOfUnsupportedPropertyWontTriggerReload() throws Exception {
         assertMemoryLeak(() -> {
             try (FileWriter w = new FileWriter(serverConf)) {
@@ -2387,16 +2458,23 @@ public class DynamicPropServerConfigurationTest extends AbstractTest {
     }
 
     private Bootstrap getBootstrap() {
+        return getBootstrap(true);
+    }
+
+    // with isSharedWorkerCountPinned false, the shared pools take their default size from the CPU count
+    private Bootstrap getBootstrap(boolean isSharedWorkerCountPinned) {
         return new Bootstrap(
-                getBootstrapConfig(),
+                getBootstrapConfig(isSharedWorkerCountPinned),
                 Bootstrap.getServerMainArgs(root)
         );
     }
 
-    private BootstrapConfiguration getBootstrapConfig() {
+    private BootstrapConfiguration getBootstrapConfig(boolean isSharedWorkerCountPinned) {
         Map<String, String> envMap = new HashMap<>();
         envMap.put(PropertyKey.METRICS_ENABLED.getEnvVarName(), "true");
-        envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        if (isSharedWorkerCountPinned) {
+            envMap.put(PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "1");
+        }
         envMap.put(PropertyKey.WAL_APPLY_WORKER_COUNT.getEnvVarName(), "1");
         return new DefaultBootstrapConfiguration() {
             @Override
