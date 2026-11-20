@@ -63,6 +63,8 @@ public class ObjObjHashMap<K, V> implements Iterable<ObjObjHashMap.Entry<K, V>>,
     public final void clear() {
         free = capacity;
         Arrays.fill(keys, noEntryValue);
+        // like remove(), let go of the values, which a map that lives on would otherwise keep reachable
+        Arrays.fill(values, null);
     }
 
     public boolean excludes(K key) {

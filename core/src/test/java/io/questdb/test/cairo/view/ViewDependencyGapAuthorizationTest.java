@@ -25,21 +25,18 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.ObjList;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
@@ -118,6 +115,30 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testMissingDependencyColumnRequiresExplicitBaseTableSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // A read that names n alone keeps the sub-query whole, and scans k and v: the view lends k only to the
+            // reads that set none of its variables.
+            createView(VIEW1, "SELECT count() n, max(v) mx FROM (SELECT k, v FROM " + TABLE1 + ")", TABLE1);
+            final LowerCaseCharSequenceHashSet columns = getViewDefinition(VIEW1).getDependencies().get(TABLE1);
+            assertEquals(2, columns.size());
+            assertTrue(columns.contains(ViewDefinition.OTHER_READ_COLUMN_PREFIX + "k"));
+            // simulate the gap: the entry no longer lists v
+            assertTrue(columns.remove("v") > -1);
+
+            // The view lends the column it marks, and not the one it lists neither plainly nor marked, which the
+            // read then needs SELECT on the base table for.
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                assertQuery("SELECT n FROM " + VIEW1)
+                        .withContext(denyContext)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=" + TABLE1 + ", columns=v]");
+            }
+        });
+    }
+
+    @Test
     public void testMissingDependencyEntryDoesNotThrowUnderAllowAll() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -169,16 +190,6 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
         });
     }
 
-    private static SqlExecutionContext denyBaseTableSelectContext() {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                new DenyBaseTableSelectSecurityContext(),
-                bindVariableService,
-                null,
-                -1,
-                null
-        );
-    }
-
     private static long readRowCount(String sql, SqlExecutionContext context) throws SqlException {
         long count = 0;
         try (RecordCursorFactory factory = engine.select(sql, context)) {
@@ -196,16 +207,5 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
         // guard the test itself: the entry must be present before we simulate the gap by removing it
         assertNotNull(viewDefinition.getDependencies().get(baseTableName));
         viewDefinition.getDependencies().remove(baseTableName);
-    }
-
-    /**
-     * Grants everything except per-column SELECT on a base table, so the view-level authorization
-     * still passes while the fallback's explicit per-column base-table check is rejected.
-     */
-    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-            throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
-        }
     }
 }

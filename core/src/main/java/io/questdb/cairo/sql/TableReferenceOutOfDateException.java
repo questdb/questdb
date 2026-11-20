@@ -88,6 +88,20 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    /**
+     * Returns the exception for a plan built on the table of id expectedTableId, whose name another table, of id
+     * actualTableId, has taken since. The message gives no metadata version: nothing has read the metadata of the
+     * table that took the name.
+     */
+    public static TableReferenceOutOfDateException ofReplacedTable(TableToken tableToken, int expectedTableId, int actualTableId) {
+        TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
+        ex.message.clear(prefix.length());
+        ex.message.put(tableToken.getTableName())
+                .put("', expectedTableId=").put(expectedTableId)
+                .put(", actualTableId=").put(actualTableId).put(']');
+        return ex;
+    }
+
     @Override
     public CharSequence getFlyweightMessage() {
         return message;

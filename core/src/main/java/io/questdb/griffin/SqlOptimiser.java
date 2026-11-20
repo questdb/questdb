@@ -99,6 +99,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
@@ -112,6 +113,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static io.questdb.griffin.SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION;
 import static io.questdb.griffin.SqlCodeGenerator.joinsRequiringTimestamp;
@@ -132,10 +134,22 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     static final String LATERAL_COUNT_MARKER_PREFIX = "__qdb_count_marker__";
+    // stands for the outputs of a column of a projection that every read of the view needs, see
+    // addSameModelReaderOrigins()
+    private static final IntHashSet EVERY_OUTPUT = new IntHashSet();
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
     private static final int JOIN_OP_REGEX = 4;
+    // The most entries the propagation of the columns of a query in kept-whole mode adds to its sets of outputs and of
+    // columns reached, see takeKeptWholeWork(). A SELECT list whose columns each read the one before it and the nested
+    // model gives column i the outputs of the columns after it, so the entries grow with the square of the columns.
+    // Past the limit, the propagation no longer knows which outputs a column serves, so it keeps whole every sub-query
+    // it has yet to decide on, see emitKeptWholeProjection(): the dependencies of the view then lend, marked, every
+    // column such a sub-query computes, those no read of the view scans included, which the principal that records
+    // the view has to be allowed to read. It keeps the work and the memory of the propagation in proportion to the
+    // SELECT.
+    private static final long KEPT_WHOLE_WORK_LIMIT = 1L << 20;
     // Rewriters that break the 1:1 relationship between baseModel rows and
     // the rows the outer LIMIT counts: DISTINCT and GROUP BY drop rows
     // (SAMPLE BY is encoded as GROUP BY); WINDOW preserves the count but
@@ -172,6 +186,8 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
     private static final String NULL_REJECTING_PROBE_COLUMN = "__qdb_null_probe";
+    // marks a column of a projection whose readers of the nested model reachedNestedReaders() is collecting
+    private static final IntHashSet REACHED_NESTED_READERS_PENDING = new IntHashSet();
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -187,6 +203,14 @@ public class SqlOptimiser implements Mutable {
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
     private static final CharSequenceHashSet nullConstants = new CharSequenceHashSet();
     private final static LowerCaseAsciiCharSequenceHashSet orderedGroupByFunctions;
+    // Test-only observability for the propagation of the columns of a query in kept-whole mode: the entries it adds to
+    // the sets of outputs of the columns and of the columns they reach, see takeKeptWholeWork(). Tests read it on the
+    // thread that ran the compile and assert on deltas.
+    private static long keptWholeOriginAddCount;
+    // Test-only observability for the release of the memory of the propagation of the columns of a query in
+    // kept-whole mode: when set, receives each map and set the propagation takes from its pools, see
+    // releaseKeptWholeMemory().
+    private static volatile Consumer<Object> keptWholePoolListener;
     protected final ObjList<CharSequence> literalCollectorANames = new ObjList<>();
     private final CharacterStore characterStore;
     private final IntList clausesToSteal = new IntList();
@@ -221,6 +245,39 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
+    // While the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(): the index of each column
+    // of the projection of a VIRTUAL model, by alias, see addSameModelReaderOrigins()
+    private final LowerCaseCharSequenceIntHashMap keptWholeColumnIndexes = new LowerCaseCharSequenceIntHashMap();
+    // per column of the projection emitKeptWholeProjection() emits, the join models of its nested model the column
+    // reaches
+    private final ObjList<IntHashSet> keptWholeColumnJoins = new ObjList<>();
+    // and the outputs of the view the column serves, null when every read of the view needs it
+    private final ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
+    // per column of the projection emitKeptWholeProjection() emits, the join model of its nested model a filter on the
+    // column gives a column, see filteredJoinIndex()
+    private final IntList keptWholeFilteredJoins = new IntList();
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeNeededBy
+    private final ObjHashSet<IntHashSet> keptWholeNeededOrigins = new ObjHashSet<>();
+    private final ObjectPool<LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOriginMapPool = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 16);
+    // per model, the outputs of the view each top-down column serves, see recordKeptWholeOrigins()
+    private final ObjObjHashMap<IQueryModel, LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOrigins = new ObjObjHashMap<>();
+    // the sets of outputs recordKeptWholeOrigins() makes for a column of its own, see KeptWholeOrigins
+    private final ObjectPool<KeptWholeOrigins> keptWholeOriginsPool = new ObjectPool<>(KeptWholeOrigins::new, 16);
+    // the models whose columns are the outputs of the view: its SELECT and the branches of its set operation
+    private final ObjHashSet<IQueryModel> keptWholeOutputLayers = new ObjHashSet<>();
+    // per column of the projection of a VIRTUAL model, the columns of the projection that read the nested model it
+    // reaches through the columns of the model it reads, see reachedNestedReaders()
+    private final ObjList<IntHashSet> keptWholeReachedReaders = new ObjList<>();
+    // per column of the projection of a VIRTUAL model, its outputs with those of the columns that read it, see
+    // addSameModelReaderOrigins(): null when no column reads it, and EVERY_OUTPUT when every read needs it
+    private final ObjList<IntHashSet> keptWholeReaderOrigins = new ObjList<>();
+    // the sets of outputs collectWithholdingOutputs() has added to keptWholeServedBy
+    private final ObjHashSet<IntHashSet> keptWholeServedOrigins = new ObjHashSet<>();
+    // the sets the propagation in kept-whole mode fills, see nextKeptWholeSet(): a pool of its own, of which no other
+    // code keeps a set, so that releaseKeptWholeMemory() frees them
+    private final ObjectPool<IntHashSet> keptWholeSetPool = new ObjectPool<>(IntHashSet::new, 16);
+    // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
+    private final IntHashSet keptWholeWithheldJoins = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
     private final LowerCaseCharSequenceObjHashMap<ExpressionNode> lateralCountTemplateMap = new LowerCaseCharSequenceObjHashMap<>();
     private final LateralJoinRewriter lateralJoinRewriter;
@@ -314,11 +371,38 @@ public class SqlOptimiser implements Mutable {
     // True when moveWhereInsideSubQueries has pushed down at least one and_offset wrapper, so
     // rebuildStrandedAndOffsets may find one in a post-join filter.
     private boolean hasOptimiserAndOffsets;
+    // True when the order the outermost optimise() required of the result of the query changed its plan, see
+    // hasTopLevelOrderChangedPlan().
+    private boolean hasTopLevelOrderChangedPlan;
+    // True while emitKeptWholeProjection() collects the join models the columns of a projection reach, which
+    // addTopDownColumn() then records rather than gives a column.
+    private boolean isKeptWholeDryRun;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // True once optimiseOrderBy() has dropped the ORDER BY of a model outside the sub-queries of expressions, see
+    // isOrderByCleared().
+    private boolean isOrderByCleared;
+    // True while optimiseOrderBy() keeps the ORDER BY of every model outside the sub-queries of expressions, see
+    // setOrderByKept().
+    private boolean isOrderByKept;
+    // True while the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(), and, set by
+    // the caller, until optimise() starts.
+    private boolean isSubQueryKeptWhole;
     // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
     // view's metadata, see optimiseExpressionModels()
     private boolean isViewMetadataCheckDeferred;
+    // the outputs of the view the projection column emitKeptWholeProjection() emits serves, null otherwise
+    private IntHashSet keptWholeEmittedOrigins;
+    // the outputs of the view whose columns need a join model, see collectWithholdingOutputs(), a set of
+    // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    private IntHashSet keptWholeNeededBy;
+    // the number of outputs of the view while the columns of a query propagate in kept-whole mode
+    private int keptWholeOutputCount;
+    // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs(), a set of
+    // keptWholeSetPool while the columns of a query propagate in kept-whole mode, null otherwise
+    private IntHashSet keptWholeServedBy;
+    // the entries the propagation in kept-whole mode has added to its sets, see takeKeptWholeWork()
+    private long keptWholeWork;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
@@ -328,6 +412,14 @@ public class SqlOptimiser implements Mutable {
     // True while optimise() runs on a sub-query that belongs to the SQL of a regular view inlined into the
     // query, rather than to the query's own text; see optimiseExpressionModels().
     private boolean optimisingViewText;
+    // While set, preparePivotForSelectSubquery() records the values each PIVOT IN sub-query returns.
+    private SqlUtil.ViewCompileRecord pivotInValueRecorder;
+    // While set, preparePivotForSelectSubquery() takes the values of the PIVOT IN sub-queries from it, in the
+    // order a compile of the same SELECT recorded them, instead of running the sub-queries again.
+    private SqlUtil.ViewCompileRecord pivotInValueSource;
+    // The nested model emitKeptWholeProjection() emits a projection to, and null otherwise. addTopDownColumn()
+    // gives no column of the projection to its join models in keptWholeWithheldJoins.
+    private IQueryModel projectionJoinHolder;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -405,6 +497,18 @@ public class SqlOptimiser implements Mutable {
         return appearsInArgs;
     }
 
+    /**
+     * Returns the number of entries the propagation of the columns of a query in kept-whole mode has added to the sets
+     * of outputs of the columns, and of the columns they reach, since class load, see
+     * {@link #setSubQueryKeptWhole(boolean)}. Capture it before a compile and assert on the delta afterwards.
+     *
+     * @return count of entries added to the sets of the propagation
+     */
+    @TestOnly
+    public static long getKeptWholeOriginAddCountForTesting() {
+        return keptWholeOriginAddCount;
+    }
+
     public static boolean hasGroupByFunc(ArrayDeque<ExpressionNode> sqlNodeStack, FunctionFactoryCache functionFactoryCache, ExpressionNode node) {
         sqlNodeStack.clear();
 
@@ -445,6 +549,18 @@ public class SqlOptimiser implements Mutable {
         return replaceAndTransferDependents(oldModel, newModel);
     }
 
+    /**
+     * Sets the listener that receives each map and set the propagation of the columns of a query in kept-whole mode
+     * takes from its pools, see {@link #setSubQueryKeptWhole(boolean)}, or clears it with null.
+     * Tests hold the objects weakly to check that no compiler keeps them once the propagation has ended.
+     *
+     * @param listener the listener, called on the thread that compiles the query, or null
+     */
+    @TestOnly
+    public static void setKeptWholePoolListenerForTesting(@Nullable Consumer<Object> listener) {
+        keptWholePoolListener = listener;
+    }
+
     public void clear() {
         clearConstNameMaps();
         contextPool.clear();
@@ -458,8 +574,17 @@ public class SqlOptimiser implements Mutable {
         defaultAliasCount = 0;
         hasNonEquiNullingJoin = false;
         hasOptimiserAndOffsets = false;
+        hasTopLevelOrderChangedPlan = false;
         isNullingExecOrderValid = false;
+        isOrderByCleared = false;
+        isOrderByKept = false;
         isViewMetadataCheckDeferred = false;
+        endKeptWholePropagation();
+        keptWholeOriginMapPool.clear();
+        keptWholeOriginsPool.clear();
+        keptWholeSetPool.clear();
+        pivotInValueRecorder = null;
+        pivotInValueSource = null;
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
         nullingExecPosByModel.clear();
@@ -621,6 +746,25 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
+    }
+
+    // The index of the join model of nested that a filter on the column of the projection gives a column, or -1. A
+    // filter a read puts on a column the projection computes stays with the projection, see
+    // moveWhereInsideSubQueries(), and the projection gives the model under it the column of the same name, if it has
+    // one, see propagateTopDownColumns0(). A filter on a column the projection takes from the model under it moves
+    // there, and reaches what the column does.
+    private static int filteredJoinIndex(QueryColumn column, IQueryModel nested) {
+        final ExpressionNode ast = column.getAst();
+        if (ast == null || ast.type == LITERAL) {
+            return -1;
+        }
+        final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+        for (int j = 0, n = joinModels.size(); j < n; j++) {
+            if (joinModels.getQuick(j).getAliasToColumnMap().contains(column.getAlias())) {
+                return j;
+            }
+        }
+        return -1;
     }
 
     // A SHOW that names an object reads it through the view the context reads table-name functions
@@ -863,6 +1007,18 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
+    // Whether the projection takes its column alias from a column of another name of its nested model, as SELECT b a
+    // takes a from b, rather than computes it or takes it from the column of the same name, which the projection of a
+    // join names with the alias of its table, as t.a.
+    private static boolean isRenamedColumn(IQueryModel projection, CharSequence alias) {
+        final QueryColumn column = projection.getAliasToColumnMap().get(alias);
+        if (column == null || column.getAst().type != LITERAL) {
+            return false;
+        }
+        final CharSequence token = column.getAst().token;
+        return !Chars.equalsIgnoreCase(alias, token, Chars.indexOfLastUnquoted(token, '.') + 1, token.length());
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -947,6 +1103,16 @@ public class SqlOptimiser implements Mutable {
 
     private static boolean modelIsFlex(IQueryModel model) {
         return model != null && flexColumnModelTypes.contains(model.getSelectModelType());
+    }
+
+    // Hands an object the propagation in kept-whole mode takes from its pools to the listener tests set, see
+    // setKeptWholePoolListenerForTesting().
+    private static <T> T notifyKeptWholePoolListener(T object) {
+        final Consumer<Object> listener = keptWholePoolListener;
+        if (listener != null) {
+            listener.accept(object);
+        }
+        return object;
     }
 
     /**
@@ -1209,6 +1375,25 @@ public class SqlOptimiser implements Mutable {
         if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
         }
+    }
+
+    // The order optimiseOrderBy() requires of a model, given the order its parent requires of it.
+    private static int requiredOrderByMnemonic(IQueryModel model, int topLevelOrderByMnemonic) {
+        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
+        if (model.getLimitLo() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        }
+
+        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
+        if (model.getTimestamp() != null) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+
+        // keep order by on model with window functions to speed up query (especially when it matches window order by)
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
+            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+        }
+        return topLevelOrderByMnemonic;
     }
 
     // Returns the column a grouping set key names: the column behind a SELECT alias, as in
@@ -1866,8 +2051,128 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Adds a value a PIVOT IN sub-query returned, as the token a plan of the value uses, to the values of its
+    // FOR column.
+    private void addPivotInValue(PivotForColumn pivotForColumn, CharSequence token, int position) {
+        final CharSequence alias = SqlUtil.createExprColumnAlias(
+                characterStore,
+                unquote(token),
+                pivotAliasMap,
+                pivotAliasSequenceMap,
+                configuration.getColumnAliasGeneratedMaxSize(),
+                true
+        );
+        pivotAliasMap.add(alias);
+        pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, position), alias);
+    }
+
     private void addPostJoinWhereClause(IQueryModel model, ExpressionNode node) {
         model.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getPostJoinWhereClause(), node));
+    }
+
+    // Adds to reached the columns of the projection that read the nested model, which the columns of the model the
+    // expression reads reach, see reachedNestedReaders(), and returns whether the expression reads the nested model
+    // itself: a name that is not a column of the model alone, as collectSameModelProjectionColumns() tells them apart.
+    private boolean addReachedNestedReaders(
+            @Nullable ExpressionNode node,
+            IQueryModel model,
+            IQueryModel nested,
+            ObjList<QueryColumn> columns,
+            IntHashSet reached
+    ) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = keptWholeColumnIndexes.get(node.token);
+            if (index < 0
+                    || model.getAliasToColumnMap().get(node.token) == null
+                    || nested.getAliasToColumnMap().contains(node.token)) {
+                return true;
+            }
+            final IntHashSet nestedReaders = reachedNestedReaders(index, model, nested, columns);
+            // past the limit of the work, addSameModelReaderOrigins() gives up the outputs of the projection
+            if (takeKeptWholeWork(nestedReaders.size())) {
+                reached.addAll(nestedReaders);
+            }
+            return false;
+        }
+        boolean isNestedRead = false;
+        if (node.paramCount < 3) {
+            isNestedRead = addReachedNestedReaders(node.lhs, model, nested, columns, reached);
+            isNestedRead |= addReachedNestedReaders(node.rhs, model, nested, columns, reached);
+        } else {
+            for (int i = 0, n = node.paramCount; i < n; i++) {
+                isNestedRead |= addReachedNestedReaders(node.args.getQuick(i), model, nested, columns, reached);
+            }
+        }
+        return isNestedRead;
+    }
+
+    // Adds the outputs of the view a column of a projection serves, origins, to those of a column of the projection
+    // that column reads, see addSameModelReaderOrigins().
+    private void addReaderOrigins(int reader, @Nullable IntHashSet origins) {
+        IntHashSet readerOrigins = keptWholeReaderOrigins.getQuick(reader);
+        if (readerOrigins == EVERY_OUTPUT) {
+            return;
+        }
+        final IntHashSet ownOrigins = keptWholeColumnOrigins.getQuick(reader);
+        if (origins == null || ownOrigins == null
+                || !takeKeptWholeWork(readerOrigins == null ? ownOrigins.size() + origins.size() : origins.size())) {
+            keptWholeReaderOrigins.setQuick(reader, EVERY_OUTPUT);
+            return;
+        }
+        if (readerOrigins == null) {
+            readerOrigins = nextKeptWholeSet();
+            readerOrigins.addAll(ownOrigins);
+            keptWholeReaderOrigins.setQuick(reader, readerOrigins);
+        }
+        readerOrigins.addAll(origins);
+    }
+
+    // Adds to the outputs of the view each column of the projection of a VIRTUAL model serves, see
+    // emitKeptWholeProjection(), those of the columns of the model that read it, directly or through other columns
+    // of the model: a read that names an output needs every column the columns of the output read. Only a column
+    // that reads the nested model needs them, as the projection gives the nested model the columns such a column
+    // reads, and the other columns read the nested model through it, see reachedNestedReaders(). This adds them once
+    // per projection: walking the columns a column reads as each column is emitted would walk a chain of columns,
+    // each of which reads the one before it, again for every column of the chain.
+    private void addSameModelReaderOrigins(IQueryModel model, IQueryModel nested, ObjList<QueryColumn> columns, int columnCount) {
+        if (model.getSelectModelType() != IQueryModel.SELECT_MODEL_VIRTUAL || columnCount < 2) {
+            return;
+        }
+        keptWholeColumnIndexes.clear();
+        keptWholeReachedReaders.clear();
+        keptWholeReaderOrigins.clear();
+        for (int i = 0; i < columnCount; i++) {
+            keptWholeColumnIndexes.put(columns.getQuick(i).getAlias(), i);
+            keptWholeReachedReaders.add(null);
+            keptWholeReaderOrigins.add(null);
+        }
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet reached = reachedNestedReaders(i, model, nested, columns);
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            for (int j = 0, n = reached.size(); j < n; j++) {
+                final int reader = reached.get(j);
+                if (reader != i) {
+                    addReaderOrigins(reader, origins);
+                }
+            }
+        }
+        if (isKeptWholeWorkExhausted()) {
+            // The sets of columns reached and of outputs may have stopped short of what the columns need, see
+            // takeKeptWholeWork(), so every column of the projection serves every output, as one every read needs.
+            for (int i = 0; i < columnCount; i++) {
+                keptWholeColumnOrigins.setQuick(i, null);
+            }
+            return;
+        }
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet readerOrigins = keptWholeReaderOrigins.getQuick(i);
+            if (readerOrigins != null) {
+                keptWholeColumnOrigins.setQuick(i, readerOrigins == EVERY_OUTPUT ? null : readerOrigins);
+            }
+        }
     }
 
     private void addTimestampToProjection(
@@ -1928,6 +2233,12 @@ public class SqlOptimiser implements Mutable {
                     // in this context we do not have a model that is able to resolve table alias
                     return;
                 }
+                if (model == projectionJoinHolder && isWithheldFromProjection(modelIndex)) {
+                    if (!isKeptWholeDryRun) {
+                        recordWithheldColumn(model.getJoinModels().getQuick(modelIndex), node.token.subSequence(dotIndex + 1, node.token.length()));
+                    }
+                    return;
+                }
 
                 addTopDownColumn0(
                         node,
@@ -1945,6 +2256,12 @@ public class SqlOptimiser implements Mutable {
             final IQueryModel m = joinModels.getQuick(i);
             final QueryColumn column = m.getAliasToColumnMap().get(columnName);
             if (column != null) {
+                if (model == projectionJoinHolder && isWithheldFromProjection(i)) {
+                    if (!isKeptWholeDryRun) {
+                        recordWithheldColumn(m, columnName);
+                    }
+                    break;
+                }
                 switch (m.getSelectModelType()) {
                     case IQueryModel.SELECT_MODEL_NONE:
                         m.addTopDownColumn(queryColumnPool.next().of(columnName, nextLiteral(columnName)), columnName);
@@ -1957,8 +2274,18 @@ public class SqlOptimiser implements Mutable {
                     default:
                         m.addTopDownColumn(column, columnName);
                 }
+                recordKeptWholeOrigins(m, columnName, keptWholeEmittedOrigins);
                 break;
             }
+        }
+    }
+
+    // Adds the column the literal names to the top-down columns of the model, unless the projection, if any, takes that
+    // column from a column of another name, see emitLiteralsTopDown(). The nodes of an expression a projection comes
+    // with, its WHERE clause, are not null.
+    private void addTopDownColumn(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
+        if (projection == null || node.type != LITERAL || !isRenamedColumn(projection, node.token)) {
+            addTopDownColumn(node, model);
         }
     }
 
@@ -1972,6 +2299,7 @@ public class SqlOptimiser implements Mutable {
                     name
             );
         }
+        recordKeptWholeOrigins(model, name, keptWholeEmittedOrigins);
     }
 
     /**
@@ -3280,6 +3608,10 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Adds the columns of the model the expression reads to the top-down columns of the model. In kept-whole mode, a
+    // column it adds serves the outputs of the view the column being emitted serves. A column the model has already
+    // gets them, and so do the columns it reads in turn, as the projection of the model is emitted to its nested
+    // model, see addSameModelReaderOrigins().
     private void collectSameModelProjectionColumns(ExpressionNode node, IQueryModel model) {
         if (node == null) {
             return;
@@ -3291,6 +3623,7 @@ public class SqlOptimiser implements Mutable {
             if (dep != null && (nested == null || !nested.getAliasToColumnMap().contains(node.token)) && model.isTopDownNameMissing(node.token) && tempCharSequenceHashSet.add(node.token)) {
                 collectSameModelProjectionColumns(dep.getAst(), model);
                 model.addTopDownColumn(dep, node.token);
+                recordKeptWholeOrigins(model, node.token, keptWholeEmittedOrigins);
             }
             return;
         }
@@ -3301,6 +3634,67 @@ public class SqlOptimiser implements Mutable {
         } else {
             for (int i = 0, k = node.paramCount; i < k; i++) {
                 collectSameModelProjectionColumns(node.args.getQuick(i), model);
+            }
+        }
+    }
+
+    // Collects the outputs of the view a read that names one of them alone gives the join model at index of
+    // projectionJoinHolder no column of the projection emitKeptWholeProjection() emits, so that its plan computes
+    // every column of the SELECT list of the join model. Such a read gets a column of the projection, one that serves
+    // the output or one every read needs, and none of those reaches the join model. A projection that gives the join
+    // model no column, or one every read needs, leaves it to the other columns of the plan.
+    private void collectWithholdingOutputs(int joinIndex, int columnCount, IntHashSet outputs) {
+        keptWholeNeededBy.clear();
+        keptWholeNeededOrigins.clear();
+        keptWholeServedBy.clear();
+        keptWholeServedOrigins.clear();
+        boolean hasColumnEveryReadNeeds = false;
+        boolean isReached = false;
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            final boolean isReaching = keptWholeColumnJoins.getQuick(i).contains(joinIndex);
+            if (origins == null) {
+                if (isReaching) {
+                    return;
+                }
+                hasColumnEveryReadNeeds = true;
+            } else {
+                // The columns of a projection share the sets of outputs they serve, see recordKeptWholeOrigins(), so
+                // each set is added once, which keeps the work in proportion to the columns plus the outputs. Past
+                // the limit of the work, this collects no output, and emitKeptWholeProjection() keeps the join model
+                // whole all the same.
+                if (keptWholeServedOrigins.add(origins)) {
+                    if (!takeKeptWholeWork(origins.size())) {
+                        return;
+                    }
+                    keptWholeServedBy.addAll(origins);
+                }
+                if (isReaching) {
+                    if (keptWholeNeededOrigins.add(origins)) {
+                        if (!takeKeptWholeWork(origins.size())) {
+                            return;
+                        }
+                        keptWholeNeededBy.addAll(origins);
+                    }
+                    isReached = true;
+                }
+            }
+        }
+        if (!isReached || !takeKeptWholeWork(hasColumnEveryReadNeeds ? keptWholeOutputCount : keptWholeServedBy.size())) {
+            return;
+        }
+        if (hasColumnEveryReadNeeds) {
+            for (int output = 0; output < keptWholeOutputCount; output++) {
+                if (!keptWholeNeededBy.contains(output)) {
+                    outputs.add(output);
+                }
+            }
+        } else {
+            for (int i = 0, n = keptWholeServedBy.size(); i < n; i++) {
+                final int output = keptWholeServedBy.get(i);
+                if (!keptWholeNeededBy.contains(output)) {
+                    outputs.add(output);
+                }
             }
         }
     }
@@ -4711,13 +5105,16 @@ public class SqlOptimiser implements Mutable {
 
     private void emitColumnLiteralsTopDown(ObjList<QueryColumn> columns, IQueryModel target) {
         for (int i = 0, n = columns.size(); i < n; i++) {
-            final QueryColumn qc = columns.getQuick(i);
-            emitLiteralsTopDown(qc.getAst(), target);
-            if (qc.isWindowExpression()) {
-                final WindowExpression ac = (WindowExpression) qc;
-                emitLiteralsTopDown(ac.getPartitionBy(), target);
-                emitLiteralsTopDown(ac.getOrderBy(), target);
-            }
+            emitColumnLiteralsTopDown(columns.getQuick(i), target);
+        }
+    }
+
+    private void emitColumnLiteralsTopDown(QueryColumn qc, IQueryModel target) {
+        emitLiteralsTopDown(qc.getAst(), target);
+        if (qc.isWindowExpression()) {
+            final WindowExpression ac = (WindowExpression) qc;
+            emitLiteralsTopDown(ac.getPartitionBy(), target);
+            emitLiteralsTopDown(ac.getOrderBy(), target);
         }
     }
 
@@ -4774,6 +5171,89 @@ public class SqlOptimiser implements Mutable {
             } else {
                 node = sqlNodeStack.poll();
             }
+        }
+    }
+
+    // Emits the projection of a model to its nested model while the columns of a read of a view propagate in
+    // kept-whole mode, see setSubQueryKeptWhole(). A read of the view that names only outputs whose columns do not
+    // need a sub-query only the projection gives columns, see SqlUtil.isProjectionFedSubQuery(), gives that
+    // sub-query no column of the projection, and its plan computes every column of the sub-query. So the projection
+    // gives no column to such a sub-query when some read leaves it without one, and to every other join model the
+    // columns the outputs need, as the reads of the view do. Each column carries the outputs it serves to the columns
+    // it reaches, see recordKeptWholeOrigins().
+    private void emitKeptWholeProjection(IQueryModel model, IQueryModel nested) {
+        final ObjList<QueryColumn> columns = model.getColumns();
+        final int columnCount = columns.size();
+        final boolean isOutputLayer = keptWholeOutputLayers.contains(model);
+        if (columnCount == 0 && !isOutputLayer) {
+            passKeptWholeOriginsToNested(model, nested);
+        }
+        keptWholeColumnOrigins.clear();
+        for (int i = 0; i < columnCount; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final IntHashSet origins;
+            if (isOutputLayer) {
+                origins = keptWholeOutputOrigins(model, column);
+            } else if (isGroupingKey(model, column)) {
+                // A read that gives the model no column keeps every column of it, so every read computes its keys,
+                // see retainGroupByKeysAsTopDownColumns().
+                origins = null;
+            } else {
+                origins = recordedKeptWholeOrigins(model, column.getAlias());
+            }
+            keptWholeColumnOrigins.add(origins);
+        }
+        addSameModelReaderOrigins(model, nested, columns, columnCount);
+        keptWholeWithheldJoins.clear();
+        projectionJoinHolder = nested;
+        try {
+            final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+            final int joinCount = joinModels.size();
+            boolean hasProjectionFedSubQuery = false;
+            for (int j = 0; j < joinCount && !hasProjectionFedSubQuery; j++) {
+                hasProjectionFedSubQuery = SqlUtil.isProjectionFedSubQuery(nested, j);
+            }
+            if (hasProjectionFedSubQuery) {
+                // a dry run collects the join models each column reaches, see isWithheldFromProjection()
+                keptWholeColumnJoins.clear();
+                isKeptWholeDryRun = true;
+                try {
+                    for (int i = 0; i < columnCount; i++) {
+                        keptWholeColumnJoins.add(nextKeptWholeSet());
+                        emitColumnLiteralsTopDown(columns.getQuick(i), nested);
+                    }
+                } finally {
+                    isKeptWholeDryRun = false;
+                }
+                keptWholeFilteredJoins.clear();
+                for (int i = 0; i < columnCount; i++) {
+                    keptWholeFilteredJoins.add(filteredJoinIndex(columns.getQuick(i), nested));
+                }
+                for (int j = 0; j < joinCount; j++) {
+                    if (SqlUtil.isProjectionFedSubQuery(nested, j)) {
+                        final IntHashSet outputs = nextKeptWholeSet();
+                        collectWithholdingOutputs(j, columnCount, outputs);
+                        if (outputs.size() > 0) {
+                            keptWholeWithheldJoins.add(j);
+                            recordWithheldJoinOrigins(j, joinModels.getQuick(j), columns, columnCount, outputs);
+                        } else if (isKeptWholeWorkExhausted()) {
+                            // Past the limit of the work, a column may serve every output in place of the ones it
+                            // serves, see takeKeptWholeWork(), so the propagation cannot tell whether some read leaves
+                            // the join model without columns. The plan of a read that keeps the join model whole
+                            // computes every column of it, the columns any read of it scans and more, so the
+                            // projection withholds it all the same.
+                            keptWholeWithheldJoins.add(j);
+                        }
+                    }
+                }
+            }
+            for (int i = 0; i < columnCount; i++) {
+                keptWholeEmittedOrigins = keptWholeColumnOrigins.getQuick(i);
+                emitColumnLiteralsTopDown(columns.getQuick(i), nested);
+            }
+        } finally {
+            keptWholeEmittedOrigins = null;
+            projectionJoinHolder = null;
         }
     }
 
@@ -4870,34 +5350,41 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void emitLiteralsTopDown(@Transient ExpressionNode node, IQueryModel model) {
+        emitLiteralsTopDown(node, model, null);
+    }
+
+    // Emits the literals of the expression to the model as top-down columns. Given a projection, the expression is the
+    // WHERE clause of the projection and the model is its nested model, and a literal that names a column the
+    // projection renames is not emitted, see propagateTopDownColumns0().
+    private void emitLiteralsTopDown(@Transient ExpressionNode node, IQueryModel model, @Nullable IQueryModel projection) {
         sqlNodeStack.clear();
 
         // pre-order iterative tree traversal
         // see: http://en.wikipedia.org/wiki/Tree_traversal
 
-        addTopDownColumn(node, model);
+        addTopDownColumn(node, model, projection);
 
         while (!sqlNodeStack.isEmpty() || node != null) {
             if (node != null) {
                 if (node.paramCount < 3) {
                     if (node.rhs != null) {
-                        addTopDownColumn(node.rhs, model);
+                        addTopDownColumn(node.rhs, model, projection);
                         sqlNodeStack.push(node.rhs);
                     }
 
                     if (node.lhs != null) {
-                        addTopDownColumn(node.lhs, model);
+                        addTopDownColumn(node.lhs, model, projection);
                     }
                     node = node.lhs;
                 } else {
                     for (int i = 1, k = node.paramCount; i < k; i++) {
                         ExpressionNode e = node.args.getQuick(i);
-                        addTopDownColumn(e, model);
+                        addTopDownColumn(e, model, projection);
                         sqlNodeStack.push(e);
                     }
 
                     final ExpressionNode e = node.args.getQuick(0);
-                    addTopDownColumn(e, model);
+                    addTopDownColumn(e, model, projection);
                     node = e;
                 }
             } else {
@@ -4975,6 +5462,28 @@ public class SqlOptimiser implements Mutable {
                 node = sqlNodeStack2.poll();
             }
         }
+    }
+
+    private void endKeptWholePropagation() {
+        isSubQueryKeptWhole = false;
+        isKeptWholeDryRun = false;
+        keptWholeWork = 0;
+        keptWholeColumnIndexes.clear();
+        keptWholeColumnJoins.clear();
+        keptWholeColumnOrigins.clear();
+        keptWholeEmittedOrigins = null;
+        keptWholeFilteredJoins.clear();
+        keptWholeNeededBy = null;
+        keptWholeNeededOrigins.clear();
+        keptWholeOrigins.clear();
+        keptWholeOutputCount = 0;
+        keptWholeOutputLayers.clear();
+        keptWholeReachedReaders.clear();
+        keptWholeReaderOrigins.clear();
+        keptWholeServedBy = null;
+        keptWholeServedOrigins.clear();
+        keptWholeWithheldJoins.clear();
+        projectionJoinHolder = null;
     }
 
     private QueryColumn ensureAliasUniqueness(IQueryModel model, QueryColumn qc) {
@@ -6527,6 +7036,24 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Whether the column is a key of a model that groups its rows: a column of a SELECT that groups other than an
+    // aggregate, or a grouping column of a HORIZON JOIN. Every read of the model needs the keys, see
+    // retainGroupByKeysAsTopDownColumns().
+    private boolean isGroupingKey(IQueryModel model, QueryColumn column) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            return column.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(column.getAst().token);
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
+            final ObjList<QueryColumn> groupingColumns = model.getHorizonJoinContext().getGroupingColumns();
+            for (int i = 0, n = groupingColumns.size(); i < n; i++) {
+                if (Chars.equalsIgnoreCase(groupingColumns.getQuick(i).getAlias(), column.getAlias())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private boolean isGroupingSetsPushdownSafe(
             IQueryModel model,
             ExpressionNode node,
@@ -6589,6 +7116,11 @@ public class SqlOptimiser implements Mutable {
         } catch (NumericException ne) {
             return false;
         }
+    }
+
+    // whether the propagation in kept-whole mode has reached the limit of its work, see takeKeptWholeWork()
+    private boolean isKeptWholeWorkExhausted() {
+        return keptWholeWork >= KEPT_WHOLE_WORK_LIMIT;
     }
 
     private boolean isLateralCountTemplateResolvable(
@@ -6927,6 +7459,42 @@ public class SqlOptimiser implements Mutable {
         // Also check against the timestamp offset alias (for virtual models without timestamp designation)
         CharSequence alias = model.getTimestampOffsetAlias();
         return alias != null && referencesColumn(node, alias);
+    }
+
+    // Whether addTopDownColumn() gives the join model at index of projectionJoinHolder no column of the
+    // projection emitKeptWholeProjection() emits. A dry run gives no join model a column, and records the ones
+    // the column it emits reaches.
+    private boolean isWithheldFromProjection(int joinIndex) {
+        if (isKeptWholeDryRun) {
+            keptWholeColumnJoins.getLast().add(joinIndex);
+            return true;
+        }
+        return keptWholeWithheldJoins.contains(joinIndex);
+    }
+
+    // The outputs of the view a column of its SELECT, or of a branch of its set operation, serves: the one at
+    // its position, or null when every read of the view needs the column, as it needs every column of a SELECT
+    // DISTINCT and of a set operation other than UNION ALL, the keys of a SELECT that groups, and a column a
+    // clause of the SELECT itself names.
+    private @Nullable IntHashSet keptWholeOutputOrigins(IQueryModel model, QueryColumn column) {
+        if (!model.allowsColumnsChange()) {
+            return null;
+        }
+        if (keptWholeOrigins.keyIndex(model) < 0) {
+            // Only the clauses of the SELECT itself give it top-down columns: it keeps those alone, and every read
+            // needs them.
+            assert keptWholeOrigins.get(model).keyIndex(column.getAlias()) < 0;
+            return null;
+        }
+        // the columns of a SELECT, those its own clauses keep included, are the ones it selects
+        final int index = model.getColumnAliasIndex(column.getAlias());
+        assert index > -1;
+        if (isGroupingKey(model, column)) {
+            return null;
+        }
+        final IntHashSet origins = nextKeptWholeSet();
+        origins.add(index);
+        return origins;
     }
 
     /**
@@ -7854,6 +8422,64 @@ public class SqlOptimiser implements Mutable {
         return n;
     }
 
+    // The order optimiseOrderBy() requires of the models a model reads, given the order required of the model, see
+    // requiredOrderByMnemonic(). It changes nothing: optimiseOrderBy() drops the ORDER BY of a model whose order
+    // nothing requires.
+    private int nestedOrderByMnemonic(IQueryModel model, int requiredOrderByMnemonic) {
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        final int n = columns.size();
+        int orderByMnemonic;
+
+        // determine if ordering is required
+        switch (requiredOrderByMnemonic) {
+            case OrderByMnemonic.ORDER_BY_UNKNOWN:
+                // we have sample by, so expect sub-query has to be ordered
+                if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                }
+                if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
+                    for (int i = 0; i < n; i++) {
+                        QueryColumn col = columns.getQuick(i);
+                        if (hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), col.getAst())) {
+                            orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                            break;
+                        }
+                    }
+                }
+                break;
+            case OrderByMnemonic.ORDER_BY_REQUIRED:
+                // parent requires order
+                // if this model forces ordering - sub-query ordering is not needed
+                if (model.getOrderBy().size() > 0) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                }
+                break;
+            default:
+                // sub-query ordering is not needed, unless sample by needs it
+                if (model.getSampleBy() != null) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                } else {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
+                }
+                break;
+        }
+
+        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
+                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
+                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
+                    break;
+                }
+            }
+        }
+        return orderByMnemonic;
+    }
+
     private QueryColumn nextColumn(CharSequence name) {
         return nextColumn(name, true, 0);
     }
@@ -7868,6 +8494,11 @@ public class SqlOptimiser implements Mutable {
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column, boolean includeIntoWildcard) {
         return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, includeIntoWildcard, 0);
+    }
+
+    // A set of keptWholeSetPool for the propagation in kept-whole mode to fill.
+    private IntHashSet nextKeptWholeSet() {
+        return notifyKeptWholePoolListener(keptWholeSetPool.next());
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
@@ -8213,11 +8844,20 @@ public class SqlOptimiser implements Mutable {
                         }
                         final boolean outerViewText = optimisingViewText;
                         optimisingViewText = viewText;
+                        // An ORDER BY the sub-query drops changes no read of a view, which reads the tables of the
+                        // sub-query as the reader, see isOrderByCleared(). A read compiles the sub-query as a query of
+                        // its own, wherever it places the view, so the sub-query keeps only the ORDER BY it needs,
+                        // see setOrderByKept().
+                        final boolean wasOrderByCleared = isOrderByCleared;
+                        final boolean wasOrderByKept = isOrderByKept;
+                        isOrderByKept = false;
                         final IQueryModel optimised;
                         try {
                             optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
                         } finally {
                             optimisingViewText = outerViewText;
+                            isOrderByCleared = wasOrderByCleared;
+                            isOrderByKept = wasOrderByKept;
                             executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
                             isViewMetadataCheckDeferred = wasViewMetadataCheckDeferred;
                         }
@@ -8332,75 +8972,18 @@ public class SqlOptimiser implements Mutable {
         if (!model.isOptimisable()) {
             return;
         }
-        ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        int orderByMnemonic;
-        int n = columns.size();
-
-        // limit x,y forces order materialization; we can't push order by past it and need to discover actual nested ordering
-        if (model.getLimitLo() != null) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+        final int requiredOrderByMnemonic = requiredOrderByMnemonic(model, topLevelOrderByMnemonic);
+        // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
+        if (
+                requiredOrderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT
+                        && !model.hasSharedRefs()
+                        && !isOrderByKept
+                        && model.getOrderBy().size() > 0
+        ) {
+            model.getOrderBy().clear();
+            isOrderByCleared = true;
         }
-
-        // if model has explicit timestamp then we should detect and preserve actual order because it might be used for asof/lt/splice join
-        if (model.getTimestamp() != null) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-        }
-
-        // keep order by on model with window functions to speed up query (especially when it matches window order by)
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_WINDOW && model.getOrderBy().size() > 0) {
-            topLevelOrderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-        }
-
-        // determine if ordering is required
-        switch (topLevelOrderByMnemonic) {
-            case OrderByMnemonic.ORDER_BY_UNKNOWN:
-                // we have sample by, so expect sub-query has to be ordered
-                if (model.getOrderBy().size() > 0 && model.getSampleBy() == null) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                }
-                if (model.getSampleBy() == null && orderByMnemonic != OrderByMnemonic.ORDER_BY_INVARIANT) {
-                    for (int i = 0; i < n; i++) {
-                        QueryColumn col = columns.getQuick(i);
-                        if (hasGroupByFunc(sqlNodeStack, functionParser.getFunctionFactoryCache(), col.getAst())) {
-                            orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                            break;
-                        }
-                    }
-                }
-                break;
-            case OrderByMnemonic.ORDER_BY_REQUIRED:
-                // parent requires order
-                // if this model forces ordering - sub-query ordering is not needed
-                if (model.getOrderBy().size() > 0) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                }
-                break;
-            default:
-                // sub-query ordering is not needed, but we'd like to propagate order by advice (if possible)
-                if (!model.hasSharedRefs()) {
-                    model.getOrderBy().clear();
-                }
-                if (model.getSampleBy() != null) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                } else {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_INVARIANT;
-                }
-                break;
-        }
-
-        // some aggregate functions (e.g. first()) rely on the rows being properly ordered to return the correct result
-        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
-            for (int i = 0; i < n && orderByMnemonic != OrderByMnemonic.ORDER_BY_REQUIRED; i++) {
-                if (hasOrderedGroupByFunc(columns.getQuick(i).getAst())) {
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_REQUIRED;
-                    break;
-                }
-            }
-        }
+        int orderByMnemonic = nestedOrderByMnemonic(model, requiredOrderByMnemonic);
 
         ObjList<ExpressionNode> orderByAdvice = getOrderByAdvice(model, orderByMnemonic);
         IntList orderByDirectionAdvice = getOrderByAdviceDirection(model, orderByMnemonic);
@@ -8514,6 +9097,44 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
+    // A model with no columns of its own, such as a join model that holds a sub-query, a CTE or a view, gives its
+    // nested model no column when its projection is emitted, so the nested model computes every column, see
+    // emitKeptWholeProjection(). The outputs of the view a column of the model serves are those the column of the
+    // same name of the nested model serves. A model no column of a projection reached serves every output, as does
+    // each column of its nested model then.
+    private void passKeptWholeOriginsToNested(IQueryModel model, IQueryModel nested) {
+        final int index = keptWholeOrigins.keyIndex(model);
+        if (index > -1) {
+            return;
+        }
+        final ObjList<CharSequence> aliases = keptWholeOrigins.valueAt(index).keys();
+        final LowerCaseCharSequenceObjHashMap<QueryColumn> nestedColumns = nested.getAliasToColumnMap();
+        for (int i = 0, n = aliases.size(); i < n; i++) {
+            final CharSequence alias = aliases.getQuick(i);
+            if (nestedColumns.contains(alias)) {
+                recordKeptWholeOrigins(nested, alias, recordedKeptWholeOrigins(model, alias));
+            }
+        }
+    }
+
+    // The first branch of a set operation the projection above it gives no column keeps every column of its SELECT,
+    // see emitKeptWholeProjection(), and so does every other branch. A read that gives the first branch a column gives
+    // every other branch the column at the same position, see propagateTopDownColumns0(), so the column of a branch
+    // serves the outputs its counterpart in the first branch does.
+    private void passKeptWholeOriginsToUnionBranches(IQueryModel nested) {
+        if (keptWholeOrigins.keyIndex(nested) > -1) {
+            // no projection gave the first branch outputs to serve, so every read needs each of its columns
+            return;
+        }
+        final ObjList<QueryColumn> nestedColumns = nested.getBottomUpColumns();
+        for (IQueryModel branch = nested.getUnionModel(); branch != null; branch = branch.getUnionModel()) {
+            final ObjList<QueryColumn> branchColumns = branch.getBottomUpColumns();
+            for (int i = 0, n = Math.min(nestedColumns.size(), branchColumns.size()); i < n; i++) {
+                recordKeptWholeOrigins(branch, branchColumns.getQuick(i).getAlias(), recordedKeptWholeOrigins(nested, nestedColumns.getQuick(i).getAlias()));
+            }
+        }
+    }
+
     /**
      * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
      * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
@@ -8598,13 +9219,6 @@ public class SqlOptimiser implements Mutable {
         int maxPivotProducedColumns = engine.getConfiguration().getSqlPivotMaxProducedColumns();
         SqlCompiler compiler = null;
         try {
-            for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
-                if (!pivotForColumns.getQuick(i).isValueList()) {
-                    compiler = engine.getSqlCompiler();
-                    break;
-                }
-            }
-
             // A function written in a view surfaces its execution requirements at the name of the outermost view in
             // the compiled SQL, see FunctionParser.enterExecutionRequirementPosition(). optimiseExpressionModels()
             // enters that name while it optimises a sub-query of a view; otherwise this PIVOT carries the name of
@@ -8620,85 +9234,33 @@ public class SqlOptimiser implements Mutable {
                 if (!pivotForColumn.isValueList()) {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
-                    assert compiler != null;
-                    // Code generation creates the sub-query's scalar functions after optimiseExpressionModels()
-                    // has left the sub-query, so a view compile flags the sub-query again for them.
-                    final boolean wasViewMetadataSubquery = sqlExecutionContext.isViewMetadataSubquery();
-                    sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery || sqlExecutionContext.isViewCompile());
-                    // The borrowed compiler did not parse this model, so it must not retry: a retry
-                    // re-parses its lexer, which holds the statement it compiled last. When a table
-                    // the sub-query reads goes out of date, the exception propagates to whatever
-                    // compiles this statement, which holds the statement's text and can retry it.
-                    try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
-                        checkDeferredViewMetadataRequirements();
-                        final RecordMetadata inListMetadata = inListFactory.getMetadata();
-                        final int columnCount = inListMetadata.getColumnCount();
-                        if (columnCount != 1) {
-                            throw SqlException
-                                    .$(subQueryNode.position, "PIVOT IN subquery must return exactly one column, got ")
-                                    .put(columnCount);
-                        }
-                        final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
-                        final boolean quote = switch (ColumnType.tagOf(columnType)) {
-                            case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.TIMESTAMP,
-                                 ColumnType.DATE, ColumnType.CHAR, ColumnType.UUID, ColumnType.IPv4, ColumnType.ARRAY,
-                                 ColumnType.LONG128, ColumnType.LONG256 -> true;
-                            default -> false;
-                        };
-                        int valueCount = 0;
-                        tempCharSequenceHashSet.clear();
+                    final int valueLo = pivotForColumn.getValueList().size();
+                    if (pivotInValueSource != null) {
+                        // a compile of the same SELECT ran the sub-query, see setPivotInValueSource()
+                        final int recordedIndex = pivotInValueSource.takePivotIn(subQueryNode.position);
                         pivotAliasMap.clear();
                         pivotAliasSequenceMap.clear();
-
-                        try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
-                            while (cursor.hasNext()) {
-                                final Record record = cursor.getRecord();
-                                boolean isNull = printRecordColumnOrNull(record, inListMetadata, tmpStringSink, subQueryNode.position);
-                                if (!tempCharSequenceHashSet.add(tmpStringSink)) {
-                                    continue;
-                                }
-                                CharacterStoreEntry quotedCse = characterStore.newEntry();
-                                if (quote && !isNull) {
-                                    quotedCse.put('\'');
-                                }
-                                quotedCse.put(tmpStringSink);
-                                if (quote && !isNull) {
-                                    quotedCse.put('\'');
-                                }
-
-                                CharSequence token = quotedCse.toImmutable();
-                                CharSequence alias = SqlUtil.createExprColumnAlias(
-                                        characterStore,
-                                        unquote(token),
-                                        pivotAliasMap,
-                                        pivotAliasSequenceMap,
-                                        configuration.getColumnAliasGeneratedMaxSize(),
-                                        true
-                                );
-                                pivotAliasMap.add(alias);
-                                pivotForColumn.addValue(expressionNodePool.next().of(CONSTANT, token, 0, subQueryNode.position), alias);
-                                valueCount++;
-                                if (forValueCombinations * valueCount > maxPivotProducedColumns) {
-                                    throw SqlException
-                                            .$(subQueryNode.position, "PIVOT produces too many columns: ")
-                                            .put(forValueCombinations * valueCount)
-                                            .put(", limit is ")
-                                            .put(maxPivotProducedColumns);
-                                }
-                            }
+                        for (int v = pivotInValueSource.getPivotInValueLo(recordedIndex), hi = pivotInValueSource.getPivotInValueHi(recordedIndex); v < hi; v++) {
+                            final CharacterStoreEntry tokenCse = characterStore.newEntry();
+                            tokenCse.put(pivotInValueSource.getPivotInValue(v));
+                            addPivotInValue(pivotForColumn, tokenCse.toImmutable(), subQueryNode.position);
                         }
-                        if (valueCount == 0) {
-                            throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
+                    } else {
+                        if (compiler == null) {
+                            compiler = engine.getSqlCompiler();
                         }
-                    } catch (SqlException e) {
-                        // The borrowed compiler sees the sub-query only, so it reports a function that a view's
-                        // definition writes at its position in that definition, not in the compiled SQL.
-                        if (e.isFunctionNotAllowed() && requirementPosition > -1) {
-                            e.setPosition(requirementPosition);
-                        }
-                        throw e;
-                    } finally {
-                        sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
+                        runPivotInSubquery(
+                                pivotForColumn,
+                                subQueryNode,
+                                compiler,
+                                forValueCombinations,
+                                maxPivotProducedColumns,
+                                requirementPosition,
+                                sqlExecutionContext
+                        );
+                    }
+                    if (pivotInValueRecorder != null) {
+                        pivotInValueRecorder.recordPivotIn(subQueryNode.position, pivotForColumn.getValueList(), valueLo, pivotForColumn.getValueList().size());
                     }
                     pivotForColumn.setSelectSubqueryExpr(null);
                     pivotForColumn.setIsValueList(true);
@@ -8996,7 +9558,14 @@ public class SqlOptimiser implements Mutable {
                 emitLiteralsTopDown(model.getWhereClause(), model);
             }
             if (nestedAllowsColumnChange) {
-                emitLiteralsTopDown(model.getWhereClause(), nested);
+                // A model that projects applies its WHERE clause to the output of its projection, see
+                // SqlCodeGenerator.generateQuery0Inner(), so the literals of the clause name columns of the projection,
+                // and the projection gives the nested model what those columns read, see emitColumnLiteralsTopDown()
+                // below. A column the projection takes from a column of another name, such as a in SELECT b a, which a
+                // filter that stays above LATEST ON names, reads b: the column a of the nested model is one the query
+                // does not read, so the clause does not give it to the nested model.
+                final IQueryModel projection = model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE ? model : null;
+                emitLiteralsTopDown(model.getWhereClause(), nested, projection);
                 // Don't emit to nested union models by name here. In UNION, columns are matched
                 // by position, not name. Name-based resolution can map to a wrong column index
                 // in union branches. The indexed propagation below (emitColumnLiteralsTopDown loop)
@@ -9018,7 +9587,11 @@ public class SqlOptimiser implements Mutable {
         retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
-            emitColumnLiteralsTopDown(model.getColumns(), nested);
+            if (isSubQueryKeptWhole) {
+                emitKeptWholeProjection(model, nested);
+            } else {
+                emitColumnLiteralsTopDown(model.getColumns(), nested);
+            }
 
             // Propagate the explicit timestamp declaration. This runs *after* the projection so
             // that a timestamp the projection already selects keeps its position in the select
@@ -9049,6 +9622,7 @@ public class SqlOptimiser implements Mutable {
                             QueryColumn qc = groupByBu.getQuick(i);
                             if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                                 nested.addTopDownColumn(nestedBu.getQuick(i), nestedBu.getQuick(i).getAlias());
+                                recordKeptWholeOrigins(nested, nestedBu.getQuick(i).getAlias(), null);
                             }
                         }
                     } else if (groupByScan.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
@@ -9059,6 +9633,7 @@ public class SqlOptimiser implements Mutable {
                             final int index = groupByScan.getColumnAliasIndex(groupingColumns.getQuick(i).getAlias());
                             if (index > -1 && index < nestedBu.size()) {
                                 nested.addTopDownColumn(nestedBu.getQuick(index), nestedBu.getQuick(index).getAlias());
+                                recordKeptWholeOrigins(nested, nestedBu.getQuick(index).getAlias(), null);
                             }
                         }
                     }
@@ -9081,8 +9656,15 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, n = unionColumnIndexes.size(); i < n; i++) {
                     QueryColumn qc = cols.getQuick(unionColumnIndexes.getQuick(i));
                     unionModel.addTopDownColumn(qc, qc.getAlias());
+                    // the column of a branch serves the outputs its counterpart in the first branch does
+                    recordKeptWholeOrigins(unionModel, qc.getAlias(), recordedKeptWholeOrigins(nested, nestedTopDownColumns.getQuick(i).getAlias()));
                 }
                 unionModel = unionModel.getUnionModel();
+            }
+            // The branches of the set operation of the view itself serve the outputs at their positions, see
+            // keptWholeOutputOrigins().
+            if (isSubQueryKeptWhole && nestedTopDownColumns.size() == 0 && !keptWholeOutputLayers.contains(nested)) {
+                passKeptWholeOriginsToUnionBranches(nested);
             }
         }
 
@@ -9379,6 +9961,24 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    // The columns of the projection of a VIRTUAL model, see addSameModelReaderOrigins(), that read the nested model
+    // and that the column at index reaches through the columns of the model it reads, itself included when it reads
+    // the nested model. Collected once per column.
+    private IntHashSet reachedNestedReaders(int index, IQueryModel model, IQueryModel nested, ObjList<QueryColumn> columns) {
+        final IntHashSet known = keptWholeReachedReaders.getQuick(index);
+        if (known != null) {
+            // A column that the columns it reads read in turn is no column of a SELECT; the pending mark is empty.
+            return known;
+        }
+        keptWholeReachedReaders.setQuick(index, REACHED_NESTED_READERS_PENDING);
+        final IntHashSet reached = nextKeptWholeSet();
+        if (addReachedNestedReaders(columns.getQuick(index).getAst(), model, nested, columns, reached)) {
+            reached.add(index);
+        }
+        keptWholeReachedReaders.setQuick(index, reached);
+        return reached;
+    }
+
     /**
      * Rebuilds every {@code and_offset} wrapper that {@link #moveWhereInsideSubQueries} pushed into a
      * post-join filter into its {@code dateadd()} residual.
@@ -9413,6 +10013,53 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // Records that the outputs of the view in origins, or every output when it is null, need the top-down
+    // column alias of the model, while the columns of a query propagate in kept-whole mode. A column serves
+    // the outputs of every projection column and clause that reaches it: a read that names only the other
+    // outputs gives the column nothing, and every read needs one that a clause reaches.
+    private void recordKeptWholeOrigins(IQueryModel model, CharSequence alias, @Nullable IntHashSet origins) {
+        if (!isSubQueryKeptWhole) {
+            return;
+        }
+        // a dry run withholds every column from the join models, see isWithheldFromProjection()
+        assert !isKeptWholeDryRun;
+        final int modelIndex = keptWholeOrigins.keyIndex(model);
+        final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins;
+        if (modelIndex > -1) {
+            columnOrigins = notifyKeptWholePoolListener(keptWholeOriginMapPool.next());
+            keptWholeOrigins.putAt(modelIndex, model, columnOrigins);
+        } else {
+            columnOrigins = keptWholeOrigins.valueAt(modelIndex);
+        }
+        final int index = columnOrigins.keyIndex(alias);
+        if (index > -1) {
+            // Shared rather than copied: a projection gives every column of a model it withholds the same outputs, and
+            // a copy for each column would take time in proportion to the columns times the outputs.
+            columnOrigins.putAt(index, alias, origins);
+            return;
+        }
+        final IntHashSet recorded = columnOrigins.valueAtQuick(index);
+        if (recorded == null) {
+            return;
+        }
+        final boolean isOwned = recorded instanceof KeptWholeOrigins columnSet && columnSet.isOwned;
+        if (origins == null || !takeKeptWholeWork(isOwned ? origins.size() : recorded.size() + origins.size())) {
+            // past the limit of the work, the column serves every output, as one every read needs
+            columnOrigins.putAt(index, alias, null);
+        } else if (isOwned) {
+            // the column made the set for itself, and no other column shares it yet
+            recorded.addAll(origins);
+        } else {
+            // The set may serve other columns too: a projection shares the set of its column with the columns the
+            // column reads. So the column takes a copy of its own.
+            final KeptWholeOrigins union = notifyKeptWholePoolListener(keptWholeOriginsPool.next());
+            union.isOwned = true;
+            union.addAll(recorded);
+            union.addAll(origins);
+            columnOrigins.putAt(index, alias, union);
+        }
+    }
+
     // A non-equi outer join consumes the complete logical prefix as its master, so every prefix
     // model must execute before the boundary. tempIntHashSet marks a boundary whose prefix is
     // already recorded, so each boundary materializes its prefix only once.
@@ -9428,6 +10075,104 @@ public class SqlOptimiser implements Mutable {
         tempIntList.add(parentIndex);
         tempIntList.add(childIndex);
         addOrderingConstraint(parent, parentIndex, childIndex);
+    }
+
+    // Records the outputs of the view a column of a join model the projection withholds serves, see
+    // isWithheldFromProjection(), without giving the model the column: a read that names one of those outputs gives
+    // the model the column. The columns of the model the column reads serve them too, which they get as the
+    // projection of the model is emitted to its nested model, see addSameModelReaderOrigins().
+    private void recordWithheldColumn(IQueryModel joinModel, CharSequence columnName) {
+        recordKeptWholeOrigins(joinModel, columnName, keptWholeEmittedOrigins);
+    }
+
+    // Records the outputs of the view that the columns of the join model at joinIndex of projectionJoinHolder serve,
+    // when a read that names one of the outputs alone gives the join model no column of the projection, see
+    // emitKeptWholeProjection(). Such a read keeps the join model whole, so every column of it serves the outputs, and
+    // the columns the projection gives it serve their own outputs too, see recordWithheldColumn(). The read may also
+    // filter on the column of the projection that serves the output, which gives the join model the column of the same
+    // name alone, see filteredJoinIndex(): a GROUP BY then computes no aggregate, and a SELECT none of its other
+    // columns, which can leave a sub-query under the join model without columns. So only the column the filter names
+    // serves such an output. A join model that holds a sub-query, a CTE or a view has no columns of its own, only the
+    // names of the columns of its nested model, see passKeptWholeOriginsToNested().
+    private void recordWithheldJoinOrigins(
+            int joinIndex,
+            IQueryModel joinModel,
+            ObjList<QueryColumn> columns,
+            int columnCount,
+            IntHashSet outputs
+    ) {
+        // the outputs whose reads keep the join model whole, those a read can filter on to give it a column left out
+        IntHashSet keptOutputs = outputs;
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            if (keptWholeFilteredJoins.getQuick(i) != joinIndex || origins == null || !takeKeptWholeWork(origins.size())) {
+                continue;
+            }
+            for (int k = 0, n = origins.size(); k < n; k++) {
+                final int output = origins.get(k);
+                if (keptOutputs.contains(output)) {
+                    if (keptOutputs == outputs) {
+                        if (!takeKeptWholeWork(outputs.size())) {
+                            break;
+                        }
+                        keptOutputs = nextKeptWholeSet();
+                        keptOutputs.addAll(outputs);
+                    }
+                    keptOutputs.remove(output);
+                }
+            }
+        }
+        final ObjList<QueryColumn> joinColumns = joinModel.getBottomUpColumns();
+        if (joinColumns.size() > 0) {
+            for (int i = 0, n = joinColumns.size(); i < n; i++) {
+                recordKeptWholeOrigins(joinModel, joinColumns.getQuick(i).getAlias(), keptOutputs);
+            }
+        } else {
+            final ObjList<CharSequence> joinColumnNames = joinModel.getAliasToColumnMap().keys();
+            for (int i = 0, n = joinColumnNames.size(); i < n; i++) {
+                recordKeptWholeOrigins(joinModel, joinColumnNames.getQuick(i), keptOutputs);
+            }
+        }
+        // The loop below walks the outputs of the columns the loop above took the work of, see takeKeptWholeWork(). Past
+        // the limit of the work, the loop above may have walked only some of them, and the propagation keeps whole every
+        // sub-query it decides on from then on, see emitKeptWholeProjection(), so no decision reads the outputs the loop
+        // below would give the columns of the join model.
+        if (keptOutputs == outputs || isKeptWholeWorkExhausted()) {
+            return;
+        }
+        // the column of the join model a filter names serves the outputs of the filtered column
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            if (keptWholeFilteredJoins.getQuick(i) == joinIndex && origins != null) {
+                final IntHashSet filteredOutputs = nextKeptWholeSet();
+                for (int k = 0, n = origins.size(); k < n; k++) {
+                    final int output = origins.get(k);
+                    if (outputs.contains(output)) {
+                        filteredOutputs.add(output);
+                    }
+                }
+                if (filteredOutputs.size() > 0) {
+                    recordKeptWholeOrigins(joinModel, columns.getQuick(i).getAlias(), filteredOutputs);
+                }
+            }
+        }
+    }
+
+    // The outputs of the view the top-down column alias of the model serves, null for every output, see
+    // recordKeptWholeOrigins(). A column no projection column or clause reached is one every read needs. Every column
+    // of a model a projection withholds serves the outputs of the reads that keep the model whole, see
+    // emitKeptWholeProjection().
+    private @Nullable IntHashSet recordedKeptWholeOrigins(IQueryModel model, CharSequence alias) {
+        if (!isSubQueryKeptWhole) {
+            return null;
+        }
+        final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins = keptWholeOrigins.get(model);
+        final IntHashSet origins = columnOrigins != null ? columnOrigins.get(alias) : null;
+        if (origins instanceof KeptWholeOrigins columnSet) {
+            // whoever takes the set shares it, so the column copies it before it adds to it, see recordKeptWholeOrigins()
+            columnSet.isOwned = false;
+        }
+        return origins;
     }
 
     /**
@@ -9606,6 +10351,16 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(fillPosition, "SAMPLE BY FILL is not supported with duplicate grouping sets");
             }
         }
+    }
+
+    // The propagation in kept-whole mode takes the sets it fills from pools of its own, which keep the capacity of
+    // their objects for the life of the compiler, up to KEPT_WHOLE_WORK_LIMIT entries. The pools start over instead,
+    // as the next statements of the compiler rarely propagate in kept-whole mode. endKeptWholePropagation(), which
+    // runs first, drops every other reference the optimiser holds to those objects, so they go with the pools.
+    private void releaseKeptWholeMemory() {
+        keptWholeOriginMapPool.resetCapacity();
+        keptWholeOriginsPool.resetCapacity();
+        keptWholeSetPool.resetCapacity();
     }
 
     /**
@@ -10387,6 +11142,8 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn qc = bottomUpColumns.getQuick(i);
                 if (qc.getAst().type != FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(qc.getAst().token)) {
                     model.addTopDownColumn(qc, qc.getAlias());
+                    // every read needs the keys
+                    recordKeptWholeOrigins(model, qc.getAlias(), null);
                 }
             }
         } else if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_HORIZON_JOIN) {
@@ -10394,6 +11151,7 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = groupingColumns.size(); i < n; i++) {
                 QueryColumn qc = groupingColumns.getQuick(i);
                 model.addTopDownColumn(qc, qc.getAlias());
+                recordKeptWholeOrigins(model, qc.getAlias(), null);
             }
         }
     }
@@ -15335,6 +16093,89 @@ public class SqlOptimiser implements Mutable {
         return node;
     }
 
+    // Runs a PIVOT IN sub-query and adds the distinct values it returns to the values of its FOR column.
+    // requirementPosition is where a function the sub-query may not run surfaces in the compiled SQL, or -1 for
+    // its own position, see preparePivotForSelectSubquery().
+    private void runPivotInSubquery(
+            PivotForColumn pivotForColumn,
+            ExpressionNode subQueryNode,
+            SqlCompiler compiler,
+            int forValueCombinations,
+            int maxPivotProducedColumns,
+            int requirementPosition,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        // Code generation creates the sub-query's scalar functions after optimiseExpressionModels()
+        // has left the sub-query, so a view compile flags the sub-query again for them.
+        final boolean wasViewMetadataSubquery = sqlExecutionContext.isViewMetadataSubquery();
+        sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery || sqlExecutionContext.isViewCompile());
+        // The borrowed compiler did not parse this model, so it must not retry: a retry
+        // re-parses its lexer, which holds the statement it compiled last. When a table
+        // the sub-query reads goes out of date, the exception propagates to whatever
+        // compiles this statement, which holds the statement's text and can retry it.
+        try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
+            checkDeferredViewMetadataRequirements();
+            final RecordMetadata inListMetadata = inListFactory.getMetadata();
+            final int columnCount = inListMetadata.getColumnCount();
+            if (columnCount != 1) {
+                throw SqlException
+                        .$(subQueryNode.position, "PIVOT IN subquery must return exactly one column, got ")
+                        .put(columnCount);
+            }
+            final int columnType = inListMetadata.getColumnMetadata(0).getColumnType();
+            final boolean quote = switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.SYMBOL, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.TIMESTAMP,
+                     ColumnType.DATE, ColumnType.CHAR, ColumnType.UUID, ColumnType.IPv4, ColumnType.ARRAY,
+                     ColumnType.LONG128, ColumnType.LONG256 -> true;
+                default -> false;
+            };
+            int valueCount = 0;
+            tempCharSequenceHashSet.clear();
+            pivotAliasMap.clear();
+            pivotAliasSequenceMap.clear();
+
+            try (RecordCursor cursor = inListFactory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    final Record record = cursor.getRecord();
+                    boolean isNull = printRecordColumnOrNull(record, inListMetadata, tmpStringSink, subQueryNode.position);
+                    if (!tempCharSequenceHashSet.add(tmpStringSink)) {
+                        continue;
+                    }
+                    CharacterStoreEntry quotedCse = characterStore.newEntry();
+                    if (quote && !isNull) {
+                        quotedCse.put('\'');
+                    }
+                    quotedCse.put(tmpStringSink);
+                    if (quote && !isNull) {
+                        quotedCse.put('\'');
+                    }
+
+                    addPivotInValue(pivotForColumn, quotedCse.toImmutable(), subQueryNode.position);
+                    valueCount++;
+                    if (forValueCombinations * valueCount > maxPivotProducedColumns) {
+                        throw SqlException
+                                .$(subQueryNode.position, "PIVOT produces too many columns: ")
+                                .put(forValueCombinations * valueCount)
+                                .put(", limit is ")
+                                .put(maxPivotProducedColumns);
+                    }
+                }
+            }
+            if (valueCount == 0) {
+                throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
+            }
+        } catch (SqlException e) {
+            // The borrowed compiler sees the sub-query only, so it reports a function that a view's
+            // definition writes at its position in that definition, not in the compiled SQL.
+            if (e.isFunctionNotAllowed() && requirementPosition > -1) {
+                e.setPosition(requirementPosition);
+            }
+            throw e;
+        } finally {
+            sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
+        }
+    }
+
     /**
      * Copies the provided order by advice into the given model.
      *
@@ -15460,6 +16301,24 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
+    // Starts the propagation of the columns of a read of a view in kept-whole mode, see setSubQueryKeptWhole().
+    // The read counts the rows of the SELECT of the view: the columns of that SELECT, and of each branch of its
+    // set operation, are the outputs a read of the view can name.
+    private void startKeptWholePropagation(IQueryModel root) {
+        isSubQueryKeptWhole = true;
+        keptWholeWork = 0;
+        // The sets grow with the outputs of the view. Taken from the pool, they go with the rest of the memory of the
+        // propagation once it ends, see releaseKeptWholeMemory().
+        keptWholeNeededBy = nextKeptWholeSet();
+        keptWholeServedBy = nextKeptWholeSet();
+        final IQueryModel view = skipNoneTypeModels(root.getNestedModel());
+        assert view != null : "a read of a view counts the rows of a SELECT";
+        keptWholeOutputCount = view.getColumns().size();
+        for (IQueryModel branch = view; branch != null; branch = branch.getUnionModel()) {
+            keptWholeOutputLayers.add(branch);
+        }
+    }
+
     private ExpressionNode substituteLateralCountPlaceholder(ExpressionNode node, ExpressionNode replacement) {
         if (node == null) {
             return null;
@@ -15522,6 +16381,20 @@ public class SqlOptimiser implements Mutable {
                 target.setJoinType(IQueryModel.JOIN_INNER);
             }
         }
+    }
+
+    // Takes the work of adding count entries to the sets of the propagation in kept-whole mode, and returns whether the
+    // propagation may do it. Past KEPT_WHOLE_WORK_LIMIT it may not, and the caller gives the column every output, or
+    // collects no output whose reads keep a join model whole. Either way, emitKeptWholeProjection() keeps whole every
+    // sub-query it decides on from then on, see isKeptWholeWorkExhausted().
+    private boolean takeKeptWholeWork(long count) {
+        if (count > KEPT_WHOLE_WORK_LIMIT - keptWholeWork) {
+            keptWholeWork = KEPT_WHOLE_WORK_LIMIT;
+            return false;
+        }
+        keptWholeWork += count;
+        keptWholeOriginAddCount += count;
+        return true;
     }
 
     private void traverseNamesAndIndices(IQueryModel parent, ExpressionNode node) throws SqlException {
@@ -16773,18 +17646,58 @@ public class SqlOptimiser implements Mutable {
         return failure;
     }
 
+    /**
+     * Returns whether the order the last optimise() that is not nested in another required of the result of the
+     * query, its {@code topLevelOrderByMnemonic}, changed the plan of the query. The query then plans otherwise as a
+     * query of its own, which requires no order of its result, and the metadata of that plan may differ, such as by
+     * the designated timestamp that the plan keeps when it drops the ORDER BY of a sub-query, see
+     * {@code SqlCompilerImpl.optimiseViewQuery()}.
+     */
+    boolean hasTopLevelOrderChangedPlan() {
+        return hasTopLevelOrderChangedPlan;
+    }
+
+    /**
+     * Returns whether an optimise() since the last {@link #setOrderByKept} dropped the ORDER BY of a model whose
+     * parent does not need its rows ordered, such as the ORDER BY of a sub-query the parent orders again. The plan
+     * of a read that places the query on a side of a join other than the first keeps such an ORDER BY, see
+     * {@code SqlCompilerImpl.optimiseViewQuery()}. The ORDER BY of a sub-query of an expression does not count: a
+     * read of a view reads the tables of such a sub-query as the reader, see
+     * {@code SqlUtil.collectTableColumnReads()}.
+     */
+    boolean isOrderByCleared() {
+        return isOrderByCleared;
+    }
+
     IQueryModel optimise(
             @Transient final IQueryModel model,
             @Transient SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        if (optimiseDepth == 0 && bareNoArgCallPositions != null) {
-            bareNoArgCallNames.clear();
-            bareNoArgCallPositions.clear();
+        return optimise(model, sqlExecutionContext, sqlParserCallback, OrderByMnemonic.ORDER_BY_UNKNOWN);
+    }
+
+    IQueryModel optimise(
+            @Transient final IQueryModel model,
+            @Transient SqlExecutionContext sqlExecutionContext,
+            SqlParserCallback sqlParserCallback,
+            int topLevelOrderByMnemonic
+    ) throws SqlException {
+        if (optimiseDepth == 0) {
+            hasTopLevelOrderChangedPlan = false;
+            if (bareNoArgCallPositions != null) {
+                bareNoArgCallNames.clear();
+                bareNoArgCallPositions.clear();
+            }
         }
         if (!model.isOptimisable()) {
             return model;
         }
+        // Kept-whole mode applies to the propagation of the columns of this query only. The sub-queries optimise()
+        // compiles on the way, those of expressions and PIVOT IN lists included, compile as any query does, and
+        // the latter run, see setSubQueryKeptWhole().
+        final boolean isKeptWhole = isSubQueryKeptWhole;
+        isSubQueryKeptWhole = false;
         IQueryModel rewrittenModel = model;
         optimiseDepth++;
         try {
@@ -16832,7 +17745,19 @@ public class SqlOptimiser implements Mutable {
             rewriteOrderByPosition(rewrittenModel);
             rewriteOrderByPositionForUnionModels(rewrittenModel);
             rewrittenModel = rewriteOrderBy(rewrittenModel);
-            optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            if (topLevelOrderByMnemonic != OrderByMnemonic.ORDER_BY_UNKNOWN) {
+                // optimiseOrderBy() changes no ORDER BY of the top-level model, whose order either way is required
+                // or unknown, so the order the model requires of the models it reads decides the rest of the plan.
+                // An optimise() nested in this one requires no order of its query.
+                hasTopLevelOrderChangedPlan = nestedOrderByMnemonic(
+                        rewrittenModel,
+                        requiredOrderByMnemonic(rewrittenModel, topLevelOrderByMnemonic)
+                ) != nestedOrderByMnemonic(
+                        rewrittenModel,
+                        requiredOrderByMnemonic(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN)
+                );
+            }
+            optimiseOrderBy(rewrittenModel, topLevelOrderByMnemonic);
             createOrderHash(rewrittenModel);
             moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
@@ -16840,7 +17765,17 @@ public class SqlOptimiser implements Mutable {
                 rebuildStrandedAndOffsets(rewrittenModel);
             }
             moveTimestampToChooseModel(rewrittenModel);
-            propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            if (isKeptWhole) {
+                startKeptWholePropagation(rewrittenModel);
+            }
+            try {
+                propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
+            } finally {
+                if (isKeptWhole) {
+                    endKeptWholePropagation();
+                    releaseKeptWholeMemory();
+                }
+            }
             rewriteMultipleTermLimitedOrderByPart2(rewrittenModel);
             rewrittenModel.recordViews(model.getReferencedViews());
             rewrittenModel.recordViewAudits(model.getViewAudits());
@@ -16859,6 +17794,7 @@ public class SqlOptimiser implements Mutable {
             freeTableFactoriesInFlight(th);
             throw th;
         } finally {
+            isSubQueryKeptWhole = isKeptWhole;
             optimiseDepth--;
         }
     }
@@ -16894,8 +17830,55 @@ public class SqlOptimiser implements Mutable {
         this.bareNoArgCallPositions = positions;
     }
 
+    /**
+     * Makes the next optimise() keep the ORDER BY of every model outside the sub-queries of expressions, or not, and
+     * forgets whether an earlier one dropped one, see {@link #isOrderByCleared()}. A query that places a SELECT on a
+     * side of a join other than the first gets such a plan of the SELECT: only the first side has its order optimised,
+     * see pushDownOrderByAdviceToJoinModels(). It compiles a sub-query of an expression as a query of its own, which
+     * keeps only the ORDER BY the sub-query needs.
+     */
+    void setOrderByKept(boolean isOrderByKept) {
+        this.isOrderByKept = isOrderByKept;
+        this.isOrderByCleared = false;
+    }
+
     void setPendingExpiryReadVersions(IntLongHashMap pendingExpiryReadVersions) {
         this.pendingExpiryReadVersions = pendingExpiryReadVersions;
+    }
+
+    /**
+     * Sets where preparePivotForSelectSubquery() records the values each PIVOT IN sub-query of the next
+     * optimise() returns, or null to record none.
+     */
+    void setPivotInValueRecorder(@Nullable SqlUtil.ViewCompileRecord pivotInValueRecorder) {
+        this.pivotInValueRecorder = pivotInValueRecorder;
+    }
+
+    /**
+     * Sets where preparePivotForSelectSubquery() takes the values of the PIVOT IN sub-queries of the next
+     * optimise() from, in the order a compile of the same SELECT recorded them, see
+     * {@link #setPivotInValueRecorder}, instead of running them again, or null to run them.
+     */
+    void setPivotInValueSource(@Nullable SqlUtil.ViewCompileRecord pivotInValueSource) {
+        this.pivotInValueSource = pivotInValueSource;
+    }
+
+    /**
+     * Makes the next optimise() of a query that counts the rows of the SELECT of a view give no column of a
+     * projection to a sub-query, CTE or view only the projection gives columns, the only source of a FROM clause
+     * or one it joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, when a
+     * read of the view can leave the sub-query without columns: the read names only outputs whose columns do not
+     * need it, or filters on an output a SELECT above the sub-query computes, which gives the model under that
+     * SELECT the column of the same name alone, see recordWithheldJoinOrigins(). A join condition, a filter of the
+     * view or an ORDER BY still gives it the columns they name. Such a read gets a
+     * plan that computes every column of the sub-query, so the dependencies of the view collect the columns of
+     * such a plan too, see {@code SqlCompilerImpl.collectOtherReadDependencies()}. A sub-query every read
+     * of the view gives columns keeps only the columns the outputs name, as in every read of the view. The mode
+     * applies to the propagation of the columns of the query: the sub-queries optimise() compiles on the way
+     * compile as any query does. Nothing generates the model.
+     */
+    void setSubQueryKeptWhole(boolean isSubQueryKeptWhole) {
+        this.isSubQueryKeptWhole = isSubQueryKeptWhole;
     }
 
     void validateUpdateColumns(
@@ -16959,6 +17942,14 @@ public class SqlOptimiser implements Mutable {
             }
             throw SqlException.position(updateQueryModel.getModelPosition()).put(e);
         }
+    }
+
+    // A set of the outputs of the view a column serves, made for that column by recordKeptWholeOrigins(), which adds
+    // to it in place.
+    private static final class KeptWholeOrigins extends IntHashSet {
+        // Whether the set serves only the column it was made for. Whoever takes the set from the column shares it, see
+        // recordedKeptWholeOrigins().
+        private boolean isOwned;
     }
 
     private static class LiteralCheckingVisitor implements PostOrderTreeTraversalAlgo.Visitor {

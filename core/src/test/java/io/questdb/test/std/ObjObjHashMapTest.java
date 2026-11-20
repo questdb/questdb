@@ -24,11 +24,14 @@
 
 package io.questdb.test.std;
 
+import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.ref.WeakReference;
 
 public class ObjObjHashMapTest {
     @Test
@@ -115,5 +118,45 @@ public class ObjObjHashMapTest {
                 TestUtils.assertEquals(rnd3.nextChars(3), map.get(value));
             }
         }
+    }
+
+    @Test
+    public void testClearReleasesValues() {
+        final ObjObjHashMap<Integer, Object> map = new ObjObjHashMap<>();
+        // more values than the initial capacity, so that the map rehashes
+        final ObjList<WeakReference<Object>> values = putValues(map, 100);
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        int retainedCount = values.size();
+        for (int attempt = 0; attempt < 10 && retainedCount > 0; attempt++) {
+            System.gc();
+            retainedCount = 0;
+            for (int i = 0, n = values.size(); i < n; i++) {
+                if (values.getQuick(i).get() != null) {
+                    retainedCount++;
+                }
+            }
+        }
+        Assert.assertEquals("values the cleared map keeps", 0, retainedCount);
+
+        // the cleared map works as a new one
+        Assert.assertTrue(map.excludes(1));
+        Assert.assertNull(map.get(1));
+        map.put(1, "one");
+        Assert.assertEquals(1, map.size());
+        Assert.assertEquals("one", map.get(1));
+        Assert.assertNull(map.get(2));
+    }
+
+    // Puts count values into the map, and returns weak references to them, so that only the map keeps them.
+    private static ObjList<WeakReference<Object>> putValues(ObjObjHashMap<Integer, Object> map, int count) {
+        final ObjList<WeakReference<Object>> values = new ObjList<>();
+        for (int i = 0; i < count; i++) {
+            final Object value = new Object();
+            map.put(i, value);
+            values.add(new WeakReference<>(value));
+        }
+        Assert.assertEquals(count, map.size());
+        return values;
     }
 }
