@@ -47,6 +47,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     // nothing in this descriptor needs to be freed by the descriptor itself.
     private PartitionDescriptor freshPartitionDescriptor;
     private LongList gapO3Ranges;
+    // Whether the merge index waits for the pass that puts the rows of each timestamp in dedup key order, see
+    // setMergeKeySortPending()
+    private boolean isMergeKeySortPending;
     // Whether the first stage of the merge that keepRowGroupMerge() kept prepared the designated timestamp and
     // the dedup key columns only
     private boolean isPreparedMergeKeyColumnsOnly;
@@ -168,6 +171,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         mergeIndexSize = 0;
         mergeActiveColCount = 0;
         mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        isMergeKeySortPending = false;
         mergeFirstStageDecodedColumnCount = 0;
         mergeTimestampDataAddr = 0;
         preparedMergeActionIndex = -1;
@@ -289,6 +293,10 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         return srcPtrs;
     }
 
+    public boolean isMergeKeySortPending() {
+        return isMergeKeySortPending;
+    }
+
     public boolean isPreparedMergeKeyColumnsOnly() {
         return isPreparedMergeKeyColumnsOnly;
     }
@@ -336,6 +344,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         mergeActiveToDecodeIdx.setPos(columnCount);
         mergeActiveColCount = 0;
         mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
+        isMergeKeySortPending = false;
     }
 
     /**
@@ -387,6 +396,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     public void setMergeFirstStage(long timestampDataAddr, int decodedColumnCount) {
         mergeTimestampDataAddr = timestampDataAddr;
         mergeFirstStageDecodedColumnCount = decodedColumnCount;
+    }
+
+    /**
+     * Records whether the merge index waits for the pass that puts the rows of each timestamp in dedup key order. The
+     * first stage of an UPSERT merge of the keys only leaves the pass to {@code O3PartitionJob.sortPendingMergeKeys()}:
+     * the UPSERT identity check compares the merge index with the stored rows by position, see
+     * {@code O3PartitionJob.isUpsertIdenticalUpToPartitionMax()}. {@link #ofRowGroupMerge(int)} and
+     * {@link #freeRowGroupMerge()} reset it.
+     */
+    public void setMergeKeySortPending(boolean isMergeKeySortPending) {
+        this.isMergeKeySortPending = isMergeKeySortPending;
     }
 
     /**

@@ -613,7 +613,10 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         setProperties();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
         assertMemoryLeak(() -> {
-            createSmallLastRowGroupTable();
+            createSmallLastRowGroupTable("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1)
+                    """);
             enableDedup("UPSERT KEYS(ts, k, s)");
             insert("('2024-01-01T05:00:00.000000Z', 8, 'b', 100, 1)");
             assertRowGroups(firstRowGroupOf16() + "cur | 5=7/0/50/1 5=8/0/100/1 5=9/0/50/1\n");
@@ -638,7 +641,10 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
         setProperties();
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
         assertMemoryLeak(() -> {
-            createSmallLastRowGroupTable();
+            createSmallLastRowGroupTable("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1)
+                    """);
             enableDedup("UPSERT KEYS(ts, k, s)");
             assertRowGroups(firstRowGroupOf16() + "- | 5=9/0/50/1 5=7/0/50/1\n");
 
@@ -649,6 +655,80 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
                     ('2024-01-01T06:00:00.000000Z', 1, 'b', 201, 1)
                     """);
             assertRowGroups(firstRowGroupOf16() + "- | 5=9/0/50/1 5=7/0/50/1 6=1/0/201/1 6=2/0/200/1\n");
+            assertUpdateMode();
+        });
+    }
+
+    @Test
+    public void testUpsertOfSwappedValuesAfterKeptRowWithRowsPastPartitionMaxReplacesRows() throws Exception {
+        // As testUpsertOfSwappedValuesWithRowsPastPartitionMaxReplacesRows, with a row before the commit's first
+        // timestamp in the last row group: the output keeps the column tops below it, and finding that row count
+        // prepares the merge of the row group before the UPSERT identity check takes it over.
+        setProperties();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            createSmallLastRowGroupTable("""
+                    ('2024-01-01T04:00:00.000000Z', 1, 'b', 40, 1),
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 60, 1)
+                    """);
+            enableDedup("UPSERT KEYS(ts, k, s)");
+            assertRowGroups(firstRowGroupOf16() + "- | 4=1/0/40/1 5=9/0/50/1 5=7/0/60/1\n");
+
+            insert("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 60, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1),
+                    ('2024-01-01T06:00:00.000000Z', 2, 'b', 200, 1),
+                    ('2024-01-01T06:00:00.000000Z', 1, 'b', 201, 1)
+                    """);
+            assertQuery("SELECT ts, k, v FROM pt WHERE ts >= '2024-01-01T04:00:00.000000Z' AND ts < '2024-01-02'")
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            ts\tk\tv
+                            2024-01-01T04:00:00.000000Z\t1\t40
+                            2024-01-01T05:00:00.000000Z\t7\t50
+                            2024-01-01T05:00:00.000000Z\t9\t60
+                            2024-01-01T06:00:00.000000Z\t1\t201
+                            2024-01-01T06:00:00.000000Z\t2\t200
+                            """, timestampType.getTypeName()));
+            // the merge has new keys, so it writes its rows in key order and claims the commit's version
+            assertRowGroups(firstRowGroupOf16() + "cur | 4=1/0/40/1 5=7/0/50/1 5=9/0/60/1 6=1/0/201/1 6=2/0/200/1\n");
+            assertUpdateMode();
+        });
+    }
+
+    @Test
+    public void testUpsertOfSwappedValuesWithRowsPastPartitionMaxReplacesRows() throws Exception {
+        // As testUpsertOfIdenticalRowsWithRowsPastPartitionMaxKeepsStoredOrderWithoutClaim, with the values of the
+        // two keys at 05:00 swapped by the commit: in key order the O3 values match the stored values by position,
+        // in stored order they do not. The commit replaces both rows.
+        setProperties();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
+        assertMemoryLeak(() -> {
+            createSmallLastRowGroupTable("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 60, 1)
+                    """);
+            enableDedup("UPSERT KEYS(ts, k, s)");
+            assertRowGroups(firstRowGroupOf16() + "- | 5=9/0/50/1 5=7/0/60/1\n");
+
+            insert("""
+                    ('2024-01-01T05:00:00.000000Z', 9, 'b', 60, 1),
+                    ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1),
+                    ('2024-01-01T06:00:00.000000Z', 2, 'b', 200, 1),
+                    ('2024-01-01T06:00:00.000000Z', 1, 'b', 201, 1)
+                    """);
+            assertQuery("SELECT ts, k, v FROM pt WHERE ts >= '2024-01-01T05:00:00.000000Z' AND ts < '2024-01-02'")
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            ts\tk\tv
+                            2024-01-01T05:00:00.000000Z\t7\t50
+                            2024-01-01T05:00:00.000000Z\t9\t60
+                            2024-01-01T06:00:00.000000Z\t1\t201
+                            2024-01-01T06:00:00.000000Z\t2\t200
+                            """, timestampType.getTypeName()));
+            // the merge has new keys, so it writes its rows in key order and claims the commit's version
+            assertRowGroups(firstRowGroupOf16() + "cur | 5=7/0/50/1 5=9/0/60/1 6=1/0/201/1 6=2/0/200/1\n");
             assertUpdateMode();
         });
     }
@@ -931,18 +1011,14 @@ public class O3ParquetDedupSortVersionTest extends AbstractCairoTest {
     }
 
     // pt without dedup and with a BYTE column, converted with row groups of 16 rows: 16 rows at 01:01 to 01:16, and
-    // two rows at 05:00 with equal values and descending keys, which make the last row group
-    private void createSmallLastRowGroupTable() throws Exception {
+    // the given rows, which make the last row group
+    private void createSmallLastRowGroupTable(String lastRowGroupRows) throws Exception {
         execute("CREATE TABLE pt (ts " + timestampType.getTypeName() + ", k LONG, s SYMBOL, v INT, b BYTE) TIMESTAMP(ts) PARTITION BY DAY WAL");
         final StringBuilder rows = new StringBuilder();
         for (int i = 1; i <= 16; i++) {
             rows.append("('2024-01-01T01:").append(i < 10 ? "0" : "").append(i).append(":00.000000Z', ").append(i).append(", 'b', ").append(i).append(", 1), ");
         }
-        execute("INSERT INTO pt VALUES " + rows + """
-                ('2024-01-01T05:00:00.000000Z', 9, 'b', 50, 1),
-                ('2024-01-01T05:00:00.000000Z', 7, 'b', 50, 1),
-                ('2024-01-02T00:00:00.000000Z', 0, 'z', 99, 1)
-                """);
+        execute("INSERT INTO pt VALUES " + rows + lastRowGroupRows + ", ('2024-01-02T00:00:00.000000Z', 0, 'z', 99, 1)");
         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '" + DAY + "'");
         drainWalQueue();
     }

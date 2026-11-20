@@ -2582,6 +2582,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             srcPtrs,
                             ctx
                     ));
+                    // the UPSERT identity check is done, the merge it or computeColumnTopRowLimit() kept may sort its keys
+                    sortPendingMergeKeys(tableWriter, dedupColSinkAddr, ctx);
                     if (!isSkipMode) {
                         // set before the call, so that the cleanup covers an output that opened partially
                         isOutputOpen = true;
@@ -5356,6 +5358,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 action.rowGroupIndex,
                                 action.rowGroupIndexHi
                         ));
+                        ctx.setMergeKeySortPending(false);
                         ctx.keepRowGroupMerge(i, duplicateCount, false);
                         isMergeKept = true;
                     }
@@ -5821,19 +5824,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     isSkipMode
             );
             if (dedupRows > rowGroupSize && tableWriter.getCommitDedupSortVersion() != PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET) {
-                // The merge keeps the stored row order and adds the new keys of a timestamp after its rows. With at
-                // least one new key the merge is written whatever the stored values are, so nothing reads the index
-                // by position anymore: put the rows of each timestamp in key order, as a native merge does.
-                Vect.dedupMergeIndexSortKeys(
-                        timestampMergeIndexAddr,
-                        dedupRows,
-                        dedupCommitAddresses.getColumnCount(),
-                        DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
-                        true
-                );
-                // Every row of the merge is in key order now, whatever order the stored rows had: the row groups claim
-                // the commit's version when parquet keeps that order.
-                mergeDedupSortVersion = getParquetDedupSortVersion(tableWriter);
+                // The merge keeps the stored row order and adds the new keys of a timestamp after its rows. Put the
+                // rows of each timestamp in key order, as a native merge does. The new keys may all be past the
+                // partition max, where the UPSERT identity check still compares the index with the stored rows by
+                // position, see isUpsertIdenticalUpToPartitionMax(): an UPSERT first stage of the keys only, which
+                // the check prepares, leaves the pass to sortPendingMergeKeys(), which runs once the check is done.
+                if (isKeyColumnsOnly && !isSkipMode) {
+                    ctx.setMergeKeySortPending(true);
+                } else {
+                    Vect.dedupMergeIndexSortKeys(
+                            timestampMergeIndexAddr,
+                            dedupRows,
+                            dedupCommitAddresses.getColumnCount(),
+                            DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
+                            true
+                    );
+                    // Every row of the merge is in key order now, whatever order the stored rows had: the row groups
+                    // claim the commit's version when parquet keeps that order.
+                    mergeDedupSortVersion = getParquetDedupSortVersion(tableWriter);
+                }
             }
         }
 
@@ -7591,6 +7600,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         if (!ff.rmdir(path)) {
             // This is not critical, the read error will be transient
             LOG.error().$("could not remove phantom partition dir, it may cause transient missing file read errors [errno=").$(ff.errno()).$(", path=").$(path).I$();
+        }
+    }
+
+    /**
+     * Runs the pass that the first stage of the row group merge kept in the context left pending, see
+     * {@link O3ParquetMergeContext#setMergeKeySortPending}: puts the rows of each timestamp of the merge index in
+     * dedup key order, and the row groups that the merge writes claim the commit's version. The dedup key columns at
+     * {@code dedupColSinkAddr} still describe that merge: it is the last one that a first stage prepared.
+     */
+    private static void sortPendingMergeKeys(TableWriter tableWriter, long dedupColSinkAddr, O3ParquetMergeContext ctx) {
+        if (ctx.isMergeKeySortPending()) {
+            Vect.dedupMergeIndexSortKeys(
+                    ctx.getMergeIndexAddr(),
+                    ctx.getMergeRowCount(),
+                    tableWriter.getDedupCommitAddresses().getColumnCount(),
+                    DedupColumnCommitAddresses.getAddress(dedupColSinkAddr),
+                    true
+            );
+            ctx.setMergeDedupSortVersion(getParquetDedupSortVersion(tableWriter));
+            ctx.setMergeKeySortPending(false);
         }
     }
 
