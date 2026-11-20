@@ -43,7 +43,6 @@ import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
-import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
@@ -398,17 +397,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // frontier's frame apart from the run's sequence, for the same reason.
     private static final long FRONTIER_STATE_ROUTE_SALT0 = 0x8CB92BA72F3D8DD7L;
     private static final long FRONTIER_STATE_ROUTE_SALT1 = 0x3C6EF372FE94F82BL;
-    // Salt the backlog band episode's random sequence apart from the run's, for the same reason:
-    // see runBacklogBandEpisode.
-    private static final long BACKLOG_BAND_EPISODE_SALT0 = 0xA0761D6478BD642FL;
-    private static final long BACKLOG_BAND_EPISODE_SALT1 = 0xE7037ED1A0B428DBL;
-    // The bands the backlog band episode commits, by where they lie against the view's earliest row
-    // M and its newest row F: one that covers M, one above M whose low is F at most, and one that
-    // ends at M at most. See runBacklogBandEpisode.
-    private static final int BACKLOG_BAND_COVERING = 0;
-    private static final int BACKLOG_BAND_ABOVE = 1;
-    private static final int BACKLOG_BAND_BELOW = 2;
-    private static final int BACKLOG_BAND_CLASSES = 3;
     // Salt the draws of a departure above a rowless anchor apart from the run's sequence, for the
     // same reason.
     private static final long ROWLESS_ANCHOR_EPISODE_SALT0 = 0xD6E8FEB86659FD93L;
@@ -646,12 +634,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Shutdowns runFuzz ran ahead of a restart that cancelled a lead drain after it fed rows past the lead, so the
     // burst of the closing window that followed met accumulators ahead of the lead: see shutDownMidDrain.
     private int leftoverClosingBursts;
-    // The backlog band episodes runReplaceRangeFuzz ran, by the class of band each committed, and the
-    // class the next one takes, which the first one draws: see runBacklogBandEpisode.
-    private int aboveBacklogBandEpisodes;
-    private int belowBacklogBandEpisodes;
-    private int coveringBacklogBandEpisodes;
-    private int nextBacklogBandClass = -1;
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -1413,7 +1395,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertReachedAnOwedSealEpisode();
         assertReachedASecondRepairCommitFault();
         assertReachedAResumeFrontierTruncateCrash();
-        assertReachedEveryBacklogBandClass();
         logKeptTimelineRetires();
         logKeptTimelineEpisodes();
     }
@@ -2091,11 +2072,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return new Rnd(rnd.getSeed0() ^ SHUTDOWN_MID_DRAIN_SALT0, rnd.getSeed1() ^ SHUTDOWN_MID_DRAIN_SALT1);
     }
 
-    // The backlog band episode's own random sequence, drawn from the run's without advancing it.
-    private static Rnd backlogBandEpisodeRnd(Rnd rnd) {
-        return new Rnd(rnd.getSeed0() ^ BACKLOG_BAND_EPISODE_SALT0, rnd.getSeed1() ^ BACKLOG_BAND_EPISODE_SALT1);
-    }
-
     // The sequence a run draws which of its two frontier-sealing departures restores a root inside
     // the new frontier's frame from, drawn from the run's without advancing it.
     private static Rnd frontierStateRouteRnd(Rnd rnd) {
@@ -2583,17 +2559,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         } else {
             assertRestoredFromTimeline("lv");
         }
-    }
-
-    // Every class of band the backlog band episode commits, which a test's replace-range runs take in
-    // turn: see runBacklogBandEpisode.
-    private void assertReachedEveryBacklogBandClass() {
-        LOG.info().$("LV fuzz backlog band episodes [covering=").$(coveringBacklogBandEpisodes)
-                .$(", above=").$(aboveBacklogBandEpisodes)
-                .$(", below=").$(belowBacklogBandEpisodes).I$();
-        Assert.assertTrue("no band covering the view's earliest row stood the guard down", coveringBacklogBandEpisodes > 0);
-        Assert.assertTrue("no band above the view's earliest row kept the guard over the rows below it", aboveBacklogBandEpisodes > 0);
-        Assert.assertTrue("no band below the view's earliest row kept the guard over every row", belowBacklogBandEpisodes > 0);
     }
 
     // Every batch crashes the frontier truncate of one of departNewestRows' departures at least: see
@@ -4855,21 +4820,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         if (rnd.nextBoolean()) {
             return null;
         }
-        return dropTheViewsOldestDay(job, oracleOrderedSql, viewOrderedSql);
-    }
-
-    /**
-     * Drops the oldest day the view holds rows of, which the view walks past keeping them, unless
-     * the view's rows all sit on one day. See {@link #dropTheOldestDayTheViewHolds}.
-     *
-     * @return the view's rows ahead of the drop, ordered by {@code viewOrderedSql}, or null when
-     * it dropped nothing
-     */
-    private @Nullable String dropTheViewsOldestDay(
-            LiveViewRefreshJob job,
-            String oracleOrderedSql,
-            String viewOrderedSql
-    ) throws Exception {
         final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
         final long viewMaxTs = queryTimestamp("SELECT max(ts) FROM lv");
         if (viewMinTs == Numbers.LONG_NULL || viewMinTs / Micros.DAY_MICROS == viewMaxTs / Micros.DAY_MICROS) {
@@ -9351,153 +9301,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // which keeps that day, when an owed-seal episode followed the drop.
         assertDepartureOracle(departureOracleOrderedSql, viewOrderedSql, rowsBeforeTheDrop);
         assertNoRefreshFaults("lv");
-        if (rowsBeforeTheDrop != null || departureOracleOrderedSql.equals(oracleOrderedSql)) {
-            runBacklogBandEpisode(rnd, rowsBeforeTheDrop, oracleOrderedSql, viewOrderedSql);
-        }
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
         execute("DROP TABLE IF EXISTS base_shadow");
-    }
-
-    /**
-     * Ends a replace-range run whose view holds the rows of its oldest day that the base dropped,
-     * {@code rowsBeforeTheDrop}, or equals the recompute over the base, in which case the episode
-     * drops that day first, as TTL or DROP PARTITION would, and the view walks past the drop
-     * keeping its rows. The episode then commits one pure-delete band the view does not consume, of
-     * the class it takes in turn: one that covers the view's earliest row, one above that row whose
-     * low is the view's newest row at most, or one that ends at the earliest row at most. It removes
-     * {@code _timeline} and restarts, which rebuilds the view from the applied base under the
-     * restatement guard. A band changes base rows inside its range only, so the guard stands down
-     * for the covering band alone, and the rebuild follows the base. Over the others it compares
-     * the view's rows below the band, or every row, among them the earliest one, whose day the base
-     * lost: it refuses, and the view keeps its rows. When the episode dropped the day itself, it
-     * puts the day back from {@code base_shadow} and restarts, and the guard lets the rebuild
-     * through.
-     * <p>
-     * The episode draws from its own sequence and puts the clock back where it found it, so the
-     * runs after it draw and see what they did before it existed.
-     */
-    private void runBacklogBandEpisode(
-            Rnd rnd,
-            @Nullable String rowsBeforeTheDrop,
-            String oracleOrderedSql,
-            String viewOrderedSql
-    ) throws Exception {
-        if (secondRepairEpisodeMarker != null) {
-            // That episode's check of the capture reads every stand-down logged after its marker.
-            return;
-        }
-        final Rnd episodeRnd = backlogBandEpisodeRnd(rnd);
-        final long clockBefore = currentMicros;
-        LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
-        try {
-            driveRefreshToQuiescence(job);
-            String rowsAheadOfTheDrop = rowsBeforeTheDrop;
-            long droppedDayTs = Numbers.LONG_NULL;
-            if (rowsAheadOfTheDrop == null) {
-                copyTheBaseToItsShadow(false);
-                final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
-                rowsAheadOfTheDrop = dropTheViewsOldestDay(job, oracleOrderedSql, viewOrderedSql);
-                if (rowsAheadOfTheDrop == null) {
-                    return;
-                }
-                droppedDayTs = viewMinTs - viewMinTs % Micros.DAY_MICROS;
-            }
-            final TableToken baseToken = engine.verifyTableName("base");
-            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(instance);
-            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
-            // The view holds every base commit, so the band is the whole backlog the restart's
-            // rebuild classifies.
-            final long processedBefore = instance.getLastProcessedSeqTxn();
-            Assert.assertEquals(engine.getTableSequencerAPI().lastTxn(baseToken), processedBefore);
-            Assert.assertEquals(processedBefore, instance.getAppliedWatermark());
-            final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
-            final long viewMaxTs = queryTimestamp("SELECT max(ts) FROM lv");
-            if (nextBacklogBandClass < 0) {
-                nextBacklogBandClass = episodeRnd.nextInt(BACKLOG_BAND_CLASSES);
-            }
-            final int bandClass = nextBacklogBandClass;
-            nextBacklogBandClass = (bandClass + 1) % BACKLOG_BAND_CLASSES;
-            final long lo;
-            final long hi;
-            switch (bandClass) {
-                case BACKLOG_BAND_COVERING -> {
-                    lo = viewMinTs - episodeRnd.nextLong(Micros.DAY_MICROS);
-                    hi = viewMinTs + 1 + episodeRnd.nextLong(viewMaxTs - viewMinTs + 1);
-                }
-                case BACKLOG_BAND_ABOVE -> {
-                    lo = viewMinTs + 1 + episodeRnd.nextLong(viewMaxTs - viewMinTs);
-                    hi = lo + 1 + episodeRnd.nextLong(Micros.DAY_MICROS);
-                }
-                default -> {
-                    hi = viewMinTs - episodeRnd.nextLong(Micros.DAY_MICROS);
-                    lo = hi - 1 - episodeRnd.nextLong(Micros.DAY_MICROS);
-                }
-            }
-            LOG.info().$("LV fuzz backlog band episode [class=").$(bandClass)
-                    .$(", viewMinTs=").$(viewMinTs)
-                    .$(", viewMaxTs=").$(viewMaxTs)
-                    .$(", lo=").$(lo)
-                    .$(", hi=").$(hi)
-                    .$(", isDayDroppedByTheRun=").$(rowsBeforeTheDrop != null).I$();
-            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
-                walWriter.commitWithParams(lo, hi, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
-            }
-            drainWalQueue();
-            Assert.assertEquals("the view must not consume the band", processedBefore, instance.getLastProcessedSeqTxn());
-            final long viewRows = countRows("lv");
-            final long viewRowsBelowTheBand = countRows("lv WHERE ts < " + lo);
-            final long baseMinTs = queryTimestamp("SELECT min(ts) FROM base");
-
-            coverage.absorb(job);
-            job = Misc.free(job);
-            engine.getLiveViewRegistry().clear();
-            removeTimelineIfAny(instance);
-            engine.buildViewGraphs();
-            job = new LiveViewRefreshJob(0, engine, 1);
-            driveRefreshToQuiescence(job);
-            final LiveViewRebuildRestatementGuard guard = job.rebuildRestatementGuardForTest();
-            final LiveViewInstance restarted = engine.getLiveViewRegistry().getViewInstance("lv");
-            Assert.assertNotNull(restarted);
-            if (bandClass == BACKLOG_BAND_COVERING) {
-                assertRebuiltFromAppliedBase("lv");
-                Assert.assertFalse(restarted.isCheckpointRecoveryBlocked());
-                Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-                coveringBacklogBandEpisodes++;
-                return;
-            }
-            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(restarted.getCheckpointRestoreRoute()));
-            Assert.assertTrue(restarted.isCheckpointRecoveryBlocked());
-            TestUtils.assertContains(restarted.getCheckpointRecoveryReason(), "would drop rows it retains [cause=");
-            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
-            // The guard compares the view's rows below a band above its earliest row, and every
-            // row under a band below it.
-            Assert.assertEquals(bandClass == BACKLOG_BAND_ABOVE ? viewRowsBelowTheBand : viewRows, guard.getDurableRows());
-            // The history floor refuses when the base holds no row as early as the view's
-            // earliest one, and the row shortfall when it does: the base lost that row's day.
-            Assert.assertEquals(
-                    baseMinTs == Numbers.LONG_NULL || viewMinTs < baseMinTs
-                            ? LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR
-                            : LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL,
-                    guard.getVerdict()
-            );
-            assertDepartureOracle(oracleOrderedSql, viewOrderedSql, rowsAheadOfTheDrop);
-            if (bandClass == BACKLOG_BAND_ABOVE) {
-                aboveBacklogBandEpisodes++;
-            } else {
-                belowBacklogBandEpisodes++;
-            }
-            if (droppedDayTs != Numbers.LONG_NULL) {
-                job = restoreTheDroppedDayAndRestart(job, droppedDayTs, oracleOrderedSql, viewOrderedSql);
-            }
-        } finally {
-            coverage.absorb(job);
-            Misc.free(job);
-            setCurrentMicros(clockBefore);
-        }
     }
 
     // Differential fuzz proving rolled-back base transactions never reach the view

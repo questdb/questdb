@@ -2355,11 +2355,8 @@ public class LiveViewInstance implements QuietCloseable {
      * base it finds. The refusal repeats unless what the guard reads of the backlog
      * changed: a purge sweep took a backlog commit that may have lowered the view's
      * output legitimately - the price of the released floor - a DEDUP change landed
-     * on the base behind the backlog, a dedup history the guard could not read reads
-     * again, or a base commit since the refusal replaces a range that covers the view's
-     * earliest row. A refresh of the view's newest rows does not change it: the guard
-     * compares the rows below such a range. On a base
-     * {@link LiveViewRebuildRestatementGuard} names as able to
+     * on the base behind the backlog, or a dedup history the guard could not read
+     * reads again. On a base {@link LiveViewRebuildRestatementGuard} names as able to
      * hide such a commit, the guard then stands down the checks the commit could
      * confound - every check over a materialized view, only the row shortfall over a
      * filtering view's base, where the history floor and the lost partition check

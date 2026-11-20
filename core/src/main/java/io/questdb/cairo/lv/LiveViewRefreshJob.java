@@ -377,12 +377,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // start of each whole-view rebuild and left holding its evidence afterwards, which is
     // what a caller reads to explain a refusal. Rebuilds never nest.
     private final LiveViewRebuildRestatementGuard restatementGuard = new LiveViewRebuildRestatementGuard();
-    // The lowest delete low of the backlog REPLACE_RANGE commits classifyRebuildBacklog read that
-    // reach the view's rows above its earliest row, or LONG_NULL when it read none. Written by
-    // every call of that walk, its empty-backlog return included, and read by
-    // armRebuildRestatementGuard right after it, so a band read for one view never reaches the
-    // next. Refresh-worker thread only.
-    private long rebuildBacklogDeleteLo = Numbers.LONG_NULL;
     // Set by restoreFromTimeline when the replay of the raw base WAL above the root does not
     // reproduce the view's durable row count and frontier, which is what a duplicate a
     // deduplicating base collapsed in the replay gap does. Read by armRebuildRestatementGuard for
@@ -15377,12 +15371,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * check, where it runs, reads the base's partition list the same way and binary-searches the
      * view's table only inside the ranges between base partitions that its rows span.
      * <p>
-     * A backlog REPLACE_RANGE that reaches the view's newest row above its earliest one - a
-     * materialized view's refresh of the view's newest bucket - changes base rows inside its
-     * range only. Every check then compares the view's rows below the lowest such band, which
-     * the view reader this opens counts by a binary search of the partition holding the band's
-     * low, and the row shortfall counts up to the newest of them.
-     * <p>
      * A view carried over from an older checkpoint format stands the guard down ahead of every
      * other check, the configuration switch included: its rebuild is the upgrade, and refusing
      * it would leave the view nothing to resume from. The history floor is still compared, and
@@ -15422,83 +15410,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_DISABLED);
             return;
         }
+        final long durableRows;
         final long durableMinTimestamp;
-        final int backlog;
-        // The rows the guard compares and the newest of them: every row the view holds, or the
-        // rows below the lowest backlog band that reaches them.
-        long comparedRows;
-        long comparedMaxTimestamp;
+        final long durableMaxTimestamp;
         try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-            comparedRows = lvReader.size();
-            if (comparedRows == 0) {
-                restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED);
-                return;
-            }
+            durableRows = lvReader.size();
             durableMinTimestamp = lvReader.getMinTimestamp();
-            comparedMaxTimestamp = lvReader.getMaxTimestamp();
-            // A snapshot behind the view could only make the checks refuse a rebuild that restates
-            // nothing - the output of the commits it lacks reads as a loss - never let a restatement
-            // through. The pin rules it out; this says so.
-            assert effectiveSeqTxn >= rebuildSnapshotFloor(instance)
-                    : "a whole-view rebuild pinned a snapshot behind the view [effectiveSeqTxn=" + effectiveSeqTxn
-                    + ", floor=" + rebuildSnapshotFloor(instance) + ']';
-            if (isRestoreReplayMismatched && hasDedupKeys(reader.getMetadata())) {
-                // The rebuild stands in for a restore whose replay of the raw WAL disagreed with the
-                // view's table, over a base whose dedup keys can collapse a duplicate the replay
-                // feeds twice. Refusing would stop a view whose timeline may be intact; the rebuild
-                // follows the base instead, as every rebuild did before the guard.
-                standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH);
-                return;
-            }
-            final long appliedWatermark = instance.getAppliedWatermark();
-            backlog = classifyRebuildBacklog(
-                    instance,
-                    reader,
-                    appliedWatermark,
-                    effectiveSeqTxn,
-                    durableMinTimestamp,
-                    comparedMaxTimestamp
-            );
-            if (backlog == LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE) {
-                standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
-                return;
-            }
-            if (backlog == LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE) {
-                standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE);
-                return;
-            }
-            if (rebuildBacklogDeleteLo != Numbers.LONG_NULL) {
-                // A backlog band changes base rows inside its range only, so the rows the view
-                // holds below the lowest one keep their evidence, and the guard compares those.
-                comparedRows = countDurableRowsBelow(lvReader, rebuildBacklogDeleteLo);
-                comparedMaxTimestamp = durableMaxTimestampBelow(lvReader, rebuildBacklogDeleteLo);
-                if (comparedRows <= 0 || comparedMaxTimestamp == Numbers.LONG_NULL) {
-                    // The band lies above the view's earliest row, so the rows below it are not
-                    // none, and only a partition that is not native answers unknown: a live view's
-                    // table holds none, ALTER TABLE refuses a live view.
-                    assert false : "no rows below a backlog band above the view's earliest row [rows=" + comparedRows + ']';
-                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
-                    return;
-                }
-                LOG.info().$("live view rebuild from the applied base checks the restatement guard only below a range its backlog replaces [view=")
-                        .$(instance.getDefinition().getViewName())
-                        .$(", replaceLo=").$ts(
-                                ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType()),
-                                rebuildBacklogDeleteLo
-                        )
-                        .$(", rows=").$(comparedRows).I$();
-            }
+            durableMaxTimestamp = lvReader.getMaxTimestamp();
         }
+        if (durableRows == 0) {
+            restatementGuard.disarm(LiveViewRebuildRestatementGuard.ABSTAIN_NOTHING_RETAINED);
+            return;
+        }
+        // A snapshot behind the view could only make the checks refuse a rebuild that restates
+        // nothing - the output of the commits it lacks reads as a loss - never let a restatement
+        // through. The pin rules it out; this says so.
+        assert effectiveSeqTxn >= rebuildSnapshotFloor(instance)
+                : "a whole-view rebuild pinned a snapshot behind the view [effectiveSeqTxn=" + effectiveSeqTxn
+                + ", floor=" + rebuildSnapshotFloor(instance) + ']';
+        if (isRestoreReplayMismatched && hasDedupKeys(reader.getMetadata())) {
+            // The rebuild stands in for a restore whose replay of the raw WAL disagreed with the
+            // view's table, over a base whose dedup keys can collapse a duplicate the replay
+            // feeds twice. Refusing would stop a view whose timeline may be intact; the rebuild
+            // follows the base instead, as every rebuild did before the guard.
+            standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_DEDUP_RESTORE_MISMATCH);
+            return;
+        }
+        final long appliedWatermark = instance.getAppliedWatermark();
+        final int backlog = classifyRebuildBacklog(instance, reader, appliedWatermark, effectiveSeqTxn, durableMaxTimestamp);
         // Armed to compare the history floor and the row shortfall, which an additive backlog
-        // leaves as they are and a backlog that may hold a dedup replacement stands down in part.
-        restatementGuard.arm(comparedRows, durableMinTimestamp, comparedMaxTimestamp, reader.size(), reader.getMinTimestamp());
+        // leaves as they are and a backlog that may lower the output stands down in part or whole.
+        restatementGuard.arm(durableRows, durableMinTimestamp, durableMaxTimestamp, reader.size(), reader.getMinTimestamp());
         switch (backlog) {
+            case LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE ->
+                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
+            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE ->
+                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE);
             case LiveViewRebuildRestatementGuard.BACKLOG_MAY_DEDUP_REPLACE -> standDownRestatementRowShortfall(
                     instance,
                     reader,
                     LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE,
                     durableMinTimestamp,
-                    comparedMaxTimestamp
+                    durableMaxTimestamp
             );
             case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE ->
                     standDownRestatementRowShortfall(
@@ -15506,7 +15459,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             reader,
                             LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE,
                             durableMinTimestamp,
-                            comparedMaxTimestamp
+                            durableMaxTimestamp
                     );
         }
     }
@@ -15565,20 +15518,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Classifies backlog (fromSeqTxn, toSeqTxn] for legitimate output removal below the
-     * frontier. A materialized-view base's TRUNCATE, and a REPLACE_RANGE whose delete band
-     * covers the view's earliest row {@code floorTs}, disable the whole restatement guard.
-     * A band only deletes and inserts base rows inside its range, so one that reaches the
-     * frontier above {@code floorTs} leaves the view's rows below it their evidence: the walk
-     * goes on, and leaves the lowest such band's delete low in {@link #rebuildBacklogDeleteLo},
-     * below which the caller compares. A band entirely below {@code floorTs} removes nothing
-     * the view holds output of, and counts as any commit below the view's rows. Filtered dedup
-     * replacement disables only the row-shortfall check:
+     * frontier. REPLACE_RANGE and a materialized-view base's TRUNCATE disable the whole
+     * restatement guard. Filtered dedup replacement disables only the row-shortfall check:
      * it preserves timestamps and partitions, so history-floor and lost-partition checks
      * still apply. Ordinary TRUNCATE, partition removal and TTL must not disable the guard.
      * <p>
      * Unreadable WAL weakens only checks the base could confound: all checks for a
-     * materialized-view base or a base whose backlog showed a REPLACE_RANGE reaching the
-     * frontier, or shortfall for a filtered base that may have deduplicated.
+     * materialized-view base, or shortfall for a filtered base that may have deduplicated.
      * Only DEDUP ENABLE/DISABLE can change that property. Classify commits using the
      * snapshot flag and subsequent DEDUP changes in the sequencer metadata log; other
      * structural changes and unreadable metadata changes provide no such evidence.
@@ -15593,10 +15539,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader reader,
             long fromSeqTxn,
             long toSeqTxn,
-            long floorTs,
             long frontierTs
     ) {
-        rebuildBacklogDeleteLo = Numbers.LONG_NULL;
         if (fromSeqTxn >= toSeqTxn) {
             return LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
         }
@@ -15611,9 +15555,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // A commit the walk read may be a dedup replacement the filter rejects. The walk goes on
         // past it, because a later commit that removes rows otherwise stands the whole guard down.
         boolean isDedupReplacementPossible = false;
-        // The walk read a REPLACE_RANGE whose delete band reaches the frontier. A base that writes
-        // one can write another, so a commit the walk cannot read may be one too: see the catch.
-        boolean hasFrontierReplaceRange = false;
         long walkedTxn = fromSeqTxn;
         try (
                 TransactionLogCursor txnCursor = engine.getTableSequencerAPI().getCursor(baseToken, fromSeqTxn);
@@ -15652,23 +15593,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
                 final long deleteLo = effectiveReplaceRangeDeleteLo(dataInfo, viewLowerBoundTimestamp);
                 if (deleteLo != Numbers.LONG_NULL && deleteLo <= frontierTs) {
-                    hasFrontierReplaceRange = true;
-                    if (dataInfo.getReplaceRangeTsHi() > floorTs) {
-                        if (deleteLo <= floorTs) {
-                            // It covers the view's earliest row, so no row the view holds is left
-                            // whose base row every band left alone.
-                            return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
-                        }
-                        // A band changes base rows inside its range only, so the view's rows below
-                        // it keep their evidence.
-                        rebuildBacklogDeleteLo = rebuildBacklogDeleteLo == Numbers.LONG_NULL
-                                ? deleteLo
-                                : Math.min(rebuildBacklogDeleteLo, deleteLo);
-                        continue;
-                    }
-                    // Entirely below the view's earliest row: it removes no base row the view holds
-                    // output of, and from the view's side it is a commit below every row it holds,
-                    // which the code below classifies as it does any other.
+                    return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
                 }
                 if (hasFilter && dataInfo.getMinTimestamp() <= frontierTs) {
                     if (isFilterFlippable) {
@@ -15681,11 +15606,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (CairoException e) {
             // The commit the walk failed on may reach the frontier, so a DEDUP change after it
             // leaves the same doubt as one after a commit it read. On a materialized view it may
-            // be a REPLACE_RANGE or a TRUNCATE too, and on a base whose backlog showed a
-            // REPLACE_RANGE reaching the frontier it may be another one.
+            // be a REPLACE_RANGE or a TRUNCATE too.
             final int backlog;
             final String guardChecks;
-            if (isMatViewBase || hasFrontierReplaceRange) {
+            if (isMatViewBase) {
                 backlog = LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE;
                 guardChecks = "none";
             } else if (isDedupReplacementPossible
@@ -15772,11 +15696,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * timestamp it replaced, so it never takes a partition away. TTL, DROP and DETACH PARTITION
      * and a table's TRUNCATE do, and each is a loss incremental refresh walks past. A
      * REPLACE_RANGE commit can remove a partition legitimately, and stands the whole guard down
-     * when its delete band covers the view's earliest row; one that reaches the view's frontier
-     * above that row limits the walk to the rows below its band, and a band that does not reach
-     * the frontier, or lies below the view's earliest row or its START FROM, removes no partition
-     * a row the view holds sits in. A partition that later commits re-created reads as present,
-     * which is the loss this check cannot see.
+     * when its delete band reaches the view's frontier; a band that does not reach it, or lies
+     * below the view's START FROM, removes no partition a row the view holds sits in. A partition
+     * that later commits re-created reads as present, which is the loss this check cannot see.
      * <p>
      * Walks the base's partition list from the partition that may hold the view's earliest row,
      * up to the view's latest row. Each partition covers its logical partition's whole range, so
