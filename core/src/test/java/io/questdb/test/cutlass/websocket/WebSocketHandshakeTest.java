@@ -215,6 +215,12 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
         // everything else is percent-encoded UTF-8 with upper-case hex digits, '%' and '+' included
         QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("a b+c%d/é表"), sink);
         Assert.assertEquals("a%20b%2Bc%25d%2F%C3%A9%E8%A1%A8", sink.toString());
+        // the ends of the unreserved ranges stay as they are, the characters just outside them do not: the client
+        // compares this echo to its own encoding, so the two sides must draw these lines at the same characters
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("AZaz09"), sink);
+        Assert.assertEquals("AZaz09", sink.toString());
+        QwpIngressHttpProcessor.encodeOwnedBy(new Utf8String("@[`{/:"), sink);
+        Assert.assertEquals("%40%5B%60%7B%2F%3A", sink.toString());
     }
 
     @Test
