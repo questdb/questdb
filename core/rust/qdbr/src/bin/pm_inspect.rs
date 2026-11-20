@@ -202,6 +202,9 @@ fn print_one_footer(reader: &ParquetMetaReader, depth: usize) {
     if footer_flags.has_scratchpad() {
         print!(" [SCRATCHPAD]");
     }
+    if footer_flags.has_dedup_sort_version() {
+        print!(" [DEDUP_SORT_VERSION]");
+    }
     if footer_flags.has_index_row_map() {
         print!(" [INDEX_ROW_MAP]");
     }
@@ -210,8 +213,27 @@ fn print_one_footer(reader: &ParquetMetaReader, depth: usize) {
         println!("seqTxn: {}", seq.get());
     }
     print_index_row_map(reader);
+    print_dedup_sort_versions(reader);
     print_scratchpad(reader);
     println!();
+}
+
+fn print_dedup_sort_versions(reader: &ParquetMetaReader) {
+    let footer = reader.footer();
+    if !footer.feature_flags().has_dedup_sort_version() {
+        return;
+    }
+    print!("Dedup sort versions: [");
+    for i in 0..reader.row_group_count() as usize {
+        if i > 0 {
+            print!(", ");
+        }
+        match footer.row_group_dedup_sort_version(i) {
+            Ok(version) => print!("{version}"),
+            _ => print!("?"),
+        }
+    }
+    println!("]");
 }
 
 fn print_index_row_map(reader: &ParquetMetaReader) {

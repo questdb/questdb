@@ -218,6 +218,7 @@ file otherwise. Feature sections are ordered by bit position.
 | --- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 0   | SEQ_TXN       | 8 bytes: `i64` per-snapshot apply-time `seqTxn`. Set when ≠ -1.                                                                                  |
 | 1   | SCRATCHPAD    | Variable size: `[u32 entry_count][(u32 code, u32 length, u8[length] content)*]`. Opaque TLV. Capped at `MAX_SCRATCHPAD_SIZE` (1 MiB) per footer. |
+| 2   | DEDUP_SORT_VERSION | `8 * ROW_GROUP_COUNT` bytes: `[i64 dedup_sort_version; ROW_GROUP_COUNT]`. See "Dedup sort version" below.                                   |
 | 32  | INDEX_ROW_MAP | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
 Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
@@ -228,6 +229,33 @@ only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIG
 QuestDB-managed parquet snapshots represented by `_pm` always normalize `column_top` to `0`. Null prefixes are
 materialized directly into parquet chunks/pages, and `_pm` pruning relies on per-chunk `NULL_COUNT` rather than
 file-level `column_top` metadata.
+
+### Dedup sort version
+
+Entry `i` claims that the rows of row group `i` are in dedup key order within each designated timestamp.
+
+- Value: the table's dedup version (`_meta` offset 64) the rows were sorted under; `-1` makes no claim. A footer
+  without the section makes no claim for any row group.
+- Order: the non-timestamp keys in column id order, compared as WAL apply compares them: fixed-width values as
+  signed integers of their width, variable-width values by length and then bytes. A 32-byte value compares as two
+  signed 16-byte integers, bytes 16 to 31 first.
+- The claim is per row group: a timestamp that crosses a row group boundary is two sorted runs, not one.
+- A reader uses the order only when the entry equals the table's current dedup version.
+- An update keeps the entry of every row group it reuses. A commit that creates the parquet file of a new partition
+  writes no entry. An O3 commit that updates or rewrites an existing parquet file writes its dedup version for a
+  row group it writes with the rows in key order, and `-1` for any other row group it writes:
+  - A commit writes `-1` for every row group it writes when it does not deduplicate, and when its keys are not in
+    column id order: WAL apply compares the keys in the order of the table's columns, and a change of a key's type
+    moves the key to the end of them while it keeps its column id.
+  - In any other commit, a row group of O3 rows only is in key order, and so is a merge that adds a key to stored
+    rows, which sorts its rows. A merge that keeps the stored rows in their stored order writes the version only
+    when the designated timestamp is the only key, or when it reads a single row group that holds it.
+  - A rewrite writes `-1` for the row groups it copies.
+  - The claim is for the rows as a reader decodes them. A commit writes `-1` for every row group when a key has a
+    type whose values parquet does not give back with the bytes the commit sorted them by. `FLOAT` and `DOUBLE`
+    are such types: the order compares their bits, and parquet stores every NaN as a NULL, which decodes as one
+    NaN. `BINARY`, `LONG128` and `ARRAY` keys make no claim either.
+- Delta base compaction writes every row group under the dedup version it captured.
 
 ### Index row map
 

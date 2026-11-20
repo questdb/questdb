@@ -519,6 +519,10 @@ pub fn convert_from_parquet(
 /// Generates a complete `_pm` file from pre-built column descriptors and raw
 /// thrift row groups. Used by the parquet write path which never materializes
 /// a parquet2 [`FileMetaData`].
+///
+/// `dedup_sort_versions[i]` is the dedup sort version of row group `i`, see
+/// [`RowGroupBlockBuilder::set_dedup_sort_version`]. A row group past the end
+/// of the slice makes no claim.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo<'_>],
@@ -530,6 +534,7 @@ pub fn generate_parquet_metadata(
     unused_bytes: u64,
     squash_tracker: i64,
     seq_txn: SeqTxn,
+    dedup_sort_versions: &[i64],
     bloom_source: &dyn BloomFilterSource,
 ) -> ParquetMetaResult<(Vec<u8>, u64)> {
     let mut writer = ParquetMetaWriter::new();
@@ -557,7 +562,10 @@ pub fn generate_parquet_metadata(
     }
 
     for (rg_idx, thrift_rg) in thrift_row_groups.iter().enumerate() {
-        let block = build_row_group_block(thrift_rg, rg_idx, bloom_source)?;
+        let mut block = build_row_group_block(thrift_rg, rg_idx, bloom_source)?;
+        if let Some(&version) = dedup_sort_versions.get(rg_idx) {
+            block.set_dedup_sort_version(version);
+        }
         writer.add_row_group(block);
     }
 

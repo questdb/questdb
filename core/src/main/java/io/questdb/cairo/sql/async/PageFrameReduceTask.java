@@ -27,6 +27,7 @@ package io.questdb.cairo.sql.async;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -210,7 +211,17 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameMemory;
     }
 
+    /**
+     * Row count of the current sub-frame. Before {@link #populateFrameMemory()} this is the
+     * declared span: an upper bound on the decoded rows, exact only when
+     * {@link #isFrameRowCountExact()}, and good for sizing buffers. Once the frame memory is
+     * populated it is the exact decoded count ({@link PageFrameMemory#getRowCount()}), which
+     * every loop over the decoded columns must use.
+     */
     public long getFrameRowCount() {
+        if (frameMemory != null && frameMemory.getFrameIndex() == frameIndex) {
+            return frameMemory.getRowCount();
+        }
         return frameSequence.getFrameRowCount(frameIndex);
     }
 
@@ -260,6 +271,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public boolean isCountOnly() {
         return isCountOnly;
+    }
+
+    /**
+     * Whether {@link #getFrameRowCount()} is the exact decoded row count of the current
+     * sub-frame; see {@link PageFrame#isExactRowCount()}.
+     */
+    public boolean isFrameRowCountExact() {
+        return frameSequence.isFrameRowCountExact(frameIndex);
     }
 
     public boolean isOutOfMemory() {

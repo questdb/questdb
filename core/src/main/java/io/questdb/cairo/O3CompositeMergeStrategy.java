@@ -38,14 +38,15 @@ import io.questdb.std.Unsafe;
 public class O3CompositeMergeStrategy {
     /**
      * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount},
-     * {@code writerTxn}, {@code lastWriteMicros}.
+     * {@code writerTxn}, {@code lastWriteMicros}, {@code dedupSortVersion}.
      */
-    public static final int LONGS_PER_BOUND = 6;
+    public static final int LONGS_PER_BOUND = 7;
     /**
      * Stride of the cut list {@link #computeCuts} fills: {@code pieceIndex}, {@code cutTimestamp}, and the rows the cut
      * must leave below and above it once resolved against the real timestamp column.
      */
     public static final int LONGS_PER_CUT = 4;
+    private static final int BOUND_DEDUP_SORT_VERSION = 6;
     private static final int BOUND_LAST_WRITE_MICROS = 5;
     private static final int BOUND_ROW_COUNT = 3;
     private static final int BOUND_ROW_OFFSET = 2;
@@ -59,9 +60,28 @@ public class O3CompositeMergeStrategy {
     public static void addPieceBounds(
             LongList bounds, long tsLo, long tsHi, long rowOffset, long rowCount, long writerTxn, long lastWriteMicros
     ) {
+        addPieceBounds(bounds, tsLo, tsHi, rowOffset, rowCount, writerTxn, lastWriteMicros, PartitionGeometryFile.DEDUP_SORT_VERSION_UNSET);
+    }
+
+    /**
+     * @param rowOffset        the FILE row this piece's first row sits at
+     * @param dedupSortVersion the dedup version whose keys sort the piece within each timestamp, or
+     *                         {@link PartitionGeometryFile#DEDUP_SORT_VERSION_UNSET}
+     */
+    public static void addPieceBounds(
+            LongList bounds,
+            long tsLo,
+            long tsHi,
+            long rowOffset,
+            long rowCount,
+            long writerTxn,
+            long lastWriteMicros,
+            long dedupSortVersion
+    ) {
         bounds.add(tsLo, tsHi);
         bounds.add(rowOffset, rowCount);
         bounds.add(writerTxn, lastWriteMicros);
+        bounds.add(dedupSortVersion);
     }
 
     /**
@@ -89,9 +109,10 @@ public class O3CompositeMergeStrategy {
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_TS_HI, tsHi);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_OFFSET, rowOffset + below);
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_ROW_COUNT, rows - below);
-        // A cut moves no bytes, so both halves inherit the parent's pair.
+        // A cut moves no bytes, so both halves inherit the parent's pair, and a part of a sorted piece is sorted.
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_WRITER_TXN, bounds.getQuick(at + BOUND_WRITER_TXN));
         bounds.setQuick(at + LONGS_PER_BOUND + BOUND_LAST_WRITE_MICROS, bounds.getQuick(at + BOUND_LAST_WRITE_MICROS));
+        bounds.setQuick(at + LONGS_PER_BOUND + BOUND_DEDUP_SORT_VERSION, bounds.getQuick(at + BOUND_DEDUP_SORT_VERSION));
         return true;
     }
 
@@ -329,6 +350,10 @@ public class O3CompositeMergeStrategy {
         plan.projectedLiveRows = liveRows;
         plan.projectedDeadRows = extent - liveRows;
         plan.projectedPieceCount = pieces;
+    }
+
+    public static long getDedupSortVersion(LongList bounds, int piece) {
+        return bounds.getQuick(piece * LONGS_PER_BOUND + BOUND_DEDUP_SORT_VERSION);
     }
 
     public static long getLastWriteMicros(LongList bounds, int piece) {

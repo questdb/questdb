@@ -36,6 +36,15 @@ import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
  * should be used.
  */
 public interface PageFrame {
+    // Cells of one dedup key page, see getDedupKeyPage().
+    int DEDUP_KEY_PAGE_AUX_ADDRESS = 3;
+    int DEDUP_KEY_PAGE_AUX_SIZE = 4;
+    int DEDUP_KEY_PAGE_CELLS = 6;
+    int DEDUP_KEY_PAGE_COLUMN_ID = 0;
+    int DEDUP_KEY_PAGE_DATA_ADDRESS = 1;
+    int DEDUP_KEY_PAGE_DATA_SIZE = 2;
+    int DEDUP_KEY_PAGE_TOP = 5;
+
     /**
      * Auxiliary index page for variable-length column types, such as Varchar, String, and Binary.
      * <p>
@@ -63,6 +72,27 @@ public interface PageFrame {
      * @return column count
      */
     int getColumnCount();
+
+    /**
+     * One cell of a non-timestamp dedup key column of a native custom-decode frame: the
+     * column ID, the full data and aux vectors, and the physical column top (see the
+     * {@code DEDUP_KEY_PAGE_*} cells). Like the designated timestamp, the partition frame
+     * decoder borrows these as base views to resolve duplicates even when the query does
+     * not select the key. Addresses are zero for a frame that is not custom-decoded.
+     *
+     * @param key  dedup key ordinal, in table metadata order, below {@link #getDedupKeyPageCount()}
+     * @param cell one of the {@code DEDUP_KEY_PAGE_*} cells
+     */
+    default long getDedupKeyPage(int key, int cell) {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Count of the dedup key pages this frame carries; constant across the frames of one cursor.
+     */
+    default int getDedupKeyPageCount() {
+        return 0;
+    }
 
     /**
      * Address of the full designated-timestamp vector used by a borrowed native base view.
@@ -245,6 +275,45 @@ public interface PageFrame {
      * Return low row index within the frame's partition, inclusive.
      */
     long getPartitionLo();
+
+    /**
+     * Upper bound on the number of rows this frame yields once decoded. It is always
+     * the declared input span, {@code getPartitionHi() - getPartitionLo()}: a frame
+     * never produces more rows than it covers.
+     * <p>
+     * Buffer allocation and scheduling may size by this value. Loops over decoded
+     * columns must use {@link PageFrameMemory#getRowCount()} instead, which is only
+     * guaranteed to equal this bound when {@link #isExactRowCount()} is true.
+     */
+    default long getRowCountHi() {
+        return getPartitionHi() - getPartitionLo();
+    }
+
+    /**
+     * Lower bound on the number of rows this frame yields once decoded. Equals
+     * {@link #getRowCountHi()} for a frame whose declared span is exact. A frame
+     * that may drop rows during decode (e.g. a cold-delta window that resolves
+     * duplicates while reading) reports {@code 0} here: its declared span is a
+     * safe upper bound, not a promise.
+     * <p>
+     * Always within {@code [0, getRowCountHi()]}.
+     */
+    default long getRowCountLo() {
+        return getRowCountHi();
+    }
+
+    /**
+     * Whether the declared span {@code getPartitionHi() - getPartitionLo()} is the
+     * exact number of rows this frame yields once decoded, i.e.
+     * {@link #getRowCountLo()} {@code ==} {@link #getRowCountHi()}.
+     * <p>
+     * Pre-decode shortcuts (counts, cursor sizes, LIMIT/OFFSET, frame skipping,
+     * time-frame navigation) may rely on the declared span only when this is true.
+     * Otherwise they must decode and use {@link PageFrameMemory#getRowCount()}.
+     */
+    default boolean isExactRowCount() {
+        return getRowCountLo() == getRowCountHi();
+    }
 
     /**
      * Tells whether this frame is one of the skip-only skeletons {@link PageFrameCursor#next(long)} hands back for a span the

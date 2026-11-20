@@ -658,6 +658,34 @@ public class HorizonJoinTimeFrameHelperTest extends AbstractTest {
         });
     }
 
+    @Test
+    public void testSeekToEmptyFrameFindsEarlierRow() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            State state = new State();
+            Trace trace = new Trace();
+            // Frame 0 holds timestamps 0..255, frame 1 decodes empty, as dedup on read can leave
+            // a frame, and frame 2 holds 20_000..20_255. A seek to the gap lands on frame 1.
+            Cursor cursor = new Cursor(trace, 256, 0, 256);
+            cursor.seekIndex = 1;
+            try (PollingEngine engine = new PollingEngine(root, state);
+                 TracingBreaker breaker = new TracingBreaker(engine, state, trace, 2048)) {
+                breaker.resetTimer();
+                HorizonJoinTimeFrameHelper helper = helper(cursor, null, 64);
+                Assert.assertEquals(255, helper.findAsOfRow(15_000, breaker));
+                Assert.assertEquals(Rows.toRowID(2, 0), helper.findAsOfRow(20_000, breaker));
+                // A fresh walk to the gap, and one past the empty frame's estimate.
+                helper.toTop();
+                Assert.assertEquals(255, helper.findAsOfRow(19_999, breaker));
+                // With no row before the empty frame, nothing matches below frame 2.
+                cursor = new Cursor(trace, 0, 0, 256);
+                cursor.seekIndex = 1;
+                helper = helper(cursor, null, 64);
+                Assert.assertEquals(Long.MIN_VALUE, helper.findAsOfRow(15_000, breaker));
+                Assert.assertEquals(Rows.toRowID(2, 5), helper.findAsOfRow(20_005, breaker));
+            }
+        });
+    }
+
     private static void assertFrameBranch(PollingEngine engine, State state, int branch, int throttle, boolean isCancel) {
         Trace trace = new Trace();
         Cursor cursor = new Cursor(trace, branch == 3 ? 0 : 1, 0, 0, 0, 0, 0, 0, 0, 0, 1);

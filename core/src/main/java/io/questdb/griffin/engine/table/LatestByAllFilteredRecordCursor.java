@@ -93,8 +93,9 @@ class LatestByAllFilteredRecordCursor extends AbstractDescendingRecordListCursor
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             frameAddressCache.add(frameCount, frame);
-            frameMemoryPool.navigateTo(frameCount++, recordA);
-            scanner.of(frameIndex, frame.getPartitionHi() - frame.getPartitionLo());
+            // Walk the decoded rows: an inexact frame holds fewer rows than its declared span.
+            final long frameRowCount = frameMemoryPool.navigateToAndCount(frameCount++, recordA);
+            scanner.of(frameIndex, frameRowCount);
             while (scanner.nextBatch(circuitBreaker)) {
                 final DirectLongList matches = scanner.getMatches();
                 if (matches == null) {

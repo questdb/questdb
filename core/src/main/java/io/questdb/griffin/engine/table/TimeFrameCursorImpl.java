@@ -267,7 +267,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         final int partitionIndex = framePartitionIndexes.get(frameIndex);
         ensurePartitionOpened(partitionIndex);
 
-        final long rowCount = frameRowCounts.get(frameIndex);
+        long rowCount = frameRowCounts.get(frameIndex);
         if (rowCount > 0) {
             final int cacheOffset = frameIndex * 2;
             long timestampLo = frameTimestampCache.get(cacheOffset);
@@ -278,6 +278,22 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             } else {
                 // Cache miss - read timestamps directly from frame memory
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                if (!frameAddressCache.isFrameRowCountExact(frameIndex)) {
+                    // The declared span was only an upper bound; the decode settles the count that
+                    // every later navigation of this frame trusts. Record it before the timestamps,
+                    // which an empty decode cannot provide.
+                    rowCount = frameMemory.getRowCount();
+                    frameRowCounts.set(frameIndex, rowCount);
+                    if (rowCount == 0) {
+                        timeFrame.ofOpen(
+                                timeFrame.getTimestampEstimateLo(),
+                                timeFrame.getTimestampEstimateHi(),
+                                0,
+                                0
+                        );
+                        return 0;
+                    }
+                }
                 final long timestampAddress = frameMemory.getPageAddress(metadata.getTimestampIndex());
                 timestampLo = Unsafe.getLong(timestampAddress);
                 timestampHi = Unsafe.getLong(timestampAddress + (rowCount - 1) * 8);
@@ -428,7 +444,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         while ((frame = frameCursor.next()) != null) {
             frameAddressCache.add(frameCount, frame);
             framePartitionIndexes.add(leadPartitionIndex);
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameRowCounts.add(frame.getRowCountHi());
             frameCount++;
         }
     }
@@ -479,7 +495,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
         while ((frame = frameCursor.next()) != null) {
             frameAddressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameRowCounts.add(frame.getRowCountHi());
             frameCount++;
         }
         partitionOpened.set(partitionIndex);
@@ -601,7 +617,7 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             }
             frameAddressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
-            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameRowCounts.add(frame.getRowCountHi());
             frameCount++;
         }
         // Mark all partitions as opened so ensurePartitionOpened is a no-op

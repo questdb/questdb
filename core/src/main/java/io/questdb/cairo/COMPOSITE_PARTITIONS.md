@@ -122,13 +122,28 @@ timestamps.
 ```
 partition directory
   ts.d  sym.d  ...          the column files, shared by every piece
-  _geometry.0               [rec@0][rec@104][rec@256] ...  append-only
+  _geometry.0               [rec@0][rec@112][rec@280] ...  append-only
                                             ^
 _txn slot 3 for this partition:  [composite flag | generation | byte offset ]
 ```
 
-Every record is a FULL snapshot (56-byte header + 48 bytes per piece), never a delta, so a reader seeks
-to the one offset `_txn` publishes and is done. The writer appends and syncs the record, THEN commits
+Every record is a FULL snapshot (56-byte header + 56 bytes per piece), never a delta, so a reader seeks
+to the one offset `_txn` publishes and is done. A piece carries its timestamp bounds, file row range, the
+txn and time its bytes last moved, and its DEDUP SORT VERSION:
+
+- The table's dedup version (`_meta` offset 64) whose keys order the piece's rows within each timestamp,
+  or -1 for no claim. Keys compare in column id order, as WAL apply compares them.
+- NEW_PIECE and MERGE of a dedup commit claim the commit's version: the commit's rows arrive in key order,
+  and a MERGE writes its piece through a merge index that is put in key order first.
+- KEEP and a cut carry the piece's claim. A JOIN keeps it only when every folded piece has the same version
+  and no two share a timestamp.
+- A plain partition records the claim as one bit in `_txn` (`TxReader.PARTITION_DEDUP_SORTED_BIT`). Its
+  pieces take the current version from the bit when it turns composite; a partition that stays plain gets
+  the bit from its one piece.
+- Records with the magic `GEOM` have 48-byte pieces without the field and read as unset. The writer stamps
+  `GEO2`.
+
+The writer appends and syncs the record, THEN commits
 `_txn` - a crash between the two leaves an unreferenced record, which is harmless. Bytes past the
 committed offset are unreachable by construction. A generation rotates when a record would push the
 file past its size cap.

@@ -28,7 +28,7 @@ use crate::parquet::error::{
 use crate::parquet::qdb_metadata::{
     column_top_evidence, ColumnTopEvidence, QdbMeta, QdbMetaCol, QdbMetaColFormat, QDB_META_KEY,
 };
-use crate::parquet_metadata::types::SeqTxn;
+use crate::parquet_metadata::types::{SeqTxn, DEDUP_SORT_VERSION_UNSET};
 use crate::parquet_write::file::{create_row_group, WriteOptions};
 use crate::parquet_write::schema::{
     to_compressions, to_encodings, to_parquet_schema, Column, Partition,
@@ -193,6 +193,10 @@ pub struct ParquetUpdater {
     hybrid_encoded_column_chunks: u64,
     /// Set by [`Self::drop_index_row_map`]: an incremental `_pm` update keeps the identity index row map.
     is_index_row_map_dropped: bool,
+    /// The dedup sort version of each row group this updater wrote with one, see
+    /// [`Self::set_last_row_group_dedup_sort_version`], keyed by the file offset of the row group's
+    /// first page: end() finds the row group by it once the footer has its final row group order.
+    dedup_sort_versions: RapidHashMap<u64, i64>,
 }
 
 fn publish_parquet_meta_with_sync<S>(
@@ -508,6 +512,7 @@ impl ParquetUpdater {
             hybrid_copied_column_chunks: 0,
             hybrid_encoded_column_chunks: 0,
             is_index_row_map_dropped: false,
+            dedup_sort_versions: RapidHashMap::default(),
         })
     }
 
@@ -515,6 +520,31 @@ impl ParquetUpdater {
     /// index file refers to index rows, and an older binary rejects a footer that carries a map.
     pub fn drop_index_row_map(&mut self) {
         self.is_index_row_map_dropped = true;
+    }
+
+    /// Claims that the rows of the row group this updater wrote last are in dedup key order
+    /// within each timestamp under dedup version `version`: end() records the version for that
+    /// row group in `_pm`. The caller vouches for the order, this updater does not check it.
+    /// `DEDUP_SORT_VERSION_UNSET` makes no claim, and neither does a row group written without
+    /// this call, whatever version the row group it replaces or copies has.
+    pub fn set_last_row_group_dedup_sort_version(&mut self, version: i64) -> ParquetResult<()> {
+        if version == DEDUP_SORT_VERSION_UNSET {
+            return Ok(());
+        }
+        let first_page_offset = self
+            .parquet_file
+            .row_groups()
+            .last()
+            .and_then(row_group_first_page_offset)
+            .ok_or_else(|| {
+                fmt_err!(
+                    InvalidLayout,
+                    "no written row group to claim dedup sort version {} for",
+                    version
+                )
+            })?;
+        self.dedup_sort_versions.insert(first_page_offset, version);
+        Ok(())
     }
 
     /// Inspect VARCHAR aux for any column whose flag is still `true` in
@@ -1789,20 +1819,24 @@ impl ParquetUpdater {
             if self.is_rewrite || self.existing_parquet_file_size <= 0 {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
+                let dedup_sort_versions =
+                    resolve_dedup_sort_versions(&self.dedup_sort_versions, thrift_row_groups);
 
                 // Full create: rewrite or first-time generation.
-                let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
-                    &col_infos,
-                    thrift_row_groups,
-                    designated_ts,
-                    &sorting_indices,
-                    footer_offset,
-                    footer_length,
-                    bloom_bitsets,
-                    self.result_unused_bytes,
-                    qdb_meta.squash_tracker,
-                    self.seq_txn,
-                )?;
+                let (parquet_meta_bytes, _) =
+                    crate::parquet_metadata::convert::generate_parquet_metadata_with_dedup_sort_versions(
+                        &col_infos,
+                        thrift_row_groups,
+                        designated_ts,
+                        &sorting_indices,
+                        footer_offset,
+                        footer_length,
+                        bloom_bitsets,
+                        self.result_unused_bytes,
+                        qdb_meta.squash_tracker,
+                        self.seq_txn,
+                        &dedup_sort_versions,
+                    )?;
                 self.result_parquet_meta_size = parquet_meta_bytes.len() as i64;
                 parquet_meta_file
                     .write_all(&parquet_meta_bytes)
@@ -1811,6 +1845,8 @@ impl ParquetUpdater {
             } else {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
+                let dedup_sort_versions =
+                    resolve_dedup_sort_versions(&self.dedup_sort_versions, thrift_row_groups);
 
                 // Incremental update: read the committed _pm and append the new
                 // snapshot. Two distinct offsets drive this, both threaded in
@@ -1848,6 +1884,7 @@ impl ParquetUpdater {
                     self.result_unused_bytes,
                     self.seq_txn,
                     self.is_index_row_map_dropped,
+                    &dedup_sort_versions,
                 )?;
 
                 // Write the new snapshot at the append base. The header still
@@ -2061,6 +2098,36 @@ impl ParquetUpdater {
             min_compression_ratio: self.min_compression_ratio,
         }
     }
+}
+
+/// The file offset of the first page of a row group, which no other row group of the file has:
+/// `update_parquet_metadata` tells the row groups an update kept from the ones it wrote by it.
+fn row_group_first_page_offset(row_group: &RowGroup) -> Option<u64> {
+    row_group
+        .columns
+        .first()
+        .and_then(|column| column.meta_data.as_ref())
+        .map(|meta| meta.dictionary_page_offset.unwrap_or(meta.data_page_offset) as u64)
+}
+
+/// The dedup sort version of each of `row_groups`, in their order: the one `versions` holds for
+/// the offset of the row group's first page, `DEDUP_SORT_VERSION_UNSET` when it holds none.
+/// Empty when no row group has a version.
+fn resolve_dedup_sort_versions(
+    versions: &RapidHashMap<u64, i64>,
+    row_groups: &[RowGroup],
+) -> Vec<i64> {
+    if versions.is_empty() {
+        return Vec::new();
+    }
+    row_groups
+        .iter()
+        .map(|row_group| {
+            row_group_first_page_offset(row_group)
+                .and_then(|offset| versions.get(&offset).copied())
+                .unwrap_or(DEDUP_SORT_VERSION_UNSET)
+        })
+        .collect()
 }
 
 fn copy_file_range<W: std::io::Write>(
@@ -6806,6 +6873,164 @@ mod tests {
                 Some(400),
             ],
         );
+        Ok(())
+    }
+
+    /// Opens an updater over `src` that writes `_pm` into `pm`: a rewrite into `out` with a fresh
+    /// `_pm`, or an in-place update that appends to the `_pm` snapshot of `pm_size` bytes.
+    fn open_updater_with_pm(
+        alloc: &crate::allocator::TestAllocatorState,
+        src: &NamedTempFile,
+        out: Option<&NamedTempFile>,
+        pm: &NamedTempFile,
+        pm_size: u64,
+    ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+        let src_len = src.as_file().metadata()?.len();
+        let (writer, write_file_size, existing_parquet_file_size) = match out {
+            Some(out) => (out.reopen()?, 0, -1),
+            None => (src.reopen()?, src_len, src_len as i64),
+        };
+        Ok(super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            writer,
+            write_file_size,
+            Some(vec![parquet2::metadata::SortingColumn::new(
+                0, false, false,
+            )]),
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            pm_size,
+            pm_size,
+            existing_parquet_file_size,
+            SeqTxn::UNSET,
+        )?)
+    }
+
+    /// The dedup sort versions of the row groups of the `_pm` snapshot of `pm_size` bytes.
+    fn pm_dedup_sort_versions(
+        pm: &NamedTempFile,
+        pm_size: i64,
+    ) -> Result<Vec<i64>, Box<dyn Error>> {
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use std::io::Read as _;
+
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64).unwrap();
+        assert!(reader.verify_checksum().is_ok());
+        Ok((0..reader.row_group_count() as usize)
+            .map(|i| reader.footer().row_group_dedup_sort_version(i).unwrap())
+            .collect())
+    }
+
+    #[test]
+    fn dedup_sort_version_goes_to_pm_with_the_row_group_it_was_set_for(
+    ) -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::types::DEDUP_SORT_VERSION_UNSET;
+        use std::io::Read as _;
+
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_row_group_size(Some(4))
+            .with_sorting_columns(Some(vec![parquet2::metadata::SortingColumn::new(
+                0, false, false,
+            )]))
+            .finish(ts_val_partition(
+                &[1, 2, 3, 4, 5, 6, 7, 8],
+                &[10, 20, 30, 40, 50, 60, 70, 80],
+            ))?;
+        let alloc = TestAllocatorState::new();
+
+        // A rewrite: the first row group is written with version 7, the second one copied, a third
+        // one written with version 7 and a fourth one with no version.
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let mut updater = open_updater_with_pm(&alloc, &src, Some(&out), &pm, 0)?;
+        updater.replace_row_group(&ts_val_partition(&[1, 2], &[11, 21]), 0, 0)?;
+        updater.set_last_row_group_dedup_sort_version(7)?;
+        updater.copy_row_group(1)?;
+        updater.insert_row_group(&ts_val_partition(&[9, 10], &[90, 100]), 2, 6)?;
+        updater.set_last_row_group_dedup_sort_version(7)?;
+        updater.insert_row_group(&ts_val_partition(&[11, 12], &[110, 120]), 3, 8)?;
+        updater.set_last_row_group_dedup_sort_version(DEDUP_SORT_VERSION_UNSET)?;
+        updater.end(None)?;
+        updater.commit_parquet_meta(false)?;
+        let rewrite_pm_size = updater.result_parquet_meta_size();
+        drop(updater);
+        assert_eq!(
+            pm_dedup_sort_versions(&pm, rewrite_pm_size)?,
+            vec![7, DEDUP_SORT_VERSION_UNSET, 7, DEDUP_SORT_VERSION_UNSET]
+        );
+
+        // An in-place update of the rewritten file: the first row group is written again with no
+        // version and loses its claim, a row group inserted after it and the last row group are
+        // written with version 8. The two row groups the update leaves in place keep what they had.
+        let mut updater = open_updater_with_pm(&alloc, &out, None, &pm, rewrite_pm_size as u64)?;
+        updater.replace_row_group(&ts_val_partition(&[1, 2], &[12, 22]), 0, 0)?;
+        updater.insert_row_group(&ts_val_partition(&[3, 4], &[30, 40]), 1, 2)?;
+        updater.set_last_row_group_dedup_sort_version(8)?;
+        updater.replace_row_group(&ts_val_partition(&[11, 12, 13], &[111, 121, 131]), 3, 10)?;
+        updater.set_last_row_group_dedup_sort_version(8)?;
+        updater.end(None)?;
+        updater.commit_parquet_meta(false)?;
+        let update_pm_size = updater.result_parquet_meta_size();
+        drop(updater);
+        assert_eq!(
+            pm_dedup_sort_versions(&pm, update_pm_size)?,
+            vec![DEDUP_SORT_VERSION_UNSET, 8, DEDUP_SORT_VERSION_UNSET, 7, 8]
+        );
+        // the snapshot of the rewrite still reads its own versions
+        assert_eq!(
+            pm_dedup_sort_versions(&pm, rewrite_pm_size)?,
+            vec![7, DEDUP_SORT_VERSION_UNSET, 7, DEDUP_SORT_VERSION_UNSET]
+        );
+
+        // the versions follow the row groups whose rows the file holds in this order
+        let mut bytes = Vec::new();
+        out.reopen()?.read_to_end(&mut bytes)?;
+        assert_eq!(
+            read_val_column(&bytes),
+            [12, 22, 30, 40, 50, 60, 70, 80, 90, 100, 111, 121, 131]
+                .into_iter()
+                .map(Some)
+                .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn dedup_sort_version_needs_a_written_row_group() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::types::DEDUP_SORT_VERSION_UNSET;
+
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .finish(ts_val_partition(&[1, 2, 3, 4], &[10, 20, 30, 40]))?;
+        let alloc = TestAllocatorState::new();
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        for out in [Some(&out), None] {
+            let mut updater = open_updater_with_pm(&alloc, &src, out, &pm, 0)?;
+            // no claim asks for no row group
+            updater.set_last_row_group_dedup_sort_version(DEDUP_SORT_VERSION_UNSET)?;
+            let err = updater
+                .set_last_row_group_dedup_sort_version(5)
+                .unwrap_err();
+            assert!(
+                err.to_string()
+                    .contains("no written row group to claim dedup sort version 5 for"),
+                "unexpected error: {err}"
+            );
+        }
         Ok(())
     }
 

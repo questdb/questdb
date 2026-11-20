@@ -64,6 +64,9 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     private int mergeActiveColCount;
     private IntList mergeActiveColIndices;
     private IntList mergeActiveToDecodeIdx;
+    // the dedup version whose keys order the rows of the merge index within each timestamp, see
+    // setMergeDedupSortVersion()
+    private long mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
     private LongList mergeDstBufs;
     // the columns that the first stage of the row group merge decoded
     private int mergeFirstStageDecodedColumnCount;
@@ -164,6 +167,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = 0;
         mergeActiveColCount = 0;
+        mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
         mergeFirstStageDecodedColumnCount = 0;
         mergeTimestampDataAddr = 0;
         preparedMergeActionIndex = -1;
@@ -204,6 +208,11 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public IntList getMergeActiveToDecodeIdx() {
         return mergeActiveToDecodeIdx;
+    }
+
+    // the dedup version that the row groups the merge writes claim, see setMergeDedupSortVersion()
+    public long getMergeDedupSortVersion() {
+        return mergeDedupSortVersion;
     }
 
     public LongList getMergeDstBufs(int colCount) {
@@ -326,6 +335,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         mergeActiveColIndices.setPos(columnCount);
         mergeActiveToDecodeIdx.setPos(columnCount);
         mergeActiveColCount = 0;
+        mergeDedupSortVersion = ParquetMetaFileReader.DEDUP_SORT_VERSION_UNSET;
     }
 
     /**
@@ -355,6 +365,17 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
 
     public void setMergeActiveColCount(int mergeActiveColCount) {
         this.mergeActiveColCount = mergeActiveColCount;
+    }
+
+    /**
+     * Records the dedup version whose keys order the rows of the merge index within each timestamp, in column id
+     * order as WAL apply compares them, or {@link ParquetMetaFileReader#DEDUP_SORT_VERSION_UNSET} when the index
+     * is not known to have such an order. The row groups that the merge writes hold the rows in the order of the
+     * index and claim this version in {@code _pm}. Whoever builds or rebuilds the merge index sets it:
+     * {@link #ofRowGroupMerge(int)} and {@link #freeRowGroupMerge()} reset it to no claim.
+     */
+    public void setMergeDedupSortVersion(long dedupSortVersion) {
+        mergeDedupSortVersion = dedupSortVersion;
     }
 
     /**

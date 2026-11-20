@@ -252,6 +252,13 @@ impl ParquetMetaWriter {
         fb.set_seq_txn(self.seq_txn);
         fb.set_scratchpad_entries(self.scratchpad.clone());
         fb.validate_scratchpad()?;
+        fb.set_dedup_sort_versions(
+            self.row_groups
+                .iter()
+                .map(RowGroupBlockBuilder::dedup_sort_version)
+                .collect(),
+        );
+        fb.validate_dedup_sort_versions()?;
         fb.write_to(&mut buf);
 
         // Compute and write CRC32 over [HEADER_CRC_AREA_OFF, checksum_field_offset).
@@ -356,6 +363,8 @@ pub struct ParquetMetaUpdateWriter<'a> {
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
     prior_block_offsets: Vec<u64>,
     prior_num_rows: Vec<u64>,
+    /// Dedup sort version of each committed row group, unset resolved.
+    prior_dedup_sort_versions: Vec<i64>,
     /// First index row of each committed row group, identity map resolved.
     prior_index_row_lo: Vec<u64>,
     /// Index rows the committed footer covers, identity map resolved.
@@ -396,6 +405,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         let mut entries = Vec::with_capacity(rg_count);
         let mut prior_block_offsets = Vec::with_capacity(rg_count);
         let mut prior_num_rows = Vec::with_capacity(rg_count);
+        let mut prior_dedup_sort_versions = Vec::with_capacity(rg_count);
         let mut prior_index_row_lo = Vec::with_capacity(rg_count);
         let mut cumulative_rows = 0u64;
         for i in 0..rg_count {
@@ -403,6 +413,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_block_offsets.push(footer.row_group_block_offset(i)?);
             let num_rows = reader.row_group(i)?.num_rows();
             prior_num_rows.push(num_rows);
+            prior_dedup_sort_versions.push(footer.row_group_dedup_sort_version(i)?);
             prior_index_row_lo.push(footer.row_group_index_row_lo(i)?.unwrap_or(cumulative_rows));
             cumulative_rows = cumulative_rows.saturating_add(num_rows);
         }
@@ -462,10 +473,23 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_scratchpad,
             prior_block_offsets,
             prior_num_rows,
+            prior_dedup_sort_versions,
             prior_index_row_lo,
             prior_index_row_count,
             is_index_row_map_dropped: false,
         })
+    }
+
+    /// Reused row groups keep their committed dedup sort version; new blocks carry their
+    /// builder's value.
+    fn resolve_dedup_sort_versions(&self) -> Vec<i64> {
+        self.entries
+            .iter()
+            .map(|entry| match entry {
+                RowGroupEntry::Existing { src } => self.prior_dedup_sort_versions[*src],
+                RowGroupEntry::New(builder) => builder.dedup_sort_version(),
+            })
+            .collect()
     }
 
     /// Writes the identity index row map whatever the row groups do: index rows start over as partition rows.
@@ -796,6 +820,8 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
+        fb.set_dedup_sort_versions(self.resolve_dedup_sort_versions());
+        fb.validate_dedup_sort_versions()?;
         fb.set_index_row_map(if self.is_index_row_map_dropped {
             None
         } else {
@@ -1092,6 +1118,103 @@ mod tests {
             u.add_row_group(index_row_map_rg(10));
         });
         assert_eq!(index_row_map_of(&first, first_size), None);
+    }
+
+    fn dedup_sort_versions_of(file: &[u8], file_size: u64) -> (bool, Vec<i64>) {
+        let reader = ParquetMetaReader::from_file_size(file, file_size).unwrap();
+        reader.verify_checksum().unwrap();
+        let footer = reader.footer();
+        let versions = (0..reader.row_group_count() as usize)
+            .map(|i| footer.row_group_dedup_sort_version(i).unwrap())
+            .collect();
+        (footer.feature_flags().has_dedup_sort_version(), versions)
+    }
+
+    #[test]
+    fn dedup_sort_version_omitted_when_unset() {
+        let (bytes, size) = make_simple_file();
+        assert_eq!(dedup_sort_versions_of(&bytes, size), (false, vec![-1]));
+        let (full, new_size) = index_row_map_apply(&bytes, size, |u| {
+            u.add_row_group(index_row_map_rg(10));
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&full, new_size),
+            (false, vec![-1, -1])
+        );
+    }
+
+    #[test]
+    fn dedup_sort_version_round_trips_on_create() {
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("val", 1, 10, ColumnFlags::new(), 0, 0, 0, 0);
+        let mut sorted = index_row_map_rg(100);
+        sorted.set_dedup_sort_version(7);
+        w.add_row_group(sorted);
+        w.add_row_group(index_row_map_rg(200));
+        let mut zero = index_row_map_rg(300);
+        zero.set_dedup_sort_version(0);
+        w.add_row_group(zero);
+        w.parquet_footer(4096, 256);
+        let (bytes, size) = w.finish().unwrap();
+        assert_eq!(dedup_sort_versions_of(&bytes, size), (true, vec![7, -1, 0]));
+    }
+
+    #[test]
+    fn dedup_sort_version_follows_row_groups_across_updates() {
+        let (original, size) = make_simple_file();
+        // Replace the only group with a sorted one, keep the old block in front of it.
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            let mut rg = index_row_map_rg(200);
+            rg.set_dedup_sort_version(3);
+            u.replace_row_group(0, rg).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&first, first_size),
+            (true, vec![3, -1])
+        );
+        // A later update keeps the committed version on the reused block and makes no claim
+        // for a new block that did not set one.
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            u.reuse_row_group(0, 1).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+            u.add_row_group(index_row_map_rg(10));
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&second, second_size),
+            (true, vec![-1, 3, -1])
+        );
+        // The earlier snapshot still resolves its own versions.
+        assert_eq!(
+            dedup_sort_versions_of(&second, first_size),
+            (true, vec![3, -1])
+        );
+        // Replacing the last sorted block drops the section again.
+        let (third, third_size) = index_row_map_apply(&second, second_size, |u| {
+            u.replace_row_group(1, index_row_map_rg(5)).unwrap();
+        });
+        assert_eq!(
+            dedup_sort_versions_of(&third, third_size),
+            (false, vec![-1, -1, -1])
+        );
+    }
+
+    #[test]
+    fn dedup_sort_version_and_index_row_map_share_a_footer() {
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            let mut rg = index_row_map_rg(200);
+            rg.set_dedup_sort_version(9);
+            u.replace_row_group(0, rg).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        assert_eq!(
+            index_row_map_of(&full, new_size),
+            Some((1200, vec![1000, 0]))
+        );
+        assert_eq!(dedup_sort_versions_of(&full, new_size), (true, vec![9, -1]));
     }
 
     #[test]

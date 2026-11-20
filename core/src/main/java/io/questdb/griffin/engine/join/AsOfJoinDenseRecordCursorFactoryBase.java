@@ -276,11 +276,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 if (backwardRowId > frameRowLo) {
                     backwardRowId--;
                 } else {
-                    if (!slaveTimeFrameCursor.prev()) {
+                    if (!slaveTimeFrameCursor.openPrev()) {
                         backwardScanExhausted = true;
                         break;
                     }
-                    slaveTimeFrameCursor.open();
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowLo = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());
                     backwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi() - 1);
@@ -347,11 +346,10 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
                 }
                 forwardRowId++;
                 if (forwardRowId == frameRowHi) {
-                    if (!slaveTimeFrameCursor.next()) {
+                    if (!slaveTimeFrameCursor.openNext()) {
                         forwardScanExhausted = true;
                         break;
                     }
-                    slaveTimeFrameCursor.open();
                     int frameIndex = slaveTimeFrame.getFrameIndex();
                     frameRowHi = Rows.toRowID(frameIndex, slaveTimeFrame.getRowHi());
                     forwardRowId = Rows.toRowID(frameIndex, slaveTimeFrame.getRowLo());

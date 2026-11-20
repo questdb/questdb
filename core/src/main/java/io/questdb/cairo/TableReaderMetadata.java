@@ -49,6 +49,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private final FilesFacade ff;
     private final LowerCaseCharSequenceIntHashMap tmpValidationMap = new LowerCaseCharSequenceIntHashMap();
     private int dedupMode;
+    private long dedupVersion;
     private long expiryCleanupIntervalMicros;
     private String expiryPredicate;
     private boolean isCopy;
@@ -179,8 +180,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return dedupMode;
     }
 
+    /**
+     * The metadata version of the last dedup-setting change ({@code _meta} offset 64): enabling or disabling dedup,
+     * changing its keys, dropping a key or changing a key's type. Stored dedup sort claims name this version.
+     */
+    public long getDedupVersion() {
+        return dedupVersion;
+    }
+
     public int getDenseSymbolIndex(int columnIndex) {
         return ((TableReaderMetadataColumn) columnMetadata.getQuick(columnIndex)).getDenseSymbolIndex();
+    }
+
+    /** Resolve stable IDs through type changes that preceded Delta activation. */
+    public int getHistoricalWriterIndex(int columnId, int columnType) {
+        final MemoryR memory = getMetaMem();
+        for (int writer = writerColumnCount - 1; writer >= 0; writer--) {
+            if (Math.abs(TableUtils.getColumnType(memory, writer)) == columnType
+                    && TableUtils.getReplacingChainHead(memory, writer) == columnId) {
+                return writer;
+            }
+        }
+        throw CairoException.critical(0).put("historical column is absent from metadata [columnId=").put(columnId).put(']');
     }
 
     @Override
@@ -260,6 +281,19 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
 
     public int getWriterColumnCount() {
         return writerColumnCount;
+    }
+
+    /** Includes tombstoned columns, which can still be keys of historical Delta Runs. */
+    public CharSequence getWriterColumnName(int writerIndex) {
+        if (writerIndex < 0 || writerIndex >= writerColumnCount) {
+            throw CairoException.critical(0).put("invalid historical writer column [index=").put(writerIndex).put(']');
+        }
+        final MemoryR memory = getMetaMem();
+        long offset = TableUtils.getColumnNameOffset(writerColumnCount);
+        for (int i = 0; i < writerIndex; i++) {
+            offset += Vm.getStorageLength(memory.getStrA(offset));
+        }
+        return memory.getStrA(offset);
     }
 
     public boolean isSoftLink() {
@@ -356,6 +390,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.expiryCleanupIntervalMicros = 0;
         this.tableFormat = TableUtils.getTableFormat(mem);
         this.dedupMode = TableUtils.getDedupMode(mem);
+        this.dedupVersion = mem.getLong(TableUtils.META_OFFSET_DEDUP_VERSION);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -429,6 +464,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
         this.dedupMode = TableUtils.getDedupMode(newMetaMem);
+        this.dedupVersion = newMetaMem.getLong(TableUtils.META_OFFSET_DEDUP_VERSION);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

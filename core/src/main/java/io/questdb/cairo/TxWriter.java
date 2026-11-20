@@ -249,6 +249,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Clears {@link TxReader#PARTITION_DEDUP_SORTED_BIT} on every partition. The bit claims the order of the table's
+     * current dedup keys, so every change of the dedup setting - enabling or disabling dedup, new keys, a dropped key
+     * or a key column type change - calls this before the commit that publishes the new setting.
+     */
+    public void clearPartitionsDedupSorted() {
+        boolean isChanged = false;
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            // getPartitionOffset3 folds the legacy all-ones word, which has bit 57 set, to 0.
+            final long word = getPartitionOffset3(i);
+            if ((word & PARTITION_DEDUP_SORTED_BIT) != 0) {
+                attachedPartitions.setQuick(i + PARTITION_VERSION_OFFSET, word & ~PARTITION_DEDUP_SORTED_BIT);
+                isChanged = true;
+            }
+        }
+        if (isChanged) {
+            recordStructureVersion++;
+            // A reader reloads the offset-3 word of the last partition only, unless this version moves.
+            partitionTableVersion++;
+        }
+    }
+
     @Override
     public void close() {
         try {
@@ -796,6 +818,34 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
+     * Sets or clears {@link TxReader#PARTITION_DEDUP_SORTED_BIT} of a plain native partition. A seqTxn stamp clears
+     * the bit, so a write that keeps the dedup key order sets it after its stamp. No-op when the partition is absent.
+     */
+    public void setPartitionDedupSorted(long timestamp, boolean isDedupSorted) {
+        setPartitionDedupSortedByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(timestamp), isDedupSorted);
+    }
+
+    public void setPartitionDedupSortedByRawIndex(int indexRaw, boolean isDedupSorted) {
+        if (indexRaw < 0) {
+            return;
+        }
+        final long word = getPartitionOffset3(indexRaw);
+        // Parquet and composite partitions carry the claim elsewhere, the bit stays clear on them.
+        final boolean isSet = isDedupSorted
+                && !isPartitionParquetByRawIndex(indexRaw)
+                && (word & PARTITION_COMPOSITE_FLAG) == 0;
+        final long updated = isSet ? word | PARTITION_DEDUP_SORTED_BIT : word & ~PARTITION_DEDUP_SORTED_BIT;
+        if (updated != word) {
+            attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, updated);
+            recordStructureVersion++;
+            if (indexRaw + LONGS_PER_TX_ATTACHED_PARTITION < attachedPartitions.size()) {
+                // A reader reloads the offset-3 word of the last partition only, unless this version moves.
+                partitionTableVersion++;
+            }
+        }
+    }
+
+    /**
      * Sets the delta-write bit, preserving REMOTE, VALID and the offset-3 value. Set-only: the bit
      * is the replicated delta-mode gate and is never cleared in place -- DROP PARTITION removes the
      * whole record.
@@ -851,8 +901,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             assert (geometryRef & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_COMPOSITE_FLAG) == 0
                     : "a geometry ref must not carry foreign flag bits";
             final long oldOffset3 = getPartitionOffset3(indexRaw);
-            final long flags = oldOffset3 & PARTITION_VERSION_FLAGS_MASK
+            long flags = oldOffset3 & PARTITION_VERSION_FLAGS_MASK
                     & ~(PARTITION_COMPOSITE_FLAG | PARTITION_SEQ_TXN_VALID_BIT);
+            if ((geometryRef & PARTITION_COMPOSITE_FLAG) != 0) {
+                // A composite partition carries the dedup sort claim per piece, in its geometry record.
+                flags &= ~PARTITION_DEDUP_SORTED_BIT;
+            }
             if ((geometryRef & PARTITION_COMPOSITE_FLAG) != 0
                     && ((oldOffset3 & PARTITION_COMPOSITE_FLAG) == 0
                     || TxReader.geometryGeneration(oldOffset3) != TxReader.geometryGeneration(geometryRef))) {
@@ -978,8 +1032,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     /**
      * Stamps a native partition's last-modifying seqTxn into the offset-3 word, preserving
-     * reserved flag bits. Clears REMOTE, the seal stamp and parquet_generated: the stamp records a
-     * data change, so no remote or generated copy matches the bytes anymore. A positive stamp
+     * reserved flag bits. Clears REMOTE, the seal stamp, parquet_generated and the dedup sort bit: the
+     * stamp records a data change, so no remote or generated copy matches the bytes anymore, and the
+     * rows are not known to be in dedup key order. A positive stamp
      * carries {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT}, marking the word a trusted seqTxn
      * (untrusted legacy words read as -1). The non-WAL path stamps 0, the cleared word, which
      * reads back as the -1 "no version" sentinel.
@@ -995,11 +1050,27 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return false;
         }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
+        // The stamp records a data change, and nothing here knows the change kept the dedup key order: the
+        // writes that do set PARTITION_DEDUP_SORTED_BIT again after the stamp.
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
-                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT | PARTITION_SEAL_STAMP_BIT);
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT | PARTITION_SEAL_STAMP_BIT | PARTITION_DEDUP_SORTED_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
         return true;
+    }
+
+    /**
+     * Stamps a seqTxn that records no change of the partition's rows - a seal, a base watermark, an upload - so the
+     * dedup sort bit, which a stamp clears, stays as it was.
+     *
+     * @return false when the partition is composite and the stamp was skipped, as {@link #setPartitionSeqTxn}
+     */
+    public boolean setPartitionSeqTxnOfSameRows(int partitionIndex, long seqTxn) {
+        final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        final boolean wasDedupSorted = isPartitionDedupSortedByRawIndex(indexRaw);
+        final boolean isStamped = setPartitionSeqTxnByRawIndex(indexRaw, seqTxn);
+        setPartitionDedupSortedByRawIndex(indexRaw, wasDedupSorted);
+        return isStamped;
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -1434,8 +1505,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         // A parquet partition is materialized whole and is never composite; the value field it is
         // about to take is its file size, not a geometry pointer.
+        // The dedup sort bit describes the native bytes the flip replaces, in either direction.
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
-                & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
+                & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG | PARTITION_DEDUP_SORTED_BIT);
         if (!isParquetFormat) {
             // A flip to native stamps a new seqTxn, which no seal wrote.
             flags &= ~PARTITION_SEAL_STAMP_BIT;

@@ -381,6 +381,11 @@ public class LatestByCompiledFilterTest extends AbstractTest {
         }
 
         @Override
+        public long getRowCount() {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public long getRowIdOffset() {
             return 777;
         }

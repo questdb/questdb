@@ -210,7 +210,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
         @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
 
         final boolean owner = stealingFrameSequence == frameSequence;
@@ -231,8 +231,12 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             final PageFrameMemory frameMemory;
             if (useLateMaterialization) {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             } else {
                 frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
             }
             record.init(frameMemory);
 
@@ -302,7 +306,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull UnorderedPageFrameSequence<?> frameSequence,
             @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
     ) {
-        final long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
+        long frameRowCount = frameSequence.getFrameRowCount(frameIndex);
         assert frameRowCount > 0;
         @SuppressWarnings("unchecked") final AsyncTopKAtom atom = ((UnorderedPageFrameSequence<AsyncTopKAtom>) frameSequence).getAtom();
 
@@ -315,12 +319,16 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             if (atom.isEncoded()) {
                 // Only the sort-key columns are read, so only they are decoded.
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, atom.getSortKeyColumnIndexes());
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
                 record.init(frameMemory);
                 final SortKeyEncoder encoder = atom.getEncoder(slotId);
                 final EncodedTopKBuffer topK = atom.getTopK(slotId);
                 encoder.encodeFrame(frameMemory, frameIndex, null, frameRowCount, topK, record);
             } else {
                 final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                // A frame whose row count is inexact reports its decoded count once decoded.
+                frameRowCount = frameMemory.getRowCount();
                 record.init(frameMemory);
                 final LimitedSizeLongTreeChain chain = atom.getTreeChain(slotId);
                 final RecordComparator comparator = atom.getComparator(slotId);

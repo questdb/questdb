@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
@@ -60,6 +61,28 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     default long getLogicalRowCount(long state) {
         bind(state);
         return PartitionFrameState.getLogicalPartitionRowCount(state);
+    }
+
+    /**
+     * Returns the rows a full scan of the partition yields. Implementations that
+     * resolve duplicates on read decode only what inexact windows need; the reader
+     * has opened the partition without its projected columns.
+     */
+    default long getResolvedRowCount(TableReader reader, long state, int partitionIndex) {
+        if (hasInexactRowCount(state)) {
+            throw CairoException.critical(0).put("partition frame state cannot resolve row counts [partitionIndex=")
+                    .put(partitionIndex).put(']');
+        }
+        return getLogicalRowCount(state);
+    }
+
+    /**
+     * Checks row-count exactness. Implementations may rule out dedup from Run
+     * metadata without binding windows or opening physical data columns.
+     */
+    default boolean hasInexactRowCount(long state) {
+        bind(state);
+        return PartitionFrameState.hasInexactWindows(state);
     }
 
     /**

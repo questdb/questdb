@@ -506,6 +506,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
     row_count: jlong,
+    dedup_sort_version: jlong,
 ) {
     let env = &mut env;
     if parquet_updater.is_null() {
@@ -530,7 +531,12 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.replace_row_group(&partition, row_group_id, row_offset_from(row_offset)?)
+        parquet_updater.replace_row_group(
+            &partition,
+            row_group_id,
+            row_offset_from(row_offset)?,
+        )?;
+        parquet_updater.set_last_row_group_dedup_sort_version(dedup_sort_version)
     };
 
     match update() {
@@ -567,6 +573,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     col_data_len: jlong,
     timestamp_index: jint,
     row_count: jlong,
+    dedup_sort_version: jlong,
 ) {
     let env = &mut env;
     if parquet_updater.is_null() {
@@ -588,7 +595,8 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)
+        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)?;
+        parquet_updater.set_last_row_group_dedup_sort_version(dedup_sort_version)
     };
 
     match insert() {

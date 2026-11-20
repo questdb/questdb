@@ -91,6 +91,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final CairoConfiguration configuration;
     private final int dbRootSize;
     private final FilesFacade ff;
+    private final ObjList<HistoricalColumn> historicalColumns = new ObjList<>();
     private final int id;
     private final int maxOpenPartitions;
     private final MessageBus messageBus;
@@ -111,6 +112,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean hasActiveColumns;
     private boolean hasParquetPartitions;
     private ObjList<IndexReader> indexes;
+    // Lets a resolved count open a partition without opening its projected columns.
+    private boolean isSkippingPartitionColumns;
     private @Nullable MemoryTracker memoryTracker;
     private int openPartitionCount;
     private LongList openPartitionInfo;
@@ -401,6 +404,47 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getDataVersion() {
         return txFile.getDataVersion();
+    }
+
+    /** Borrowed until the partition closes; never exposes tombstones as query columns. */
+    public HistoricalColumn getHistoricalColumn(int partitionIndex, int columnId, int type) {
+        for (int i = historicalColumns.size() - 1; i >= 0; i--) {
+            final HistoricalColumn column = historicalColumns.getQuick(i);
+            if (column.partitionIndex() == partitionIndex && column.columnId() == columnId) {
+                return column;
+            }
+        }
+        final int writerIndex = metadata.getHistoricalWriterIndex(columnId, type);
+        final long rows = openPartition(partitionIndex);
+        final long partitionTimestamp = getPartitionTimestampByIndex(partitionIndex);
+        final long rawTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+        final long top = rawTop < 0 ? rows : Math.min(rawTop, rows);
+        MemoryCMR data = null;
+        MemoryCMR aux = null;
+        try {
+            if (top < rows) {
+                final String name = metadata.getWriterColumnName(writerIndex).toString();
+                final long nameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                final long partitionNameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+                pathGenNativePartition(partitionIndex, partitionNameTxn);
+                final int partitionLen = path.size();
+                TableUtils.dFile(path, name, nameTxn);
+                data = openHistoricalColumnMemory();
+                if (ColumnType.isVarSize(type)) {
+                    TableUtils.iFile(path.trimTo(partitionLen), name, nameTxn);
+                    aux = openHistoricalColumnMemory();
+                }
+            }
+            final HistoricalColumn column = new HistoricalColumn(partitionIndex, columnId, data, aux, top);
+            historicalColumns.add(column);
+            return column;
+        } catch (Throwable th) {
+            Misc.free(data);
+            Misc.free(aux);
+            throw th;
+        } finally {
+            path.trimTo(rootLen);
+        }
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
@@ -696,6 +740,23 @@ public class TableReader implements Closeable, SymbolTableSource {
         return metadata.getPartitionBy();
     }
 
+    /**
+     * Returns the rows a full scan of the partition yields. Partitions with exact
+     * row counts use snapshot metadata and are not opened. Inexact partitions open
+     * only the timestamp and dedup-key columns needed to resolve inexact windows.
+     */
+    public long getResolvedPartitionRowCount(int partitionIndex) {
+        final long state = getOrOpenPartitionState(partitionIndex);
+        if (state == 0) {
+            return txFile.getPartitionSize(partitionIndex);
+        }
+        if (!partitionFrameStateFactory.hasInexactRowCount(state)) {
+            return partitionFrameStateFactory.getLogicalRowCount(state);
+        }
+        openPartitionWithoutColumns(partitionIndex);
+        return partitionFrameStateFactory.getResolvedRowCount(this, state, partitionIndex);
+    }
+
     @TestOnly
     public ReaderScanProfile getScanProfile() {
         return scanProfile;
@@ -848,6 +909,37 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
+     * Returns whether reading this snapshot may yield fewer rows than its partitions
+     * declare: a dedup table with delta partitions whose windows the binding could not
+     * prove duplicate-free (see {@link PartitionFrameState#isExactRowCount(long, int)}).
+     * Row-count shortcuts over declared spans (cursor sizes, skips, LIMIT clamps) must
+     * not be taken while this is true; every such frame must be decoded to be counted.
+     * Binds the delta partition states, exactly as counting their logical rows does.
+     */
+    public boolean hasInexactRowCount() {
+        return hasInexactRowCount(0, partitionCount);
+    }
+
+    /**
+     * {@link #hasInexactRowCount()} over partitions {@code [partitionLo, partitionHi)} only. Binds only the delta
+     * partition states of that range, so a cursor confined to some partitions pays no catalog open for the others.
+     */
+    public boolean hasInexactRowCount(int partitionLo, int partitionHi) {
+        if (!hasAnyDelta()) {
+            return false;
+        }
+        for (int i = partitionLo; i < partitionHi; i++) {
+            if (txFile.getPartitionHasDelta(i)) {
+                final long state = getOrOpenPartitionState(i);
+                if (state != 0 && partitionFrameStateFactory.hasInexactRowCount(state)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Returns whether any partition may be Parquet. A Delta partition counts as possibly
      * Parquet, because resolving its base format needs catalog I/O that a compile must not pay.
      */
@@ -875,6 +967,11 @@ public class TableReader implements Closeable, SymbolTableSource {
     @TestOnly
     public boolean isParquetMetaReaderOpen() {
         return parquetMetaReader.isOpen();
+    }
+
+    @TestOnly
+    public boolean isPartitionFrameStateOpen(int partitionIndex) {
+        return getOpenPartitionState(partitionIndex) != 0;
     }
 
     @Override
@@ -1239,6 +1336,15 @@ public class TableReader implements Closeable, SymbolTableSource {
         partitionCount--;
     }
 
+    private void closeHistoricalColumns(int partitionIndex) {
+        for (int i = historicalColumns.size() - 1; i >= 0; i--) {
+            if (historicalColumns.getQuick(i).partitionIndex() == partitionIndex) {
+                Misc.free(historicalColumns.getQuick(i));
+                historicalColumns.remove(i);
+            }
+        }
+    }
+
     private void closeIndexReader(int base, int columnIndex) {
         int index = getPrimaryColumnIndex(base, columnIndex);
         Misc.free(indexes.getQuick(index));
@@ -1293,6 +1399,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void closePartitionResources(int partitionIndex, int offset) {
+        closeHistoricalColumns(partitionIndex);
         // we will call this method even if partition has been closed already, or it doesn't exist,
         // hence we ignore the "unknown" format
         final byte format = getPartitionFormat(partitionIndex);
@@ -1329,9 +1436,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        // Resolve by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the reader's
+        // partition index need not yet line up with the transaction's.
+        final int txPartitionIndex = txFile.getPartitionIndex(partitionTs);
         long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
         long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
-        if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
+        // A partition mapped before its Delta catalog existed must reopen through the catalog's base, as
+        // reconcileOpenPartitions0 closes it later. The name txn and the _txn row count do not show a base
+        // compaction, and the retired native base's column files are gone by the time a column is remapped.
+        final boolean isCatalogNew = txPartitionIndex > -1
+                && txFile.getPartitionHasDelta(txPartitionIndex)
+                && getPartitionBaseId(partitionIndex) == 0;
+        if (existingPartitionNameTxn != newNameTxn || newSize < 0 || isCatalogNew) {
             LOG.debug().$("close outdated partition files [table=").$(tableToken).$(", ts=")
                     .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
             // Close all columns, partition is overwritten. Partition reconciliation process will re-open correct files
@@ -1347,13 +1463,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionCount--;
             return -1;
         }
-        long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         //noinspection resource
-        pathGenNativePartition(partitionIndex, nameTxn);
-        // Resolve the geometry by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the
-        // reader's partition index need not yet line up with the transaction's, which is why every lookup above
-        // goes by timestamp too.
-        return mappedRowCount(txFile.getPartitionIndex(partitionTs), newSize);
+        pathGenNativePartition(partitionIndex, existingPartitionNameTxn);
+        return mappedRowCount(txPartitionIndex, newSize);
     }
 
     private void copyColumns(
@@ -1500,6 +1612,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void destroyPartitionFrameState(int partitionIndex) {
+        closeHistoricalColumns(partitionIndex);
         if (partitionFrameStates == null) {
             return;
         }
@@ -1568,6 +1681,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     private void freeColumns() {
+        Misc.freeObjListAndClear(historicalColumns);
         Misc.freeObjList(columns);
     }
 
@@ -1853,6 +1967,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         );
     }
 
+    private MemoryCMR openHistoricalColumnMemory() {
+        final long size = ff.length(path.$());
+        if (size < 0) {
+            throw CairoException.critical(ff.errno()).put("cannot open historical column [path=").put(path).put(']');
+        }
+        return size == 0 ? null : new MemoryCMRDetachedImpl(ff, path.$(), size, MemoryTag.MMAP_TABLE_READER, false);
+    }
+
     private TableReaderMetadata openMetaFile() {
         TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken);
         try {
@@ -2128,7 +2250,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void openPartitionColumns(int partitionIndex, Path path, int columnBase, long partitionRowCount) {
         try {
             for (int i = 0; i < columnCount; i++) {
-                if (hasActiveColumns && !activeColumns.get(i)) {
+                if (isSkippingPartitionColumns || (hasActiveColumns && !activeColumns.get(i))) {
                     continue;
                 }
                 reloadColumnAt(
@@ -2146,6 +2268,23 @@ public class TableReader implements Closeable, SymbolTableSource {
             closePartitionColumns(columnBase);
             openPartitionInfo.setQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_SIZE, -1);
             throw th;
+        }
+    }
+
+    // Leaves the active-columns flag clear, so a later scan opens its projection.
+    private void openPartitionWithoutColumns(int partitionIndex) {
+        if (getPartitionRowCount(partitionIndex) != -1) {
+            return;
+        }
+        isSkippingPartitionColumns = true;
+        try {
+            openPartition0(partitionIndex);
+        } finally {
+            isSkippingPartitionColumns = false;
+        }
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE) > -1) {
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
         }
     }
 
@@ -2848,6 +2987,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void setPartitionBaseId(int partitionIndex, long baseId) {
         if (partitionFrameStates != null) {
             partitionFrameStates.setQuick(partitionIndex * PARTITION_STATES_SLOT_SIZE + PARTITION_STATES_SLOT_OFFSET_BASE_ID, baseId);
+        }
+    }
+
+    public record HistoricalColumn(int partitionIndex, int columnId, MemoryCMR data, MemoryCMR aux, long top) implements Closeable {
+        @Override
+        public void close() {
+            Misc.free(data);
+            Misc.free(aux);
         }
     }
 }

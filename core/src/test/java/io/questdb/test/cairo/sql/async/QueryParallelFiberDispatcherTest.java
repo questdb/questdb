@@ -34,8 +34,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -2355,10 +2359,28 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     @Test
     public void testVectorAggregateEntrySuccessCompletesOnceAndReleasesSlot() throws Exception {
         assertVectorEntryModes((engine, mode) -> {
-            try (RealEntryFixture fixture = new RealEntryFixture(engine, new AtomicBooleanCircuitBreaker(engine), null, null, null)) {
-                runVectorEntry(engine, mode, fixture, null, null);
-                Assert.assertFalse(fixture.error.hasError());
-                Assert.assertEquals(42, fixture.function.getLong(null));
+            try (SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                engine.execute("CREATE TABLE IF NOT EXISTS vector_entry AS (SELECT nullif(x, 1) x FROM long_sequence(42))", context);
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compiler.compile("vector_entry", context).getRecordCursorFactory();
+                        PageFrameCursor frameCursor = factory.getPageFrameCursor(context, PartitionFrameCursorFactory.ORDER_ASC);
+                        PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                        RealEntryFixture fixture = new RealEntryFixture(engine, new AtomicBooleanCircuitBreaker(engine), null, null, null)
+                ) {
+                    addressCache.of(factory.getMetadata(), frameCursor);
+                    final PageFrame frame = frameCursor.next();
+                    Assert.assertNotNull(frame);
+                    addressCache.add(0, frame);
+                    Assert.assertNull(frameCursor.next());
+                    fixture.pool.of(addressCache);
+                    Assert.assertEquals(0, fixture.function.getLong(null));
+                    runVectorEntry(engine, mode, fixture, null, null);
+                    Assert.assertFalse(fixture.error.hasError());
+                    Assert.assertFalse(fixture.breaker.checkIfTripped());
+                    // count(*) includes the NULL row and consumes the navigated frame's row count.
+                    Assert.assertEquals(42, fixture.function.getLong(null));
+                }
             }
         });
     }
@@ -5064,8 +5086,8 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     if (frameFailure != null) {
                         throw frameFailure;
                     }
-                    // count(*) has no key/value column, so it only consumes frameRowCount.
-                    return null;
+                    // Success paths bind the pool to a live frame address cache, just like the owner.
+                    return super.navigateTo(frameIndex);
                 }
             };
             try {

@@ -353,10 +353,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
                 return null;
             }
             pageFrameAddressCache.add(streamingPageFrameIndex, frame);
-            pageFrameMemoryPool.navigateTo(streamingPageFrameIndex, pageFrameMemoryRecord);
+            // Stream the decoded rows: an inexact frame holds fewer rows than its declared span.
+            streamingPageFrameRowHi = pageFrameMemoryPool.navigateToAndCount(streamingPageFrameIndex, pageFrameMemoryRecord);
             streamingCurrentPageFrame = frame;
             streamingPageFrameRow = 0;
-            streamingPageFrameRowHi = frame.getPartitionHi() - frame.getPartitionLo();
             streamingPageFrameIndex++;
         }
         return streamingCurrentPageFrame;

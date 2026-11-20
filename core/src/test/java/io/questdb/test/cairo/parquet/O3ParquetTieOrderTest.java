@@ -83,26 +83,27 @@ public class O3ParquetTieOrderTest extends AbstractCairoTest {
     @Test
     public void testDedupSkipTieMatchesNative() throws Exception {
         // DEDUP SKIP KEYS(ts, v): the coalesced merge drops the resent row 5 and puts the new keys 0 and 50
-        // after the stored rows at 03:00
+        // among the stored rows at 03:00, in key order
         Assume.assumeTrue(isWal);
         setProperties();
         assertMemoryLeak(() -> {
             createTables(" DEDUP SKIP KEYS(ts, v)", 1, 2, 3, 4, 4, 4, 7, 8);
             insertRows("(50, 'a', 'v50', 50.5, '2024-01-01T03:00:00.000000Z'), (5, 'a', 'v5', 5.5, '2024-01-01T03:00:00.000000Z'), "
                     + "(0, 'a', 'v0', 0.5, '2024-01-01T03:00:00.000000Z')");
-            assertDayOrder(1, 2, 3, 4, 5, 6, 0, 50, 7, 8);
+            assertDayOrder(1, 2, 3, 0, 4, 5, 6, 50, 7, 8);
         });
     }
 
     @Test
     public void testDedupUpsertTieMatchesNative() throws Exception {
-        // DEDUP UPSERT KEYS(ts, v): the coalesced merge puts the new keys 0 and 50 after the stored rows at 03:00
+        // DEDUP UPSERT KEYS(ts, v): the coalesced merge puts the new keys 0 and 50 among the stored rows at
+        // 03:00, in key order
         Assume.assumeTrue(isWal);
         setProperties();
         assertMemoryLeak(() -> {
             createTables(" DEDUP UPSERT KEYS(ts, v)", 1, 2, 3, 4, 4, 4, 7, 8);
             insertRows("(50, 'a', 'v50', 50.5, '2024-01-01T03:00:00.000000Z'), (0, 'a', 'v0', 0.5, '2024-01-01T03:00:00.000000Z')");
-            assertDayOrder(1, 2, 3, 4, 5, 6, 0, 50, 7, 8);
+            assertDayOrder(1, 2, 3, 0, 4, 5, 6, 50, 7, 8);
         });
     }
 

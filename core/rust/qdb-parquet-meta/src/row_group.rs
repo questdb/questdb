@@ -28,7 +28,7 @@ use crate::column_chunk::ColumnChunkRaw;
 use crate::error::ParquetMetaErrorKind;
 use crate::error::ParquetMetaResult;
 use crate::parquet_meta_err;
-use crate::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE};
+use crate::types::{BLOCK_ALIGNMENT, COLUMN_CHUNK_SIZE, DEDUP_SORT_VERSION_UNSET};
 
 // ── RowGroupBlockReader (zero-copy) ────────────────────────────────────
 
@@ -126,6 +126,9 @@ pub struct RowGroupBlockBuilder {
     bloom_filters: Vec<(usize, usize)>,
     /// (col_index, parquet_offset, parquet_length) for external bloom filters.
     external_bloom_filters: Vec<(usize, u64, u64)>,
+    /// Footer-side per-row-group entry, not part of the block bytes; see
+    /// `FooterFeatureFlags::DEDUP_SORT_VERSION_BIT`.
+    dedup_sort_version: i64,
 }
 
 impl RowGroupBlockBuilder {
@@ -137,11 +140,23 @@ impl RowGroupBlockBuilder {
             out_of_line: Vec::new(),
             bloom_filters: Vec::new(),
             external_bloom_filters: Vec::new(),
+            dedup_sort_version: DEDUP_SORT_VERSION_UNSET,
         }
     }
 
     pub fn num_rows(&self) -> u64 {
         self.num_rows
+    }
+
+    /// The dedup version whose keys sort this row group's rows within each designated
+    /// timestamp; `DEDUP_SORT_VERSION_UNSET` makes no claim.
+    pub fn dedup_sort_version(&self) -> i64 {
+        self.dedup_sort_version
+    }
+
+    pub fn set_dedup_sort_version(&mut self, version: i64) -> &mut Self {
+        self.dedup_sort_version = version;
+        self
     }
 
     pub fn column_chunk_raw(&self, index: usize) -> &ColumnChunkRaw {

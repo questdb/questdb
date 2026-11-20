@@ -124,9 +124,7 @@ public class WindowJoinTimeFrameHelper {
         isFrameCursorExhausted = false;
 
         // let's start with the last found frame and row id
-        if (bookmarkedFrameIndex != -1 && timestampLo >= bookmarkedTimestampLo) {
-            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
-            timeFrameCursor.open();
+        if (openBookmarkedFrame(timestampLo)) {
             if (recordPrevailing) {
                 // Set prevailing candidate so findPrevailingForMasterRow can
                 // scan backward if the window starts at the frame boundary.
@@ -150,7 +148,7 @@ public class WindowJoinTimeFrameHelper {
             // avoiding O(N) linear scan through all preceding frames.
             final long nativeTimestamp = scale == 1 ? timestampLo : timestampLo / scale;
             timeFrameCursor.seekEstimate(nativeTimestamp);
-            if (recordPrevailing && timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
+            if (recordPrevailing && openSeekedFrame()) {
                 // The seeked frame has ceiling <= timestampLo, so all its rows
                 // are < timestampLo. Record its last row as prevailing candidate.
                 prevailingFrameIndex = timeFrame.getFrameIndex();
@@ -254,18 +252,15 @@ public class WindowJoinTimeFrameHelper {
         int prevailingFrameIndex = -1;
         isFrameCursorExhausted = false;
 
-        if (bookmarkedFrameIndex != -1 && timestampLo >= bookmarkedTimestampLo) {
-            timeFrameCursor.jumpTo(bookmarkedFrameIndex);
-            if (timeFrameCursor.open() > 0) {
-                long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi(), scale);
-                if (frameTsHi < timestampLo) {
-                    // Record as prevailing candidate
-                    prevailingRowIndex = timeFrame.getRowHi() - 1;
-                    prevailingFrameIndex = timeFrame.getFrameIndex();
-                    bookmarkCurrentFrame(0, timestampLo);
-                } else {
-                    rowLo = bookmarkedRowIndex;
-                }
+        if (openBookmarkedFrame(timestampLo)) {
+            long frameTsHi = scaleTimestamp(timeFrame.getTimestampHi(), scale);
+            if (frameTsHi < timestampLo) {
+                // Record as prevailing candidate
+                prevailingRowIndex = timeFrame.getRowHi() - 1;
+                prevailingFrameIndex = timeFrame.getFrameIndex();
+                bookmarkCurrentFrame(0, timestampLo);
+            } else {
+                rowLo = bookmarkedRowIndex;
             }
         } else {
             bookmarkedFrameIndex = -1;
@@ -273,7 +268,7 @@ public class WindowJoinTimeFrameHelper {
             // avoiding O(N) linear scan through all preceding frames.
             final long nativeTimestamp = scale == 1 ? timestampLo : timestampLo / scale;
             timeFrameCursor.seekEstimate(nativeTimestamp);
-            if (timeFrame.getFrameIndex() >= 0 && timeFrameCursor.open() > 0) {
+            if (openSeekedFrame()) {
                 // The seeked frame has ceiling <= timestampLo, so all its rows
                 // are < timestampLo. Record its last row as prevailing candidate.
                 prevailingRowIndex = timeFrame.getRowHi() - 1;
@@ -468,10 +463,9 @@ public class WindowJoinTimeFrameHelper {
             if (timeFrameCursor.open() > 0) {
                 return true;
             }
-            // Step over an empty frame rather than end the scan on it, the way findRowLo() does.
-            // No TimeFrameCursor hands out an empty frame today, so this loop never spins; it keeps
-            // nextFrame() consistent with findRowLo() and every other open() consumer, since ending
-            // the scan here would silently truncate the index and drop window rows past the frame.
+            // Step over an empty frame rather than end the scan on it, the way findRowLo() does: a
+            // frame decodes empty when dedup on read leaves it no rows, and ending the scan here
+            // would silently truncate the index and drop window rows past the frame.
         }
         return false;
     }
@@ -674,5 +668,27 @@ public class WindowJoinTimeFrameHelper {
             return -(scanHi - 1) - 2;
         }
         return prevailingRow;
+    }
+
+    // Opens the bookmarked frame when the bookmark can anchor a search from timestampLo. A frame can
+    // decode empty, e.g. when dedup on read leaves it no rows; it bounds no row, so a bookmark on it
+    // is dropped and the search starts over from a seek.
+    private boolean openBookmarkedFrame(long timestampLo) {
+        if (bookmarkedFrameIndex == -1 || timestampLo < bookmarkedTimestampLo) {
+            return false;
+        }
+        timeFrameCursor.jumpTo(bookmarkedFrameIndex);
+        if (timeFrameCursor.open() > 0) {
+            return true;
+        }
+        bookmarkedFrameIndex = -1;
+        return false;
+    }
+
+    // Opens the frame a seek landed on, or, when it decodes empty, the last earlier frame with rows.
+    // Every frame up to the seeked one ends below the seek timestamp, so either holds the prevailing
+    // candidate. With no such frame, the cursor is before the first frame.
+    private boolean openSeekedFrame() {
+        return timeFrame.getFrameIndex() >= 0 && (timeFrameCursor.open() > 0 || timeFrameCursor.openPrev());
     }
 }

@@ -78,6 +78,15 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     }
 
     /**
+     * Returns whether a frame of this cursor may decode to fewer rows than it declares (see
+     * {@link TableReader#hasInexactRowCount()}). Checks only the partitions this cursor can
+     * reach, binding their delta partition states.
+     */
+    default boolean hasInexactRowCount() {
+        return getTableReader().hasInexactRowCount();
+    }
+
+    /**
      * Returns true if this cursor applies interval filtering to partitions.
      * When true, the cursor may produce narrowed row ranges per partition
      * and skip partitions entirely, making page frame counts unpredictable

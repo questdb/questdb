@@ -79,6 +79,11 @@ public class CompositeAwarePartitionFrameCursor implements PartitionFrameCursor 
     }
 
     @Override
+    public boolean hasInexactRowCount() {
+        return delegate.hasInexactRowCount();
+    }
+
+    @Override
     public boolean hasIntervalFilter() {
         return delegate.hasIntervalFilter();
     }
