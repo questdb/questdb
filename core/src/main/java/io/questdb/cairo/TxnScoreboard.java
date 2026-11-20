@@ -63,12 +63,23 @@ public interface TxnScoreboard extends QuietCloseable {
 
     boolean acquireTxn(int id, long tableTxn, long seqTxn);
 
+    /**
+     * Copies the seqTxn of every active reader and of the checkpoint to {@code address}, at most
+     * {@code capacity} values, after fencing later readers at {@code currentTableTxn}. Returns the
+     * active count, which may exceed capacity, or -1 when an entry's seqTxn is unknown.
+     */
+    default int copyReaderSeqTxns(long currentTableTxn, long address, int capacity) {
+        return -1;
+    }
+
     int getEntryCount();
 
     /**
      * Returns the minimum sequencer transaction needed by active table snapshots.
      * The caller must read {@code currentTableTxn} and {@code currentSeqTxn} from one stable {@code _txn} view.
-     * The caller must not use the result for reclamation while a checkpoint is in progress.
+     * A checkpoint's seqTxn is included through the {@link #CHECKPOINT_ID} slot. A caller that deletes files also
+     * checks that no checkpoint is in progress, after the scan: a checkpoint may take the slot and close its source
+     * reader during the scan.
      */
     default long getMinSeqTxn(long currentTableTxn, long currentSeqTxn) {
         return UNKNOWN_SEQ_TXN;
