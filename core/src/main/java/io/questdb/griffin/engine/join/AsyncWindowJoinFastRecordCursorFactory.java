@@ -368,6 +368,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
+        if (frameRowCount == 0) {
+            // An inexact frame can decode to no rows. It has no first or last master timestamp, and
+            // a slave lookup from NULL bounds would only reset the slave bookmark.
+            return;
+        }
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long windowLo = atom.getWindowLo();
@@ -518,6 +523,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
+        if (frameRowCount == 0) {
+            // An inexact frame can decode to no rows. It has no first or last master timestamp, and
+            // a slave lookup from NULL bounds would only reset the slave bookmark.
+            return;
+        }
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long windowLo = atom.getWindowLo();
@@ -669,6 +679,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
+        if (frameRowCount == 0) {
+            // An inexact frame can decode to no rows. It has no first or last master timestamp, and
+            // a slave lookup from NULL bounds would only reset the slave bookmark.
+            return;
+        }
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long windowLo = atom.getWindowLo();
@@ -882,6 +897,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
+        if (frameRowCount == 0) {
+            // An inexact frame can decode to no rows. It has no first or last master timestamp, and
+            // a slave lookup from NULL bounds would only reset the slave bookmark.
+            return;
+        }
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long windowLo = atom.getWindowLo();
@@ -1067,6 +1087,11 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         final DirectLongList rows = task.getFilteredRows();
         rows.clear();
         task.setFilteredRowCount(frameRowCount);
+        if (frameRowCount == 0) {
+            // An inexact frame can decode to no rows. It has no first or last master timestamp, and
+            // a slave lookup from NULL bounds would only reset the slave bookmark.
+            return;
+        }
 
         final int masterTimestampIndex = atom.getMasterTimestampIndex();
         final long windowLo = atom.getWindowLo();
