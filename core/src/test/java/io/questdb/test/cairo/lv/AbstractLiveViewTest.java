@@ -621,6 +621,20 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Spins until the thread parks on a monitor's {@code wait()}: a checkpoint freeze's {@code waitForUnfrozen()} in
+     * the tests that call it.
+     */
+    protected static void awaitWaiting(Thread thread) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (thread.getState() != Thread.State.WAITING) {
+            if (thread.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail(thread.getName() + " never parked [state=" + thread.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
+    /**
      * Joins a thread a test started, whose body records what it threw in {@code error}, and fails when the
      * thread is still running after {@link #THREAD_JOIN_MILLIS} or threw.
      */
@@ -651,6 +665,24 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 clearWorkerThreadLocals();
             }
         }, "lv-checkpoint-agent");
+    }
+
+    /**
+     * Starts a thread named {@code name} that runs {@code body} and records what it threw in {@code error}, for
+     * {@link #joinWithoutError} to report.
+     */
+    protected static Thread startThread(String name, AtomicReference<Throwable> error, Runnable body) {
+        final Thread thread = new Thread(() -> {
+            try {
+                body.run();
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, name);
+        thread.start();
+        return thread;
     }
 
     /**

@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -36,12 +35,8 @@ import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Files;
 import io.questdb.std.Numbers;
-import io.questdb.std.Os;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
@@ -51,7 +46,6 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -69,6 +63,9 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>
  * A checkpoint freeze that takes the refresh latch while an invalidation writes the state file frees the
  * invalidated view's runtime state once it lets the latch go, since the invalidation's own free lost to it.
+ * <p>
+ * The base table's writer closes each view's state file before it lets the view's monitor go, so it holds no
+ * view's file open while it waits for the next view's checkpoint freeze.
  */
 public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     // A reason for the base-table writer in the tests that call it directly, without changing the base.
@@ -90,7 +87,7 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
     private static final String NOT_WAL_REASON = "base table is not WAL table";
     private static final String UPDATE_REASON = "update operation";
     private static final LogCapture capture = new LogCapture();
-    private final StateFileFault fault = new StateFileFault();
+    private final LiveViewStateFileFault fault = new LiveViewStateFileFault();
 
     @Before
     public void setUpRepeatedInvalidation() {
@@ -249,6 +246,58 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
             }
             assertFirstInvalidationStands(instance, "base table drop", firstUs.get());
             assertInvalidAfterARestart("base table drop", firstUs.get());
+        });
+    }
+
+    @Test
+    public void testABaseInvalidationLetsEachStateFileGoBeforeTheNextView() throws Exception {
+        // Two views over base, lv registered ahead of lv2, and a checkpoint freeze of lv2. The base-table writer
+        // invalidates lv and then waits for lv2's freeze. It closed lv's state file holding lv's monitor, so it
+        // holds no descriptor of the file while it waits, and a DROP LIVE VIEW of lv, or the rollback of a failed
+        // CREATE LIVE VIEW, which mark the view dropped under that monitor, find the file closed when they remove
+        // it, as Windows requires.
+        assertMemoryLeak(fault, () -> {
+            final LiveViewInstance instance = createBaseView();
+            execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM NOW AS " + BASE_VIEW_SQL);
+            final LiveViewInstance sibling = engine.getLiveViewRegistry().getViewInstance("lv2");
+            Assert.assertNotNull(sibling);
+            final TableToken baseToken = engine.verifyTableName("base");
+            fault.watchStateFile(instance);
+            Assert.assertTrue(sibling.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            final AtomicReference<Throwable> invalidatorError = new AtomicReference<>();
+            final Thread invalidator;
+            try {
+                invalidator = startThread(
+                        "lv-invalidator",
+                        invalidatorError,
+                        () -> engine.invalidateLiveViewsForBaseTable(baseToken, BASE_REASON)
+                );
+                awaitWaiting(invalidator);
+                Assert.assertTrue(instance.isInvalid());
+                TestUtils.assertEquals(BASE_REASON, instance.getInvalidationReason());
+                Assert.assertFalse(sibling.isInvalid());
+                Assert.assertEquals("lv's state file must be closed while the writer waits for lv2", 0, fault.getOpenStateFileFdCount());
+            } finally {
+                sibling.endCheckpoint();
+            }
+            joinWithoutError(invalidator, invalidatorError);
+            Assert.assertEquals("lv's state file must be closed holding lv's monitor", 1, fault.getStateFileClosesHoldingTheMonitor());
+            Assert.assertEquals(0, fault.getStateFileClosesWithoutTheMonitor());
+            Assert.assertEquals(0, fault.getOpenStateFileFdCount());
+            Assert.assertTrue(sibling.isInvalid());
+            TestUtils.assertEquals(BASE_REASON, sibling.getInvalidationReason());
+            capture.drain();
+            capture.assertNotLogged(COULD_NOT_PERSIST_LINE);
+
+            shutdown();
+            engine.buildViewGraphs();
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views() ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            lv\tinvalid\tinvalidated by the base
+                            lv2\tinvalid\tinvalidated by the base
+                            """);
         });
     }
 
@@ -731,17 +780,6 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
         capture.assertNotLogged(COULD_NOT_PERSIST_LINE);
     }
 
-    // Spins until the thread parks on a monitor's wait(): the freeze's waitForUnfrozen() in these tests.
-    private static void awaitWaiting(Thread thread) {
-        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
-        while (thread.getState() != Thread.State.WAITING) {
-            if (thread.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
-                Assert.fail(thread.getName() + " never parked [state=" + thread.getState() + ']');
-            }
-            Os.pause();
-        }
-    }
-
     private static void invalidate(boolean isBaseWriter, LiveViewInstance instance, TableToken baseToken, String reason) {
         if (isBaseWriter) {
             engine.invalidateLiveViewsForBaseTable(baseToken, reason);
@@ -789,20 +827,6 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
             drainWalQueue();
         }
         Assert.assertTrue("the view must have been invalidated", instance.isInvalid());
-    }
-
-    private static Thread startThread(String name, AtomicReference<Throwable> error, Runnable body) {
-        final Thread thread = new Thread(() -> {
-            try {
-                body.run();
-            } catch (Throwable th) {
-                error.set(th);
-            } finally {
-                clearWorkerThreadLocals();
-            }
-        }, name);
-        thread.start();
-        return thread;
     }
 
     // Read as the turn left the instance: the drop marked it and no invalidation flipped it or wrote its state
@@ -969,64 +993,5 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
         final LiveViewInstance instance = instance();
         Assert.assertEquals(LiveViewState.SEED_STATE_SEEDING, instance.getStateReader().getSeedState());
         return instance;
-    }
-
-    /**
-     * {@link LiveViewBaseAmountOpenFault}, which fails the base's amount column file, and faults on the state
-     * file of the view {@link #watchStateFile} names: fails its next opens for writing, reporting a missing file,
-     * counts those made while the view is marked dropped, and runs the action {@link #runAtNextStateFileOpen}
-     * names ahead of the next one.
-     */
-    private static final class StateFileFault extends LiveViewBaseAmountOpenFault {
-        private final AtomicBoolean isMissingStateFileErrnoPending = new AtomicBoolean();
-        private final AtomicReference<Runnable> stateFileOpenAction = new AtomicReference<>();
-        private final AtomicInteger stateFileOpenFailures = new AtomicInteger();
-        private final AtomicInteger stateFileOpensAfterDrop = new AtomicInteger();
-        // The file name, with the view's directory and the separators ahead of it, of the watched state file.
-        private volatile String watchedFileName;
-        private volatile LiveViewInstance watchedInstance;
-
-        @Override
-        public int errno() {
-            return isMissingStateFileErrnoPending.compareAndSet(true, false) ? CairoException.ERRNO_FILE_DOES_NOT_EXIST : super.errno();
-        }
-
-        @Override
-        public long openRW(LPSZ name, int opts) {
-            final String fileName = watchedFileName;
-            if (fileName != null && Utf8s.endsWithAscii(name, fileName)) {
-                if (watchedInstance.isDropped()) {
-                    stateFileOpensAfterDrop.incrementAndGet();
-                }
-                final Runnable action = stateFileOpenAction.getAndSet(null);
-                if (action != null) {
-                    action.run();
-                }
-                if (stateFileOpenFailures.getAndUpdate(n -> Math.max(0, n - 1)) > 0) {
-                    isMissingStateFileErrnoPending.set(true);
-                    return -1;
-                }
-            }
-            return super.openRW(name, opts);
-        }
-
-        void failStateFileOpens(int count) {
-            stateFileOpenFailures.set(count);
-        }
-
-        int getStateFileOpensAfterDrop() {
-            return stateFileOpensAfterDrop.get();
-        }
-
-        // Runs the action once, at the next open of the watched state file, ahead of the open.
-        void runAtNextStateFileOpen(Runnable action) {
-            stateFileOpenAction.set(action);
-        }
-
-        // Sets the instance before the name the open checks first.
-        void watchStateFile(LiveViewInstance instance) {
-            watchedInstance = instance;
-            watchedFileName = Files.SEPARATOR + instance.getLiveViewToken().getDirName() + Files.SEPARATOR + LiveViewState.LIVE_VIEW_STATE_FILE_NAME;
-        }
     }
 }

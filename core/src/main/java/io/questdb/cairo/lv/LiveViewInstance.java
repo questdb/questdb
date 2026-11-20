@@ -1206,8 +1206,9 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #startCheckpoint(SqlExecutionCircuitBreaker)} without the freeze gate: it waits out any
      * in-flight refresh turn and, via the CAS barrier, publishes state the caller
      * set beforehand to the worker's next {@link #tryLockForRefresh()}. DROP pairs
-     * it with a prior {@link #markAsDropped()} so no worker is mid-commit and the
-     * next under-latch recheck sees the drop before the table is torn down.
+     * it with a prior {@link #markDroppedAndAwaitCheckpoint()}, and the rollback of a
+     * failed CREATE with a prior {@link #markAsDropped()}, so no worker is mid-commit
+     * and the next under-latch recheck sees the drop before the table is torn down.
      */
     public void fenceRefresh() {
         awaitRefreshLatch(null);
@@ -2421,9 +2422,22 @@ public class LiveViewInstance implements QuietCloseable {
         isCheckpointUpgradeRebuildPending = true;
     }
 
+    /**
+     * Marks the view dropped and cancels its refresh, under the instance monitor. The out-of-band writers of _lv.s,
+     * {@code CairoEngine.invalidateLiveView} and {@code invalidateLiveViewsForBaseTable0}, check {@link #isDropped()}
+     * and write under this monitor, so one that holds it finishes its write, file released, before this returns, and
+     * one that takes it later finds the view dropped and writes nothing. The caller tears the view's files down only
+     * after it has also fenced the refresh worker with {@link #fenceRefresh()}, which it calls after this returns,
+     * never under this monitor: a refresh turn takes the refresh latch first and this monitor second.
+     * <p>
+     * Unlike {@link #markDroppedAndAwaitCheckpoint()} it does not wait for a checkpoint freeze: the rollback of a
+     * failed CREATE LIVE VIEW removes a directory whose name never committed, which no checkpoint copies.
+     */
     public void markAsDropped() {
-        dropped = true;
-        cancelRefresh();
+        synchronized (this) {
+            dropped = true;
+            cancelRefresh();
+        }
     }
 
     /**

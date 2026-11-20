@@ -2024,6 +2024,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     // would race the worker into a UAF/leak): tryCloseIfDropped frees
                     // only if unlatched, else defers to the worker's finally hook.
                     if (partial != null) {
+                        // markAsDropped takes the view's monitor, which an invalidation holds while it checks for
+                        // the mark and writes _lv.s, so none writes over the teardown below.
                         partial.markAsDropped();
                         final Runnable beforeFenceHook = liveViewCreateRollbackBeforeFenceHook;
                         if (beforeFenceHook != null) {
@@ -3230,7 +3232,8 @@ public class CairoEngine implements Closeable, WriterSource {
      * of {@link #invalidateLiveViewsForBaseTable0}.
      * <p>
      * An invalidation never replaces another: the view keeps the first one's reason and
-     * time, and a view a DROP has marked dropped is left to the drop.
+     * time, and a view that DROP LIVE VIEW or the rollback of a failed CREATE LIVE VIEW
+     * has marked dropped is left to them.
      */
     public void invalidateLiveView(LiveViewInstance instance, String reason) {
         final long invalidationTimestampUs = configuration.getMicrosecondClock().getTicks();
@@ -3239,8 +3242,9 @@ public class CairoEngine implements Closeable, WriterSource {
             // the snapshot reflects the pre-invalidation state and the agent's
             // _lv.s copy is not raced by this rewrite.
             instance.waitForUnfrozen();
-            // DROP LIVE VIEW marks the view dropped under this monitor before it tears the view's
-            // files down, so a view found dropped here is the drop's: write nothing over its teardown.
+            // DROP LIVE VIEW and the rollback of a failed CREATE LIVE VIEW mark the view dropped under
+            // this monitor before they tear its files down, so a view found dropped here is theirs:
+            // write nothing over the teardown.
             if (instance.isDropped()) {
                 return;
             }
@@ -4995,9 +4999,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     // state and the agent's _lv.s copy is not raced by this
                     // rewrite.
                     instance.waitForUnfrozen();
-                    // As in invalidateLiveView: a view a DROP has marked dropped is the drop's, so
-                    // write nothing over its teardown, and the first invalidation's reason and time
-                    // stand, in memory and in _lv.s, which is still rewritten.
+                    // As in invalidateLiveView: DROP LIVE VIEW and the rollback of a failed CREATE
+                    // LIVE VIEW mark the view dropped under this monitor before they tear its files
+                    // down, so write nothing over the teardown of a view found dropped here; and the
+                    // first invalidation's reason and time stand, in memory and in _lv.s, which is
+                    // still rewritten.
                     if (instance.isDropped()) {
                         continue;
                     }
@@ -5034,6 +5040,11 @@ public class CairoEngine implements Closeable, WriterSource {
                         LOG.error().$("could not persist live view invalidation [view=").$(instance.getLiveViewToken())
                                 .$(", reason=").$safe(persistedReason)
                                 .$(", error=").$(t).I$();
+                    } finally {
+                        // Let _lv.s go before this monitor does, as invalidateLiveView's try-with-resources
+                        // does: a failed CREATE LIVE VIEW's rollback marks the view dropped under this monitor
+                        // and then deletes its directory, which Windows refuses while a file in it is open.
+                        blockFileWriter.close();
                     }
                     if (!isInvalid) {
                         instance.markInvalid(viewReason, invalidationTimestampUs);
