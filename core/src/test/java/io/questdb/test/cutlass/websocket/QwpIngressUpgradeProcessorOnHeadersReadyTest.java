@@ -1203,11 +1203,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 }
                 Assert.assertFalse("rejected handshake must not switch protocol", context.isSwitchProtocolCalled());
             }
-            byte[] bytes = new byte[context.getMockRawSocket().sentSize];
-            for (int i = 0; i < bytes.length; i++) {
-                bytes[i] = Unsafe.getByte(bufferAddr + i);
-            }
-            return new String(bytes, StandardCharsets.UTF_8);
+            return readResponse(bufferAddr, context.getMockRawSocket().sentSize);
         } finally {
             Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
@@ -1218,7 +1214,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         for (int i = 0; i < size; i++) {
             bytes[i] = Unsafe.getByte(bufferAddr + i);
         }
-        return new String(bytes, StandardCharsets.US_ASCII);
+        // UTF-8, as a reject reason can name an entity outside ASCII
+        return new String(bytes, StandardCharsets.UTF_8);
     }
 
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
