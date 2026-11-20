@@ -51,6 +51,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
@@ -90,7 +91,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -143,6 +146,8 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
     protected static final int SEED_COMPLETION_PASSES = 2000;
+    // How long a test waits for a thread it started to reach a point or to finish; only a broken run waits it out.
+    protected static final long THREAD_JOIN_MILLIS = 60_000;
     // Hosted Windows CI agents run these suites about 15-20x slower than Linux/mac (measured
     // against build 280635: LiveViewConcurrencyTest 205s vs 9.5s, LiveViewCheckpointKeyedScanTest
     // 235s vs 15s). The soak tests are pure redundancy: each extra row only deepens race exposure,
@@ -579,6 +584,22 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes
+     * the freeze intent before it waits for the refresh latch, and {@code startCheckpoint} enters the monitor only
+     * once it holds the latch, so from here on every free that CASes the latch loses until the caller lets the
+     * monitor go.
+     */
+    protected static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
+        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
+        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
+            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
+                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
+            }
+            Os.pause();
+        }
+    }
+
+    /**
      * Waits until {@code instance} has been marked dropped, then returns. This is the deterministic
      * fence a concurrent {@code engine.dropLiveView} crosses: {@code markDroppedAndAwaitCheckpoint}
      * publishes {@code dropped = true} (a volatile) BEFORE it commits to its blocking branch - the
@@ -597,6 +618,39 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
             Os.pause();
         }
+    }
+
+    /**
+     * Joins a thread a test started, whose body records what it threw in {@code error}, and fails when the
+     * thread is still running after {@link #THREAD_JOIN_MILLIS} or threw.
+     */
+    protected static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
+        thread.join(THREAD_JOIN_MILLIS);
+        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
+        if (error.get() != null) {
+            throw new AssertionError(thread.getName() + " failed", error.get());
+        }
+    }
+
+    /**
+     * A thread, not started yet, that runs {@code startCheckpoint} on the view, as {@code DatabaseCheckpointAgent}
+     * does for CHECKPOINT CREATE, and records whether it published the freeze in {@code isFrozen} and what it
+     * threw in {@code error}.
+     */
+    protected static Thread newCheckpointAgentThread(
+            LiveViewInstance instance,
+            AtomicBoolean isFrozen,
+            AtomicReference<Throwable> error
+    ) {
+        return new Thread(() -> {
+            try {
+                isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+            } catch (Throwable th) {
+                error.set(th);
+            } finally {
+                clearWorkerThreadLocals();
+            }
+        }, "lv-checkpoint-agent");
     }
 
     /**

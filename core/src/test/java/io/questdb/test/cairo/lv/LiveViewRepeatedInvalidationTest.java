@@ -88,7 +88,6 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
             2026-01-01T09:30:00.000000Z\tacct-2\t10.0\t2
             """;
     private static final String NOT_WAL_REASON = "base table is not WAL table";
-    private static final long THREAD_JOIN_MILLIS = 60_000;
     private static final String UPDATE_REASON = "update operation";
     private static final LogCapture capture = new LogCapture();
     private final StateFileFault fault = new StateFileFault();
@@ -732,19 +731,6 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
         capture.assertNotLogged(COULD_NOT_PERSIST_LINE);
     }
 
-    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
-    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
-    // the latch.
-    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
-        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
-        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
-            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
-                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
-            }
-            Os.pause();
-        }
-    }
-
     // Spins until the thread parks on a monitor's wait(): the freeze's waitForUnfrozen() in these tests.
     private static void awaitWaiting(Thread thread) {
         final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
@@ -782,14 +768,6 @@ public class LiveViewRepeatedInvalidationTest extends AbstractLiveViewTxTest {
             }
         });
         return firstUs;
-    }
-
-    private static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
-        thread.join(THREAD_JOIN_MILLIS);
-        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
-        if (error.get() != null) {
-            throw new AssertionError(thread.getName() + " failed", error.get());
-        }
     }
 
     private static LiveViewStateReader readStateFile(LiveViewInstance instance) {

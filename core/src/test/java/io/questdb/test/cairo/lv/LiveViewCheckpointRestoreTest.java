@@ -82,8 +82,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     // > FLUSH EVERY 100ms, so a single driveRefreshToQuiescence pass crosses the flush window.
     private static final String SNAPSHOT_ID = "test-checkpoint-instance";
-    // How long a case waits for a thread it started to reach a point or to finish; only a broken run waits it out.
-    private static final long THREAD_JOIN_MILLIS = 60_000;
     // Installed before the engine is built (setUpStatic) so DatabaseCheckpointAgent captures it. A pure
     // pass-through unless a test arms lvStateCopyHook; testCheckpointWhileBaseAdvancesConverges uses it to
     // land a deterministic base advance during the _lv.s copy.
@@ -1270,19 +1268,6 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
 
     // Appends one row to the (ts, sym, x) base table via a direct WalWriter. Used by the base-advance
     // FilesFacade hook, which runs off the SQL execution context and so cannot use execute(INSERT ...).
-    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
-    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
-    // the latch.
-    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
-        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
-        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
-            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
-                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
-            }
-            Os.pause();
-        }
-    }
-
     private static void appendBaseRow(WalWriter walWriter, long ts, CharSequence sym, double x) {
         TableWriter.Row row = walWriter.newRow(ts);
         row.putSym(1, sym);

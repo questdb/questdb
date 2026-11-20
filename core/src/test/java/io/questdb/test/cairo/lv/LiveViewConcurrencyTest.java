@@ -223,8 +223,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
     private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
-    // How long a test waits for a thread it started to reach a point or to finish; only a broken run waits it out.
-    private static final long THREAD_JOIN_MILLIS = 60_000;
     // How long the multi-worker soak's driver waits after a tick for a worker to finish a
     // turn that did work. A tick no writer committed on has no turn to wait for, so the bound
     // keeps such a tick from stalling the driver.
@@ -2067,45 +2065,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         Assert.assertNull(instance.getRepairRuntime());
         Assert.assertNull(instance.getStoredRowScanFactory());
         Assert.assertNull(instance.getSeedBaseReader());
-    }
-
-    // Spins until the checkpoint agent blocks on the view's monitor, which the caller holds. The agent publishes the
-    // freeze intent before it waits for the refresh latch, and startCheckpoint enters the monitor only once it holds
-    // the latch, so from here on every free that CASes the latch loses until the caller lets the monitor go.
-    private static void awaitAgentBlockedHoldingTheLatch(Thread agent, LiveViewInstance instance) {
-        final long deadlineNanos = System.nanoTime() + THREAD_JOIN_MILLIS * 1_000_000L;
-        while (!(instance.isFreezeArmed() && agent.getState() == Thread.State.BLOCKED)) {
-            if (agent.getState() == Thread.State.TERMINATED || System.nanoTime() > deadlineNanos) {
-                Assert.fail("the checkpoint agent never blocked holding the refresh latch [state=" + agent.getState() + ']');
-            }
-            Os.pause();
-        }
-    }
-
-    private static void joinWithoutError(Thread thread, AtomicReference<Throwable> error) throws InterruptedException {
-        thread.join(THREAD_JOIN_MILLIS);
-        Assert.assertFalse(thread.getName() + " must complete", thread.isAlive());
-        if (error.get() != null) {
-            throw new AssertionError(thread.getName() + " failed", error.get());
-        }
-    }
-
-    // A thread that runs startCheckpoint on the view, as DatabaseCheckpointAgent does for CHECKPOINT CREATE, and
-    // records whether it published the freeze.
-    private static Thread newCheckpointAgentThread(
-            LiveViewInstance instance,
-            AtomicBoolean isFrozen,
-            AtomicReference<Throwable> error
-    ) {
-        return new Thread(() -> {
-            try {
-                isFrozen.set(instance.startCheckpoint(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-            } catch (Throwable th) {
-                error.set(th);
-            } finally {
-                clearWorkerThreadLocals();
-            }
-        }, "lv-checkpoint-agent");
     }
 
     // Builds the thread that tears the checkpoint soak's view down: it awaits the barrier and the view's first
