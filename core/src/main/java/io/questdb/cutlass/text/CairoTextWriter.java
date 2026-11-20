@@ -224,7 +224,6 @@ public class CairoTextWriter implements Closeable, Mutable {
             }
             w.append();
             writtenLineCount++;
-            checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dus);
             if (atomicity == Atomicity.SKIP_ALL) {
@@ -237,7 +236,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(timestampIndex).put(']');
             }
+            return;
         }
+        // The batch commit stays out of the row catch above: its failure concerns every uncommitted
+        // row, which writtenLineCount already counts, so it fails the import in every atomicity
+        // mode, as the final commit does.
+        checkUncommittedRowCount();
     }
 
     public void setCreate(boolean create) {
