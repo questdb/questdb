@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.std.DoubleList;
 import io.questdb.std.Hash;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -108,7 +109,7 @@ public final class DoubleKeyIndex {
         }
         // the value is not NULL, and the distance to a NULL key is NaN or infinite
         final int keyCount = keys.size();
-        if (keyCount <= LINEAR_SCAN_LIMIT) {
+        if (isScanned(keyCount)) {
             for (int i = 0; i < keyCount; i++) {
                 if (Math.abs(keys.getQuick(i) - value) <= Numbers.DOUBLE_TOLERANCE) {
                     return i;
@@ -116,8 +117,8 @@ public final class DoubleKeyIndex {
             }
             return -1;
         }
-        final long cell = isOnGrid(bits) ? cellOf(value) : bits;
-        int slot = Hash.hashLong32(cell) & mask;
+        final long cell = lookupCell(value, bits);
+        int slot = homeSlot(cell);
         long slotCell;
         while ((slotCell = cells[slot]) != EMPTY) {
             if (slotCell == cell && Math.abs(keyValues[slot] - value) <= Numbers.DOUBLE_TOLERANCE) {
@@ -126,6 +127,30 @@ public final class DoubleKeyIndex {
             slot = (slot + 1) & mask;
         }
         return -1;
+    }
+
+    /**
+     * Returns how many entries {@link #indexOf(double)} may compare the value with: every key when it
+     * scans them, otherwise the full slots from the value's home slot to the next empty one. Tests
+     * check that it stays small however many keys there are.
+     */
+    @TestOnly
+    public int probeLength(double value) {
+        final long bits = Double.doubleToRawLongBits(value);
+        if (isNull(bits)) {
+            return 0;
+        }
+        final int keyCount = keys.size();
+        if (isScanned(keyCount)) {
+            return keyCount;
+        }
+        int slot = homeSlot(lookupCell(value, bits));
+        int length = 0;
+        while (cells[slot] != EMPTY) {
+            length++;
+            slot = (slot + 1) & mask;
+        }
+        return length;
     }
 
     // Truncation toward zero makes cell 0 two cells wide, and still keeps the cell numbers of two
@@ -140,6 +165,15 @@ public final class DoubleKeyIndex {
 
     private static boolean isOnGrid(long bits) {
         return (bits & Long.MAX_VALUE) < GRID_LIMIT_BITS;
+    }
+
+    private static boolean isScanned(int keyCount) {
+        return keyCount <= LINEAR_SCAN_LIMIT;
+    }
+
+    // the cell a value is looked up under: its grid cell, or its bits from 2^30 up
+    private static long lookupCell(double value, long bits) {
+        return isOnGrid(bits) ? cellOf(value) : bits;
     }
 
     private void allocate(int capacity) {
@@ -167,8 +201,12 @@ public final class DoubleKeyIndex {
         }
     }
 
+    private int homeSlot(long cell) {
+        return Hash.hashLong32(cell) & mask;
+    }
+
     private void put(long cell, int keyIndex, double key) {
-        int slot = Hash.hashLong32(cell) & mask;
+        int slot = homeSlot(cell);
         while (cells[slot] != EMPTY) {
             slot = (slot + 1) & mask;
         }

@@ -34,6 +34,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.function.IntToDoubleFunction;
+
 /**
  * Compares DoubleKeyIndex with a scan that tries the keys in order with Numbers.equals(), as '='
  * and the searched form of CASE do.
@@ -101,6 +103,31 @@ public class DoubleKeyIndexTest {
     }
 
     @Test
+    public void testProbeLengthOfNullAndFewKeys() {
+        // an empty index and a NULL value compare with nothing; up to 4 keys a value compares with
+        // every key
+        final DoubleKeyIndex index = new DoubleKeyIndex();
+        Assert.assertEquals(0, index.probeLength(0.5));
+        for (int i = 0; i < 4; i++) {
+            index.add(i);
+            Assert.assertEquals(i + 1, index.probeLength(0.5));
+        }
+        Assert.assertEquals(0, index.probeLength(Double.NaN));
+    }
+
+    @Test
+    public void testProbeLengthStaysShortWithManyKeys() {
+        assertShortProbes("whole numbers", i -> i);
+        assertShortProbes("multiples of 1.5", i -> i * 1.5);
+        assertShortProbes("FLOAT fractions", i -> (float) (i * 1.1 + 0.37));
+        assertShortProbes("keys 3 tolerances apart", i -> i * 3 * TOL);
+        assertShortProbes("keys from 2^30 up", i -> (1L << 30) + i * 0.5);
+        assertShortProbes("negative keys", i -> -1 - i * 0.25);
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertShortProbes("random keys", i -> (rnd.nextDouble() - 0.5) * 1_000_000);
+    }
+
+    @Test
     public void testRandomKeySets() {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final DoubleList values = new DoubleList();
@@ -149,6 +176,43 @@ public class DoubleKeyIndexTest {
             final double value = values.getQuick(i);
             Assert.assertEquals("value " + value + " in " + added, firstEqual(added, value), index.indexOf(value));
         }
+    }
+
+    // A lookup must compare a value with a few slots however many keys there are. The bounds sit
+    // above what a table at most half full needs, where keys a few tolerances apart, which share
+    // cells, come closest, and below what a scan of the keys, keys piled into one run of slots or
+    // a table kept 3/4 full gives. Checking every 250 keys sees each table from 8,192 slots up at
+    // several fill levels between two growths.
+    private static void assertShortProbes(String keyKind, IntToDoubleFunction keyAt) {
+        final int keyCount = 10_000;
+        final DoubleKeyIndex index = new DoubleKeyIndex();
+        final double[] keys = new double[keyCount];
+        for (int n = 1; n <= keyCount; n++) {
+            keys[n - 1] = keyAt.applyAsDouble(n - 1);
+            index.add(keys[n - 1]);
+            if (n % 250 == 0) {
+                assertShortProbes(keyKind, index, keys, n);
+            }
+        }
+    }
+
+    private static void assertShortProbes(String keyKind, DoubleKeyIndex index, double[] keys, int n) {
+        long total = 0;
+        int longest = 0;
+        int lookups = 0;
+        for (int i = 0; i < n; i++) {
+            // the key, a value that equals it, and a value between it and the next key
+            final double next = i + 1 < n ? keys[i + 1] : keys[i] + 1;
+            for (double value : new double[]{keys[i], keys[i] + 0.5 * TOL, (keys[i] + next) / 2}) {
+                final int length = index.probeLength(value);
+                total += length;
+                longest = Math.max(longest, length);
+                lookups++;
+            }
+        }
+        final double mean = (double) total / lookups;
+        Assert.assertTrue(keyKind + ", " + n + " keys: mean probe length " + mean, mean <= 8);
+        Assert.assertTrue(keyKind + ", " + n + " keys: longest probe " + longest, longest <= 256);
     }
 
     private static int firstEqual(DoubleList keys, double value) {
