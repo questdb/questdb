@@ -203,23 +203,58 @@ public final class QwpWireTestFixtures {
 
     /**
      * msg_kind(1) + request_id(8 LE) + sql_len(varint) + sql + initial_credit(varint,
-     * 0 = unbounded) + bind_count(0). SQL must be short enough for a single-byte
-     * length varint.
+     * 0 = unbounded) + bind_count(0).
      */
     public static byte[] buildQueryRequest(long requestId, String sql, long initialCredit) {
-        byte[] sqlBytes = sql.getBytes(StandardCharsets.UTF_8);
-        Assert.assertTrue("helper supports single-byte varint SQL lengths only", sqlBytes.length < 128);
-        byte[] p = new byte[1 + 8 + 1 + sqlBytes.length + 10 + 1];
+        return buildQueryRequest(requestId, sql, initialCredit, 0, 0, 0);
+    }
+
+    /**
+     * msg_kind(1) + request_id(8 LE) + sql_len(varint) + sql + initial_credit(varint,
+     * 0 = unbounded) + bind_count(varint) and a LONG bind per {@code longBinds}
+     * value, then, when {@code queryFlags} is not 0, the {@code query_flags}
+     * varint and the row-window fields its bits call for: {@code skipRows} with
+     * {@link QwpEgressMsgKind#QUERY_FLAG_SKIP_ROWS}, then {@code maxRows} with
+     * {@link QwpEgressMsgKind#QUERY_FLAG_MAX_ROWS}.
+     */
+    public static byte[] buildQueryRequest(
+            long requestId,
+            String sql,
+            long initialCredit,
+            long queryFlags,
+            long skipRows,
+            long maxRows,
+            long... longBinds
+    ) {
+        final byte[] sqlBytes = sql.getBytes(StandardCharsets.UTF_8);
+        final byte[] p = new byte[1 + 8 + 10 + sqlBytes.length + 10 + 10 + longBinds.length * 10 + 30];
         int i = 0;
         p[i++] = QwpEgressMsgKind.QUERY_REQUEST;
         for (int s = 0; s < 8; s++) {
             p[i++] = (byte) (requestId >>> (8 * s));
         }
-        p[i++] = (byte) sqlBytes.length;
+        i = QwpVarint.encode(p, i, sqlBytes.length);
         System.arraycopy(sqlBytes, 0, p, i, sqlBytes.length);
         i += sqlBytes.length;
         i = QwpVarint.encode(p, i, initialCredit);
-        p[i++] = 0x00;
+        i = QwpVarint.encode(p, i, longBinds.length);
+        for (long bind : longBinds) {
+            // type, null_flag 0, the value
+            p[i++] = QwpConstants.TYPE_LONG;
+            p[i++] = 0;
+            for (int s = 0; s < 8; s++) {
+                p[i++] = (byte) (bind >>> (8 * s));
+            }
+        }
+        if (queryFlags != 0) {
+            i = QwpVarint.encode(p, i, queryFlags);
+            if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_SKIP_ROWS) != 0) {
+                i = QwpVarint.encode(p, i, skipRows);
+            }
+            if ((queryFlags & QwpEgressMsgKind.QUERY_FLAG_MAX_ROWS) != 0) {
+                i = QwpVarint.encode(p, i, maxRows);
+            }
+        }
         return Arrays.copyOf(p, i);
     }
 
