@@ -29,6 +29,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.mv.MatViewTimerTask;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.ConcurrentQueue;
@@ -190,6 +191,51 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
             Assert.assertEquals(3, timer.getTimerCount());
             Assert.assertEquals(3, state.getRegisteredTimerCount());
             assertQuery("SELECT price FROM mv ORDER BY ts").expectSize().noLeakCheck().returns("price\n42.0\n43.0\n");
+        });
+    }
+
+    @Test
+    public void testRestartAfterPeriodRefreshAndViewChangeKeepsPeriodHi() throws Exception {
+        // The period timer's range refresh commits the period it completed with a view state event, a view DROP
+        // PARTITION follows, and a restart comes before the view's WAL applies them: the view keeps the end of the
+        // completed period as its last period, in the base's timestamp units.
+        assertMemoryLeak(() -> {
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('z', 0.5, '2023-12-31T00:10:00.000000Z'), ('a', 1.0, '2024-01-01T00:10:00.000000Z')");
+            execute("CREATE MATERIALIZED VIEW price_1h REFRESH IMMEDIATE PERIOD (LENGTH 1d) AS ("
+                    + "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            Assert.assertEquals(
+                    timestampType.getDriver().parseFloorLiteral("2024-01-01T00:00:00.000000Z"),
+                    engine.getMatViewStateStore().getViewState(viewToken).getLastPeriodHi()
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-02T01:00:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            // the refresh job runs the period's range refresh, the WAL apply job does not
+            drainMatViewQueue(engine);
+            final long periodHi = timestampType.getDriver().parseFloorLiteral("2024-01-02T00:00:00.000000Z");
+            Assert.assertEquals(periodHi, engine.getMatViewStateStore().getViewState(viewToken).getLastPeriodHi());
+            execute("ALTER MATERIALIZED VIEW price_1h DROP PARTITION LIST '2023-12-31'");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            Assert.assertTrue(tracker.getWriterTxn() < tracker.getSeqTxn());
+
+            engine.getMatViewStateStore().clear();
+            engine.hydrateMatViewStateStore();
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertFalse(state.isInvalid());
+            Assert.assertEquals(periodHi, state.getLastPeriodHi());
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(periodHi, state.getLastPeriodHi());
+            final String suffix = timestampType == TestTimestampType.NANO ? "000Z" : "Z";
+            assertQuery("price_1h ORDER BY ts, sym")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("ts\tsym\tprice\n2024-01-01T00:00:00.000000" + suffix + "\ta\t1.0\n");
         });
     }
 
@@ -440,7 +486,9 @@ public class MatViewTimerJobTest extends AbstractCairoTest {
                     }
                     drainWalAndMatViewQueues(testEngine);
                     timer.run();
-                    Assert.assertEquals(0, timer.getTimerCount());
+                    // An IMMEDIATE view owns the refresh intervals update timer from CREATE on; the held ADD of the
+                    // timer view registers nothing yet.
+                    Assert.assertEquals(isUpdate ? 1 : 0, timer.getTimerCount());
                     final Gates gates = new Gates(false);
                     queue.gates = gates;
                     final AtomicReference<Throwable> error = new AtomicReference<>();

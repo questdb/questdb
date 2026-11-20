@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.tasks.TableWriterTask;
 import org.jetbrains.annotations.NotNull;
@@ -43,7 +44,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.tasks.TableWriterTask.CMD_UPDATE_TABLE;
 
 public class UpdateOperation extends AbstractOperation {
-    public static final String MAT_VIEW_INVALIDATION_REASON = "update operation";
+    public static final String LIVE_VIEW_INVALIDATION_REASON = "update operation";
     public static final int SENDER_CLOSED_INCREMENT = 7;
     public static final int WRITER_CLOSED_INCREMENT = 10;
     public static final int FULLY_CLOSED_STATE = WRITER_CLOSED_INCREMENT + SENDER_CLOSED_INCREMENT;
@@ -53,6 +54,10 @@ public class UpdateOperation extends AbstractOperation {
     private boolean executingAsync;
     private RecordCursorFactory factory;
     private volatile boolean requesterTimeout;
+    // The highest and the lowest timestamp of the partitions the update rewrote, LONG_NULL until it commits
+    // rewritten rows. The WAL apply job queues the rewritten range for the base's materialized views.
+    private long rewrittenPartitionTimestampHi = Numbers.LONG_NULL;
+    private long rewrittenPartitionTimestampLo = Numbers.LONG_NULL;
 
     public UpdateOperation(
             @NotNull TableToken tableToken,
@@ -134,6 +139,22 @@ public class UpdateOperation extends AbstractOperation {
         return factory;
     }
 
+    /**
+     * Returns the highest timestamp of the partitions that the update rewrote and committed, or
+     * {@link Numbers#LONG_NULL} when it changed no row.
+     */
+    public long getRewrittenPartitionTimestampHi() {
+        return rewrittenPartitionTimestampHi;
+    }
+
+    /**
+     * Returns the lowest timestamp of the partitions that the update rewrote and committed, or
+     * {@link Numbers#LONG_NULL}, see {@link #getRewrittenPartitionTimestampHi()}.
+     */
+    public long getRewrittenPartitionTimestampLo() {
+        return rewrittenPartitionTimestampLo;
+    }
+
     @Override
     public boolean isStructural() {
         return false;
@@ -141,11 +162,6 @@ public class UpdateOperation extends AbstractOperation {
 
     public boolean isWriterClosePending() {
         return executingAsync && closeState.get() != WRITER_CLOSED_INCREMENT;
-    }
-
-    @Override
-    public String matViewInvalidationReason() {
-        return MAT_VIEW_INVALIDATION_REASON;
     }
 
     @Override
@@ -158,6 +174,14 @@ public class UpdateOperation extends AbstractOperation {
         executingAsync = false;
         closeState.set(0);
         requesterTimeout = false;
+    }
+
+    /**
+     * Records the partitions that the update rewrote, once their rows are committed.
+     */
+    public void setRewrittenPartitionTimestamps(long partitionTimestampLo, long partitionTimestampHi) {
+        this.rewrittenPartitionTimestampLo = partitionTimestampLo;
+        this.rewrittenPartitionTimestampHi = partitionTimestampHi;
     }
 
     @Override

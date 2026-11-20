@@ -79,6 +79,11 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             ts\tk\ta\tb\tc
             2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t3.0
             """;
+    private static final String SQL_VIEW_REFRESHED_ROWS = """
+            ts\tk\ta\tb\tc
+            2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t3.0
+            2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\t30.0
+            """;
     private final boolean parallel;
 
     public MatViewRefreshRecompileCompatibilityTest(boolean parallel) {
@@ -194,31 +199,32 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
 
     @Test
     public void testRefreshAcceptsSqlViewColumnRenamedInPlace() throws Exception {
-        // The name changed at the same position, so refresh copies the column by position.
+        // A SQL view's columns count as plain columns, so refresh maps them to the view's columns by name. The
+        // SQL view no longer produces c, so view column c reads NULL, and the view ignores c2.
         assertSqlViewChange(
                 "SELECT * FROM vagg",
                 "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, avg(c) c2 FROM base SAMPLE BY 1h)",
                 "mv\tvalid\t\n",
                 """
                         ts\tk\ta\tb\tc
-                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t3.0
-                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\t30.0
+                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\tnull
+                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\tnull
                         """
         );
     }
 
     @Test
     public void testRefreshAcceptsSqlViewColumnReplacedInPlace() throws Exception {
-        // A name can't tell a replaced column from a redefinition of c under its own name, which refresh
-        // accepts as well, so the replacement lands in c.
+        // Refresh maps the SQL view's columns to the view's columns by name, so the replacement d does not land
+        // in c: the view ignores d, and view column c reads NULL.
         assertSqlViewChange(
                 "SELECT * FROM vagg",
                 "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, max(a) d FROM base SAMPLE BY 1h)",
                 "mv\tvalid\t\n",
                 """
                         ts\tk\ta\tb\tc
-                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\t1.0
-                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\t10.0
+                        2024-01-01T00:00:00.000000Z\tx\t1.0\t2.0\tnull
+                        2024-01-01T01:00:00.000000Z\tx\t10.0\t20.0\tnull
                         """
         );
     }
@@ -513,7 +519,7 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
         assertLateralRefreshRecompiles(
                 "SELECT base.ts, sum(l.c) AS s FROM base "
                         + "LEFT JOIN LATERAL (SELECT count() c FROM dim WHERE dim.k = base.k "
-                        + "UNION ALL SELECT CAST(100 AS LONG) FROM long_sequence(0)) l ON true "
+                        + "UNION ALL SELECT CAST(100 AS LONG) AS c FROM long_sequence(0)) l ON true "
                         + "SAMPLE BY 1h"
         );
     }
@@ -581,34 +587,39 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
 
     @Test
     public void testRefreshRejectsSqlViewAddedColumn() throws Exception {
+        // Refresh maps the SQL view's columns to the view's columns by name, so the view ignores the added
+        // column n and stays valid.
         assertSqlViewChange(
                 "SELECT * FROM vagg",
                 "ALTER VIEW vagg AS (SELECT ts, k, avg(a) a, avg(b) b, avg(c) c, count() n FROM base SAMPLE BY 1h)",
-                "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, queryColumnCount=6, viewColumnCount=5]\n",
-                SQL_VIEW_INITIAL_ROWS
+                "mv\tvalid\t\n",
+                SQL_VIEW_REFRESHED_ROWS
         );
     }
 
     @Test
     public void testRefreshRejectsSqlViewColumnsRotated() throws Exception {
+        // Refresh maps the SQL view's columns to the view's columns by name, so each moved column still lands in
+        // the view column of its name, and the view stays valid.
         assertSqlViewChange(
                 "SELECT * FROM vagg",
                 "ALTER VIEW vagg AS (SELECT ts, k, avg(c) c, avg(a) a, avg(b) b FROM base SAMPLE BY 1h)",
-                "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, columnIndex=2, queryColumn=c, viewColumn=a]\n",
-                SQL_VIEW_INITIAL_ROWS
+                "mv\tvalid\t\n",
+                SQL_VIEW_REFRESHED_ROWS
         );
     }
 
     @Test
     public void testRefreshRejectsSqlViewColumnsSwapped() throws Exception {
         // A query written without SELECT gets a wildcard from the parser, so both spellings take the
-        // SQL view's column order.
+        // SQL view's column order. Refresh maps the columns to the view's columns by name, so the swapped
+        // columns still land in the view columns of their names, and the view stays valid.
         for (String viewQuery : new String[]{"SELECT * FROM vagg", "vagg"}) {
             assertSqlViewChange(
                     viewQuery,
                     "ALTER VIEW vagg AS (SELECT ts, k, avg(b) b, avg(a) a, avg(c) c FROM base SAMPLE BY 1h)",
-                    "mv\tinvalid\t[-1]: materialized view query does not match view schema [view=mv, columnIndex=2, queryColumn=b, viewColumn=a]\n",
-                    SQL_VIEW_INITIAL_ROWS
+                    "mv\tvalid\t\n",
+                    SQL_VIEW_REFRESHED_ROWS
             );
         }
     }
@@ -701,8 +712,9 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             for (Case c : cases) {
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
                 // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold and the refresh
-                // below compiles the stored query under the settings in force then.
-                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + c.viewSql + ") PARTITION BY DAY" + c.createSuffix);
+                // below compiles the stored query under the settings in force then. The view is created the
+                // way versions before the explicit column name rules created it.
+                executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + c.viewSql + ") PARTITION BY DAY" + c.createSuffix);
                 drainWalQueue();
                 setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
 
@@ -761,8 +773,9 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
             for (String[] c : cases) {
                 final String legacySql = c[0];
                 // MANUAL DEFERRED: no refresh runs at CREATE, so the factory cache stays cold, as on the first
-                // refresh after an upgrade restart. CREATE stores the call with its parentheses.
-                execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
+                // refresh after an upgrade restart. The view is created the way versions before the explicit
+                // column name rules created it.
+                executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS (" + legacySql + ") PARTITION BY DAY");
                 drainWalQueue();
                 installPersistedViewSql("mv", legacySql);
 

@@ -1384,8 +1384,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testBaseTableNameInQuotes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base 'x' as (select ts, max(v) from x sample by 1d) partition by day;");
-            execute("create materialized view x_view2 with base \"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base 'x' as (select ts, max(v) as max from x sample by 1d) partition by day;");
+            execute("create materialized view x_view2 with base \"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
         });
     }
 
@@ -1394,27 +1394,27 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
 
-            execute("create materialized view x_view with base public.x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base public.x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("x_view"));
 
-            execute("create materialized view x_view2 with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view2 with base \"public\".\"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("x_view2"));
 
-            execute("create materialized view public.x_view3 with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view public.x_view3 with base \"public\".\"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("x_view3"));
 
-            execute("create materialized view \"public\".\"x_view4\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view \"public\".\"x_view4\" with base \"public\".\"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("x_view4"));
 
-            execute("create materialized view \"public.x_view5\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view \"public.x_view5\" with base \"public\".\"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("public.x_view5"));
 
-            execute("create materialized view \"public\" with base \"public\".\"x\" as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view \"public\" with base \"public\".\"x\" as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertTableExistence(true, engine.verifyTableName("public"));
 
             assertSyntaxError(
-                    "create materialized view x_view5 with base 'dfc.x' as (select ts, max(v) from dfc.x sample by 1d) partition by day",
-                    78,
+                    "create materialized view x_view5 with base 'dfc.x' as (select ts, max(v) as max from dfc.x sample by 1d) partition by day",
+                    85,
                     "table does not exist [table=dfc.x]"
             );
             assertSyntaxError(
@@ -10975,7 +10975,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView10() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM '2020-09-10T20:00:00.000000Z';")
                     .noLeakCheck()
                     .fails(75, "'to' expected");
@@ -10986,7 +10986,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView11() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to")
                     .noLeakCheck()
                     .fails(78, "TO timestamp expected");
@@ -10997,7 +10997,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView12() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to 'foobar'")
                     .noLeakCheck()
                     .fails(79, "invalid TO timestamp value");
@@ -11008,7 +11008,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView13() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("refresh materialized view 'x_view' range from '2020-09-10T20:00:00.000000Z' to '2020-09-10T19:00:00.000000Z'")
                     .noLeakCheck()
                     .fails(79, "TO timestamp must not be earlier than FROM timestamp");
@@ -11056,10 +11056,10 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView5() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' foobar")
                     .noLeakCheck()
-                    .fails(35, "'full', 'incremental', 'range' or 'stats' expected");
+                    .fails(35, "'full', 'incremental', 'range', 'resume' or 'stats' expected");
         });
     }
 
@@ -11067,7 +11067,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView6() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' INCREMENTAL foobar")
                     .noLeakCheck()
                     .fails(47, "unexpected token");
@@ -11078,7 +11078,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView7() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE;")
                     .noLeakCheck()
                     .fails(40, "'from' expected");
@@ -11089,7 +11089,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView8() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM")
                     .noLeakCheck()
                     .fails(45, "FROM timestamp expected");
@@ -11100,7 +11100,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
     public void testRefreshMatView9() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (ts timestamp, v long) timestamp(ts) partition by day WAL;");
-            execute("create materialized view x_view with base x as (select ts, max(v) from x sample by 1d) partition by day;");
+            execute("create materialized view x_view with base x as (select ts, max(v) as max from x sample by 1d) partition by day;");
             assertQuery("REFRESH MATERIALIZED VIEW 'x_view' RANGE FROM foobar;")
                     .noLeakCheck()
                     .fails(46, "invalid FROM timestamp value");

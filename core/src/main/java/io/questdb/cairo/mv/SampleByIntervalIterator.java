@@ -44,9 +44,12 @@ import org.jetbrains.annotations.Nullable;
  *       whole iteration. All step-groups use the same step.</li>
  *   <li>Per-cluster -- {@link #toTop(LongList)} accepts one step per cached
  *       interval (cluster). On every cluster transition the iterator swaps
- *       the active step and {@link #snapToCluster(long)} aligns the iterator
- *       state to the new cluster's lower boundary so a step-group never
- *       straddles a gap between two clusters.</li>
+ *       the active step and {@link #clampToInterval(long, long)} aligns the
+ *       iterator state to the cluster boundaries: it snaps a step-group that
+ *       starts before a cluster forward to the cluster's lower boundary (via
+ *       {@link #snapToCluster(long)}), and caps a step-group that would run
+ *       past a cluster to the cluster's upper bucket ceiling, so a step-group
+ *       never straddles a gap between two clusters.</li>
  * </ul>
  */
 public abstract class SampleByIntervalIterator {
@@ -56,6 +59,13 @@ public abstract class SampleByIntervalIterator {
     private @Nullable LongList stepPerInterval;
     // index of next txn timestamp interval to check against
     private int txnIntervalLoIndex;
+
+    /**
+     * Returns the start of the SAMPLE BY bucket that holds the given timestamp, where the iterator starts the
+     * step-group of an interval whose low boundary is that timestamp. Valid once the iterator is set up, for a
+     * timestamp no later than the maximum timestamp it was set up with.
+     */
+    public abstract long bucketFloor(long timestamp);
 
     /**
      * Returns maximum timestamp that belong to the iterated intervals.
@@ -103,37 +113,32 @@ public abstract class SampleByIntervalIterator {
         OUT:
         while (next0()) {
             if (intervalsSize != -1) {
-                final long iteratorLo = getTimestampLo();
-                final long iteratorHi = getTimestampHi() - 1; // hi is exclusive, hence -1
                 while (txnIntervalLoIndex < intervalsSize) {
                     final long intervalLo = intervals.getQuick(txnIntervalLoIndex);
                     final long intervalHi = intervals.getQuick(txnIntervalLoIndex + 1);
 
-                    if (iteratorHi < intervalLo) {
-                        // The step-group is entirely before the next cluster.
-                        // Snap the iterator to the cluster lo so the next
-                        // next0() emits a step-group anchored at the cluster
-                        // boundary, instead of walking the gap step-by-step.
-                        // Without this snap, a small per-cluster step would
-                        // make the gap traversal cost O(gap / step) cursor-less
-                        // iterations.
-                        snapToCluster(intervalLo);
-                        continue OUT;
-                    } else if (iteratorLo <= intervalHi) {
-                        // iterator timestamps have an intersection with the txn interval
+                    if (getTimestampLo() > intervalHi) {
+                        // The step-group is entirely after this txn interval; try the next one.
+                        txnIntervalLoIndex += 2;
+                        // Cluster just advanced -- swap the step to the new
+                        // cluster's step so the next next0() advances at the right
+                        // granularity. The new cluster's snap/cap is handled below
+                        // via clampToInterval().
+                        if (stepPerInterval != null && txnIntervalLoIndex < intervalsSize) {
+                            this.step = stepPerInterval.getQuick(txnIntervalLoIndex >> 1);
+                        }
+                        continue;
+                    }
+                    // The step-group precedes, straddles, or sits inside this interval.
+                    // clampToInterval() either snaps the iterator forward to the interval's
+                    // first bucket (returns false; re-run next0() from there) or caps the
+                    // step-group's high boundary to the interval's last bucket ceiling
+                    // (returns true) so that no step-group, and no replace range, spans a
+                    // gap between intervals.
+                    if (clampToInterval(intervalLo, intervalHi)) {
                         return true;
                     }
-                    // otherwise, iterator timestamps are after the txn interval
-                    // continue to the next txn interval
-                    txnIntervalLoIndex += 2;
-                    // Cluster just advanced -- swap the step to the new
-                    // cluster's step so the next next0() advances at the right
-                    // granularity. The new cluster's snap is handled on the
-                    // next loop iteration via the iteratorHi < intervalLo
-                    // branch above.
-                    if (stepPerInterval != null && txnIntervalLoIndex < intervalsSize) {
-                        this.step = stepPerInterval.getQuick(txnIntervalLoIndex >> 1);
-                    }
+                    continue OUT;
                 }
                 // all txn intervals are before the iterator
                 return false;
@@ -168,6 +173,26 @@ public abstract class SampleByIntervalIterator {
         this.txnIntervalLoIndex = 0;
         toTop0();
     }
+
+    /**
+     * Reconciles the current step-group (produced by the last {@link #next0()})
+     * with the txn interval {@code [intervalLo, intervalHi]} it precedes,
+     * straddles or sits inside. The base {@link #next()} only calls this when
+     * {@code getTimestampLo() <= intervalHi}.
+     * <ul>
+     *   <li>When the step-group starts before the interval's first bucket, it
+     *       snaps the iterator forward to that bucket (via
+     *       {@link #snapToCluster(long)}) and returns {@code false}, so the
+     *       caller re-runs {@link #next0()} from the interval boundary and no
+     *       step-group spans the gap before the interval.</li>
+     *   <li>Otherwise the step-group starts inside the interval's buckets; it
+     *       caps the step-group's high boundary to the bucket ceiling of
+     *       {@code intervalHi} and returns {@code true}, so the step-group,
+     *       and the replace range it drives, never runs past the interval into
+     *       the gap after it.</li>
+     * </ul>
+     */
+    protected abstract boolean clampToInterval(long intervalLo, long intervalHi);
 
     protected abstract boolean next0();
 

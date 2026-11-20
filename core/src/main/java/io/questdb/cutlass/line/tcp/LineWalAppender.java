@@ -165,6 +165,12 @@ public class LineWalAppender implements QuietCloseable {
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnNameUtf16, maxFileNameLength)) {
                         columnWriterIndex = metadata.getColumnIndexQuiet(columnNameUtf16);
                         if (columnWriterIndex < 0) {
+                            if (writer.getTableToken().isMatView()) {
+                                // A backfill into a materialized view writes the view's columns. The view's columns
+                                // change only through ALTER MATERIALIZED VIEW, which checks the change against the
+                                // view's SQL.
+                                throw matViewColumnNotFound(columnNameUtf16, tud.getTableNameUtf16());
+                            }
                             securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
                             try {
                                 int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);

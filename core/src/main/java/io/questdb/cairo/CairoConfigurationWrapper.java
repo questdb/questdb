@@ -2020,6 +2020,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRefreshLimitWallClockEnabled() {
+        return getDelegate().isMatViewRefreshLimitWallClockEnabled();
+    }
+
+    @Override
     public boolean isMatViewRefreshBlocked(CharSequence viewName) {
         return getDelegate().isMatViewRefreshBlocked(viewName);
     }

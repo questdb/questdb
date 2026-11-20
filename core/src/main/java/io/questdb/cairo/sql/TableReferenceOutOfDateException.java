@@ -71,6 +71,14 @@ public class TableReferenceOutOfDateException extends RuntimeException implement
         return ex;
     }
 
+    public static TableReferenceOutOfDateException ofExpiryPolicyChange(TableToken tableToken) {
+        TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
+        ex.message.clear();
+        ex.message.put("cached statement cannot be used because the EXPIRE ROWS policy of the materialized view has changed [view=")
+                .put(tableToken.getTableName()).put(']');
+        return ex;
+    }
+
     public static TableReferenceOutOfDateException ofOutdatedView(TableToken tableToken, long expectedTxn, long actualTxn) {
         TableReferenceOutOfDateException ex = new TableReferenceOutOfDateException();
         // This is to have correct stack trace in local debugging with -ea option

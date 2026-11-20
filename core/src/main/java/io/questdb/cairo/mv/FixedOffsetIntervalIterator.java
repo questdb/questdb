@@ -37,6 +37,11 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
     private long timestampLo;
 
     @Override
+    public long bucketFloor(long timestamp) {
+        return sampler.round(timestamp);
+    }
+
+    @Override
     public long getMaxTimestamp() {
         return maxTimestamp;
     }
@@ -85,6 +90,23 @@ public class FixedOffsetIntervalIterator extends SampleByIntervalIterator {
         ofCommon(sampler, offset, intervals, minTs, maxTs);
         toTop(stepPerInterval);
         return this;
+    }
+
+    @Override
+    protected boolean clampToInterval(long intervalLo, long intervalHi) {
+        if (timestampLo < bucketFloor(intervalLo)) {
+            // The step-group starts before the interval's first bucket (in the gap
+            // before it). Snap forward to the interval's bucket floor.
+            snapToCluster(intervalLo);
+            return false;
+        }
+        // The step-group starts inside the interval's buckets. Cap its high boundary to
+        // the ceiling of the interval's last bucket so it does not run past the interval.
+        final long ceil = sampler.nextTimestamp(sampler.round(intervalHi));
+        if (timestampHi > ceil) {
+            timestampHi = ceil;
+        }
+        return true;
     }
 
     @Override

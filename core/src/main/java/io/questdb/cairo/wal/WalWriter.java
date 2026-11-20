@@ -53,6 +53,7 @@ import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.pool.RecentWriteTracker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -183,6 +184,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long lastReplaceRangeLowTs = 0;
     private long lastTxnMaxTimestamp = -1;
     private byte lastTxnType = WalTxnType.DATA;
+    // The backlog-lost marker that the next view state event carries, see resetMatViewState().
+    private CharSequence matViewBacklogLostReason;
+    // The base table id that the next view state event carries, see resetMatViewState().
+    private int matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+    private @Nullable WalPreCommitValidator preCommitValidator;
     // What rollbackToSavepoint() restores: the transaction's bounds and its row count
     // at markSavepoint(). The row count is relative to currentTxnStartRowNum, which a
     // segment roll moves.
@@ -342,6 +348,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         throwIfCommitPrepared("apply ALTER");
         alterOp.authorize();
+        // A compiled operation that runs again, such as a pg-wire prepared statement, asks for a fresh compile
+        // when the view state its compile-time checks read has changed since.
+        alterOp.verifyCompiledState(getColumnStructureVersion());
         if (alterOp.getCommand() == AlterOperation.ADD_INDEX || alterOp.isIndexedColumnAdded()) {
             validateIndexCreation(alterOp);
         }
@@ -748,6 +757,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     .put(", wal=").put(walId)
                     .put(']');
         }
+        // The prepared record is sequenced as is: a mat view's validator must see it here, as commit0() does.
+        validatePreCommit(WalTxnType.DATA, WAL_DEDUP_MODE_DEFAULT);
         // A record that the failure below leaves in the event file is never sequenced: stop counting it.
         final int lastSegmentTxnBeforeAppend = lastSegmentTxn;
         try {
@@ -788,8 +799,105 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return txn;
     }
 
+    /**
+     * Writes the event of {@code ALTER MATERIALIZED VIEW ... AS}, which replaces the view's base table name and SQL
+     * text when it applies, see {@link WalTxnType#MAT_VIEW_DEFINITION}. The caller takes the role-switch commit fence,
+     * see {@code MatViewCommitFence}.
+     *
+     * @return the sequencer txn of the event
+     */
+    public long appendMatViewDefinition(
+            @NotNull CharSequence baseTableName,
+            @NotNull CharSequence matViewSql,
+            boolean isBaseTableChange
+    ) {
+        throwIfCommitPrepared("append a materialized view definition");
+        try {
+            lastSegmentTxn = events.appendMatViewDefinition(baseTableName, matViewSql, isBaseTableChange);
+            final int syncedMode = syncAdaptiveEventsBeforeSequencing();
+            final long seqTxn = getSequencerTxn();
+            // W>0: the private events are already durable. Record the deferred sequencer flush as pending, so
+            // the next commit or the background flusher runs it within W even if commits stop.
+            if (syncedMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
+                recordPendingDurable(seqTxn);
+            }
+            return seqTxn;
+        } catch (Throwable th) {
+            if (sequencer.isDataSyncFailureFatal(th)) {
+                distressed = true;
+                dropPendingDurable();
+                sequencer.handleDataSyncFailure(th);
+            }
+            rollback0();
+            throw th;
+        }
+    }
+
     // Marks the materialized view as invalid or resets its invalidation status,
-    // depending on the input values.
+    // depending on the input values. baseTableId is the id of the base table that the refresh position
+    // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown. The event
+    // carries no backlog-lost marker.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn,
+            int baseTableId
+    ) {
+        resetMatViewState(
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                invalid,
+                invalidationReason,
+                lastPeriodHi,
+                refreshIntervals,
+                refreshIntervalsBaseTxn,
+                baseTableId,
+                null
+        );
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values. baseTableId is the id of the base table that the refresh position
+    // and the cached intervals belong to, MatViewState.BASE_TABLE_ID_UNKNOWN when unknown, and
+    // backlogLostReason the cause of a lost backlog of an invalid view, null while its backlog is
+    // tracked. The event goes through the overridable form below, which a subclass that intercepts
+    // view state events overrides, so that every form reaches it.
+    public void resetMatViewState(
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn,
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
+    ) {
+        matViewBaseTableId = baseTableId;
+        matViewBacklogLostReason = backlogLostReason;
+        try {
+            resetMatViewState(
+                    lastRefreshBaseTxn,
+                    lastRefreshTimestamp,
+                    invalid,
+                    invalidationReason,
+                    lastPeriodHi,
+                    refreshIntervals,
+                    refreshIntervalsBaseTxn
+            );
+        } finally {
+            matViewBaseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+            matViewBacklogLostReason = null;
+        }
+    }
+
+    // Marks the materialized view as invalid or resets its invalidation status,
+    // depending on the input values. Called directly, the event carries no base table id and no
+    // backlog-lost marker.
     public void resetMatViewState(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -808,7 +916,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     invalidationReason,
                     lastPeriodHi,
                     refreshIntervals,
-                    refreshIntervalsBaseTxn
+                    refreshIntervalsBaseTxn,
+                    matViewBaseTableId,
+                    matViewBacklogLostReason
             );
             final int syncedMode = syncAdaptiveEventsBeforeSequencing();
             final long seqTxn = getSequencerTxn();
@@ -883,6 +993,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             distressed = true;
             throw th;
         }
+    }
+
+    /**
+     * Install an optional pre-commit validator that is consulted before every
+     * commit on this writer. A {@code null} value clears the validator. Setting
+     * a validator a second time replaces the previous one. The validator runs
+     * before the txn is sealed, so a rejection (CairoException) leaves the
+     * writer in a clean post-rollback state.
+     * <p>
+     * The WAL pool wires this up once per tenant when the table is a mat view.
+     */
+    public void setPreCommitValidator(@Nullable WalPreCommitValidator validator) {
+        this.preCommitValidator = validator;
     }
 
     protected final void cleanupBeforeClose() {
@@ -1480,6 +1603,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         assert !isCommitPrepared : "a prepared commit reached commit0";
         checkDistressed();
         throwIfInColumnarWrite("commit");
+        validatePreCommit(txnType, dedupMode);
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 // Flush before asking the sequencer. A conditional cleanup commit does not hold the sequencer lock
@@ -2996,6 +3120,34 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             .put(tableToken.getTableName())
                             .put(']');
                 }
+            }
+        }
+    }
+
+    // Runs the pre-commit validator before the txn is sealed, so a CairoException rejection lands the writer in the
+    // same state it would be in after a user-initiated rollback. Mat-view writers carry one to enforce the
+    // bucket-whole rule on user backfill; everyone else has preCommitValidator == null and pays no cost.
+    //
+    // A CairoException is the sanctioned reject channel: we roll the txn back and rethrow, leaving the writer
+    // healthy and reusable. Any other Throwable is treated as an internal validator fault -- the writer is marked
+    // distressed first, so the pool expels this tenant and the next acquisition starts clean; rollback0() then
+    // short-circuits (it no-ops once distressed) since a distressed writer's segment is truncated on close anyway.
+    // Either way, if rollback itself throws, the original cause is preserved via addSuppressed so the validator's
+    // rejection is not lost in diagnostics.
+    private void validatePreCommit(byte txnType, byte dedupMode) {
+        if (preCommitValidator != null) {
+            try {
+                preCommitValidator.validate(txnType, dedupMode, txnMinTimestamp, txnMaxTimestamp);
+            } catch (Throwable ex) {
+                if (!(ex instanceof CairoException)) {
+                    distressed = true;
+                }
+                try {
+                    rollback0();
+                } catch (Throwable rollbackEx) {
+                    ex.addSuppressed(rollbackEx);
+                }
+                throw ex;
             }
         }
     }

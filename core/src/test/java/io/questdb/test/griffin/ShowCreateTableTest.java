@@ -264,7 +264,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testMatViewRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
-            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            execute("create materialized view base_1h as (select ts, max(v) as max from base sample by 1h) partition by week");
             drainWalAndViewQueues();
             assertExceptionNoLeakCheck(
                     "show create table base_1h",
@@ -278,7 +278,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testMatViewRejectedCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
-            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            execute("create materialized view base_1h as (select ts, max(v) as max from base sample by 1h) partition by week");
             drainWalAndViewQueues();
             // the keyword casing must not change the outcome - the position still points at the name
             assertExceptionNoLeakCheck(
@@ -293,7 +293,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     public void testMatViewRejectedQuotedName() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
-            execute("create materialized view 'base 1h' as (select ts, max(v) from base sample by 1h) partition by week");
+            execute("create materialized view 'base 1h' as (select ts, max(v) as max from base sample by 1h) partition by week");
             drainWalAndViewQueues();
             // the position points at the opening quote of the quoted identifier
             assertExceptionNoLeakCheck(
@@ -309,7 +309,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         // a materialized view rejected by SHOW CREATE TABLE must remain reachable via the dedicated statement
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
-            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            execute("create materialized view base_1h as (select ts, max(v) as max from base sample by 1h) partition by week");
             drainWalAndViewQueues();
             printSql("show create materialized view base_1h");
             TestUtils.assertContains(sink.toString(), "CREATE MATERIALIZED VIEW 'base_1h'");
@@ -324,7 +324,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
         // on demand rather than report a registered matview as non-existent.
         assertMemoryLeak(() -> {
             execute("create table base (ts timestamp, v double) timestamp(ts) partition by day wal");
-            execute("create materialized view base_1h as (select ts, max(v) from base sample by 1h) partition by week");
+            execute("create materialized view base_1h as (select ts, max(v) as max from base sample by 1h) partition by week");
             drainWalAndViewQueues();
 
             // Simulate the window: registry knows the matview, metadata cache is empty.

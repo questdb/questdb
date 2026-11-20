@@ -59,6 +59,7 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -69,8 +70,10 @@ import io.questdb.jit.JitUtil;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -80,12 +83,15 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.nanotime.Nanos;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.tools.CompositePartitionRandomiser;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -236,9 +242,11 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
             assertQuery("select suspended from wal_tables() where name = 'price_1h'").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("suspended\ntrue\n");
 
-            // Resume and recover with a full refresh against the rebased base; the worker stays healthy.
+            // Resume and recover with a full refresh against the rebased base; the worker stays healthy. The FULL
+            // waits until the view's WAL applies the invalidation that RESUME WAL redelivered.
             execute("alter materialized view price_1h resume wal");
             execute("refresh materialized view price_1h full");
+            drainQueues();
             drainQueues();
             assertQuery("select view_status from materialized_views").noLeakCheck().inferRandomAccess().inferTimestamp().sizeMayVary().returns("view_status\nvalid\n");
             assertQuery("select count() from price_1h").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
@@ -353,12 +361,13 @@ public class MatViewTest extends AbstractCairoTest {
 
             // The rebase replaced price_1h's target token (old dir dropped, new dir created) and reset its
             // sequencer, so its dependents' watermarks no longer map onto it: both direct dependents are
-            // invalidated, and the cascade carries the invalidation down to the grandchild (price_1w). The
-            // reason the direct dependents see is "base table is dropped or renamed" (the only source of that
-            // string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when the base token fails
-            // verification during the rebase teardown) rather than the "base table rebase" reason CairoEngine
-            // enqueues -- accurate either way, since a rebase drops and recreates the target token. The
-            // rebased price_1h itself comes back valid (fresh default state, data preserved via hard links).
+            // invalidated. The invalidation no longer cascades to the grandchild (price_1w), which stays valid
+            // on price_1d's rows. The reason the direct dependents see is "base table is dropped or renamed"
+            // (the only source of that string is MatViewRefreshJob.checkIfBaseTableDropped, which fires when
+            // the base token fails verification during the rebase teardown) rather than the "base table
+            // rebase" reason CairoEngine enqueues -- accurate either way, since a rebase drops and recreates
+            // the target token. The rebased price_1h itself comes back valid (fresh default state, data
+            // preserved via hard links).
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
@@ -366,7 +375,7 @@ public class MatViewTest extends AbstractCairoTest {
                             price_1d\tprice_1h\tinvalid\tbase table is dropped or renamed
                             price_1d_2\tprice_1h\tinvalid\tbase table is dropped or renamed
                             price_1h\tbase_price\tvalid\t
-                            price_1w\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            price_1w\tprice_1d\tvalid\t
                             """);
 
             // A full refresh of the dependents recovers them against the rebased price_1h.
@@ -1830,12 +1839,12 @@ public class MatViewTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h",
                     32,
-                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
+                    "'add', 'alter', 'as', 'drop', 'rename', 'resume', 'set', 'suspend' or 'with' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h foobar",
                     33,
-                    "'alter' or 'resume' or 'suspend' or 'set' or 'drop' expected"
+                    "'add', 'alter', 'as', 'drop', 'rename', 'resume', 'set', 'suspend' or 'with' expected"
             );
             assertExceptionNoLeakCheck(
                     "alter materialized view price_1h alter",
@@ -2031,7 +2040,7 @@ public class MatViewTest extends AbstractCairoTest {
                     create materialized view daily_summary\s
                     WITH BASE trades
                     as (
-                    select trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    select trades.ts, count(*) as count, sum(volume) as sum, min(price) as min, max(price) as max, avg(price) as avg
                     FROM trades
                     asof join (select * from prices where valid) prices
                     sample by 1d
@@ -2040,7 +2049,7 @@ public class MatViewTest extends AbstractCairoTest {
                     create materialized view daily_summary\s
                     WITH BASE trades
                     as (
-                    select /*+ ASOF_LINEAR(trades prices) */ trades.ts, count(*), sum(volume), min(price), max(price), avg(price)
+                    select /*+ ASOF_LINEAR(trades prices) */ trades.ts, count(*) as count, sum(volume) as sum, min(price) as min, max(price) as max, avg(price) as avg
                     FROM trades
                     asof join (select * from prices where valid) prices
                     sample by 1d
@@ -2097,7 +2106,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBareFunctionCallKeepsMeaningWhenBaseGainsColumn() throws Exception {
-        // The stored query calls pi() with its parentheses, so a column the base table gains later under the
+        // CREATE requires the parentheses of a call to pi(), so a column the base table gains later under the
         // same name leaves the view computing the function.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -2106,7 +2115,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            execute("create materialized view mv as (select ts, pi() as pi, avg(v) as avg from base_price sample by 1d)");
             drainQueues();
 
             execute("alter table base_price add column pi double");
@@ -2117,7 +2126,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_sql, view_status from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_sql\tview_status\nselect ts, pi(), avg(v) from base_price sample by 1d\tvalid\n");
+                    .returns("view_sql\tview_status\nselect ts, pi() as pi, avg(v) as avg from base_price sample by 1d\tvalid\n");
             assertQuery("mv")
                     .timestamp("ts")
                     .expectSize()
@@ -2131,10 +2140,11 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBareFunctionCallStoredWithParentheses() throws Exception {
-        // A bare name the query reads as a call to a zero-argument function is stored with its parentheses. A
-        // passthrough view's refresh reads every bare name in the stored query as a column, so the parentheses
-        // keep the call.
+    public void testBareFunctionCallRequiresParentheses() throws Exception {
+        // CREATE reads a bare name as a column, so a bare name that names no column but a zero-argument function
+        // fails at its position and asks for the parentheses, also quoted, in another case, next to a wildcard
+        // and in sub-queries. Written with parentheses, the queries are stored as written, and a passthrough
+        // view's refresh, which reads every bare name as a column, keeps calling the function.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -2142,30 +2152,61 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            final String[] queries = {
-                    "select ts, pi, avg(v) from base_price sample by 1d",
-                    "select ts, \"pi\", avg(v) from base_price sample by 1d",
-                    "select *, pi from base_price",
-                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1)) sample by 1d",
-                    "select ts, avg(v) from base_price where v < (select pi from long_sequence(1))" +
-                            " and v <> (select pi from long_sequence(1)) sample by 1d",
-                    "select ts, PI, avg(v) from base_price sample by 1d"
+            // the query with the bare call, where the bare call starts, and the query with the parentheses
+            final String[][] queries = {
+                    {
+                            "select ts, pi, avg(v) as avg from base_price sample by 1d",
+                            "pi,",
+                            "select ts, pi() as pi, avg(v) as avg from base_price sample by 1d"
+                    },
+                    {
+                            "select ts, \"pi\", avg(v) as avg from base_price sample by 1d",
+                            "\"pi\"",
+                            "select ts, pi() as pi, avg(v) as avg from base_price sample by 1d"
+                    },
+                    {
+                            "select *, pi from base_price",
+                            "pi from",
+                            "select *, pi() as pi from base_price"
+                    },
+                    {
+                            "select ts, avg(v) as avg from base_price where v < (select pi from long_sequence(1)) sample by 1d",
+                            "pi from",
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1)) sample by 1d"
+                    },
+                    {
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1))" +
+                                    " and v <> (select pi from long_sequence(1)) sample by 1d",
+                            "pi from",
+                            "select ts, avg(v) as avg from base_price where v < (select pi() from long_sequence(1))" +
+                                    " and v <> (select pi() from long_sequence(1)) sample by 1d"
+                    },
+                    {
+                            "select ts, PI, avg(v) as avg from base_price sample by 1d",
+                            "PI,",
+                            "select ts, PI() as PI, avg(v) as avg from base_price sample by 1d"
+                    }
             };
             for (int i = 0; i < queries.length; i++) {
-                execute("create materialized view mv" + i + " as (" + queries[i] + ")");
+                final String prefix = "create materialized view mv" + i + " as (";
+                final String name = queries[i][1].startsWith("PI") ? "PI" : "pi";
+                assertExceptionNoLeakCheck(
+                        prefix + queries[i][0] + ")",
+                        prefix.length() + queries[i][0].indexOf(queries[i][1]),
+                        name + " is not a column; write " + name + "() to call the function"
+                );
+                execute(prefix + queries[i][2] + ")");
             }
             drainQueues();
             assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
                     .noLeakCheck()
-                    .returns("""
-                            view_name\tview_sql\tview_status
-                            mv0\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
-                            mv1\tselect ts, pi(), avg(v) from base_price sample by 1d\tvalid
-                            mv2\tselect "sym", "v", "ts", pi() from base_price\tvalid
-                            mv3\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) sample by 1d\tvalid
-                            mv4\tselect ts, avg(v) from base_price where v < (select pi() from long_sequence(1)) and v <> (select pi() from long_sequence(1)) sample by 1d\tvalid
-                            mv5\tselect ts, PI(), avg(v) from base_price sample by 1d\tvalid
-                            """);
+                    .returns("view_name\tview_sql\tview_status\n" +
+                            "mv0\t" + queries[0][2] + "\tvalid\n" +
+                            "mv1\t" + queries[1][2] + "\tvalid\n" +
+                            "mv2\t" + queries[2][2] + "\tvalid\n" +
+                            "mv3\t" + queries[3][2] + "\tvalid\n" +
+                            "mv4\t" + queries[4][2] + "\tvalid\n" +
+                            "mv5\t" + queries[5][2] + "\tvalid\n");
             assertQuery("mv0")
                     .timestamp("ts")
                     .expectSize()
@@ -2190,10 +2231,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute(ddl);
             drainQueues();
             printSql("select view_sql from materialized_views where view_name = 'mv0'");
-            Assert.assertEquals(
-                    "select ts, pi(), avg(v) from base_price sample by 1d",
-                    sink.toString().substring("view_sql\n".length()).trim()
-            );
+            Assert.assertEquals(queries[0][2], sink.toString().substring("view_sql\n".length()).trim());
             assertQuery("mv0")
                     .timestamp("ts")
                     .expectSize()
@@ -2204,26 +2242,30 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBareFunctionCallsStayAllowedOnContextAfterCreate() throws Exception {
-        // CREATE compiles the stored query with bare names read as columns on the caller's own context, which
-        // the connection goes on using; the context reads bare function names as calls again afterwards.
+        // CREATE compiles the view's query with bare names read as columns on the caller's own context, which
+        // the connection goes on using; the context reads bare function names as calls again afterwards, also
+        // after a CREATE that the rule fails.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, v double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            execute("create materialized view mv as (select ts, pi, avg(v) from base_price sample by 1d)");
+            execute("create materialized view mv as (select ts, pi() as pi, avg(v) as avg from base_price sample by 1d)");
+            assertQuery("select pi from long_sequence(1)")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("pi\n3.141592653589793\n");
+            final String bareCall = "create materialized view mv_bare as (select ts, pi, avg(v) as avg from base_price sample by 1d)";
+            assertExceptionNoLeakCheck(bareCall, bareCall.indexOf("pi,"), "pi is not a column; write pi() to call the function");
             assertQuery("select pi from long_sequence(1)")
                     .expectSize()
                     .noLeakCheck()
                     .returns("pi\n3.141592653589793\n");
 
-            final String sql = "create materialized view price_copy as (select ts, * from base_price)";
-            assertExceptionNoLeakCheck(
-                    sql,
-                    sql.indexOf('*'),
-                    "could not expand the wildcard of the materialized view query, list the columns explicitly [error=Invalid column: ts1]"
-            );
+            // CREATE stores the wildcard as written, so a wildcard that repeats a column of the select list is
+            // accepted too.
+            execute("create materialized view price_copy as (select ts, * from base_price)");
             assertQuery("select pi from long_sequence(1)")
                     .expectSize()
                     .noLeakCheck()
@@ -2235,13 +2277,14 @@ public class MatViewTest extends AbstractCairoTest {
     public void testBareFunctionNameColumnLossInvalidatesView() throws Exception {
         // A base column named like a zero-argument function stays a column reference in the stored query. Once
         // the base drops or renames it, a passthrough view's refresh fails to resolve the name instead of calling
-        // version().
+        // version(). A wildcard is stored as written and no longer produces the dropped column, so its view column
+        // reads NULL and the view stays valid.
         assertMemoryLeak(() -> {
             final String[][] cases = {
-                    {"select sym, version, ts from base_price", "alter table base_price drop column version", "[12]"},
-                    {"select sym, version, ts from base_price", "alter table base_price rename column version to version_x", "[12]"},
-                    {"select * from base_price", "alter table base_price drop column version", "[14]"},
-                    {"select sym, \"version\", ts from base_price", "alter table base_price drop column version", "[12]"}
+                    {"select sym, version, ts from base_price", "alter table base_price drop column version", "invalid\t[12]: Invalid column: version"},
+                    {"select sym, version, ts from base_price", "alter table base_price rename column version to version_x", "invalid\t[12]: Invalid column: version"},
+                    {"select * from base_price", "alter table base_price drop column version", "valid\t"},
+                    {"select sym, \"version\", ts from base_price", "alter table base_price drop column version", "invalid\t[12]: Invalid column: version"}
             };
             for (String[] c : cases) {
                 executeWithRewriteTimestamp(
@@ -2264,7 +2307,7 @@ public class MatViewTest extends AbstractCairoTest {
                 assertQuery("select view_status, invalidation_reason from materialized_views")
                         .noRandomAccess()
                         .noLeakCheck()
-                        .returns("view_status\tinvalidation_reason\ninvalid\t" + c[2] + ": Invalid column: version\n");
+                        .returns("view_status\tinvalidation_reason\n" + c[2] + "\n");
 
                 execute("drop materialized view mv");
                 execute("drop table base_price");
@@ -2291,7 +2334,7 @@ public class MatViewTest extends AbstractCairoTest {
                                 ") timestamp(ts) partition by DAY WAL"
                 );
                 execute("insert into base_price values('gbpusd', 'v1', 1.5, '2024-09-10T12:01')");
-                execute("create materialized view mv as (select ts, version, avg(v) from base_price sample by 1d)");
+                execute("create materialized view mv as (select ts, version, avg(v) as avg from base_price sample by 1d)");
                 drainQueues();
 
                 execute(alter);
@@ -2327,15 +2370,15 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
             execute("create view v_price as select ts, sym, pi, v from base_price");
             execute("create view v_price_sub as select ts, sym, v from base_price where v < (select pi from long_sequence(1))");
-            execute("create materialized view mv_pi as (select ts, pi, avg(v) from v_price sample by 1d)");
-            execute("create materialized view mv_sub as (select ts, avg(v) from v_price_sub sample by 1d)");
+            execute("create materialized view mv_pi as (select ts, pi, avg(v) as avg from v_price sample by 1d)");
+            execute("create materialized view mv_sub as (select ts, avg(v) as avg from v_price_sub sample by 1d)");
             drainQueues();
             assertQuery("select view_name, view_sql, view_status from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_sql\tview_status
-                            mv_pi\tselect ts, pi, avg(v) from v_price sample by 1d\tvalid
-                            mv_sub\tselect ts, avg(v) from v_price_sub sample by 1d\tvalid
+                            mv_pi\tselect ts, pi, avg(v) as avg from v_price sample by 1d\tvalid
+                            mv_sub\tselect ts, avg(v) as avg from v_price_sub sample by 1d\tvalid
                             """);
             assertQuery("mv_pi")
                     .timestamp("ts")
@@ -2352,8 +2395,9 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnAttachPartition() throws Exception {
+        // ATTACH PARTITION invalidates no view: it queues the attached partition's range for the view's refresh.
         final String partition = "2024-01-01";
-        testBaseTableInvalidateOnOperation(
+        testBaseTableKeepsViewValidOnOperation(
                 () -> {
                     // insert a few rows to have a detachable partition
                     execute(
@@ -2370,14 +2414,15 @@ public class MatViewTest extends AbstractCairoTest {
                         Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
                     }
                 },
-                "alter table base_price attach partition list '" + partition + "';",
-                "attach partition operation"
+                "alter table base_price attach partition list '" + partition + "';"
         );
     }
 
     @Test
     public void testBaseTableInvalidateOnChangeColumnType() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price alter column amount type long;", "change column type operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price alter column amount type long;");
     }
 
     @Test
@@ -2424,17 +2469,21 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnDetachPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price detach partition where ts > 0;", "detach partition operation");
+        // DETACH PARTITION invalidates no view: the view keeps its rows there.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price detach partition where ts > 0;");
     }
 
     @Test
     public void testBaseTableInvalidateOnDropColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop column amount;", "drop column operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price drop column amount;");
     }
 
     @Test
     public void testBaseTableInvalidateOnDropPartition() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price drop partition where ts > 0;", "drop partition operation");
+        // DROP PARTITION invalidates no view: the view keeps its rows there.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price drop partition where ts > 0;");
     }
 
     @Test
@@ -2444,17 +2493,22 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testBaseTableInvalidateOnRenameColumn() throws Exception {
-        testBaseTableInvalidateOnOperation("alter table base_price rename column amount to amount2;", "rename column operation");
+        // A base column change invalidates no view when it applies: the view's next refresh that recomputes rows
+        // decides, and the view does not read amount.
+        testBaseTableKeepsViewValidOnOperation("alter table base_price rename column amount to amount2;");
     }
 
     @Test
     public void testBaseTableInvalidateOnTruncate() throws Exception {
-        testBaseTableInvalidateOnOperation("truncate table base_price;", "truncate operation");
+        // TRUNCATE invalidates no view: the view keeps its rows, and its refreshes drop the intervals queued
+        // before the truncate.
+        testBaseTableKeepsViewValidOnOperation("truncate table base_price;");
     }
 
     @Test
     public void testBaseTableInvalidateOnUpdate() throws Exception {
-        testBaseTableInvalidateOnOperation("update base_price set amount = 42;", "update operation");
+        // UPDATE invalidates no view: it queues the range of the partitions it rewrote for the view's refresh.
+        testBaseTableKeepsViewValidOnOperation("update base_price set amount = 42;");
     }
 
     @Test
@@ -2608,6 +2662,8 @@ public class MatViewTest extends AbstractCairoTest {
             currentMicros = parseFloorPartialTimestamp("2024-10-24T18");
             execute("rename table base_price to base_price2");
             execute("refresh materialized view 'price_1h' full;");
+            // FULL on the view the rename invalidated waits until the view's WAL applies the invalidation
+            drainQueues();
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2621,14 +2677,18 @@ public class MatViewTest extends AbstractCairoTest {
                             """);
 
             // Create another base table instead of the one that was renamed.
-            // This table is non-WAL, so mat view should be still invalid.
+            // This table is non-WAL, so REFRESH ... FULL refuses it at the statement, and the mat view stays invalid.
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY BYPASS WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2024-10-24T19");
-            execute("refresh materialized view 'price_1h' full;");
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view 'price_1h' full;",
+                    26,
+                    "base table is not a WAL table or a materialized view [view=price_1h, baseTable=base_price]"
+            );
             drainQueues();
 
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
@@ -2638,7 +2698,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-10-24T18:00:00.000000Z\t2024-10-24T19:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\tbase table is not a WAL table\t1\t-1
+                            price_1h\timmediate\tbase_price\t2024-10-24T18:00:00.000000Z\t2024-10-24T18:00:00.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t[-105]: table does not exist [table=base_price]\t1\t-1
                             """);
         });
     }
@@ -2842,15 +2902,20 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
-            // revalidate the view
-            execute("refresh materialized view price_1h full");
+            // REFRESH ... FULL refuses a base of another designated timestamp type at the statement, and the view
+            // keeps its rows and its invalidation
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view price_1h full",
+                    26,
+                    "base table designated timestamp type does not match the view's [view=price_1h, baseTable=base_price, viewType=TIMESTAMP_NS, baseTableType=TIMESTAMP]"
+            );
             drainQueues();
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\t[-1]: timestamp type mismatch between materialized view and query [view=TIMESTAMP_NS, query=TIMESTAMP]
+                            price_1h\tbase_price\tinvalid\tbase table is dropped or renamed
                             """);
         });
     }
@@ -3111,8 +3176,10 @@ public class MatViewTest extends AbstractCairoTest {
                             price_1h\tbase_price\tvalid
                             """);
 
-            execute("alter table base_price drop column amount;");
-            execute("insert into base_price (sym, price, ts) values('gbpusd', 1.330, '2024-09-15T12:01')");
+            // A base DROP COLUMN invalidates no view when it applies. The view reads price, so the refresh
+            // after the insert fails to compile its SQL and invalidates the view.
+            execute("alter table base_price drop column price;");
+            execute("insert into base_price (sym, ts) values('gbpusd', '2024-09-15T12:01')");
 
             drainQueues();
 
@@ -3121,7 +3188,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1h\tbase_price\tinvalid\tdrop column operation
+                            price_1h\tbase_price\tinvalid\t[17]: Invalid column: price
                             """);
 
             try (Path path = new Path()) {
@@ -3195,13 +3262,14 @@ public class MatViewTest extends AbstractCairoTest {
                             sym30\t30.0\t2022-02-26T10:00:00.000000Z
                             """));
 
-            // Expect 3 (30 rows / 10 rows per batch) commits.
+            // Expect 3 (30 rows / 10 rows per batch) commits, after the view state event that persists the base
+            // table id at the view's first refresh.
             assertQuery("select writerTxn, sequencerTxn from wal_tables() where name = 'price_1h'")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             writerTxn\tsequencerTxn
-                            3\t3
+                            4\t4
                             """);
         });
     }
@@ -3219,6 +3287,12 @@ public class MatViewTest extends AbstractCairoTest {
 
             // copy
             assertCannotModifyMatView("copy price_1h from 'test-numeric-headers.csv' with header true");
+            // the import resolves a single-quoted target to the view too
+            assertExceptionNoLeakCheck(
+                    "copy 'price_1h' from 'test-numeric-headers.csv' with header true",
+                    5,
+                    "cannot modify materialized view [view=price_1h]"
+            );
             // rename table
             assertCannotModifyMatView("rename table price_1h to price_1h_bak");
             // update
@@ -3759,12 +3833,14 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column extra_col");
             drainQueues();
 
+            // The view does not read extra_col, so the DROP leaves it valid, and the refresh that the DROP's own
+            // commit triggers moves its refresh position past the DROP.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full");
@@ -4036,6 +4112,71 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshDoesNotTruncateWhenViewSqlDoesNotCompile() throws Exception {
+        // Regression: REFRESH ... FULL used to truncate the view before it recompiled the stored SQL,
+        // so a definition that no longer compiles (here: it selects a base column that has been
+        // dropped; in the field, an upgrade that tightened a planner gate) destroyed rows that were
+        // readable a moment earlier and could not be rebuilt on that binary. The recompile must
+        // succeed before anything is destroyed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.323, '2024-09-10T12:02')" +
+                            ",('jpyusd', 103.21, '2024-09-10T12:02')" +
+                            ",('gbpusd', 1.321, '2024-09-10T13:02')"
+            );
+            drainQueues();
+
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("alter table base_price drop column sym;");
+            drainQueues();
+
+            // This is the state an operator sees before reaching for a full refresh: the view is
+            // invalid, but its rows are still there and still readable.
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The rows must survive the failed refresh.
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+
+            // ... and the failure must be reported, naming the recompile error.
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tinvalid\t[7]: Invalid column: sym
+                            """);
+        });
+    }
+
+    @Test
     public void testFullRefreshDroppedBaseColumn() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -4081,23 +4222,35 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column sym;");
             drainQueues();
 
+            // The DROP invalidates no view when it applies, and the refresh that its own commit triggers has
+            // no rows to recompute, so it moves the refresh position past the DROP without compiling the SQL.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full;");
             drainQueues();
 
+            // The full refresh cannot recompile the stored SQL, so it fails before the truncate: the view
+            // goes invalid with the compile error, still holding the rows it was refreshed with, and still
+            // claiming the base txn its last refresh moved it to (not -1, which would deny it ever refreshed).
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t2\t2
+                            """);
+            assertQuery("select invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            invalidation_reason
+                            [7]: Invalid column: sym
                             """);
             assertQuery("price_1h order by sym")
                     .expectSize()
@@ -4174,24 +4327,92 @@ public class MatViewTest extends AbstractCairoTest {
             execute("alter table base_price drop column price");
             drainQueues();
 
+            // The DROP invalidates no view when it applies, and the refresh that its own commit triggers has
+            // no rows to recompute, so it moves the refresh position past the DROP without compiling the SQL.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tvalid\t2\t2
                             """);
 
             execute("refresh materialized view price_1h full");
             drainQueues();
 
-            // The view is expected to be still invalid.
+            // The view is expected to go invalid with the compile error, and to still hold the row it was
+            // refreshed with: the stored SQL no longer compiles, so nothing may be destroyed.
             assertQuery(matViewsSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t2\t2
+                            """);
+            assertQuery("select invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            invalidation_reason
+                            [17]: Invalid column: price
+                            """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testFullRefreshFailedCompileReportsASaneRefreshDuration() throws Exception {
+        // The pre-flight failure returns before insertAsSelect, which is what stamps the start
+        // timestamp; refreshFailState still stamps a fresh finish timestamp. Left alone, the pair
+        // straddles the successful refresh that preceded it and materialized_views reports the whole
+        // gap -- here thirteen months -- as this refresh's duration. Assert the duration, not that the
+        // fields are populated: they are populated either way.
+        final String durationSql = "select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
+                "last_refresh_finish_timestamp - last_refresh_start_timestamp as refresh_duration_us " +
+                "from materialized_views";
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            currentMicros = parseFloorPartialTimestamp("2001-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            assertQuery(durationSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_duration_us
+                            price_1h\tvalid\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\t0
+                            """);
+
+            execute("alter table base_price drop column price");
+            drainQueues();
+
+            // Time passes -- the view sits broken for over a year before anyone reaches for a full
+            // refresh. The clock must move, or the bug is invisible: the changed tests pin currentMicros
+            // to one value across both the success and the failure.
+            currentMicros = parseFloorPartialTimestamp("2002-02-02T02:02:02.000000Z");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            // The failed attempt happened at 2002-02-02 and took no time at all.
+            assertQuery(durationSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_duration_us
+                            price_1h\tinvalid\t2002-02-02T02:02:02.000000Z\t2002-02-02T02:02:02.000000Z\t0
                             """);
         });
     }
@@ -4279,6 +4500,230 @@ public class MatViewTest extends AbstractCairoTest {
             capture.drain();
             capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
                     + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
+    public void testFullRefreshSurvivesBaseDdlBeforeThePreFlightCompile() throws Exception {
+        // A base DDL landing between the full refresh fixing its base-table reader snapshot and the
+        // pre-flight compile. The question this pins is whether the pre-flight's SqlException-only
+        // catch can be bypassed by a TableReferenceOutOfDateException, which would route past
+        // compileViewQueryForFullRefresh to the outer catch and invalidate the view.
+        //
+        // It cannot, and the reason is structural rather than lucky: SqlOptimiser enumerates a
+        // table's columns from executionContext.getReader(token) and stamps that reader's metadata
+        // version onto the model (SqlOptimiser.enumerateColumns), and
+        // MatViewRefreshSqlExecutionContext.getReader returns the FIXED base reader. Code generation
+        // then re-checks that same version against that same reader, so the versions always agree.
+        // The refresh therefore runs entirely against the snapshot it fixed, and the DDL is a no-op
+        // for it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                // Fires after the base reader snapshot is fixed and before the pre-flight compile.
+                // ADD COLUMN, not DROP: it bumps the base metadata version without breaking the view
+                // SQL, which is the shape that would surface a version mismatch if one existed.
+                job.setOnBaseReaderSnapshotForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        try {
+                            execute("alter table base_price add column extra int");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the base DDL must land before the pre-flight compile", fired.get());
+
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tvalid\t
+                            """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testFullRefreshSurvivesBreakingBaseDdlAfterTheTruncate() throws Exception {
+        // The narrow window the pre-flight leaves open: it compiles, the truncate publishes, and only
+        // then does a breaking base DDL land, so insertAsSelect's own recompile is the one that runs
+        // against the changed base table. If that recompile could fail, the rows would already be
+        // gone -- the very failure the pre-flight exists to prevent.
+        //
+        // It cannot fail, for the same reason as the sibling test above: both compiles enumerate the
+        // base table's columns from the one fixed, detached reader, so neither sees the dropped
+        // column. The rebuild completes from the snapshot and the rows survive. The DDL invalidates
+        // no view when it applies, so the rebuilt view stays valid; the next refresh that recomputes
+        // rows, after a base insert, recompiles the SQL against the changed base and invalidates the
+        // view with the compile error, keeping its rows -- the view is stale, not empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01');");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(viewState);
+            final AtomicBoolean fired = new AtomicBoolean();
+            try (MatViewRefreshJob job = createMatViewRefreshJob(engine)) {
+                // Drop the plan the last successful refresh parked. Without this the rebuild reuses it
+                // and never reaches the compile at all, so the test would pass vacuously. A cold plan
+                // cache is the ordinary state after a restart, or after any refresh that consumed the
+                // parked plan and failed. The seam runs on the refresh thread under the view latch,
+                // which is what acquireRecordFactory asserts.
+                job.setOnBaseReaderSnapshotForTesting(() -> Misc.free(viewState.acquireRecordFactory()));
+                // Fires after fencedTruncateSoft, before findRefreshIntervals and insertAsSelect.
+                job.setOnHoldingLockForTesting(() -> {
+                    if (fired.compareAndSet(false, true)) {
+                        try {
+                            execute("alter table base_price drop column price");
+                        } catch (Exception e) {
+                            throw new RuntimeException(e);
+                        }
+                        drainWalQueue();
+                    }
+                });
+                engine.getMatViewStateStore().enqueueFullRefresh(viewToken);
+                drainMatViewQueue(job);
+                drainWalQueue();
+            }
+            Assert.assertTrue("the breaking base DDL must land after the truncate", fired.get());
+
+            // The rows the truncate destroyed were rebuilt from the fixed snapshot ...
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+            // ... and the concurrent DDL leaves the rebuilt view valid ...
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tvalid\t
+                            """);
+
+            // ... until a base insert makes the next refresh compile the SQL against the changed base.
+            execute("insert into base_price(sym, ts) values('gbpusd', '2024-09-10T12:05');");
+            drainQueues();
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tinvalid\t[17]: Invalid column: price
+                            """);
+            assertQuery("price_1h order by sym")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
+    public void testFullRefreshStillReplacesViewContents() throws Exception {
+        // The other side of the truncate ordering: the fix for the destroy-before-recompile bug must
+        // not become "never truncate". A healthy full refresh still replaces the whole view, so a
+        // bucket whose base partition is gone must disappear from it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            execute(
+                    "insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')" +
+                            ",('gbpusd', 1.321, '2024-09-11T12:01')"
+            );
+            drainQueues();
+
+            final String bothDays = """
+                    sym\tprice\tts
+                    gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-11T12:00:00.000000Z
+                    """;
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(bothDays));
+
+            // Dropping a base partition leaves the view valid, with the bucket the base no longer holds.
+            execute("alter table base_price drop partition list '2024-09-10';");
+            drainQueues();
+
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(bothDays));
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The stored SQL still compiles, so the full refresh truncates and rebuilds: the view
+            // is valid again and the stale bucket is gone.
+            assertQuery("select view_name, view_status from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status
+                            price_1h\tvalid
+                            """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-11T12:00:00.000000Z
+                            """));
         });
     }
 
@@ -7193,11 +7638,21 @@ public class MatViewTest extends AbstractCairoTest {
                             x_1h\timmediate\tx\tvalid\t\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t2
                             """);
 
-            // Make the view invalid. Range refresh should be ignored.
+            // Make the view invalid: a base rename invalidates it, and renaming the base back keeps it invalid.
+            // Range refresh on an invalid view fails at the view name and changes nothing. Each rename is a base
+            // transaction, so the base reaches txn 6: two inserts, two renames, the truncate and the insert.
+            execute("rename table x to x_tmp;");
+            execute("rename table x_tmp to x;");
+            drainQueues();
             execute("truncate table x;");
             execute(insertOlderRows);
             drainQueues();
-            execute("refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';");
+            assertExceptionNoLeakCheck(
+                    "refresh materialized view x_1h range from '2024-09-10T12:02' to '2024-09-11T12:02';",
+                    26,
+                    "materialized view is invalid, run REFRESH MATERIALIZED VIEW x_1h RESUME first [reason=table rename operation]"
+            );
+            drainQueues();
             assertQuery("x_1h order by sym, ts")
                     .expectSize()
                     .noLeakCheck()
@@ -7210,7 +7665,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
-                            x_1h\timmediate\tx\tinvalid\ttruncate operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t4
+                            x_1h\timmediate\tx\tinvalid\ttable rename operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t6
                             """);
         });
     }
@@ -7499,17 +7954,18 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // all views should be invalid
+            // A base TRUNCATE invalidates no view: the chain keeps its rows and follows the rows written after it.
             assertQuery("select view_name, refresh_type, base_table_name, view_status, invalidation_reason from materialized_views order by view_name")
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
-                            v1_base\timmediate\tbase\tinvalid\ttruncate operation
-                            v2_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v3_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v1_base\timmediate\tbase\tvalid\t
+                            v2_v1\timmediate\tv1_base\tvalid\t
+                            v3_v1\timmediate\tv1_base\tvalid\t
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
 
+            // Neither does a parent FULL refresh, which truncates the parent before it rebuilds it.
             execute("refresh materialized view " + view1Name + " full");
             drainQueues();
 
@@ -7518,9 +7974,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             v1_base\timmediate\tbase\tvalid\t
-                            v2_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v3_v1\timmediate\tv1_base\tinvalid\tbase materialized view is invalidated
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v2_v1\timmediate\tv1_base\tvalid\t
+                            v3_v1\timmediate\tv1_base\tvalid\t
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
 
             // Refresh the rest
@@ -7596,7 +8052,7 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
                             v2_v1\timmediate\tv1_base\tinvalid\tbase table is dropped or renamed
                             v3_v1\timmediate\tv1_base\tinvalid\tbase table is dropped or renamed
-                            v4_v3\timmediate\tv3_v1\tinvalid\tbase materialized view is invalidated
+                            v4_v3\timmediate\tv3_v1\tvalid\t
                             """);
         });
     }
@@ -7628,10 +8084,10 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason
-                            price_1d\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
-                            price_1d_2\timmediate\tprice_1h\tinvalid\tbase materialized view refresh failed
+                            price_1d\timmediate\tprice_1h\tvalid\t
+                            price_1d_2\timmediate\tprice_1h\tvalid\t
                             price_1h\timmediate\tbase_price\tinvalid\t[-1]: unexpected reduce error
-                            price_1w\timmediate\tprice_1d\tinvalid\tbase materialized view is invalidated
+                            price_1w\timmediate\tprice_1d\tvalid\t
                             """);
         });
     }
@@ -8070,71 +8526,26 @@ public class MatViewTest extends AbstractCairoTest {
         disableCompositePartitionRandomisation();
         // End-to-end test for cairo.mat.view.refresh.max.clusters: with 5
         // disjoint inserts and the cap forced down to 2, clustering must
-        // collapse the 5 intervals into 2 clusters, producing exactly 2
-        // REPLACE_RANGE commits on the mat-view table instead of 5. Reading
-        // the mat-view's writer txn before and after the refresh is the
-        // only observable that distinguishes "cap took effect" from
-        // "clustering ran but didn't merge anything" -- intervals are
-        // cleared post-refresh regardless of cluster count, so the cache
-        // size assertion alone is cap-independent.
+        // collapse the 5 intervals into 2 clusters. Reading the mat-view's
+        // writer txn before and after the refresh is the only observable
+        // that distinguishes "cap took effect" from "clustering ran but
+        // didn't merge anything" -- intervals are cleared post-refresh
+        // regardless of cluster count, so the cache size assertion alone is
+        // cap-independent.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "5s");
         setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MAX_CLUSTERS, 2);
         assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
-            );
-            execute(
-                    "create materialized view price_1h refresh manual as " +
-                            "select ts, last(price) as price from base_price sample by 1h;"
-            );
-            // Initial seed + refresh to clear cache.
-            execute("insert into base_price(price, ts) values (1.0, '2024-01-01T00:01')");
-            currentMicros = parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z");
-            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // 5 disjoint inserts widely apart -- each becomes its own cached
-            // interval at refresh-intervals-update time.
-            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T00:01')");
-            execute("insert into base_price(price, ts) values (3.0, '2024-03-01T00:01')");
-            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T00:01')");
-            execute("insert into base_price(price, ts) values (5.0, '2024-05-01T00:01')");
-            execute("insert into base_price(price, ts) values (6.0, '2024-06-01T00:01')");
-
-            currentMicros += 6 * Micros.SECOND_MICROS;
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-
-            // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
-            // happens inside findRefreshIntervals during the refresh itself,
-            // so this snapshot is taken before the cap kicks in.
-            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
-            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
-            Assert.assertNotNull(viewState);
-            Assert.assertEquals(10, viewState.getRefreshIntervals().size());
-
-            final long txnBefore = engine.getTableSequencerAPI()
-                    .getTxnTracker(viewToken).getWriterTxn();
-            execute("refresh materialized view price_1h incremental;");
-            drainMatViewTimerQueue(timerJob);
-            drainQueues();
-            final long txnAfter = engine.getTableSequencerAPI()
-                    .getTxnTracker(viewToken).getWriterTxn();
-
-            // Cap of 2 must produce exactly 2 REPLACE_RANGE commits.
-            // Without the cap (or with cap >= 5) the same workload produces
-            // 5 commits -- this delta is the observable that proves the
-            // config knob is doing work.
-            Assert.assertEquals(
-                    "max-clusters cap of 2 must collapse 5 intervals into 2 commits",
-                    2L,
-                    txnAfter - txnBefore
-            );
-            Assert.assertEquals(0, viewState.getRefreshIntervals().size());
-            Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+            // A base partitioned by day holds the five inserts in five partitions with gaps
+            // between them. The cap merges the five cached intervals into 2 clusters, and the
+            // partition clip keeps them whole: the view holds no rows in the gaps, so a
+            // REPLACE_RANGE commit across a gap deletes nothing a split would keep.
+            assertMaxClustersCapCommits("DAY", "price_1h", 2);
+            // All five inserts land in the one 2024 partition of a base partitioned by year,
+            // so the 2 clusters produce exactly 2 REPLACE_RANGE commits. Without the cap (or
+            // with cap >= 5) the same workload produces 5 commits -- this delta is the
+            // observable that proves the config knob is doing work.
+            assertMaxClustersCapCommits("YEAR", "price_1h_dense", 2);
         });
     }
 
@@ -8200,7 +8611,8 @@ public class MatViewTest extends AbstractCairoTest {
         // QuestDB 8.x, and any release run with cairo.sql.column.alias.expression.enabled=false, names an
         // unaliased avg(price) "avg" and a repeated sym "sym1". The expression rules name them "avg(price)" and
         // "sym_2". The view stores its query as written, and that text fixes what every column computes, so a
-        // refresh under the expression rules keeps the view valid and keeps copying the columns by position.
+        // refresh under the expression rules keeps the view valid and keeps copying the columns by position. The
+        // views are created the way versions before the explicit column name rules created them.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
             executeWithRewriteTimestamp(
@@ -8209,8 +8621,8 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view price_1d as (select ts, sym, sym, avg(price) from base_price sample by 1d)");
-            execute("create materialized view price_cte as (with p as (select ts, sym, price from base_price) select ts, sym, avg(price) from p sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_1d as (select ts, sym, sym, avg(price) from base_price sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_cte as (with p as (select ts, sym, price from base_price) select ts, sym, avg(price) from p sample by 1d)");
             drainQueues();
 
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
@@ -8252,7 +8664,8 @@ public class MatViewTest extends AbstractCairoTest {
     public void testRefreshKeepsViewWhenLegacyAliasRulesRenameColumns() throws Exception {
         // The reverse switch. The expression rules name a repeated sym "sym_2" and cut a column reference longer
         // than cairo.sql.column.alias.generated.max.size to that size; the legacy rules name them "sym1" and
-        // the full column name.
+        // the full column name. The view is created the way versions before the explicit column name rules
+        // created it.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
             final String venue = "venue_" + "v".repeat(64);
@@ -8263,7 +8676,7 @@ public class MatViewTest extends AbstractCairoTest {
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute("insert into base_price values('gbpusd', 'lmax', 1.5, '2024-09-10T12:01')");
-            execute("create materialized view price_1d as (select ts, sym, sym, " + venue + ", avg(price) avg_price from base_price sample by 1d)");
+            executeWithoutExplicitNamesCheck("create materialized view price_1d as (select ts, sym, sym, " + venue + ", avg(price) avg_price from base_price sample by 1d)");
             drainQueues();
 
             setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "false");
@@ -8390,8 +8803,9 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testRefreshRejectsWildcardViewWhenSourceViewGainsColumn() throws Exception {
         // A wildcard over a regular view takes its columns from that view, which ALTER VIEW can widen without
-        // invalidating the materialized view. The refresh refuses the wider query. A view that lists its
-        // columns keeps refreshing them.
+        // invalidating the materialized view. A regular view's columns count as plain columns, so the refresh
+        // maps them to the view's columns by name and ignores the added column. A view that lists its
+        // columns keeps refreshing them too.
         // The composite partition sweep cannot open a reader on a regular view.
         disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
@@ -8416,26 +8830,28 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
                             stats_cols\tvalid\t
-                            stats_star\tinvalid\t[-1]: materialized view query does not match view schema [view=stats_star, queryColumnCount=5, viewColumnCount=4]
+                            stats_star\tvalid\t
                             """);
-            assertQuery("stats_cols")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(replaceExpectedTimestamp("""
-                            ts\tsym\ta\tb
-                            2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
-                            2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
-                            """));
+            for (String view : new String[]{"stats_cols", "stats_star"}) {
+                assertQuery(view)
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp("""
+                                ts\tsym\ta\tb
+                                2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
+                                2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
+                                """));
+            }
         });
     }
 
     @Test
     public void testRefreshRejectsWildcardViewWhenSourceViewReordersColumns() throws Exception {
         // A wildcard over a regular view takes its column order from that view, which ALTER VIEW can change
-        // without invalidating the materialized view. The copier maps columns by position, so the refresh
-        // compares column names and refuses the reordered query instead of writing max(price) into a and
-        // avg(price) into b. A view that lists its columns reads them by name and keeps refreshing.
+        // without invalidating the materialized view. A regular view's columns count as plain columns, so the
+        // refresh maps them to the view's columns by name and writes avg(price) into a and max(price) into b, as
+        // before the change. A view that lists its columns reads them by name and keeps refreshing.
         // The composite partition sweep cannot open a reader on a regular view.
         disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
@@ -8460,17 +8876,19 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
                             stats_cols\tvalid\t
-                            stats_star\tinvalid\t[-1]: materialized view query does not match view schema [view=stats_star, columnIndex=2, queryColumn=b, viewColumn=a]
+                            stats_star\tvalid\t
                             """);
-            assertQuery("stats_cols")
-                    .timestamp("ts")
-                    .expectSize()
-                    .noLeakCheck()
-                    .returns(replaceExpectedTimestamp("""
-                            ts\tsym\ta\tb
-                            2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
-                            2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
-                            """));
+            for (String view : new String[]{"stats_cols", "stats_star"}) {
+                assertQuery(view)
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp("""
+                                ts\tsym\ta\tb
+                                2024-09-10T12:00:00.000000Z\tgbpusd\t1.5\t1.5
+                                2024-09-10T15:00:00.000000Z\tgbpusd\t6.0\t9.5
+                                """));
+            }
         });
     }
 
@@ -9211,6 +9629,1717 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshLimitBoundaryEmptyBaseTable() throws Exception {
+        // Boundary computation on an empty base table: max(base_ts) is Long.MIN_VALUE.
+        // The fallback to wall clock keeps the boundary math from underflowing; the
+        // refresh skips the empty range and leaves the view empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 months;");
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryFutureDatedBaseTimestamp() throws Exception {
+        // Boundary anchor is min(max(base_ts), wallClock): when base data contains
+        // future timestamps relative to wall clock, the anchor caps at wall clock so
+        // the boundary does not jump forward and exclude legitimate current data.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T12:00')" +
+                            ",('gbpusd', 1.322, '2030-01-01T00:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 day;");
+
+            // Without the wall-clock cap, anchor would be 2030-01-01 and the boundary
+            // 2029-12-31, dropping every 2024 row. With the cap, anchor = 2024-09-10T12:30,
+            // boundary = 2024-09-09T12:30, so all rows survive.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T11:00:00.000000Z
+                            gbpusd\t1.321\t2024-09-10T12:00:00.000000Z
+                            gbpusd\t1.322\t2030-01-01T00:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryUsesMaxBaseTimestamp() throws Exception {
+        // New boundary formula: min(max(base_ts), wallClock) - LIMIT. When wall clock
+        // has advanced well past max(base_ts) (stale base ingestion), the boundary
+        // stays anchored at max(base_ts), preserving rows the old wall-clock-only
+        // formula would have pushed below the boundary.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T10:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.322, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+
+            // Wall clock is 12 hours past max(base_ts). Under the old formula the
+            // boundary would be 23:00, excluding every row. The new formula anchors
+            // at max(base_ts) = 12:00, so the boundary is 11:00 and the 11:00/12:00
+            // buckets survive.
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.321\t2024-09-10T11:00:00.000000Z
+                            gbpusd\t1.322\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitBoundaryWallClockEscapeHatch() throws Exception {
+        // Same stale-ingestion setup as testRefreshLimitBoundaryUsesMaxBaseTimestamp,
+        // but with the escape hatch on. The boundary reverts to the pre-frozen-zone
+        // formula (wallClock - LIMIT), so every row falls below the boundary.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values ('gbpusd', 1.320, '2024-09-10T10:00')" +
+                            ",('gbpusd', 1.321, '2024-09-10T11:00')" +
+                            ",('gbpusd', 1.322, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T00:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshLimitWallClockEscapeHatchRejectsBackfill() throws Exception {
+        // With the escape-hatch on, isBackfillableMatView returns false even
+        // when REFRESH LIMIT is set -- the entry-point gate must reject INSERT
+        // with the legacy "cannot modify materialized view" error. The
+        // materialized_views().backfill_max_ts column must surface NULL too,
+        // so the gate and the metadata stay consistent.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            assertCannotModifyMatView("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillCopyRejectedWithRefreshLimit() throws Exception {
+        // SQL COPY imports into an existing view through the parallel importer, which attaches partitions
+        // through the view's TableWriter, outside the view's WAL where MatViewBackfillValidator checks
+        // backfill at commit. So the compile-time gate refuses COPY into a materialized view even when its
+        // REFRESH LIMIT lets INSERT backfill the frozen zone: for every spelling of the name, whatever the
+        // COPY options, FROM stdin too, and whether the view is still empty (the bootstrap case) or not.
+        // A refused COPY publishes no import task.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values ('a', 8.0, '2024-09-10T10:10'), ('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+            assertQueryNoLeakCheck("count\n0\n", "select count() from price_1h", null, false, true);
+
+            final String gateMessage = "cannot modify materialized view [view=price_1h]";
+            assertExceptionNoLeakCheck("copy price_1h from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy \"price_1h\" from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy 'price_1h' from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck("copy PRICE_1H from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            assertExceptionNoLeakCheck(
+                    "copy price_1h from 'x.csv' with header true timestamp 'ts' partition by DAY on error abort",
+                    5,
+                    gateMessage
+            );
+            assertExceptionNoLeakCheck("copy price_1h from stdin", 5, gateMessage);
+            Assert.assertEquals(CopyImportContext.INACTIVE_COPY_ID, engine.getCopyImportContext().getActiveImportID());
+
+            // Wall clock 12:30: anchor = min(12:00, 12:30) = 12:00; boundary = 11:00, so the
+            // refresh builds the 12:00 bucket only.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            assertExceptionNoLeakCheck("copy price_1h from 'test-numeric-headers.csv' with header true", 5, gateMessage);
+            Assert.assertEquals(CopyImportContext.INACTIVE_COPY_ID, engine.getCopyImportContext().getActiveImportID());
+
+            // ALTER, RENAME, UPDATE and TRUNCATE stay refused too
+            assertCannotModifyMatView("alter table price_1h add column x int");
+            assertCannotModifyMatView("rename table price_1h to price_1h_bak");
+            assertCannotModifyMatView("update price_1h set price = 1.1");
+            assertCannotModifyMatView("truncate table price_1h");
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillBucketWholeManagedZoneRejected() throws Exception {
+        // Validator at WAL commit rejects backfill that lands in or straddles a
+        // bucket extending past the REFRESH LIMIT boundary's bucket floor.
+        // With wall clock at 12:30 and limit=1h, boundary=11:30 -> boundary bucket
+        // floor=11:00. A row at 11:30 sits in bucket [11:00, 12:00) which ends at
+        // 12:00 > 11:00 -- the whole-txn rejection fires.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            try {
+                execute("insert into price_1h values('a', 7.0, '2024-09-10T11:30')");
+                Assert.fail("expected bucket-whole rejection");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone backfill at 09:00 stays accepted -- bucket [09:00, 10:00)
+            // ends at 10:00 <= boundary bucket floor 11:00.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillBucketWholeManagedZoneRejectedMonthsLimit() throws Exception {
+        // Months-based REFRESH LIMIT exercises the driver.addMonths arithmetic in the
+        // commit-time validator's boundary computation; the hours path is covered by
+        // testMatViewBackfillBucketWholeManagedZoneRejected. limit=2 months, base max
+        // 2024-12-01, wall clock 2024-12-15 -> boundary = addMonths(2024-12-01, -2)
+        // = 2024-10-01 (already 1d-bucket aligned). A managed-zone row is rejected; a row
+        // whose 1d bucket ends at-or-before 2024-10-01 is accepted.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-12-01T00:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-15T00:00:00.000000Z");
+            try {
+                execute("insert into price_1d values('a', 7.0, '2024-10-15T00:00')");
+                Assert.fail("expected bucket-whole rejection in the managed zone");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone backfill at 2024-08-15 -- bucket [2024-08-15, 2024-08-16) ends
+            // at-or-before the 2024-10-01 boundary bucket floor.
+            execute("insert into price_1d values('a', 1.0, '2024-08-15T00:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-08-15T00:00:00.000000Z
+                            """),
+                    "price_1d order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillInsertAcceptedWithRefreshLimit() throws Exception {
+        // With REFRESH LIMIT set, the SQL INSERT entry-point gate accepts the
+        // statement and the WAL commit-time validator accepts the row because
+        // its bucket sits strictly below the boundary's bucket floor.
+        // Pin currentMicros so the validator's anchor is deterministic; without
+        // it the test would compare a ts in 2024 against the JVM wall clock and
+        // accept trivially.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall clock 12:30: anchor = min(11:00, 12:30) = 11:00; boundary = 10:00.
+            // Snapped boundary bucket floor = 10:00 (1h sampling). Row at 09:00
+            // sits in bucket [09:00, 10:00) -> bucketEnd = 10:00 == boundary
+            // floor, accepted by the bucket-whole rule.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.5\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierAdvancesOnApplyNotCommit() throws Exception {
+        // #3 regression: the commit-time validator (a WalPreCommitValidator pre-commit hook)
+        // must NOT advance the in-memory backfill frontier. Advancing it before the txn is
+        // durably sealed means a commit that fails to seal -- or is simply never applied --
+        // leaves the refresh boundary permanently over-pinned (the frontier is a monotonic
+        // CAS-max with no rollback). The frontier must advance only on the WAL apply path
+        // (ApplyWal2TableJob.reconstructBackfillFrontier), after the data is committed.
+        // The composite randomiser drains the WAL queue after every execute(), which would apply
+        // the backfill INSERT before the assertion that it is still unapplied.
+        disableCompositePartitionRandomisation();
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+            Assert.assertEquals(Long.MIN_VALUE, state.getBackfillFrontier());
+
+            // Wall clock 12:30: anchor = min(11:00, 12:30) = 11:00, boundary = 10:00. Row at
+            // 09:00 is frozen and accepted. The INSERT commits to the WAL (validator runs) but
+            // we deliberately do NOT drain the WAL queue yet, so the txn is not applied.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
+
+            // Commit-time validation has run, but the txn is not applied: the frontier must
+            // still be unset. (Pre-fix, the validator advanced it here.)
+            Assert.assertEquals(
+                    "validator must not advance the backfill frontier before the txn is applied",
+                    Long.MIN_VALUE,
+                    state.getBackfillFrontier()
+            );
+
+            // The apply path reconstructs the frontier from the committed backfill txn.
+            drainQueues();
+            Assert.assertTrue(
+                    "frontier must be reconstructed on the apply path",
+                    state.getBackfillFrontier() != Long.MIN_VALUE
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierPersistedBeforeDataCommit() throws Exception {
+        // #1 regression: the backfill frontier must be persisted to _mv.s BEFORE the backfill data
+        // is committed, so a crash between the data commit and a post-commit state write can never
+        // leave applied backfill data whose frontier was lost (which a later max(base_ts) retreat
+        // could then silently wipe -- the txn is already applied, so a restart never re-runs
+        // reconstruct for it). We simulate the failing state write with a FilesFacade that fails the
+        // _mv.s write during the backfill apply. With the fix the persist runs first, so its failure
+        // aborts the apply and the data is NOT committed (the table suspends; consistency preserved);
+        // the backfill then applies cleanly once the fault clears -- nothing is lost, just deferred.
+        final AtomicBoolean failStateWrite = new AtomicBoolean(false);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (failStateWrite.get() && Utf8s.containsAscii(name, MatViewState.MAT_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('gbpusd', 2.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            Assert.assertNotNull(state);
+
+            // Backfill a frozen-zone row (09:00, below the 10:00 boundary) with the _mv.s write
+            // failing during apply.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            failStateWrite.set(true);
+            execute("insert into price_1h values('gbpusd', 1.5, '2024-09-10T09:00:00.000000Z')");
+            drainQueues();
+
+            // The state write failed before the data commit, so the backfill must NOT be committed
+            // and its frontier must NOT be marked persisted (pre-fix the persist ran after the
+            // commit, so the row would be committed/visible with a lost frontier).
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("sym\tprice\tts\n"),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            Assert.assertEquals(
+                    "frontier must not be marked persisted when its state write failed",
+                    Long.MIN_VALUE,
+                    state.getPersistedBackfillFrontier()
+            );
+
+            // Clear the fault and resume: the backfill re-applies and the frontier becomes durable.
+            failStateWrite.set(false);
+            execute("alter materialized view price_1h resume wal");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.5\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+            Assert.assertTrue(
+                    "frontier must be durably persisted to _mv.s after recovery",
+                    state.getPersistedBackfillFrontier() != Long.MIN_VALUE
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillInsertRejectedWithoutRefreshLimit() throws Exception {
+        // Without REFRESH LIMIT set, INSERT must still be rejected -- the gate
+        // returns isBackfillableMatView=false so the existing "cannot modify materialized
+        // view" error fires.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            createMatView("select sym, last(price) as price, ts from base_price sample by 1h");
+
+            assertCannotModifyMatView("insert into price_1h values('gbpusd', 1.5, '2024-09-10T10:00:00.000000Z')");
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTs() throws Exception {
+        // materialized_views().backfill_max_ts surfaces the current frozen-zone
+        // cutoff. NULL when REFRESH LIMIT is not set; otherwise the boundary's
+        // bucket floor in the base table's units.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // No REFRESH LIMIT set -- backfill_max_ts is NULL.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // With 1h limit and wall clock 12:30, boundary = min(12:00, 12:30) - 1h
+            // = 11:00. Bucket floor for 1h sampling is also 11:00 (already aligned).
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1h\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullPreservesFrozenZone() throws Exception {
+        // Plain REFRESH MATERIALIZED VIEW ... FULL preserves rows below the
+        // REFRESH LIMIT boundary (the frozen zone). The user-backfilled row at
+        // 09:00 survives a FULL refresh that recomputes the managed-zone bucket
+        // [12:00, 13:00) from the base table.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall clock 12:30: boundary = min(12:00, 12:30) - 1h = 11:00.
+            // Bucket [09:00, 10:00) ends at 10:00 <= 11:00 -> frozen zone.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Backfill row at 09:00 survives; managed-zone bucket 12:00 is refreshed from base.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullPreservesFrozenZoneAfterBasePartitionDrop() throws Exception {
+        // Regression: the frozen-zone boundary must not retreat when max(base_ts)
+        // drops. Dropping the most-recent base partition lowers max(base_ts), so an
+        // anchor of min(max(base_ts), now) would pull the boundary backwards and the
+        // next FULL refresh would emit a REPLACE_RANGE whose lo sat below an
+        // already-accepted frozen-zone backfill row, deleting it (and recomputing the
+        // base bucket instead). The anchor max(max(base_ts), max(view_ts)) keeps the
+        // boundary pinned at the view's high-water mark (the orphaned 09-13 bucket),
+        // so the backfill survives.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            // Base data spans below the backfill (09-10T12:00) up to a recent
+            // partition (09-13T12:00); the low row keeps base_min below the backfill
+            // so a retreating FULL refresh would otherwise reach down and wipe it.
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T12:00')" +
+                            ",('a', 6.0, '2024-09-12T12:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 days;");
+            drainQueues();
+
+            // Wall clock 09-13T12:30: anchor = min(09-13T12:00, now) = 09-13T12:00,
+            // boundary = 09-11T12:00. First refresh publishes that floor and
+            // materialises the managed-zone buckets 09-12 and 09-13.
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Backfill a frozen-zone row well below the published floor.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+            drainQueues();
+
+            // Drop the most-recent base partition. max(base_ts) falls to 09-12T12:00,
+            // which would retreat the boundary to 09-10T12:00 without the clamp.
+            execute("alter table base_price drop partition list '2024-09-13'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The backfill at 09-10T18:00 survives (boundary clamped at 09-11T12:00).
+            // 09-12 is recomputed from base; 09-13 stays as a stale orphan because its
+            // base partition is gone (the documented "FULL does not wipe stale buckets"
+            // tradeoff). Crucially, NO row appears at 09-10T12:00 -- that would mean the
+            // boundary retreated and the REPLACE_RANGE recomputed it while deleting the
+            // 09-10T18:00 backfill.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T18:00:00.000000Z
+                            a\t6.0\t2024-09-12T12:00:00.000000Z
+                            a\t9.0\t2024-09-13T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillMultiRowAllFrozenAccepted() throws Exception {
+        // Multi-row insert where every row sits in the frozen zone is accepted.
+        // The validator gates on the txn's max-row timestamp.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Boundary 11:00, snapped 11:00. Buckets [08:00,09:00) and [09:00,10:00)
+            // both end at-or-before 11:00 -> accepted. Direct INSERT into a mat view
+            // is row-by-row (it does not re-aggregate through the SAMPLE BY), so all
+            // three inserted rows land verbatim.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute(
+                    "insert into price_1h values" +
+                            "('a', 1.0, '2024-09-10T08:00')" +
+                            ",('a', 2.0, '2024-09-10T09:00')" +
+                            ",('a', 3.0, '2024-09-10T09:30')"
+            );
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T08:00:00.000000Z
+                            a\t2.0\t2024-09-10T09:00:00.000000Z
+                            a\t3.0\t2024-09-10T09:30:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillMultiRowStraddlingBoundaryRejected() throws Exception {
+        // Multi-row insert where the min row is in the frozen zone but the max
+        // row straddles the boundary. The whole txn must be rejected because
+        // the validator inspects the max-row's bucket.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            try {
+                execute(
+                        "insert into price_1h values" +
+                                "('a', 1.0, '2024-09-10T08:00')" +
+                                ",('a', 2.0, '2024-09-10T11:30')"
+                );
+                Assert.fail("expected bucket-whole rejection on straddling txn");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Mat view stays empty -- the whole txn was rolled back, including the frozen row.
+            assertQueryNoLeakCheck(
+                    "sym\tprice\tts\n",
+                    "price_1h order by sym, ts"
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierSurvivesBaseRetreatBeforeFirstRefresh() throws Exception {
+        // Regression for the pre-first-refresh data-loss window. A backfill accepted into a
+        // view that has NOT yet been refreshed cannot be protected by max(view_ts): the
+        // backfilled row IS the view's max, so anchoring on max(base_ts, view_ts) and then
+        // dropping the most-recent base partition would pull the boundary back over the
+        // backfill and a FULL refresh would wipe it. The validator records the anchor it
+        // accepted against (backfillFrontier); folding that into the refresh anchor pins the
+        // boundary at-or-above it, so the backfill survives.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T12:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 days;");
+            drainQueues();
+
+            // Wall clock 09-13T12:30; anchor = min(max(base)=09-13T12:00, now) = 09-13T12:00,
+            // boundary = 09-11T12:00. The view has NEVER been refreshed -- this is the
+            // bootstrap window. Backfill a frozen-zone row below the boundary: accepted, and
+            // the apply path records the minimal protective frontier 09-12T19:00
+            // (bucket end 09-10T19:00 + LIMIT).
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T18:00')");
+            drainQueues();
+
+            // Drop the most-recent base partition: max(base_ts) retreats to 09-10T12:00.
+            // Without the backfill frontier the refresh would anchor on max(base=09-10T12:00,
+            // view_ts=09-10T18:00) = 09-10T18:00, boundary 09-08T18:00, and REPLACE_RANGE
+            // [09-08T18:00,...) would recompute (wipe) the 09-10T18:00 backfill from a base
+            // that no longer has that row. The frontier keeps the boundary at 09-10T19:00,
+            // exactly at the backfilled bucket's exclusive end.
+            execute("alter table base_price drop partition list '2024-09-13'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // The backfill at 09-10T18:00 survives (boundary stayed at 09-10T19:00, so the
+            // row remains in the frozen zone the refresh never touches).
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T18:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierSurvivesClockRetreat() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T09:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // At 12:30 the boundary is 11:00. The backfill lands in the frozen
+            // [10:00, 11:00) bucket and records a 12:00 protective frontier.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T10:00')");
+            drainQueues();
+
+            // Move the wall clock behind the recorded frontier. Capping the combined
+            // data/backfill frontier by now would retreat the boundary to 10:30, whose
+            // bucket floor lets FULL refresh delete the accepted 10:00 backfill.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T10:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewFrozenBoundarySurvivesClockRetreatWithoutBackfill() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-09T12:00')" +
+                            ",('a', 7.0, '2024-09-11T13:00')" +
+                            ",('a', 9.0, '2024-09-13T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 day;");
+            drainQueues();
+
+            // Materialize the 09-11 bucket, then advance the frozen floor past it.
+            currentMicros = parseFloorPartialTimestamp("2024-09-11T14:00:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+            currentMicros = parseFloorPartialTimestamp("2024-09-13T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Remove the source partition and move the clock backward. Without the
+            // committed-floor clamp, 09-11 becomes managed again and FULL deletes
+            // the now-orphaned view bucket because the base no longer recomputes it.
+            execute("alter table base_price drop partition list '2024-09-11'");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2024-09-12T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t7.0\t2024-09-11T13:00:00.000000Z
+                            """),
+                    "price_1h where ts = '2024-09-11T13:00'",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFrontierSurvivesBaseRetreatMonthsLimit() throws Exception {
+        // R3 regression: a months-based REFRESH LIMIT must protect a frozen backfill across a
+        // max(base_ts) retreat just like an hours limit. The frontier records the minimal anchor
+        // for the backfilled bucket; the refresh recovers the boundary by subtracting the limit.
+        // For a months limit that subtraction is calendar arithmetic (addMonths), which clamps
+        // day-of-month, so a naive bucketEnd+LIMIT anchor round-trips strictly BELOW bucketEnd at
+        // a month-end bucket and the refresh's REPLACE_RANGE would wipe the backfill. The frontier
+        // (safeBackfillAnchor) must compensate so the recovered boundary stays at-or-above bucketEnd.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-07-15T12:00')" +
+                            ",('a', 6.0, '2024-08-20T12:00')" +
+                            ",('a', 9.0, '2024-10-05T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            // Wall 2024-10-10. anchor = min(max(base)=10-05, now) = 10-05; boundary floor =
+            // round(addMonths(10-05,-2)) = 08-05. Backfill bucket [07-30, 07-31) ends at 07-31
+            // <= 08-05 -> accepted. The bucket end 07-31 is a month-end that clamps under
+            // addMonths(+2)->09-30, whose inverse addMonths(-2)->07-30 lands BELOW 07-31.
+            currentMicros = parseFloorPartialTimestamp("2024-10-10T00:00:00.000000Z");
+            execute("insert into price_1d values('a', 1.0, '2024-07-30T06:00')");
+            drainQueues();
+
+            // Retreat max(base_ts) to 08-20 by dropping the recent partition. 08-20 sits ABOVE
+            // the backfill's 07-31 bucket end, so the FULL refresh's REPLACE_RANGE hi reaches it;
+            // whether the backfill is wiped depends only on whether the recovered boundary stays
+            // at-or-above 07-31.
+            execute("alter table base_price drop partition list '2024-10-05'");
+            drainWalQueue();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            // The backfill at 07-30 must survive (boundary >= its 07-31 bucket end despite the
+            // lossy addMonths round-trip); 08-20 is the recomputed managed-zone bucket.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-07-30T06:00:00.000000Z
+                            a\t6.0\t2024-08-20T00:00:00.000000Z
+                            """),
+                    "price_1d order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillTimeZoneAlignedRefreshLimit() throws Exception {
+        // R3 regression: a tz-aligned view must bucket the validator (and the frozen floor) on the
+        // SAME tz-aware grid the refresh REPLACE_RANGE uses, so an accepted backfill is never
+        // overwritten. For Asia/Kolkata (+5:30) with SAMPLE BY 1h the bucket boundaries sit at :30
+        // past the UTC hour. Pre-fix the validator bucketed tz-blind (:00) and accepted a row the
+        // tz-aware refresh then silently wiped.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-09-10T08:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1h align to calendar time zone 'Asia/Kolkata';"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // anchor = min(12:00, 12:30) = 12:00, boundary 11:00 UTC; tz-aware bucket floor
+            // (boundaries at :30) = 10:30 UTC.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // A row in the tz-aware managed zone -- bucket [10:30,11:30) ends at 11:30 > 10:30 --
+            // must be rejected (pre-fix it was accepted on the tz-blind grid, then wiped).
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection: row falls in the tz-aware managed zone");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly in the tz-aware frozen zone -- bucket [09:30,10:30) ends at 10:30 ==
+            // floor -- is accepted and survives the refresh.
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:45')");
+            drainQueues();
+
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:45:00.000000Z
+                            """),
+                    "price_1h where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillTimeZoneAlignedSuperDayDstRefreshLimit() throws Exception {
+        // R3 regression (super-day + DST path): a 1d view aligned to a DST zone buckets on the
+        // local-calendar grid via TimezoneFloorTimestampSampler in the validator, matching the
+        // refresh's TimeZoneIntervalIterator. A frozen-zone backfill must survive the refresh.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2024-01-10T12:00')" +
+                            ",('a', 9.0, '2024-01-20T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1d align to calendar time zone 'Europe/Berlin';"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 days;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-01-20T18:00:00.000000Z");
+            // Old row, clearly in the frozen zone (well below the ~01-17 boundary): accepted and
+            // must survive the refresh on the local-calendar grid.
+            execute("insert into price_1d values('a', 1.0, '2024-01-12T10:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-01-12T10:00:00.000000Z
+                            """),
+                    "price_1d where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillPeriodViewSurvivesPeriodRefresh() throws Exception {
+        // R4 check (agent F2): a period mat view's timer range-refresh skips the frozen-boundary
+        // clamp, but its lower bound is lastPeriodHi (the high-water mark of completed periods, near
+        // now), never the frozen zone -- so a frozen backfill must survive a period refresh.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price(sym, price, ts) values" +
+                            " ('gbpusd', 1.0, '2023-09-10T12:00')" +
+                            ",('gbpusd', 2.0, '2023-12-31T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh period(length 24h) as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 months;");
+            currentMicros = parseFloorPartialTimestamp("2024-01-01T01:01:01.000000Z");
+            drainQueues();
+
+            // Backfill a frozen-zone row (well before the ~2023-11 boundary). Accepted.
+            execute("insert into price_1h values('gbpusd', 9.0, '2023-09-15T08:00')");
+            drainQueues();
+
+            // Advance the clock so a new period completes and fire another period refresh.
+            currentMicros = parseFloorPartialTimestamp("2024-01-03T01:01:01.000000Z");
+            execute("insert into base_price values('gbpusd', 3.0, '2024-01-02T12:00')");
+            drainQueues();
+
+            // The frozen backfill survives the period range refresh.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t9.0\t2023-09-15T08:00:00.000000Z
+                            """),
+                    "price_1h where price = 9.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillTimeZoneAlignedMidnightDstRefreshLimit() throws Exception {
+        // R4 regression: for a super-day view aligned to a DST zone whose transition is near LOCAL
+        // MIDNIGHT (the day-bucket boundary), the refresh's TimeZoneIntervalIterator collapses the
+        // ambiguous/gap hour into a single bucket (adjustLoBoundary), pulling REPLACE_RANGE.lo a full
+        // bucket below the plain local-floor. The validator must bucket on that SAME (collapsed) grid
+        // or it accepts a row the refresh then wipes. Africa/Cairo falls back at local midnight.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 5.0, '2023-10-20T12:00')" +
+                            ",('a', 9.0, '2023-10-27T01:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price " +
+                            "sample by 1d align to calendar time zone 'Africa/Cairo';"
+            );
+            execute("alter materialized view price_1d set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2023-10-27T01:30:00.000000Z");
+            // The boundary's bucket is the fall-back day; the iterator collapses it to
+            // [2023-10-25T21:00, 2023-10-26T22:00) with floor 2023-10-25T21:00. A row at 21:30 lands
+            // in that collapsed (managed) bucket -- pre-fix the tz-blind/plain-floor validator
+            // accepted it and the refresh then wiped it; now it must be rejected.
+            try {
+                execute("insert into price_1d values('a', 1.0, '2023-10-25T21:30')");
+                Assert.fail("expected rejection: row falls in the DST-collapsed managed bucket");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly below the collapsed floor is frozen and survives the refresh.
+            execute("insert into price_1d values('a', 1.0, '2023-10-23T12:00')");
+            drainQueues();
+
+            execute("refresh materialized view price_1d full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2023-10-23T12:00:00.000000Z
+                            """),
+                    "price_1d where price = 1.0",
+                    "ts",
+                    true,
+                    false
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewExtendRefreshLimitOverwritesBackfillInNewlyManagedRange() throws Exception {
+        // backfillFrontier must NOT wrongly pin the boundary across an ALTER that EXTENDS the
+        // limit. Extending grows the managed zone downward; a row backfilled into what used
+        // to be the frozen zone becomes managed under the new limit and is recomputed
+        // (overwritten) on the next refresh, as the PR documents. This guards that the
+        // frontier (and the absence of a monotonic floor clamp) keeps EXTEND working.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "insert into base_price values" +
+                            "('a', 7.0, '2024-09-10T08:00')" +
+                            ",('a', 9.0, '2024-09-10T12:00')"
+            );
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Under 1h: anchor = min(12:00, 12:30) = 12:00, boundary = 11:00. Backfill 09:00
+            // (frozen, below 11:00) is accepted; backfillFrontier records 12:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            // Sanity: the backfilled 09:00 row is present before the extend.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+
+            // Extend the limit so the managed zone now reaches down past 09:00.
+            execute("alter materialized view price_1h set refresh limit 12 hour;");
+            drainQueues();
+
+            // Refresh under 12h: anchor = 12:00 (base/view/frontier all <= 12:00), boundary
+            // 00:00. 09:00 is now in the managed zone and is recomputed from base, which has
+            // no 09:00 row -> the backfill is overwritten (removed). 08:00 and 12:00 are the
+            // base-derived managed-zone buckets.
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t7.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillRefreshDoesNotOverwriteAcceptedRow() throws Exception {
+        // C1 regression: the validator and refresh must agree on a boundary so
+        // the next refresh's REPLACE_RANGE never wipes a row that the
+        // commit-time validator just accepted. The fix publishes the refresh
+        // tick's snapped REPLACE_RANGE.lo (bucket floor) on MatViewState and
+        // the validator clamps its own snapped floor to min(own, published).
+        //
+        // Sequence: refresh ticks at wall 11:30 with max(base_ts) = 11:00,
+        // boundary = 10:00, published floor = 10:00. Wall advances, more base
+        // ingest brings max(base_ts) = 13:00. User backfills a row at 10:30
+        // (bucket [10:00, 11:00), end = 11:00). Without the published-floor
+        // clamp, the validator would compute floor = 12:00 and accept the row.
+        // The next refresh's REPLACE_RANGE covers [10:00, ...) and would wipe
+        // it. With the clamp, the validator's effective floor stays at 10:00
+        // and the row is rejected.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T11:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Refresh tick 1: anchor = min(11:00, 11:30) = 11:00, boundary = 10:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Base table advances. Wall clock advances. The validator's own
+            // boundary would now move to 12:00 (anchor = min(13:00, 13:30) = 13:00).
+            // The published anchor from the last refresh tick is still 11:00, so
+            // the validator clamps to it -- boundary stays 10:00.
+            execute("insert into base_price values('a', 9.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T13:30:00.000000Z");
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection clamped by published anchor");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // Frozen-zone row strictly below the published boundary is accepted.
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T08:00')");
+            drainQueues();
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T11:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRefreshFullEscapeHatchWipesFrozenZone() throws Exception {
+        // With the wall-clock escape hatch on, FULL falls back to the pre-feature
+        // wipe-and-reinsert: truncateSoft runs and any user backfill that landed
+        // in the frozen zone disappears.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Toggle the escape hatch off briefly to backfill (the entry gate
+            // would otherwise reject). Reinstate it before FULL.
+            node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "false");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 1.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            node1.setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_LIMIT_WALL_CLOCK_ENABLED, "true");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            // Escape hatch on: FULL wiped everything and refreshed from base.
+            // Boundary = 11:30 (wall - 1h), so only the 12:00 bucket survives.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTsMonthsLimit() throws Exception {
+        // Months-based REFRESH LIMIT exercises the addMonths arithmetic path
+        // (driver.addMonths) instead of fromHours.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-12-01T00:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1d refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1d;"
+            );
+            execute("alter materialized view price_1d set refresh limit 2 months;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-12-15T00:00:00.000000Z");
+
+            // Anchor = min(2024-12-01, 2024-12-15) = 2024-12-01. addMonths(2024-12-01, -2)
+            // = 2024-10-01. Sampling by 1d, so the bucket floor is 2024-10-01.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "price_1d\t2024-10-01T00:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillFiveMinuteSampling() throws Exception {
+        // Validator behaviour with sub-hour sampling. Bucket width = 5m, so
+        // the bucket floor sits on 5-minute multiples and the validator's
+        // rejection threshold shifts by the same granularity.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_5m refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 5m;"
+            );
+            execute("alter materialized view price_5m set refresh limit 1 hour;");
+            drainQueues();
+
+            // Wall 12:30, anchor 12:00, boundary 11:00, snapped 11:00 (5m-aligned).
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Bucket [10:55, 11:00) ends at 11:00 == boundary -> accepted.
+            execute("insert into price_5m values('a', 1.0, '2024-09-10T10:55')");
+            drainQueues();
+
+            // Bucket [11:00, 11:05) ends at 11:05 > 11:00 -> rejected.
+            try {
+                execute("insert into price_5m values('a', 2.0, '2024-09-10T11:00')");
+                Assert.fail("expected rejection at 5-minute boundary");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T10:55:00.000000Z
+                            """),
+                    "price_5m order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillRejectedAfterShrinkLimit() throws Exception {
+        // C1' regression: ALTER SET REFRESH LIMIT shrinking the limit between
+        // a refresh tick's publish and a user commit must not let the user
+        // commit slip into refresh's already-locked-in REPLACE_RANGE.
+        //
+        // Sequence: refresh at wall 12:30 under LIMIT=2h. Anchor = min(12:00,
+        // 12:30) = 12:00. Refresh's REPLACE_RANGE.lo = 10:00 (snapped).
+        // Published floor = 10:00. ALTER LIMIT to 1h. User backfills at ts =
+        // 10:30. Validator under LIMIT_now = 1h would compute its own snapped
+        // floor at 11:00 -- without the published-floor clamp it would accept
+        // the row, which the next refresh's REPLACE_RANGE [10:00, ...) would
+        // wipe. With the clamp the effective floor is min(11:00, 10:00) =
+        // 10:00 and the bucket [10:00, 11:00) is rejected.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 9.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 2 hour;");
+            drainQueues();
+
+            // Refresh under 2h: floor = 10:00.
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("refresh materialized view price_1h full;");
+            drainQueues();
+
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            try {
+                execute("insert into price_1h values('a', 1.0, '2024-09-10T10:30')");
+                Assert.fail("expected rejection clamped by published floor (was 10:00 under 2h)");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+
+            // A row strictly below the published floor is still acceptable.
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T08:00')");
+            drainQueues();
+
+            // 08:00 is the user backfill we just accepted; 12:00 is the
+            // refresh-filled row from the earlier FULL under LIMIT=2h.
+            assertQueryNoLeakCheck(
+                    replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T08:00:00.000000Z
+                            a\t9.0\t2024-09-10T12:00:00.000000Z
+                            """),
+                    "price_1h order by ts",
+                    "ts",
+                    true,
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTsMixedDrivers() throws Exception {
+        // C2' regression: materialized_views().backfill_max_ts must be correct
+        // for every row even when consecutive views have different timestamp
+        // drivers (MICROS vs NANOS). The cursor's sampler cache must be keyed
+        // on the driver as well as (interval, unit) -- without that, a MICROS
+        // sampler is reused for a NANOS view and the published bucket floor is
+        // mis-rounded by ~1000x.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_us (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create table base_ns (" +
+                            "  sym symbol, price double, ts timestamp_ns" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_us values('a', 1.0, '2024-09-10T12:00')");
+            execute("insert into base_ns values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view view_us refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_us sample by 1h;"
+            );
+            execute(
+                    "create materialized view view_ns refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_ns sample by 1h;"
+            );
+            execute("alter materialized view view_us set refresh limit 1 hour;");
+            execute("alter materialized view view_ns set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Both views: anchor = min(12:00, 12:30) = 12:00. boundary = 11:00.
+            // Snapped (1h bucket) = 11:00. backfill_max_ts in micros = same wall.
+            // Cursor iteration order follows view creation order: view_us first.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "view_us\t2024-09-10T11:00:00.000000Z\n" +
+                            "view_ns\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views()",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsBackfillMaxTsSharedBaseReusesReader() throws Exception {
+        // Two mat views over the SAME base table: the cursor resolves max(base_ts) once and
+        // memoizes it by (base token, base writer txn), so the second row reuses the cached
+        // value instead of opening a second base reader. Both views are manual-deferred and
+        // never refreshed, so they share the same applied base txn and therefore the same
+        // cache key. backfill_max_ts must still be correct on the memo-hit row.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts timestamp" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view view_a refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute(
+                    "create materialized view view_b refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view view_a set refresh limit 1 hour;");
+            execute("alter materialized view view_b set refresh limit 1 hour;");
+            drainQueues();
+
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+
+            // Both views: anchor = min(12:00, 12:30) = 12:00, boundary = 11:00, snapped
+            // (1h bucket) = 11:00. The second row (view_b) is served from the base-reader memo.
+            assertQueryNoLeakCheck(
+                    "view_name\tbackfill_max_ts\n" +
+                            "view_a\t2024-09-10T11:00:00.000000Z\n" +
+                            "view_b\t2024-09-10T11:00:00.000000Z\n",
+                    "select view_name, backfill_max_ts from materialized_views() order by view_name",
+                    null
+            );
+        });
+    }
+
+    @Test
+    public void testValidatorPicksUpBaseDropRecreate() throws Exception {
+        // The validator caches (baseToken, baseTxn, maxBaseTs) by reference
+        // identity of the base token. After DROP TABLE + CREATE TABLE with
+        // the same name, the new TableToken instance differs from the cached
+        // one, so the cache invalidates and the validator picks up the new
+        // max(base_ts). Confirms a refactor to name-based caching would not
+        // silently break consistency.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute(
+                    "create materialized view price_1h refresh manual deferred as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h;"
+            );
+            execute("alter materialized view price_1h set refresh limit 1 hour;");
+            drainQueues();
+
+            // Warm the validator's per-writer cache with one backfill against
+            // base@12:00 (boundary 11:00, bucket [09:00, 10:00) accepted).
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T12:30:00.000000Z");
+            execute("insert into price_1h values('a', 5.0, '2024-09-10T09:00')");
+            drainQueues();
+
+            // Drop and recreate base with a much earlier max(base_ts). The
+            // validator's cache must invalidate (new token instance) -- if it
+            // returned the stale 12:00 max, the new boundary computation would
+            // still allow 09:00 rows. Under the fresh max=09:00 boundary=08:00,
+            // and a backfill at 08:30 should now be rejected.
+            execute("drop table base_price");
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "  sym symbol, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("insert into base_price values('a', 1.0, '2024-09-10T09:00')");
+            drainWalQueue();
+
+            try {
+                execute("insert into price_1h values('a', 7.0, '2024-09-10T08:30')");
+                Assert.fail("expected rejection under new (lower) base max_ts");
+            } catch (CairoException e) {
+                assertContains(e.getFlyweightMessage(), "backfill row falls in or past the managed zone");
+            }
+            // Drain any pending invalidation/refresh work scheduled by the drop+recreate
+            // before this test exits so the next test starts from a clean engine state.
+            drainQueues();
+        });
+    }
+
+    @Test
     public void testRefreshSkipsUnchangedBuckets() throws Exception {
         // Verify that incremental refresh skips unchanged SAMPLE BY buckets.
         assertMemoryLeak(() -> {
@@ -9350,13 +11479,14 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     """));
 
+            // the view's first refresh wrote the view state event that persists the base table id and its data commit
             assertQuery("wal_tables()")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
-                            price_1h\ttrue\t1\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t2\t0\t4\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view
@@ -9381,7 +11511,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
-                            price_1h\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t4\t0\t4\t\t\t0\t0\t0\t-1\t
                             """);
 
             // suspend mat view again
@@ -9408,11 +11538,12 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
-                            price_1h\ttrue\t3\t0\t5\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t4\t0\t6\t\t\t0\t0\t0\t-1\t
                             """);
 
-            // resume mat view from txn
-            execute("alter materialized view price_1h resume wal from txn 3");
+            // resume mat view from txn; the view's WAL starts with the view state event that persisted the base
+            // table id at its first refresh, so its transactions are one higher than without it
+            execute("alter materialized view price_1h resume wal from txn 4");
             drainQueues();
 
             assertQuery("price_1h order by sym")
@@ -9433,7 +11564,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .returns("""
                             name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
                             base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
-                            price_1h\tfalse\t5\t0\t5\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t6\t0\t6\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
@@ -10390,9 +12521,9 @@ public class MatViewTest extends AbstractCairoTest {
             drainQueues();
             assertPassthroughMatchesBase();
 
-            // The view stores `select sym, price, ts from base_price`, the wildcard expanded at CREATE, so
-            // once the base loses price the refresh cannot compile the query and the view goes invalid,
-            // naming the missing column.
+            // The view stores `select * from base_price` as written, and refresh maps the columns it expands to
+            // by name. Once the base loses price, the wildcard no longer produces it, so a full refresh rebuilds
+            // the view with price NULL and the view stays valid.
             execute("alter table base_price drop column price");
             drainQueues();
             execute("refresh materialized view price_copy full");
@@ -10403,19 +12534,16 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_status\tinvalidation_reason
-                            price_copy\tinvalid\t[14]: Invalid column: price
+                            price_copy\tvalid\t
                             """);
-
-            // Preflight refusal happens before truncate, so the last successfully materialized contents stay
-            // queryable while the view reports invalid.
             assertQuery("price_copy")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp("""
                             sym\tprice\tts
-                            gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
-                            jpyusd\t103.21\t2024-09-11T13:02:00.000000Z
+                            gbpusd\tnull\t2024-09-10T12:01:00.000000Z
+                            jpyusd\tnull\t2024-09-11T13:02:00.000000Z
                             """));
         });
     }
@@ -10434,7 +12562,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertPassthroughMatchesBase();
 
             // Dropping a column and adding it back moves it to the end of the base table. The view stores
-            // `select sym, price, ts from base_price`, which reads the columns by name, so a full refresh
+            // `select * from base_price`, and refresh maps the columns it expands to by name, so a full refresh
             // rebuilds the view in its own column order, with the re-added sym NULL as in the base.
             execute("alter table base_price drop column sym");
             execute("alter table base_price add column sym varchar");
@@ -10472,13 +12600,14 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
             drainQueues();
 
-            // The view stores its query with the wildcard expanded into the columns the base has at CREATE.
+            // The view stores its query as written.
             assertQuery("select view_sql from materialized_views where view_name = 'price_copy'")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_sql\nselect \"sym\", \"price\", \"ts\" from base_price\n");
+                    .returns("view_sql\nselect * from base_price\n");
 
-            // A column the base gains later stays out of the view, which keeps refreshing.
+            // Refresh maps the columns of the wildcard to the view's columns by name, so a column the base gains
+            // later stays out of the view, which keeps refreshing.
             execute("alter table base_price add column extra int");
             execute("insert into base_price values('jpyusd', 103.21, '2024-09-11T13:02', 7)");
             drainQueues();
@@ -10506,21 +12635,29 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testPassthroughSelectStarRepeatingColumnRejected() throws Exception {
-        // The expansion takes the view's column names, and the view renames the repeated ts to ts1, which the
-        // base table does not have. CREATE rejects the view rather than store a query that reads ts1.
+        // CREATE stores the wildcard as written, so a wildcard that repeats a column of the select list is
+        // accepted. The wildcard's ts is the view's column ts1, and refresh fills it like any other column.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
                             "sym varchar, price double, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            final String sql = "create materialized view price_copy as (select ts, * from base_price)";
-            assertExceptionNoLeakCheck(
-                    sql,
-                    sql.indexOf('*'),
-                    "could not expand the wildcard of the materialized view query, list the columns explicitly [error=Invalid column: ts1]"
-            );
-            Assert.assertNull(engine.getTableTokenIfExists("price_copy"));
+            execute("create materialized view price_copy as (select ts, * from base_price)");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+            assertQuery("select view_sql, view_status from materialized_views where view_name = 'price_copy'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("view_sql\tview_status\nselect ts, * from base_price\tvalid\n");
+            assertQuery("price_copy")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            ts\tsym\tprice\tts1
+                            2024-09-10T12:01:00.000000Z\tgbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                            """));
         });
     }
 
@@ -10532,8 +12669,7 @@ public class MatViewTest extends AbstractCairoTest {
                             "sym varchar, \"my price\" double, \"from\" int, ts #TIMESTAMP" +
                             ") timestamp(ts) partition by DAY WAL"
             );
-            // Each wildcard shape keeps the rest of the query as written, and every expanded name comes out
-            // quoted.
+            // CREATE stores each wildcard shape as written.
             execute("create materialized view v1 as (select * from base_price where \"my price\" > 1)");
             execute("create materialized view v2 as (select b.* from base_price b)");
             execute("create materialized view v3 as (select *, \"my price\" * 2 as doubled from base_price)");
@@ -10544,14 +12680,14 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_sql
-                            v1\tselect "sym", "my price", "from", "ts" from base_price where "my price" > 1
-                            v2\tselect "sym", "my price", "from", "ts" from base_price b
-                            v3\tselect "sym", "my price", "from", "ts", "my price" * 2 as doubled from base_price
-                            v4\tselect "sym", "ts" from (select sym, ts from base_price)
+                            v1\tselect * from base_price where "my price" > 1
+                            v2\tselect b.* from base_price b
+                            v3\tselect *, "my price" * 2 as doubled from base_price
+                            v4\tselect * from (select sym, ts from base_price)
                             v5\tselect sym, ts from base_price
                             """);
 
-            // The stored queries refresh to the same rows the originals would.
+            // The stored queries refresh to the rows of the queries as written.
             execute("insert into base_price values('gbpusd', 1.5, 3, '2024-09-10T12:01')");
             drainQueues();
             assertQuery("select \"my price\", \"from\", doubled from v3")
@@ -10586,7 +12722,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testPassthroughShowCreateRoundTrips() throws Exception {
-        // SHOW CREATE prints the stored, expanded query; running that output again recreates the same view.
+        // SHOW CREATE prints the stored query; running that output again recreates the same view.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -10596,7 +12732,7 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base_price values('gbpusd', 3, '2024-09-10T12:01')");
             execute("create materialized view price_copy as (base_price where \"declare\" > 0)");
             drainQueues();
-            final String viewSql = "select \"sym\", \"declare\", \"ts\" from base_price where \"declare\" > 0";
+            final String viewSql = "base_price where \"declare\" > 0";
             assertQuery("select view_sql from materialized_views where view_name = 'price_copy'")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -10656,9 +12792,10 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testPassthroughRefreshAfterBaseEmptiedRunsOneQuery() throws Exception {
         // A REPLACE commit that leaves the base table empty gives the refresh step estimate no rows to size
-        // from. The refresh covers the replaced range in one query, which reads nothing, and its REPLACE_RANGE
-        // commit removes the view rows. The step counts buckets, and a passthrough view's refresh bucket is
-        // one microsecond, so the replaced range here spans about 10,000 buckets.
+        // from. The step counts buckets, and a passthrough view's refresh bucket is one microsecond, so the
+        // replaced range here spans about 10,000 buckets. The commit also removes the base's only partition,
+        // so the partition clip leaves the refresh nothing to recompute: it runs no query at all, keeps the
+        // view's rows, and still moves the view's refresh position to the base's last transaction.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -10684,13 +12821,27 @@ public class MatViewTest extends AbstractCairoTest {
                 drainQueues();
                 logCapture.drain();
                 // QueryProgress logs refreshMinTs only for a refresh query.
-                logCapture.assertOnlyOnce("exe \\[id=[^\\n]*refreshMinTs=");
+                Assert.assertEquals(0, logCapture.countLoggedRE("exe \\[id=[^\\n]*refreshMinTs="));
             } finally {
                 logCapture.stop();
             }
 
             assertQuery("select count() from base_price").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
-            assertPassthroughMatchesBase();
+            final String fractionSuffix = ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? "000Z" : "000000Z";
+            assertQuery("price_copy order by ts, sym, price")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("sym\tprice\tts\n" +
+                            "gbpusd\t1.32\t2024-09-10T00:00:00.001" + fractionSuffix + "\n" +
+                            "gbpusd\t1.323\t2024-09-10T00:00:00.005" + fractionSuffix + "\n");
+            assertQuery("select view_status, refresh_base_table_txn = base_table_txn caught_up from materialized_views where view_name = 'price_copy'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tcaught_up
+                            valid\ttrue
+                            """);
         });
     }
 
@@ -10730,8 +12881,8 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testPassthroughWildcardSpellingsStoreExpandedColumns() throws Exception {
-        // Every spelling of a passthrough wildcard the parser accepts stores the expanded column list. A query
-        // written without SELECT gets one in front; a wildcard written against its neighbours gets a space.
+        // CREATE stores every spelling of a passthrough wildcard the parser accepts as written, a query written
+        // without SELECT included, and refresh maps the columns of each to the view's columns by name.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -10757,15 +12908,15 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\tview_sql\tview_status
-                            v1\tselect "sym", "price", "ts" from base_price\tvalid
-                            v2\tSELECT "sym", "price", "ts" FROM base_price\tvalid
-                            v3\tselect "sym", "price", "ts" from base_price\tvalid
-                            v4\tselect "sym", "price", "ts" from base_price\tvalid
-                            v5\tselect "sym", "price", "ts" from base_price where price > 0\tvalid
-                            v6\tselect "sym", "price", "ts" from base_price where price * 2 > 0\tvalid
-                            v7\tselect "sym", "price", "ts" from base_price b\tvalid
-                            v8\tselect "sym", "price", "ts" from (base_price)\tvalid
-                            v9\twith t as (select * from base_price) select "sym", "price", "ts" from t\tvalid
+                            v1\tselect *from base_price\tvalid
+                            v2\tSELECT*FROM base_price\tvalid
+                            v3\tbase_price\tvalid
+                            v4\tbase_price\tvalid
+                            v5\tbase_price where price > 0\tvalid
+                            v6\tbase_price where price * 2 > 0\tvalid
+                            v7\tselect b.* from base_price b\tvalid
+                            v8\tselect * from (base_price)\tvalid
+                            v9\twith t as (select * from base_price) select * from t\tvalid
                             """);
             final String all = "sym\tprice\tts\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\njpyusd\t-2.0\t2024-09-10T12:02:00.000000Z\n";
             final String positive = "sym\tprice\tts\ngbpusd\t1.5\t2024-09-10T12:01:00.000000Z\n";
@@ -11350,10 +13501,11 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimersRegistered() throws Exception {
         // Timers live only in MatViewTimerJob's in-memory heap, so timers_registered is the only
-        // surface that shows whether anything schedules a view at all. Zero is expected for an
-        // immediate, non-period view, which base table commits drive on their own; zero for any
-        // other refresh type means nothing schedules the view, while view_status keeps reporting
-        // 'valid' and every other column keeps describing the timer settings the view is not using.
+        // surface that shows whether anything schedules a view at all. An immediate, non-period view,
+        // which base table commits drive on their own, owns only the refresh intervals update timer,
+        // which keeps its backlog while it is invalid; zero for any view means nothing schedules it,
+        // while view_status keeps reporting 'valid' and every other column keeps describing the timer
+        // settings the view is not using.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -11389,15 +13541,15 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            // One refresh intervals update timer per non-immediate view, one period timer per
-            // non-manual period view, and one incremental refresh timer per timer view.
+            // One refresh intervals update timer per view, one period timer per non-manual period
+            // view, and one incremental refresh timer per timer view.
             assertQuery(timersSql)
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_immediate\timmediate\tvalid\t0
+                            price_immediate\timmediate\tvalid\t1
                             price_manual\tmanual\tvalid\t1
-                            price_period\timmediate\tvalid\t1
+                            price_period\timmediate\tvalid\t2
                             price_timer\ttimer\tvalid\t2
                             price_timer_period\ttimer\tvalid\t3
                             """);
@@ -11411,9 +13563,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_immediate\timmediate\tvalid\t0
+                            price_immediate\timmediate\tvalid\t1
                             price_manual\tmanual\tvalid\t1
-                            price_period\timmediate\tvalid\t1
+                            price_period\timmediate\tvalid\t2
                             price_timer\ttimer\tvalid\t2
                             """);
         });
@@ -11449,7 +13601,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_1h\timmediate\tvalid\t0
+                            price_1h\timmediate\tvalid\t1
                             """);
 
             execute("alter materialized view price_1h set refresh every 1h;");
@@ -11471,13 +13623,14 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
-            // Back to base table commits driving the view, so the job holds nothing for it again.
+            // Back to base table commits driving the view, so the job holds only the refresh intervals
+            // update timer for it again.
             assertQuery(timersSql)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tview_status\ttimers_registered
-                            price_1h\timmediate\tvalid\t0
+                            price_1h\timmediate\tvalid\t1
                             """);
         });
     }
@@ -11549,13 +13702,14 @@ public class MatViewTest extends AbstractCairoTest {
                         dequeued.get() < refillBudget
                 );
 
-                // One refresh intervals update timer plus one incremental refresh timer.
+                // One refresh intervals update timer per view, plus one incremental refresh timer for the
+                // timer view.
                 assertQuery("select view_name, refresh_type, view_status, timers_registered " +
                         "from materialized_views() order by view_name")
                         .noLeakCheck()
                         .returns("""
                                 view_name	refresh_type	view_status	timers_registered
-                                price_immediate	immediate	valid	0
+                                price_immediate	immediate	valid	1
                                 price_timer	timer	valid	2
                                 """);
             }
@@ -11641,12 +13795,15 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateBarrierDoesNotAdvanceRefreshBaseTxnPastTruncate() throws Exception {
+        // The truncate is no longer a barrier but a cut: a refresh that scans a TRUNCATE drops the intervals queued
+        // before it, keeps the view's rows and advances the refresh position past the truncate.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             createMatView("mv", "select ts, count() cnt from base sample by 1h");
             execute("insert into base values ('a', 1.0, '2024-09-10T12:00'), ('a', 2.0, '2024-09-10T12:30')");
             drainQueues(); // applies base WAL and converges the view
 
+            final TableToken baseToken = engine.verifyTableName("base");
             final TableToken viewToken = engine.verifyTableName("mv");
             final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
             final MatViewState state = store.getViewState(viewToken);
@@ -11654,54 +13811,58 @@ public class MatViewTest extends AbstractCairoTest {
             final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
             Assert.assertTrue(baseTxnBeforeTruncate > -1);
 
-            // Truncate (the barrier) then add a later bucket. Apply only the base WAL so the truncate sits
-            // in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            // A row before the truncate, the truncate, and a later bucket. Apply only the base WAL so that all
+            // three sit in the gap the next incremental refresh scans, WITHOUT processing mat-view tasks yet.
+            execute("insert into base values ('a', 3.0, '2024-09-10T12:45')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
 
-            // Drain any queued mat-view task (including the apply-time INVALIDATE) before the lone
-            // refresh run, so the refresh run itself -- not a separately-queued INVALIDATE -- is what
-            // must avoid advancing the watermark past the truncate.
+            // Drain any queued mat-view task before the lone refresh run, so the refresh run itself is what scans
+            // the truncate.
             final MatViewRefreshTask discard = new MatViewRefreshTask();
             while (store.tryDequeueRefreshTask(discard)) {
                 // drop
             }
 
-            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
-            // no-rows commit advance the persisted base txn past the truncate. The same drain that runs the
-            // refresh also dequeues the barrier's INVALIDATE and finalizes it, so the view ends invalid.
             store.enqueueIncrementalRefresh(viewToken);
             try (MatViewRefreshJob job = createMatViewRefreshJob()) {
                 job.run();
             }
 
             Assert.assertEquals(
-                    "a truncate-barrier refresh must not advance the persisted base txn past the truncate",
-                    baseTxnBeforeTruncate,
+                    "a refresh that scans a truncate advances the persisted base txn past it",
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
                     state.getLastRefreshBaseTxn()
             );
-            // The user-visible half of the barrier: the durable INVALIDATE the refresh enqueued must take
-            // effect, leaving the view actually invalid with the truncate reason -- not silently valid.
-            Assert.assertTrue("the truncate barrier must invalidate the view", state.isInvalid());
+            Assert.assertTrue(state.getLastRefreshBaseTxn() > baseTxnBeforeTruncate);
+            Assert.assertFalse("the truncate must leave the view valid", state.isInvalid());
             drainWalAndMatViewQueues();
             assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+                    .returns("view_status\tinvalidation_reason\nvalid\t\n");
+            // The 12:00 bucket keeps its count from before the truncate: the interval of the 12:45 row, written
+            // before the truncate, is dropped.
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-10T20:00:00.000000Z\t1
+                            """);
         });
     }
 
     @Test
     public void testRefreshIntervalsAdvanceOnlyAfterFirstDataRefresh() throws Exception {
-        // Pins the bootstrap invariant behind the truncate-barrier's never-refreshed guard in
-        // updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the setRefreshIntervalsBaseTxn call)
-        // only inside if (lastRefreshTxn > -1), where lastRefreshTxn = max(lastRefreshBaseTxn,
-        // refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so the first advance
-        // requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never reach
-        // refreshIntervalsBaseTxn > -1. That makes the never-refreshed side of the truncate barrier
-        // (lastRefreshBaseTxn == -1) unreachable: an external review argued it stalls a view forever, but
-        // the precondition cannot form.
+        // Pins the bootstrap invariant of updateRefreshIntervals0: refreshIntervalsBaseTxn advances (the
+        // setRefreshIntervalsBaseTxn call) only inside if (lastRefreshTxn > -1), where lastRefreshTxn =
+        // max(lastRefreshBaseTxn, refreshIntervalsBaseTxn). With both at the -1 default that block is skipped, so
+        // the first advance requires lastRefreshBaseTxn already > -1 -- a never-data-refreshed view can never
+        // reach refreshIntervalsBaseTxn > -1, and its first build recomputes the whole base.
         //
         // A built-in positive control keeps the no-advance assertion honest: the SAME
         // UPDATE_REFRESH_INTERVALS pass DOES advance refreshIntervalsBaseTxn once the view has refreshed, so
@@ -11759,10 +13920,8 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testTruncateBarrierInvalidatesChainedMatView() throws Exception {
-        // A truncate barrier that invalidates a mat-view must cascade to mat-views chained on top of it.
-        // The refresh-path barrier invalidates view A inline; A's dependent view B (built on A) is then
-        // stale and must be invalidated too -- the same cascade invalidateView performs on a successful
-        // invalidation. Without the cascade, B is silently left valid with stale pre-truncate rows.
+        // A truncate under view A no longer invalidates A, nor cascades to view B, built on A. A's refresh drops
+        // the intervals queued before the truncate and keeps its rows, and B follows A's commits.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             createMatView("mv_a", "select ts, count() cnt from base sample by 1h");
@@ -11788,34 +13947,37 @@ public class MatViewTest extends AbstractCairoTest {
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
 
-            // Drop any queued mat-view task (including the apply-time INVALIDATE that already cascades) so
-            // the refresh-path barrier on A -- not a separately-queued INVALIDATE -- is the sole trigger.
-            final MatViewRefreshTask discard = new MatViewRefreshTask();
-            while (store.tryDequeueRefreshTask(discard)) {
-                // drop
-            }
-            Assert.assertFalse("view B must still look valid before the barrier refresh", stateB.isInvalid());
-
-            // Drive A's incremental refresh: it hits the truncate barrier and invalidates A inline, which
-            // must cascade an INVALIDATE to B. Drain so B's INVALIDATE is processed.
             store.enqueueIncrementalRefresh(viewA);
             drainWalAndMatViewQueues();
+            drainWalAndMatViewQueues();
 
-            Assert.assertTrue("view A must be invalidated by the truncate barrier", stateA.isInvalid());
-            Assert.assertTrue(
-                    "a chained mat-view must be invalidated when its base mat-view is invalidated by a truncate barrier",
-                    stateB.isInvalid()
-            );
+            Assert.assertFalse("view A must stay valid across the truncate", stateA.isInvalid());
+            Assert.assertFalse("a chained mat-view must stay valid when its base mat-view refreshes over a truncate", stateB.isInvalid());
+            assertQuery("mv_a")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-10T20:00:00.000000Z\t1
+                            """);
+            // B recomputes its day bucket from A's rows: 2 + 1.
+            assertQuery("mv_b")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T00:00:00.000000Z\t3
+                            """);
         });
     }
 
     @Test
     public void testTruncateBarrierHoldsWatermarkForPeriodMatView() throws Exception {
-        // The truncate barrier must hold the refresh watermark for PERIOD mat-views too, not only plain
-        // ones. A period view's incremental refresh synthesizes a fresh range from the period bounds, so
-        // even when the barrier clears the incremental intervals the refresh would otherwise build a
-        // non-empty range, commit, and advance lastRefreshBaseTxn past the truncate -- blinding the
-        // load-time backstop if the queued invalidation is later lost across a role switch.
+        // A period mat-view also refreshes over a truncate: its refresh drops the intervals queued before the
+        // truncate, keeps the view's rows, recomputes the newly completed period and advances the watermark.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             currentMicros = parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z");
@@ -11830,6 +13992,7 @@ public class MatViewTest extends AbstractCairoTest {
             drainMatViewTimerQueue(timerJob);
             drainQueues();
 
+            final TableToken baseToken = engine.verifyTableName("base");
             final TableToken viewToken = engine.verifyTableName("mv");
             final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
             final MatViewState state = store.getViewState(viewToken);
@@ -11837,47 +14000,54 @@ public class MatViewTest extends AbstractCairoTest {
             final long baseTxnBeforeTruncate = state.getLastRefreshBaseTxn();
             Assert.assertTrue("precondition: the period view refreshed at least once", baseTxnBeforeTruncate > -1);
 
-            // Truncate (the barrier) then add a later bucket in a NEW complete period. Apply only the base
-            // WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now"
-            // past the new period's end so the period branch synthesizes a non-empty range for it.
+            // A row before the truncate, the truncate and a later bucket in a NEW complete period. Apply only the
+            // base WAL so the truncate sits in the gap the next incremental refresh scans, and advance "now" past
+            // the new period's end so the period branch includes it.
+            execute("insert into base values ('a', 3.0, '2024-09-10T12:45')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-11T20:00')");
             currentMicros = parseFloorPartialTimestamp("2024-09-12T00:00:00.000000Z");
             drainWalQueue();
 
-            // Drop any queued mat-view task (including the apply-time INVALIDATE) so the lone refresh run is
-            // what must avoid advancing the watermark past the truncate.
             final MatViewRefreshTask discard = new MatViewRefreshTask();
             while (store.tryDequeueRefreshTask(discard)) {
                 // drop
             }
 
-            // Drive ONE fresh incremental refresh. The truncate in the scanned range must NOT let the
-            // period branch's synthesized range commit a watermark advance past the truncate.
             store.enqueueIncrementalRefresh(viewToken);
             try (MatViewRefreshJob job = createMatViewRefreshJob()) {
                 job.run();
             }
 
             Assert.assertEquals(
-                    "a truncate-barrier refresh of a period view must not advance the persisted base txn past the truncate",
-                    baseTxnBeforeTruncate,
+                    "a refresh of a period view that scans a truncate advances the persisted base txn past it",
+                    engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn(),
                     state.getLastRefreshBaseTxn()
             );
-            Assert.assertTrue("the truncate barrier must invalidate the period view", state.isInvalid());
+            Assert.assertFalse("the truncate must leave the period view valid", state.isInvalid());
             drainWalAndMatViewQueues();
             assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'mv'")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_status\tinvalidation_reason\ninvalid\ttruncate operation\n");
+                    .returns("view_status\tinvalidation_reason\nvalid\t\n");
+            assertQuery("mv")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcnt
+                            2024-09-10T12:00:00.000000Z\t2
+                            2024-09-11T20:00:00.000000Z\t1
+                            """);
         });
     }
 
     @Test
     public void testWalTxnRangeLoaderDetectsTruncate() throws Exception {
-        // Direct unit coverage for the detection primitive the whole truncate barrier rests on:
-        // a range with a TRUNCATE reports hasTruncate()==true; a data-only range reports false; and a
-        // second clean load resets the flag back to false (no stale carry-over on a reused loader).
+        // Direct unit coverage for the TRUNCATE cut of the WAL interval scan: a range with a TRUNCATE reports
+        // hasTruncate()==true and keeps only the intervals of the transactions after the truncate; a data-only
+        // range reports false and keeps every interval; and a second clean load resets the flag back to false
+        // (no stale carry-over on a reused loader).
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
@@ -11885,6 +14055,7 @@ public class MatViewTest extends AbstractCairoTest {
             final TableToken baseToken = engine.verifyTableName("base");
             final long txnAfterFirstInsert = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
 
+            execute("insert into base values ('a', 2.0, '2024-09-10T15:00')");
             execute("truncate table base");
             execute("insert into base values ('a', 9.0, '2024-09-10T20:00')");
             drainWalQueue();
@@ -11899,16 +14070,84 @@ public class MatViewTest extends AbstractCairoTest {
                 // Data-only range (the very first insert): no truncate.
                 loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
                 Assert.assertFalse("a data-only range must not report a truncate", loader.hasTruncate());
+                final long firstTs = parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(firstTs, intervals.getQuick(0));
+                Assert.assertEquals(firstTs, intervals.getQuick(1));
 
-                // Range that spans the truncate: detected.
+                // Range that spans the 15:00 insert, the truncate and the 20:00 insert: the cut drops the 15:00
+                // interval, written before the truncate.
                 intervals.clear();
                 loader.load(engine, path, baseToken, intervals, txnAfterFirstInsert, txnAfterTruncate);
                 Assert.assertTrue("a range containing a TRUNCATE must report a truncate", loader.hasTruncate());
+                final long lastTs = parseFloorPartialTimestamp("2024-09-10T20:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(lastTs, intervals.getQuick(0));
+                Assert.assertEquals(lastTs, intervals.getQuick(1));
+                Assert.assertEquals(lastTs, loader.getMinTimestamp());
+                Assert.assertEquals(lastTs, loader.getMaxTimestamp());
 
                 // A second clean (data-only) load must reset the flag, proving no stale carry-over.
                 intervals.clear();
                 loader.load(engine, path, baseToken, intervals, 0, txnAfterFirstInsert);
                 Assert.assertFalse("a clean reload must reset the truncate flag to false", loader.hasTruncate());
+            }
+        });
+    }
+
+    @Test
+    public void testWalTxnRangeLoaderReleasesLargeScanBuffer() throws Exception {
+        // The scan buffers three longs per data transaction. A scan over a long backlog must not keep that buffer
+        // once it is done, while a scan of up to 1,024 transactions fits the retained buffer and grows nothing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken baseToken = engine.verifyTableName("base");
+            final int txnCount = 2_000;
+            final long ts = parseFloorPartialTimestamp("2024-09-10T12:00:00.000000Z");
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                for (int i = 0; i < txnCount; i++) {
+                    final TableWriter.Row row = walWriter.newRow(ts);
+                    row.putSym(0, "a");
+                    row.putDouble(1, i);
+                    row.append();
+                    walWriter.commit();
+                }
+            }
+            drainWalQueue();
+
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 2);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
+
+                // 1,024 data transactions fill the retained buffer exactly, so the scan keeps it as it is
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, 1_024);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
+
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, 0, txnCount);
+                // the rows share their timestamp, so their intervals merge into one
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+                Assert.assertEquals(WalTxnRangeLoader.TXN_INTERVALS_RETAINED_CAPACITY, loader.getTxnIntervalsCapacity());
+
+                // the loader still works after it dropped its buffer
+                intervals.clear();
+                loader.load(engine, path, baseToken, intervals, txnCount - 1, txnCount);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
             }
         });
     }
@@ -12026,7 +14265,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // the view must be marked as invalid as the result of refresh attempt
+            // the view must be marked as invalid as the result of refresh attempt: the table now under the base
+            // table's name has another id than the one the view's refresh position belongs to
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                     "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
@@ -12034,7 +14274,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\t[-1]: unexpected txn numbers, base table may have been renamed [view=price_1h, fromBaseTxn=2, toBaseTxn=1]\t2\t1
+                            price_1h\tmanual\tbase_price\t2025-01-01T01:01:01.000000Z\t2025-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table changed\t2\t1
                             """);
         });
     }
@@ -12088,7 +14328,8 @@ public class MatViewTest extends AbstractCairoTest {
 
             drainQueues();
 
-            // the view must be marked as invalid since the base table was dropped
+            // the view must be marked as invalid since the base table was dropped: the refresh intervals update
+            // finds another table under the base table's name than the one its cached intervals belong to
             assertQuery("select view_name, refresh_type, base_table_name, last_refresh_start_timestamp, last_refresh_finish_timestamp, " +
                     "view_sql, view_status, invalidation_reason, " + txnColumns() + " " +
                     "from materialized_views")
@@ -12096,7 +14337,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\tmanual\tbase_price\t2099-01-01T01:01:07.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table is dropped or renamed\t2\t1
+                            price_1h\tmanual\tbase_price\t2099-01-01T01:01:01.000000Z\t2099-01-01T01:01:07.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h;\tinvalid\tbase table changed\t2\t1
                             """);
         });
     }
@@ -12446,8 +14687,10 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + type);
             drainQueues();
+            // A base column type change invalidates no view when it applies; the next refresh that recomputes
+            // rows casts the changed column to the view column.
             assertQuery("SELECT view_status FROM materialized_views")
-                    .noRandomAccess().noLeakCheck().returns("view_status\ninvalid\n");
+                    .noRandomAccess().noLeakCheck().returns("view_status\nvalid\n");
             if (isRehydrated) {
                 rehydrateTimestampMatViewForTypeChange();
             }
@@ -12564,6 +14807,74 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertMaxClustersCapCommits(String basePartitionBy, String viewName, long expectedCommits) throws Exception {
+        final String baseName = viewName + "_base";
+        executeWithRewriteTimestamp(
+                "create table " + baseName + " (price double, ts #TIMESTAMP) timestamp(ts) partition by " + basePartitionBy + " WAL"
+        );
+        execute(
+                "create materialized view " + viewName + " refresh manual as " +
+                        "select ts, last(price) as price from " + baseName + " sample by 1h;"
+        );
+        // Initial seed + refresh to clear cache.
+        execute("insert into " + baseName + "(price, ts) values (1.0, '2024-01-01T00:01')");
+        currentMicros = Math.max(currentMicros, parseFloorPartialTimestamp("2099-01-01T01:01:01.000000Z")) + Micros.MINUTE_MICROS;
+        final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+        execute("refresh materialized view " + viewName + " incremental;");
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+
+        // 5 disjoint inserts widely apart -- each becomes its own cached
+        // interval at refresh-intervals-update time.
+        execute("insert into " + baseName + "(price, ts) values (2.0, '2024-02-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (3.0, '2024-03-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (4.0, '2024-04-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (5.0, '2024-05-01T00:01')");
+        execute("insert into " + baseName + "(price, ts) values (6.0, '2024-06-01T00:01')");
+
+        currentMicros += 6 * Micros.SECOND_MICROS;
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+
+        // Pre-refresh: 5 cached interval pairs (10 longs). Clustering
+        // happens inside findRefreshIntervals during the refresh itself,
+        // so this snapshot is taken before the cap kicks in.
+        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+        Assert.assertNotNull(viewState);
+        Assert.assertEquals(10, viewState.getRefreshIntervals().size());
+
+        final long txnBefore = engine.getTableSequencerAPI()
+                .getTxnTracker(viewToken).getWriterTxn();
+        execute("refresh materialized view " + viewName + " incremental;");
+        drainMatViewTimerQueue(timerJob);
+        drainQueues();
+        final long txnAfter = engine.getTableSequencerAPI()
+                .getTxnTracker(viewToken).getWriterTxn();
+
+        Assert.assertEquals(
+                "max-clusters cap of 2 over a base partitioned by " + basePartitionBy,
+                expectedCommits,
+                txnAfter - txnBefore
+        );
+        Assert.assertEquals(0, viewState.getRefreshIntervals().size());
+        Assert.assertEquals(-1, viewState.getRefreshIntervalsBaseTxn());
+        // The view holds every row the base holds, whichever way the refresh committed them.
+        assertQuery(viewName)
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp("""
+                        ts\tprice
+                        2024-01-01T00:00:00.000000Z\t1.0
+                        2024-02-01T00:00:00.000000Z\t2.0
+                        2024-03-01T00:00:00.000000Z\t3.0
+                        2024-04-01T00:00:00.000000Z\t4.0
+                        2024-05-01T00:00:00.000000Z\t5.0
+                        2024-06-01T00:00:00.000000Z\t6.0
+                        """));
     }
 
     private void assertPassthroughMatchesBase() throws Exception {
@@ -12771,6 +15082,35 @@ public class MatViewTest extends AbstractCairoTest {
         return out + " from (" + in + ")";
     }
 
+    // Compatibility shims for the frozen-zone tests, mapping the removed
+    // assertQueryNoLeakCheck(...) overloads onto the QueryAssertion fluent API.
+    private void assertQueryNoLeakCheck(CharSequence expected, CharSequence query) throws Exception {
+        assertQuery(query).noLeakCheck().inferRandomAccess().returns(expected);
+    }
+
+    private void assertQueryNoLeakCheck(CharSequence expected, CharSequence query, CharSequence ddl) throws Exception {
+        final QueryAssertion assertion = assertQuery(query).noLeakCheck().inferRandomAccess();
+        if (ddl != null) {
+            assertion.ddl(ddl);
+        }
+        assertion.returns(expected);
+    }
+
+    private void assertQueryNoLeakCheck(
+            CharSequence expected,
+            CharSequence query,
+            CharSequence expectedTimestamp,
+            boolean supportsRandomAccess,
+            boolean expectSize
+    ) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp(expectedTimestamp)
+                .supportsRandomAccess(supportsRandomAccess)
+                .expectSize(expectSize)
+                .returns(expected);
+    }
+
     private long passthroughViewSeqTxn() {
         return engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("price_copy")).getSeqTxn();
     }
@@ -12974,10 +15314,31 @@ public class MatViewTest extends AbstractCairoTest {
         testBaseTableInvalidateOnOperation(null, operationSql, invalidationReason);
     }
 
+    private void testBaseTableKeepsViewValidOnOperation(String operationSql) throws Exception {
+        testBaseTableKeepsViewValidOnOperation(null, operationSql);
+    }
+
+    private void testBaseTableKeepsViewValidOnOperation(
+            @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
+            String operationSql
+    ) throws Exception {
+        testBaseTableOperation(runBeforeMatViewCreate, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                "price_1h\tbase_price\tvalid\t\n");
+    }
+
     private void testBaseTableInvalidateOnOperation(
             @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
             String operationSql,
             String invalidationReason
+    ) throws Exception {
+        testBaseTableOperation(runBeforeMatViewCreate, operationSql, "view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
+                "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n");
+    }
+
+    private void testBaseTableOperation(
+            @Nullable TestUtils.LeakProneCode runBeforeMatViewCreate,
+            String operationSql,
+            String expectedStatus
     ) throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -13016,8 +15377,7 @@ public class MatViewTest extends AbstractCairoTest {
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
-                    .returns("view_name\tbase_table_name\tview_status\tinvalidation_reason\n" +
-                            "price_1h\tbase_price\tinvalid\t" + invalidationReason + "\n");
+                    .returns(expectedStatus);
         });
     }
 
@@ -13086,12 +15446,14 @@ public class MatViewTest extends AbstractCairoTest {
             );
             drainQueues();
 
+            // The view state event that persists the base table id at the view's first refresh comes first.
             assertQuery("select sequencerTxn, minTimestamp, maxTimestamp from wal_transactions('price_1h')")
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             sequencerTxn\tminTimestamp\tmaxTimestamp
-                            1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                            1\t\t
+                            2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
                             """);
 
             execute(
@@ -13105,9 +15467,10 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             sequencerTxn\tminTimestamp\tmaxTimestamp
-                            1\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
-                            2\t\t
-                            3\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
+                            1\t\t
+                            2\t2024-09-10T12:00:00.000000Z\t2024-09-18T19:00:00.000000Z
+                            3\t\t
+                            4\t2024-09-10T12:00:00.000000Z\t2024-09-10T13:00:00.000000Z
                             """);
 
             assertViewMatchesSqlOverBaseTable(viewSql);

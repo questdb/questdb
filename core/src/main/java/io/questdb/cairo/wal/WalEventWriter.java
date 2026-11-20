@@ -379,6 +379,28 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
+    // The event of ALTER MATERIALIZED VIEW ... AS: the base table name the statement validated against, the SQL text
+    // and whether the statement changed the base table.
+    int appendMatViewDefinition(
+            @NotNull CharSequence baseTableName,
+            @NotNull CharSequence matViewSql,
+            boolean isBaseTableChange
+    ) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.MAT_VIEW_DEFINITION);
+        eventMem.putStr(baseTableName);
+        eventMem.putStr(matViewSql);
+        eventMem.putBool(isBaseTableChange);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        eventMem.putInt(WAL_FORMAT_OFFSET_32, WALE_MAT_VIEW_FORMAT_VERSION);
+        return txn++;
+    }
+
     int appendMatViewInvalidate(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,
@@ -386,7 +408,9 @@ class WalEventWriter implements Closeable {
             @Nullable CharSequence invalidationReason,
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
-            long refreshIntervalsBaseTxn
+            long refreshIntervalsBaseTxn,
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason
     ) {
         startOffset = eventMem.getAppendOffset() - Integer.BYTES;
         eventMem.putLong(txn);
@@ -406,6 +430,9 @@ class WalEventWriter implements Closeable {
             } else {
                 eventMem.putInt(-1);
             }
+            // Trailing fields: older readers stop at the record's length, which the size prefix gives.
+            eventMem.putInt(baseTableId);
+            eventMem.putStr(backlogLostReason);
         }
         eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
         eventMem.putInt(-1);

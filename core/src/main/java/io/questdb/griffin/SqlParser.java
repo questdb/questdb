@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
@@ -158,8 +159,13 @@ public class SqlParser {
     private static final LowerCaseAsciiCharSequenceHashSet pivotForStop = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet setOperations = new LowerCaseAsciiCharSequenceHashSet();
     private static final LowerCaseAsciiCharSequenceHashSet tableAliasStop = new LowerCaseAsciiCharSequenceHashSet();
+    // Lets CREATE MATERIALIZED VIEW skip the explicit column name rules, so that a test can build a view the way
+    // versions before them did, see setMatViewExplicitNamesCheckSkipped().
+    private static volatile boolean isMatViewExplicitNamesCheckSkipped;
     private final IntList accumulatedColumnPositions = new IntList();
     private final ObjList<QueryColumn> accumulatedColumns = new ObjList<>();
+    // The result of parseAlterMatViewQuery().
+    private final AlterMatViewQuery alterMatViewQuery = new AlterMatViewQuery();
     private final LowerCaseCharSequenceHashSet aliasMap = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceIntHashMap aliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final CairoEngine cairoEngine;
@@ -190,6 +196,8 @@ public class SqlParser {
     // the value is parsed, so addDeclaredQueries() finds the node's digit here, by its model.
     private final IntList declaredValueQueryDigits = new IntList();
     private final ObjList<IQueryModel> declaredValueQueryModels = new ObjList<>();
+    // Stays empty: the aliases no other column takes, see generateColumnReferenceAlias().
+    private final LowerCaseCharSequenceHashSet emptyAliasMap = new LowerCaseCharSequenceHashSet();
     private final ObjectPool<ExplainModel> explainModelPool;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ExpressionParser expressionParser;
@@ -216,6 +224,7 @@ public class SqlParser {
     // Map of view definitions encountered during query compilation.
     // Using a map ensures consistent view definitions even if views are modified concurrently.
     private final LowerCaseCharSequenceObjHashMap<ViewDefinition> recordedViews = new LowerCaseCharSequenceObjHashMap<>();
+    private final LowerCaseCharSequenceIntHashMap referenceAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
     private final PostOrderTreeTraversalAlgo.Visitor rejectJoinSubQueryRef = this::rejectJoinSubQuery;
     private final ObjectPool<RenameTableModel> renameTableModelPool;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteConcatRef = this::rewriteConcat;
@@ -265,6 +274,13 @@ public class SqlParser {
     private final ObjList<WithClauseModel> withModels = new ObjList<>();
     // Number of audited views whose bodies are being expanded at the current parse position.
     private int auditedViewDepth;
+    // Where the SQL text of a materialized view starts and ends in the statement, and whether parentheses enclose
+    // it, see parseMatViewQuery().
+    private boolean isMatViewQueryEnclosed;
+    private int matViewQueryHi;
+    private int matViewQueryLo;
+    // Whether parseSelectClause() records where each column's expression ends, see setRecordingColumnExprEnds().
+    private boolean isRecordingColumnExprEnds;
     private boolean copyMode = false;
     private boolean createTableMode = false;
     private boolean createViewMode = false;
@@ -955,6 +971,17 @@ public class SqlParser {
         return visitor.visit(node);
     }
 
+    /**
+     * Lets CREATE MATERIALIZED VIEW skip the explicit column name rules, so that a test can build a view whose SQL
+     * relies on generated column names or calls a zero-argument function without parentheses, as the versions
+     * before the rules stored it. The parse then applies the older alias check, and the compile reads a bare
+     * zero-argument function name as a call.
+     */
+    @TestOnly
+    public static void setMatViewExplicitNamesCheckSkipped(boolean isSkipped) {
+        isMatViewExplicitNamesCheckSkipped = isSkipped;
+    }
+
     public static void validateMatViewEveryUnit(char unit, int pos) throws SqlException {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
             throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
@@ -1000,6 +1027,41 @@ public class SqlParser {
         return SqlException.$(position, "EXPIRE ROWS predicate can read only the view the policy is set on");
     }
 
+    // The position of the SQL's first reference to the regular view of the given name that the parse expanded, or -1.
+    // Walks the models as SqlUtil.findTableNamePosition() does, but not into the body of another expanded view, whose
+    // positions point into that view's own SQL.
+    private static int findExpandedViewPosition(IQueryModel model, CharSequence viewName) {
+        IQueryModel m = model;
+        do {
+            final ExpressionNode viewNameExpr = m.getOriginatingViewNameExpr();
+            if (viewNameExpr != null) {
+                return Chars.equalsIgnoreCase(viewNameExpr.token, viewName) ? viewNameExpr.position : -1;
+            }
+
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m) {
+                    final int position = findExpandedViewPosition(joinModel, viewName);
+                    if (position > -1) {
+                        return position;
+                    }
+                }
+            }
+
+            final IQueryModel unionModel = m.getUnionModel();
+            if (unionModel != null) {
+                final int position = findExpandedViewPosition(unionModel, viewName);
+                if (position > -1) {
+                    return position;
+                }
+            }
+
+            m = m.getNestedModel();
+        } while (m != null);
+        return -1;
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -1039,6 +1101,58 @@ public class SqlParser {
         return Chars.equals(token, ZERO_OFFSET.token)
                 || Chars.equals(token, "'+00:00'")
                 || Chars.equals(token, "'-00:00'");
+    }
+
+    private static SqlException matViewAliasRequired(QueryColumn column) {
+        return SqlException
+                .position(column.getAst().position)
+                .put("column '").put(column.getName()).put("' requires an explicit alias. Use: ")
+                .put(column.getName()).put(" AS your_column_name");
+    }
+
+    /**
+     * Returns true when the parsed query names its columns: in every select model of its own text, each column
+     * without an explicit alias is a wildcard, or a plain column reference that the parser named after its
+     * column, whose name is at most 64 characters long, see
+     * {@link #isNamedAfterReferencedColumn(CharSequence, CharSequence)}. Such names do not depend on the server
+     * version or the {@code cairo.sql.column.alias.*} settings, so a materialized view whose SQL names its
+     * columns maps them to its own columns by name. Any other
+     * unaliased column has a generated name, a duplicate name's suffix included. Wildcards and plain references
+     * carry names up from subqueries, CTEs and join branches, so the walk covers those too. A model expanded
+     * from a regular view is not part of the text; its columns reach the query as plain columns.
+     */
+    private static boolean isNamingItsColumns(@Nullable IQueryModel model) {
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getViewNameExpr() != null) {
+                // the regular view's own models sit below this one, as its nested, join and union models
+                return true;
+            }
+            final ObjList<QueryColumn> columns = m.getBottomUpColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (column.getAliasPosition() != QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                    continue;
+                }
+                final ExpressionNode ast = column.getAst();
+                if (ast.type != ExpressionNode.LITERAL) {
+                    return false;
+                }
+                if (!ast.isWildcard() && !isNamedAfterReferencedColumn(column.getAlias(), ast.token)) {
+                    return false;
+                }
+            }
+            final ObjList<IQueryModel> joinModels = m.getJoinModels();
+            for (int i = 0, n = joinModels.size(); i < n; i++) {
+                final IQueryModel joinModel = joinModels.getQuick(i);
+                if (joinModel != m && !isNamingItsColumns(joinModel)) {
+                    return false;
+                }
+            }
+            if (!isNamingItsColumns(m.getUnionModel())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static CreateLiveViewOperationBuilder parseCreateLiveViewExt(
@@ -2642,6 +2756,24 @@ public class SqlParser {
         return EXPIRE_BOUNDARY_NONE;
     }
 
+    // Returns where the last token in [lo, hi) of content ends, where hi starts a token or ends the content, or lo
+    // when the range has no token. Reads the text as the parse does, so a comment or whitespace before hi is not
+    // part of the result.
+    private int findTokensEnd(CharSequence content, int lo, int hi) throws SqlException {
+        final GenericLexer lookahead = viewLexers.next();
+        try {
+            lookahead.of(content, lo, hi);
+            int end = lo;
+            CharSequence tok;
+            while ((tok = SqlUtil.fetchNext(lookahead)) != null) {
+                end = lookahead.lastTokenPosition() + tok.length();
+            }
+            return end;
+        } finally {
+            viewLexers.release(lookahead);
+        }
+    }
+
     private void generateColumnAlias(GenericLexer lexer, QueryColumn qc, boolean hasFrom) throws SqlException {
         CharSequence token = qc.getAst().token;
         if (qc.getAst().isWildcard() && !hasFrom) {
@@ -2676,6 +2808,33 @@ public class SqlParser {
         }
         qc.setAlias(alias, QueryColumn.SYNTHESIZED_ALIAS_POSITION);
         aliasMap.add(alias);
+    }
+
+    // Returns the name generateColumnAlias() gives a plain column reference when no other column of its select list
+    // takes that name. A reference whose generated name differs from it was renamed for another column's sake.
+    private CharSequence generateColumnReferenceAlias(ExpressionNode ast) {
+        assert ast.type == ExpressionNode.LITERAL;
+        referenceAliasSequenceMap.clear();
+        if (configuration.isColumnAliasExpressionEnabled()) {
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            ast.toSink(entry);
+            return SqlUtil.createExprColumnAlias(
+                    characterStore,
+                    entry.toImmutable(),
+                    emptyAliasMap,
+                    referenceAliasSequenceMap,
+                    configuration.getColumnAliasGeneratedMaxSize(),
+                    false
+            );
+        }
+        return SqlUtil.createColumnAlias(
+                characterStore,
+                unquote(ast.token),
+                Chars.indexOfLastUnquoted(ast.token, '.'),
+                emptyAliasMap,
+                referenceAliasSequenceMap,
+                false
+        );
     }
 
     private @Nullable CreateTableColumnModel getCreateTableColumnModel(CharSequence columnName) {
@@ -2769,6 +2928,20 @@ public class SqlParser {
         } finally {
             viewLexers.release(lookahead);
         }
+    }
+
+    // Returns true when a column without an explicit alias needs one in a materialized view's SQL, see
+    // validateMatViewQuery(): a column whose generated name is not a valid column name, and, under the explicit name
+    // rules, a computed column or a plain column reference whose name another column of its select list took. The
+    // expression alias rules name a prefixed wildcard, such as b.*, "*" with protective quotes.
+    private boolean isMatViewAliasRequired(QueryColumn column, boolean isExplicitNameRequired) {
+        final CharSequence name = column.getName();
+        final ExpressionNode ast = column.getAst();
+        if (ast.isWildcard()) {
+            return !Chars.equals(name, '*') && !Chars.equals(name, "\"*\"");
+        }
+        return !TableUtils.isValidColumnName(name, configuration.getMaxFileNameLength())
+                || isExplicitNameRequired && (ast.type != ExpressionNode.LITERAL || !Chars.equals(name, generateColumnReferenceAlias(ast)));
     }
 
     // True while the parse is in the text of the window WHEN policy that validateWindowExpiryPredicate()
@@ -4556,6 +4729,40 @@ public class SqlParser {
                 && (token.charAt(11) | 32) == 'p';
     }
 
+    // Where each named column of the outermost SELECT of a materialized view's SQL starts in the statement, for the
+    // errors that the checks of the compile report, which see the optimised query. Wildcard columns have no entry.
+    private static void collectMatViewColumnPositions(IQueryModel queryModel, LowerCaseCharSequenceIntHashMap sink) {
+        final ObjList<QueryColumn> columns = queryModel.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (!column.getAst().isWildcard()) {
+                sink.put(Chars.toString(SqlUtil.toColumnName(column.getAlias())), column.getAst().position);
+            }
+        }
+    }
+
+    // The SAMPLE BY time zone, or offset, of a materialized view's SQL, as CREATE MATERIALIZED VIEW stores it, or null.
+    private static @Nullable String getMatViewSampleBy(IQueryModel queryModel, boolean isTimeZone) {
+        final ExpressionNode node = getMatViewSampleByNode(queryModel, isTimeZone);
+        return node != null ? unquote(node.token).toString() : null;
+    }
+
+    // A bare table name, a query with no select list of its own, parses to a model without a nested model.
+    private static @Nullable ExpressionNode getMatViewSampleByNode(IQueryModel queryModel, boolean isTimeZone) {
+        final IQueryModel nestedModel = queryModel.getNestedModel();
+        if (nestedModel == null) {
+            return null;
+        }
+        return isTimeZone ? nestedModel.getSampleByTimezoneName() : nestedModel.getSampleByOffset();
+    }
+
+    // The position of the SAMPLE BY time zone, or offset, of a materialized view's SQL, or the given default when the
+    // SQL has none.
+    private static int getMatViewSampleByPosition(IQueryModel queryModel, boolean isTimeZone, int defaultPosition) {
+        final ExpressionNode node = getMatViewSampleByNode(queryModel, isTimeZone);
+        return node != null ? node.position : defaultPosition;
+    }
+
     private ExecutionModel parseCreateMatView(
             GenericLexer lexer,
             SqlExecutionContext executionContext,
@@ -4736,32 +4943,12 @@ public class SqlParser {
 
         boolean enclosedInParentheses;
         if (isAsKeyword(tok)) {
-            int startOfQuery = lexer.getPosition();
-            tok = tok(lexer, "'(' or 'with' or 'select'");
-            enclosedInParentheses = Chars.equals(tok, '(');
-            if (enclosedInParentheses) {
-                startOfQuery = lexer.getPosition();
-                tok = tok(lexer, "'with' or 'select'");
-            }
-
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
-            final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
-            final IQueryModel queryModel;
-            executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
-            try {
-                if (isWithKeyword(tok)) {
-                    parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                    // CTEs require SELECT to be specified
-                    expectTok(lexer, "select");
-                }
-                lexer.unparseLast();
-                queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
-            } finally {
-                executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
-            }
-            final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+            final IQueryModel queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+            final int startOfQuery = matViewQueryLo;
+            final int endOfQuery = matViewQueryHi;
+            enclosedInParentheses = isMatViewQueryEnclosed;
 
             tableNames.clear();
             tableNamePositions.clear();
@@ -4793,17 +4980,11 @@ public class SqlParser {
                 throw SqlException.position(baseTableNamePos)
                         .put("base table is not referenced in materialized view query: ").put(baseTableName);
             }
-            validateMatViewQuery(queryModel, baseTableNameStr);
+            validateMatViewQuery(queryModel, baseTableNameStr, !isMatViewExplicitNamesCheckSkipped);
+            collectMatViewColumnPositions(queryModel, mvOpBuilder.getColumnPositions());
 
-            final IQueryModel nestedModel = queryModel.getNestedModel();
-            if (nestedModel != null) {
-                if (nestedModel.getSampleByTimezoneName() != null) {
-                    mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
-                }
-                if (nestedModel.getSampleByOffset() != null) {
-                    mvOpBuilder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
-                }
-            }
+            mvOpBuilder.setTimeZone(getMatViewSampleBy(queryModel, true));
+            mvOpBuilder.setTimeZoneOffset(getMatViewSampleBy(queryModel, false));
 
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql, startOfQuery);
@@ -7801,6 +7982,45 @@ public class SqlParser {
         }
     }
 
+    // Parses the AS block that CREATE MATERIALIZED VIEW and ALTER MATERIALIZED VIEW ... AS share, the lexer standing
+    // after AS: the SELECT, in parentheses or not, which may read no view with a row-expiry policy. Leaves where the
+    // SQL text starts and ends in matViewQueryLo and matViewQueryHi, and whether parentheses enclose it in
+    // isMatViewQueryEnclosed; the caller reads the closing parenthesis.
+    private IQueryModel parseMatViewQuery(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence matViewName
+    ) throws SqlException {
+        int startOfQuery = lexer.getPosition();
+        CharSequence tok = tok(lexer, "'(' or 'with' or 'select'");
+        final boolean enclosedInParentheses = Chars.equals(tok, '(');
+        if (enclosedInParentheses) {
+            startOfQuery = lexer.getPosition();
+            tok = tok(lexer, "'with' or 'select'");
+        }
+
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final IQueryModel queryModel;
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
+        try {
+            if (isWithKeyword(tok)) {
+                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                // CTEs require SELECT to be specified
+                expectTok(lexer, "select");
+            }
+            lexer.unparseLast();
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
+        matViewQueryLo = startOfQuery;
+        matViewQueryHi = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
+        isMatViewQueryEnclosed = enclosedInParentheses;
+        return queryModel;
+    }
+
     /**
      * Parses a parenthesized comma-separated list of column expressions: (a, b, c).
      * Used by ROLLUP and CUBE parsing.
@@ -8147,6 +8367,8 @@ public class SqlParser {
             boolean hasFrom = false;
             while (true) {
                 tok = tok(lexer, "column");
+                // where the column's expression starts
+                final int exprLo = lexer.lastTokenPosition();
                 if (Chars.equals(tok, '*')) {
                     expr = nextLiteral(GenericLexer.immutableOf(tok), lexer.lastTokenPosition());
                 } else {
@@ -8238,6 +8460,11 @@ public class SqlParser {
                         throw err(lexer, null, "column alias cannot be a blank string");
                     }
                     col.setAlias(alias, aliasPosition);
+                }
+                if (isRecordingColumnExprEnds) {
+                    // The expression ends before the token that follows it. The select lists of a materialized
+                    // view's SQL, the only ones recorded, are followed by FROM or by the ')' of a sub-query.
+                    col.setExprEndPosition(findTokensEnd(lexer.getContent(), exprLo, colPosition));
                 }
 
                 accumulatedColumns.add(col);
@@ -10011,8 +10238,25 @@ public class SqlParser {
         return tok;
     }
 
-    private void validateMatViewQuery(IQueryModel model, String baseTableName) throws SqlException {
+    /**
+     * Checks the rules of a materialized view's SQL that its parse can tell, the explicit column names among them.
+     * In every select model of the SQL's own text, a column without an explicit alias must be a wildcard or a plain
+     * column reference that keeps the name of its column: a computed column, such as a function call, an
+     * expression or a constant, needs an alias, and so does a plain column reference whose name another column of
+     * its select list took. Generated names change with the server version and the
+     * {@code cairo.sql.column.alias.*} settings, while refresh maps the SQL's columns to the view's columns by
+     * name. The walk covers nested, join and union models; sub-queries inside expressions produce no view
+     * column. The models of a regular view that the SQL reads keep the check that predates the rules, which
+     * rejects only a generated name that is not a valid column name, and only where the model reads the base
+     * table: the user cannot change the view's text in the SQL. isExplicitNameRequired false applies that older
+     * check to every model.
+     */
+    private void validateMatViewQuery(IQueryModel model, String baseTableName, boolean isExplicitNameRequired) throws SqlException {
         for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getViewNameExpr() != null) {
+                // this model and the ones below it are a regular view's text
+                isExplicitNameRequired = false;
+            }
             tableNames.clear();
             tableNamePositions.clear();
             SqlUtil.collectAllTableNames(m, tableNames, null);
@@ -10031,6 +10275,15 @@ public class SqlParser {
                 }
                 throw SqlException.position(position)
                         .put("ROLLUP, CUBE and GROUPING SETS are not supported for materialized views");
+            }
+            if (!baseTableQueried && isExplicitNameRequired) {
+                final ObjList<QueryColumn> columns = m.getColumns();
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    final QueryColumn column = columns.getQuick(i);
+                    if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION && isMatViewAliasRequired(column, true)) {
+                        throw matViewAliasRequired(column);
+                    }
+                }
             }
             if (baseTableQueried) {
                 if (m.getSampleBy() != null && m.getSampleByOffset() == null) {
@@ -10081,17 +10334,16 @@ public class SqlParser {
                         windowFuncPosition = windowFunctionPosition(column.getAst());
                     }
 
-                    if (!Chars.equals(column.getName(), '*') && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
-                        if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
-                            throw SqlException
-                                    .position(column.getAst().position)
-                                    .put("column '").put(column.getName()).put("' requires an explicit alias. Use: ")
-                                    .put(column.getName()).put(" AS your_column_name");
-                        } else {
-                            throw SqlException
-                                    .position(column.getAliasPosition())
-                                    .put("column alias '").put(column.getName()).put("' contains unsupported characters");
+                    if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                        if (isMatViewAliasRequired(column, isExplicitNameRequired)) {
+                            throw matViewAliasRequired(column);
                         }
+                    } else if (!column.getAst().isWildcard() && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
+                        // the user cannot alias a wildcard, but the parse names the wildcard of a query it writes
+                        // in the user's stead, such as that of a bare table name, *
+                        throw SqlException
+                                .position(column.getAliasPosition())
+                                .put("column alias '").put(column.getName()).put("' contains unsupported characters");
                     }
                 }
 
@@ -10107,7 +10359,7 @@ public class SqlParser {
                 if (joinModel == m) {
                     continue;
                 }
-                validateMatViewQuery(joinModel, baseTableName);
+                validateMatViewQuery(joinModel, baseTableName, isExplicitNameRequired);
             }
 
             final IQueryModel unionModel = m.getUnionModel();
@@ -10117,7 +10369,7 @@ public class SqlParser {
                     throw SqlException.position(m.getUnionModel().getModelPosition())
                             .put("union on base table is not supported for materialized views: ").put(baseTableName);
                 }
-                validateMatViewQuery(unionModel, baseTableName);
+                validateMatViewQuery(unionModel, baseTableName, isExplicitNameRequired);
             }
         }
     }
@@ -10209,6 +10461,21 @@ public class SqlParser {
         return -1;
     }
 
+    static boolean isMatViewExplicitNamesCheckSkipped() {
+        return isMatViewExplicitNamesCheckSkipped;
+    }
+
+    // True when the parser named the column after the column it references: the name of a plain column reference
+    // without its table prefix, and without the suffix that tells a duplicate name apart. A column name longer than
+    // the default cairo.sql.column.alias.generated.max.size does not count, whatever the current setting: the
+    // default rules name such a reference after the column name cut to that size, and the setting can change
+    // between the view's CREATE and a refresh.
+    static boolean isNamedAfterReferencedColumn(CharSequence alias, CharSequence token) {
+        final int lo = Chars.indexOfLastUnquoted(token, '.') + 1;
+        return token.length() - lo <= PropServerConfiguration.COLUMN_ALIAS_GENERATED_MAX_SIZE_DEFAULT
+                && Chars.equals(alias, 0, alias.length(), token, lo, token.length());
+    }
+
     static void validateIdentifier(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (tok == null || tok.isEmpty()) {
             throw SqlException.position(lexer.lastTokenPosition()).put("non-empty identifier expected");
@@ -10298,6 +10565,7 @@ public class SqlParser {
         expiryTimestampColumnName = null;
         pendingExpiryReadVersions.clear();
         securityContext = null;
+        isRecordingColumnExprEnds = false;
     }
 
     ExpressionNode expr(
@@ -10358,6 +10626,10 @@ public class SqlParser {
         recordStatementTextLength(lexer);
         final ExecutionModel model = parse0(lexer, executionContext, sqlParserCallback);
         attachViewReads(model);
+        if (executionContext.isViewSqlCompile() && model.getModelType() == ExecutionModel.QUERY) {
+            // The optimiser renames and wraps models, so only the parser's output shows the names the SQL wrote.
+            executionContext.setViewSqlGeneratedColumnNames(!isNamingItsColumns((IQueryModel) model));
+        }
         return model;
     }
 
@@ -10449,6 +10721,120 @@ public class SqlParser {
      */
     void setAnchorAllowed(boolean anchorAllowed) {
         expressionParser.setAnchorAllowed(anchorAllowed);
+    }
+
+    /**
+     * Makes the parse record, on each column of a select list, where the column's expression ends in the text,
+     * see {@link QueryColumn#getExprEndPosition()}, until called again with false. {@link #clear()} turns it off.
+     * It costs a second read of each column's text, so only callers that edit the text around the columns turn
+     * it on.
+     */
+    void setRecordingColumnExprEnds(boolean isRecordingColumnExprEnds) {
+        this.isRecordingColumnExprEnds = isRecordingColumnExprEnds;
+    }
+
+    /**
+     * Checks the parsed SQL of a materialized view under the rules of CREATE MATERIALIZED VIEW that the parse can
+     * tell, the explicit column names among them, whatever {@link #setMatViewExplicitNamesCheckSkipped(boolean)}
+     * says, as a CREATE that replays the SQL would.
+     */
+    void validateMatViewSql(IQueryModel model, String baseTableName) throws SqlException {
+        validateMatViewQuery(model, baseTableName, true);
+    }
+
+    /**
+     * Parses the rest of {@code ALTER MATERIALIZED VIEW v [WITH BASE b] AS (<select>)}, the lexer standing after AS,
+     * and checks the new SQL under the rules of CREATE MATERIALIZED VIEW that the parse can tell, the explicit column
+     * names among them, with the AS block helper that CREATE uses. The SQL must read the given base table: the view's
+     * current one, or the one WITH BASE names. Unlike CREATE, the statement never infers a base table from the SQL,
+     * so that a mistyped table name fails instead of moving the view.
+     *
+     * @param baseTableName         the base table of the new definition
+     * @param baseTableNamePosition the position of the name after WITH BASE, or -1 without WITH BASE
+     * @return the SQL text and what the statement checks against the view's definition, valid until the next call
+     */
+    AlterMatViewQuery parseAlterMatViewQuery(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            SqlParserCallback sqlParserCallback,
+            CharSequence matViewName,
+            String baseTableName,
+            int baseTableNamePosition
+    ) throws SqlException {
+        final IQueryModel queryModel = parseMatViewQuery(lexer, executionContext, sqlParserCallback, matViewName);
+        final AlterMatViewQuery result = alterMatViewQuery;
+        result.clear();
+        result.sql = Chars.toString(lexer.getContent(), matViewQueryLo, matViewQueryHi);
+        result.sqlPosition = matViewQueryLo;
+
+        tableNames.clear();
+        tableNamePositions.clear();
+        SqlUtil.collectAllTableNames(queryModel, tableNames, tableNamePositions);
+        if (!tableNames.contains(baseTableName)) {
+            if (baseTableNamePosition > -1) {
+                throw SqlException.position(baseTableNamePosition)
+                        .put("base table is not referenced in materialized view query: ").put(baseTableName);
+            }
+            // A regular view took the base table's name, and the parse expanded the SQL's reads of it into the tables it
+            // reads. WITH BASE refuses such a view before the parse, see SqlCompilerImpl.alterMatViewAs().
+            if (recordedViews.get(baseTableName) != null) {
+                final int viewPosition = findExpandedViewPosition(queryModel, baseTableName);
+                throw SqlException.position(viewPosition > -1 ? viewPosition : matViewQueryLo)
+                        .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
+            }
+            throw SqlException.position(matViewQueryLo)
+                    .put("materialized view query does not read its base table, name the new base table with WITH BASE [baseTable=")
+                    .put(baseTableName).put(']');
+        }
+        validateMatViewQuery(queryModel, baseTableName, true);
+
+        result.baseTableReferencePosition = SqlUtil.findTableNamePosition(queryModel, baseTableName);
+        // collectAllTableNames() above found the table on the same walk, with the same comparison
+        assert result.baseTableReferencePosition > -1;
+        result.timeZone = getMatViewSampleBy(queryModel, true);
+        result.timeZoneOffset = getMatViewSampleBy(queryModel, false);
+        result.timeZonePosition = getMatViewSampleByPosition(queryModel, true, matViewQueryLo);
+        result.timeZoneOffsetPosition = getMatViewSampleByPosition(queryModel, false, matViewQueryLo);
+        collectMatViewColumnPositions(queryModel, result.columnPositions);
+
+        if (isMatViewQueryEnclosed) {
+            expectTok(lexer, ')');
+        }
+        return result;
+    }
+
+    /**
+     * The new SQL of {@code ALTER MATERIALIZED VIEW ... AS}, as {@link #parseAlterMatViewQuery} parsed it: its text and
+     * position in the statement, where it first references the base table, its SAMPLE BY time zone and offset, which
+     * the view's must equal, with their positions, the SQL's when it has none, and where each named column of its
+     * outermost SELECT starts, keyed by the column's name.
+     */
+    public static final class AlterMatViewQuery {
+        public final LowerCaseCharSequenceIntHashMap columnPositions = new LowerCaseCharSequenceIntHashMap();
+        public int baseTableReferencePosition;
+        public String sql;
+        public int sqlPosition;
+        public @Nullable String timeZone;
+        public @Nullable String timeZoneOffset;
+        public int timeZoneOffsetPosition;
+        public int timeZonePosition;
+
+        // The position of the named column in the statement, or the position of the SQL when the SELECT does not name it.
+        public int getColumnPosition(CharSequence columnName) {
+            final int index = columnPositions.keyIndex(columnName);
+            return index < 0 ? columnPositions.valueAt(index) : sqlPosition;
+        }
+
+        private void clear() {
+            columnPositions.clear();
+            baseTableReferencePosition = 0;
+            sql = null;
+            sqlPosition = 0;
+            timeZone = null;
+            timeZoneOffset = null;
+            timeZoneOffsetPosition = 0;
+            timeZonePosition = 0;
+        }
     }
 
     /**

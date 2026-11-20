@@ -55,7 +55,6 @@ import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.mv.MatViewTimerTask;
 import io.questdb.cairo.mv.NoOpMatViewStateStore;
-import io.questdb.cairo.mv.WalTxnRangeLoader;
 import io.questdb.cairo.pool.AbstractMultiTenantPool;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ReaderPool;
@@ -165,7 +164,6 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.MemoryTrackerProvider;
@@ -3239,6 +3237,42 @@ public class CairoEngine implements Closeable, WriterSource {
         return deadlineNanos - System.nanoTime() > 0;
     }
 
+    /**
+     * Shared backfill gate for mat views: returns {@code true} when {@code matViewToken}
+     * is a materialized view that has a non-zero {@code REFRESH LIMIT} set and the
+     * frozen-zone feature is enabled (i.e. the wall-clock escape-hatch config is off).
+     * In that case direct user INSERT, ILP, QWP and HTTP /imp into it are allowed in principle.
+     * Returns {@code false} for non-mat-views (caller's existing path applies), for
+     * mat views without {@code REFRESH LIMIT} (caller rejects with its existing
+     * "cannot modify materialized view" error), and whenever the escape-hatch is on
+     * (the entire feature is meant to be off).
+     * <p>
+     * Backfill is allowed even before the first refresh (bootstrap workflow). The
+     * commit-time validator records each accepted backfill's anchor as a
+     * {@link MatViewState#getBackfillFrontier() backfill frontier} high-water mark, which
+     * the refresh job folds into its boundary anchor so a subsequently-retreating
+     * {@code max(base_ts)} cannot pull the boundary back over an already-accepted backfill.
+     * <p>
+     * This is only the entry-point gate. Per-row bucket-whole enforcement happens later
+     * at write/apply time using the boundary computed at commit time -- the compile-time
+     * boundary cannot be trusted because the boundary keeps moving.
+     */
+    public boolean isBackfillableMatView(@NotNull TableToken matViewToken) {
+        if (!matViewToken.isMatView()) {
+            return false;
+        }
+        if (configuration.isMatViewRefreshLimitWallClockEnabled()) {
+            // Escape-hatch on: the whole frozen-zone feature is meant to be off.
+            return false;
+        }
+        final MatViewState state = matViewStateStore.getViewState(matViewToken);
+        if (state == null) {
+            return false;
+        }
+        final MatViewDefinition def = state.getViewDefinition();
+        return def != null && def.getRefreshLimitHoursOrMonths() != 0;
+    }
+
     public boolean isClosing() {
         return closing;
     }
@@ -3298,6 +3332,16 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public boolean isReadOnlyMode() {
         return configuration.isReadOnlyInstance();
+    }
+
+    /**
+     * Returns true when the calling execution holds the role-switch read lock while a role switch, such as a demote,
+     * waits for the write lock. The role switch cannot proceed until that read hold goes away, and every fenced commit
+     * that starts meanwhile waits behind it, so a statement that waits under the read lock for something another thread
+     * produces stops waiting then: the other thread may itself wait for the role switch at the commit fence.
+     */
+    public boolean isRoleSwitchWaitingForCurrentReadHold() {
+        return roleSwitchLock.isWriterWaitingForCurrentReadHold();
     }
 
     public final boolean isSqlExecutionCooperativePollingEnabled() {
@@ -4751,44 +4795,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return state.getViewMetadata();
     }
 
-    // Scans the base-table WAL gap (lastRefreshBaseTxn, baseTableLastTxn] for a TRUNCATE, using the
-    // same range and loader an incremental refresh would use (so there is no off-by-one vs interval
-    // planning). A truncate in the gap means a resumed incremental refresh would keep stale
-    // pre-truncate rows, so the caller must invalidate the view instead. Runs only on the cold
-    // load/hydrate path, so a transient loader is fine.
-    private boolean hasBaseTableTruncateInWalGap(TableToken baseTableToken, long lastRefreshBaseTxn, long baseTableLastTxn) {
-        if (lastRefreshBaseTxn >= baseTableLastTxn) {
-            return false;
-        }
-        // This load-time probe scans the same (lastRefreshBaseTxn, baseTableLastTxn] gap that the
-        // enqueued incremental refresh re-scans to build its intervals, so the no-truncate promote path
-        // reads the gap twice (and allocates a fresh loader per view). It is bounded to lagging views on
-        // the cold boot/promote path, so the redundant scan is a tracked optimization, not a steady-state
-        // cost.
-        try (
-                Path path = new Path();
-                WalTxnRangeLoader loader = new WalTxnRangeLoader(configuration)
-        ) {
-            final LongList intervals = new LongList();
-            loader.load(this, path, baseTableToken, intervals, lastRefreshBaseTxn, baseTableLastTxn);
-            return loader.hasTruncate();
-        } catch (CairoException e) {
-            // Missing or purged WAL files in the gap. Treat as "no truncate found" so the caller
-            // still schedules the normal incremental refresh. The refresh path's own interval planning
-            // hits the same read failure and falls back to a full refresh; note that fallback is a
-            // REPLACE_RANGE over the current range, so if the purged gap held a truncate, pre-truncate
-            // buckets outside the current range can survive (a stale-valid view). That purge-during-the-
-            // pending-window residual is a known, tracked deferral. Letting the exception escape would
-            // cause loadMatViewIntoStore's logging-only catch to swallow it, skipping
-            // enqueueIncrementalRefresh and leaving the view silently unscheduled after a promote-hydrate.
-            LOG.info().$("could not scan base WAL gap for truncate, scheduling refresh [baseTable=").$(baseTableToken)
-                    .$(", errno=").$(e.getErrno())
-                    .$(", msg=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return false;
-        }
-    }
-
     private boolean holdsPath(CharSequence path) {
         return isUnderRoot(path, configuration.getDbRoot())
                 || isUnderRoot(path, configuration.getCheckpointRoot())
@@ -4922,7 +4928,9 @@ public class CairoEngine implements Closeable, WriterSource {
                         pathLen,
                         tableToken
                 );
-                if (dependentViewGraph.addView(viewDefinition)) {
+                // A view on a dependency loop, which two concurrent base changes of ALTER MATERIALIZED VIEW ...
+                // WITH BASE can leave, still loads with its edge and state, and goes invalid below.
+                if (dependentViewGraph.addView(viewDefinition, true)) {
                     target.createViewState(viewDefinition);
                 }
             } else if (forceCreateState && target.getViewState(tableToken) == null) {
@@ -4957,8 +4965,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     return;
                 }
 
+                // The view's base table id comes from a view state event that the view's WAL has not applied yet,
+                // or else from the state file, so the scan stops at the applied transactions.
+                final long appliedSeqTxn = readMatViewAppliedSeqTxn(tableToken, path, pathLen);
                 path.trimTo(pathLen).concat(tableToken);
-                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader)) {
+                if (!WalUtils.readMatViewState(path, tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, appliedSeqTxn)) {
                     LOG.info().$("could not find materialized view state, default values will be used [table=")
                             .$safe(viewDefinition.getBaseTableName())
                             .$(", view=").$(tableToken)
@@ -4977,6 +4988,15 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
 
                 state.initFromReader(matViewStateReader);
+                if (dependentViewGraph.isOnDependencyLoop(viewDefinition)) {
+                    // No refresh can follow a loop; RESUME and REFRESH ... FULL refuse the view until ALTER
+                    // MATERIALIZED VIEW ... WITH BASE moves it off the loop.
+                    LOG.info().$("materialized view is on a dependency loop [view=").$(tableToken)
+                            .$(", baseTable=").$safe(viewDefinition.getBaseTableName())
+                            .I$();
+                    target.enqueueInvalidate(tableToken, "circular dependency");
+                    return;
+                }
                 if (state.isInvalid()) {
                     return;
                 }
@@ -4989,19 +5009,9 @@ public class CairoEngine implements Closeable, WriterSource {
                             .$(", baseTableTxn=").$(baseTableLastTxn)
                             .I$();
                     target.enqueueInvalidate(tableToken, "materialized view is ahead of base table and cannot be synchronized");
-                } else if (state.getLastRefreshBaseTxn() > -1 && hasBaseTableTruncateInWalGap(baseTableToken, state.getLastRefreshBaseTxn(), baseTableLastTxn)) {
-                    // A truncate in the base WAL gap (lastRefreshBaseTxn, baseTableLastTxn] carries no
-                    // data interval, so resuming an incremental refresh would silently advance past it
-                    // and keep stale pre-truncate rows. Invalidate instead, the same way a primary
-                    // already invalidates dependents on a truncate. Only for a view that has refreshed
-                    // at least once (a never-refreshed view has nothing stale to retain).
-                    LOG.info().$("materialized view base table was truncated, invalidating on load [table=")
-                            .$safe(viewDefinition.getBaseTableName())
-                            .$(", view=").$(tableToken)
-                            .I$();
-                    target.enqueueInvalidate(tableToken, "truncate operation");
                 } else if (viewDefinition.getRefreshType() == MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
-                    // Kickstart immediate refresh.
+                    // Kickstart immediate refresh. A base TRUNCATE in the gap the refresh scans keeps the view
+                    // valid: the scan's TRUNCATE cut drops the intervals queued before it.
                     target.enqueueIncrementalRefresh(tableToken);
                 }
             }
@@ -5014,6 +5024,25 @@ public class CairoEngine implements Closeable, WriterSource {
                 rec.$(", msg=").$safe(th.getMessage());
             }
             rec.I$();
+        }
+    }
+
+    // Returns the seqTxn that the view's table has applied up to, or -1 when its _txn file cannot be read, in which
+    // case the load scans every transaction of the view's WAL for its base table id.
+    private long readMatViewAppliedSeqTxn(TableToken viewToken, Path path, int pathLen) {
+        try (TableMetadata metadata = getTableMetadata(viewToken); TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            path.trimTo(pathLen).concat(viewToken).concat(TableUtils.TXN_FILE_NAME);
+            txReader.ofRO(path.$(), metadata.getTimestampType(), metadata.getPartitionBy());
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            return txReader.getSeqTxn();
+        } catch (Throwable th) {
+            LOG.info().$("could not read applied seqTxn of materialized view, scanning its whole WAL for the base table id [view=")
+                    .$(viewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+            return -1;
+        } finally {
+            path.trimTo(pathLen);
         }
     }
 
@@ -5320,7 +5349,8 @@ public class CairoEngine implements Closeable, WriterSource {
                     final int mvRootLen = p.of(root).size();
                     final MatViewDefinition def = new MatViewDefinition();
                     MatViewDefinition.readFrom(this, def, blockReader, p, mvRootLen, newToken);
-                    if (dependentViewGraph.addView(def)) {
+                    // the rebased view keeps its edge also on a dependency loop
+                    if (dependentViewGraph.addView(def, true)) {
                         matViewStateStore.createViewState(def);
                     }
                 } catch (Throwable mvEx) {
@@ -5386,9 +5416,11 @@ public class CairoEngine implements Closeable, WriterSource {
             // dropped entry lets WalPurgeJob sweep the dir like any dropped table (and it is WalPurgeJob
             // that calls removeTableToken once the dir is actually deleted).
             notifyPoolsTableDropped(oldToken, false);
+            // Drop the entries the mat view state store keys by the old dir name: a mat view's state, and the TRUNCATE
+            // record of a table some view uses as its base, as a drop does.
+            matViewStateStore.removeViewState(oldToken);
             if (oldToken.isMatView()) {
-                // Drop the old mat view's graph/state entries (keyed by the old dir name).
-                matViewStateStore.removeViewState(oldToken);
+                // Drop the old mat view's graph entries (keyed by the old dir name).
                 dependentViewGraph.removeView(oldToken);
             }
         } finally {

@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileUtils;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.std.LongList;
@@ -41,13 +42,35 @@ import org.jetbrains.annotations.Nullable;
  * invalidation reason string.
  */
 public class MatViewStateReader implements Mutable {
+    private final StringSink backlogLostReason = new StringSink();
     private final StringSink invalidationReason = new StringSink();
     private final LongList refreshIntervals = new LongList();
+    private long backfillFrontier = Long.MIN_VALUE;
+    private int baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+    private long frozenBoundaryFloor = Numbers.LONG_NULL;
+    private int frozenBoundaryLimitHoursOrMonths;
+    private boolean hasBacklogLostReason;
     private boolean invalid;
     private long lastPeriodHi = Numbers.LONG_NULL;
     private long lastRefreshBaseTxn = -1;
     private long lastRefreshTimestampUs = Numbers.LONG_NULL;
     private long refreshIntervalsBaseTxn = -1;
+
+    /**
+     * Reads only the base table id from a {@code _mv.s} state file, for the WAL apply job, which keeps it when it
+     * rewrites the file for a refresh commit. Returns {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the file has
+     * no base table block.
+     */
+    public static int readBaseTableId(@NotNull BlockFileReader reader) {
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
+                return readBaseTableId(block);
+            }
+        }
+        return MatViewState.BASE_TABLE_ID_UNKNOWN;
+    }
 
     @Override
     public void clear() {
@@ -58,6 +81,39 @@ public class MatViewStateReader implements Mutable {
         lastPeriodHi = Numbers.LONG_NULL;
         refreshIntervalsBaseTxn = -1;
         refreshIntervals.clear();
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+        baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        setBacklogLostReason(null);
+    }
+
+    public long getBackfillFrontier() {
+        return backfillFrontier;
+    }
+
+    /**
+     * Returns the cause of a lost backlog that the state carries, or null when the view's backlog is tracked, the
+     * view is valid, or the state predates the marker.
+     */
+    public @Nullable CharSequence getBacklogLostReason() {
+        return hasBacklogLostReason ? backlogLostReason : null;
+    }
+
+    /**
+     * Returns the id of the base table that the refresh position and the cached refresh intervals belong to, or
+     * {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the state carries none.
+     */
+    public int getBaseTableId() {
+        return baseTableId;
+    }
+
+    public long getFrozenBoundaryFloor() {
+        return frozenBoundaryFloor;
+    }
+
+    public int getFrozenBoundaryLimitHoursOrMonths() {
+        return frozenBoundaryLimitHoursOrMonths;
     }
 
     @Nullable
@@ -98,6 +154,16 @@ public class MatViewStateReader implements Mutable {
         // Mat view data commit means that cached intervals were applied and should be evicted.
         refreshIntervalsBaseTxn = -1;
         refreshIntervals.clear();
+        // WAL events don't carry the frozen-zone runtime state; reset to defaults so the
+        // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+        // A data commit carries no base table id: its fixed part is followed by the symbol map diffs. The caller
+        // takes the id from a newer view state event or the _mv.s state file.
+        baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        // A data commit makes the view valid, and a valid view has no backlog.
+        setBacklogLostReason(null);
         return this;
     }
 
@@ -111,6 +177,13 @@ public class MatViewStateReader implements Mutable {
         refreshIntervalsBaseTxn = info.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();
         refreshIntervals.addAll(info.getRefreshIntervals());
+        // WAL events don't carry the frozen-zone runtime state; reset to defaults so the
+        // caller (WalUtils.readMatViewState) can overlay it from the _mv.s state file.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+        baseTableId = info.getBaseTableId();
+        setBacklogLostReason(info.getBacklogLostReason());
         return this;
     }
 
@@ -124,6 +197,11 @@ public class MatViewStateReader implements Mutable {
         // of(MatViewInvalidationInfo) siblings already fully repopulate; this block-file path must too.
         clear();
         boolean matViewStateBlockFound = false;
+        // Default the frozen-zone fields: state files written before the frozen-zone feature
+        // (and freshly-created views) have no block of this type.
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
@@ -158,7 +236,21 @@ public class MatViewStateReader implements Mutable {
                     refreshIntervals.add(block.getLong(offset));
                     offset += Long.BYTES;
                 }
-                return this;
+                // keep going, because the frozen-zone block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
+                backfillFrontier = block.getLong(0);
+                frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
+                // keep going, because the base table block might follow
+                continue;
+            }
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
+                baseTableId = readBaseTableId(block);
+                setBacklogLostReason(readBacklogLostReason(block));
             }
         }
         if (!matViewStateBlockFound) {
@@ -167,5 +259,68 @@ public class MatViewStateReader implements Mutable {
                     .put(']');
         }
         return this;
+    }
+
+    /**
+     * Overlays only the frozen-zone runtime fields (backfill frontier, boundary floor, and its LIMIT) and the base
+     * table id from the {@code _mv.s} state file, leaving the refresh-state fields untouched. Used by
+     * {@link io.questdb.cairo.wal.WalUtils#readMatViewState} when the refresh state was reconstructed
+     * from a WAL event (which does not carry the frozen-zone fields) so the frontier still survives a
+     * restart. Resets the fields to their defaults when the file has no frozen-zone block, and the base table id
+     * to unknown when it has no base table block. The caller replaces the base table id with the one of a newer
+     * view state event that the view's WAL has not applied yet, see {@link #setBaseTableId(int)}.
+     */
+    public void ofFrozenZoneOverlay(@NotNull BlockFileReader reader) {
+        backfillFrontier = Long.MIN_VALUE;
+        frozenBoundaryFloor = Numbers.LONG_NULL;
+        frozenBoundaryLimitHoursOrMonths = 0;
+        baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+        final BlockFileReader.BlockCursor cursor = reader.getCursor();
+        while (cursor.hasNext()) {
+            final ReadableBlock block = cursor.next();
+            if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) {
+                backfillFrontier = block.getLong(0);
+                frozenBoundaryFloor = block.getLong(Long.BYTES);
+                if (block.length() >= 2L * Long.BYTES + Integer.BYTES) {
+                    frozenBoundaryLimitHoursOrMonths = block.getInt(2L * Long.BYTES);
+                }
+            } else if (block.type() == MatViewState.MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE) {
+                baseTableId = readBaseTableId(block);
+            }
+        }
+    }
+
+    /**
+     * Sets the base table id, for the caller that takes it from a source other than the one this reader read the
+     * rest of the state from, see {@link #ofFrozenZoneOverlay(BlockFileReader)}.
+     */
+    public void setBaseTableId(int baseTableId) {
+        this.baseTableId = baseTableId;
+    }
+
+    /**
+     * Sets the cause of a lost backlog, or clears it with null, for the checkpoint that marks the backlog of a view it
+     * copies lost when it cannot load the base table changes the backlog misses.
+     */
+    public void setBacklogLostReason(@Nullable CharSequence backlogLostReason) {
+        this.backlogLostReason.clear();
+        if (backlogLostReason != null) {
+            this.backlogLostReason.put(backlogLostReason);
+            hasBacklogLostReason = true;
+        } else {
+            hasBacklogLostReason = false;
+        }
+    }
+
+    // The marker follows the id in the block, and a block written before the marker existed ends at the id: such a
+    // block, like one that cannot hold the marker's length, carries none. A block's length counts its header.
+    private static @Nullable CharSequence readBacklogLostReason(ReadableBlock block) {
+        return block.length() >= BlockFileUtils.BLOCK_HEADER_SIZE + 2L * Integer.BYTES ? block.getStr(Integer.BYTES) : null;
+    }
+
+    // A block shorter than the id, which no version writes, counts as carrying none: a failure to read the new
+    // fields loads them as unknown, never as an error. A block's length counts its header.
+    private static int readBaseTableId(ReadableBlock block) {
+        return block.length() >= BlockFileUtils.BLOCK_HEADER_SIZE + Integer.BYTES ? block.getInt(0) : MatViewState.BASE_TABLE_ID_UNKNOWN;
     }
 }

@@ -48,6 +48,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
@@ -3313,6 +3314,16 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadMatViewStateDefersUnappliedTxnsWithoutStateV1() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateDefersUnappliedTxnsWithoutState(0));
+    }
+
+    @Test
+    public void testReadMatViewStateDefersUnappliedTxnsWithoutStateV2() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateDefersUnappliedTxnsWithoutState(2));
+    }
+
+    @Test
     public void testReadMatViewStateInvalidFileFormat() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = "testReadMatViewStateInvalidFileFormat";
@@ -3350,6 +3361,167 @@ public class WalWriterTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testReadMatViewStateStopsAtPurgedTxnLogParts() throws Exception {
+        // One transaction per txn-log part: 1 without view state, 2 the refresh commit of base txn 42 and 3 a column
+        // added, and _mv.s holds base txn 7. The WAL purge job deletes the parts below the one of the applied seqTxn, so
+        // the load must not open them: it passes the column change and takes the state file at the first deleted part.
+        assertMemoryLeak(() -> {
+            final int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+            try (
+                    Path path = new Path();
+                    MemoryCMR txnMem = Vm.getCMRInstance();
+                    BlockFileReader reader = new BlockFileReader(configuration);
+                    WalEventReader walEventReader = new WalEventReader(configuration);
+                    BlockFileWriter stateWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+            ) {
+                final TableToken tableToken = createTable(
+                        new TableModel(configuration, "testReadMatViewStatePurgedParts", PartitionBy.YEAR)
+                                .col("a", ColumnType.BYTE)
+                                .timestamp("ts")
+                                .wal()
+                );
+                final MatViewStateReader matViewStateReader = new MatViewStateReader();
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                final int tableLen = path.size();
+                stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                MatViewState.append(
+                        Numbers.LONG_NULL,
+                        7,
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        null,
+                        -1,
+                        Long.MIN_VALUE,
+                        Numbers.LONG_NULL,
+                        0,
+                        stateWriter
+                );
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) 1);
+                    row.append();
+                    walWriter.commit();
+                    row = walWriter.newRow(0);
+                    row.putByte(0, (byte) 2);
+                    row.append();
+                    walWriter.commitMatView(42, 42, 42, 0, 1);
+                    addColumn(walWriter, "c", ColumnType.INT);
+                }
+
+                // the part of the first transaction gone: the refresh commit gives the state, and the scan for an
+                // unapplied view state event with the base table id ends at the deleted part
+                removeTxnLogPart(path, tableLen, 0);
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+                assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+
+                // the part of the refresh commit gone too, as the purge leaves it once the column change applied
+                removeTxnLogPart(path, tableLen, 1);
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+                assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+                assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+
+                // without the state file there is no state to load
+                path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+                assertFalse(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+                assertFalse(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+            }
+        });
+    }
+
+    @Test
+    public void testReadMatViewStateTakesStateFileAtUnreadableTxnLogPart() throws Exception {
+        // One transaction per txn-log part: 1 without view state, 2 the refresh commit of base txn 42 and 3 a column
+        // added, and _mv.s holds base txn 7. A part that exists but cannot be opened, as one that the WAL purge job
+        // deletes during the load, gives the state file's state, as a deleted part does.
+        final AtomicBoolean isPartOpenFailArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isPartOpenFailArmed.get()
+                        && Utf8s.containsAscii(name, "testReadMatViewStateUnreadablePart")
+                        && Utf8s.endsWithAscii(name, TXNLOG_PARTS_DIR + Files.SEPARATOR + "1")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            final int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 1);
+            try (
+                    Path path = new Path();
+                    MemoryCMR txnMem = Vm.getCMRInstance();
+                    BlockFileReader reader = new BlockFileReader(configuration);
+                    WalEventReader walEventReader = new WalEventReader(configuration);
+                    BlockFileWriter stateWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+            ) {
+                final TableToken tableToken = createTable(
+                        new TableModel(configuration, "testReadMatViewStateUnreadablePart", PartitionBy.YEAR)
+                                .col("a", ColumnType.BYTE)
+                                .timestamp("ts")
+                                .wal()
+                );
+                final MatViewStateReader matViewStateReader = new MatViewStateReader();
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                final int tableLen = path.size();
+                stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+                MatViewState.append(
+                        Numbers.LONG_NULL,
+                        7,
+                        false,
+                        null,
+                        Numbers.LONG_NULL,
+                        null,
+                        -1,
+                        Long.MIN_VALUE,
+                        Numbers.LONG_NULL,
+                        0,
+                        stateWriter
+                );
+                try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                    TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) 1);
+                    row.append();
+                    walWriter.commit();
+                    row = walWriter.newRow(0);
+                    row.putByte(0, (byte) 2);
+                    row.append();
+                    walWriter.commitMatView(42, 42, 42, 0, 1);
+                    addColumn(walWriter, "c", ColumnType.INT);
+                }
+
+                // the part of the refresh commit readable: the load passes the column change to the commit
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+                assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+
+                isPartOpenFailArmed.set(true);
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+                assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+                assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+                assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+            }
+        });
+    }
+
+    @Test
+    public void testReadMatViewStateTakesAppliedEventBelowStructuralTxnsV1() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateTakesAppliedEventBelowStructuralTxns(0));
+    }
+
+    @Test
+    public void testReadMatViewStateTakesAppliedEventBelowStructuralTxnsV2() throws Exception {
+        assertMemoryLeak(() -> testReadMatViewStateTakesAppliedEventBelowStructuralTxns(2));
     }
 
     @Test
@@ -7710,9 +7882,188 @@ public class WalWriterTest extends AbstractCairoTest {
         return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
     }
 
+    // Deletes a part of the table's transaction log, as the WAL purge job does with the parts below the one of the
+    // applied seqTxn.
+    private static void removeTxnLogPart(Path path, int tableLen, int part) {
+        path.trimTo(tableLen).concat(SEQ_DIR).concat(TXNLOG_PARTS_DIR).slash().put(part);
+        assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+        path.trimTo(tableLen);
+    }
+
     private static String showCreateTable(String tableName) throws SqlException {
         printSql("SHOW CREATE TABLE " + tableName);
         return sink.toString();
+    }
+
+    // The load passes the unapplied transactions without view state to the newest view state event below them. When it
+    // reaches the applied transactions without one, it takes the state from the newest applied transaction: its view
+    // state event, or _mv.s, which holds the state of the applied transactions, when it has none; without _mv.s it goes
+    // on below them. The transactions are 1, 3 and 4 without view state and 2 the refresh commit of base txn 42, and
+    // _mv.s holds base txn 7, as after an apply of the refresh commit that failed to write it.
+    private static void testReadMatViewStateDefersUnappliedTxnsWithoutState(int chunkSize) {
+        int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+        final String tableName = "testReadMatViewStateDefers" + (chunkSize > 0 ? "_v2" : "_v1");
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal();
+        final TableToken tableToken = createTable(model);
+
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (
+                Path path = new Path();
+                MemoryCMR txnMem = Vm.getCMRInstance();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                BlockFileWriter stateWriter = new BlockFileWriter(ff, configuration.getCommitMode())
+        ) {
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            final int tableLen = path.size();
+            stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            MatViewState.append(
+                    Numbers.LONG_NULL,
+                    7,
+                    false,
+                    null,
+                    Numbers.LONG_NULL,
+                    null,
+                    -1,
+                    Long.MIN_VALUE,
+                    Numbers.LONG_NULL,
+                    0,
+                    stateWriter
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                final TableWriter.Row row = walWriter.newRow(0);
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.commit();
+            }
+            // a transaction without view state alone: the state file, at the first transaction
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 0));
+            assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+            assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                for (int i = 2; i < 5; i++) {
+                    final TableWriter.Row row = walWriter.newRow(0);
+                    row.putByte(0, (byte) i);
+                    row.append();
+                    if (i == 2) {
+                        walWriter.commitMatView(42, 42, 42, 0, 1);
+                    } else {
+                        walWriter.commit();
+                    }
+                }
+            }
+            // every transaction unapplied: the refresh commit below the two without view state
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 0));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // the refresh commit applied, the two above it not: the refresh commit, the newest applied transaction
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 2));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // every transaction applied: the state file, at the newest applied transaction, which carries no view state
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 4));
+            assertEquals(7, matViewStateReader.getLastRefreshBaseTxn());
+            // the applied seqTxn unknown: every transaction counts as unapplied
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+
+            path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            assertTrue(ff.removeQuiet(path.$()));
+            // without the state file, the load goes on below the applied transactions
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 2));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // and past applied transactions without view state, to the newest view state event
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 4));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+        }
+    }
+
+    // A structural transaction carries no WAL event, so the load passes it and takes the state from the newest
+    // transaction with one: the event of the refresh commit of base txn 42, whether the column change above it is
+    // applied or not. _mv.s holds base txn 7, as after an apply of the refresh commit that failed to write it. The
+    // transactions are 1 without view state, 2 the refresh commit and 3 a column added.
+    private static void testReadMatViewStateTakesAppliedEventBelowStructuralTxns(int chunkSize) {
+        int chunkSizeOld = node1.getConfiguration().getDefaultSeqPartTxnCount();
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSize);
+        final String tableName = "testReadMatViewStateStructural" + (chunkSize > 0 ? "_v2" : "_v1");
+        TableModel model = new TableModel(configuration, tableName, PartitionBy.YEAR)
+                .col("a", ColumnType.BYTE)
+                .col("b", ColumnType.SYMBOL)
+                .timestamp("ts")
+                .wal();
+        final TableToken tableToken = createTable(model);
+
+        try (
+                Path path = new Path();
+                MemoryCMR txnMem = Vm.getCMRInstance();
+                BlockFileReader reader = new BlockFileReader(configuration);
+                WalEventReader walEventReader = new WalEventReader(configuration);
+                BlockFileWriter stateWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+        ) {
+            final MatViewStateReader matViewStateReader = new MatViewStateReader();
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            final int tableLen = path.size();
+            stateWriter.of(path.concat(MatViewState.MAT_VIEW_STATE_FILE_NAME).$());
+            MatViewState.append(
+                    Numbers.LONG_NULL,
+                    7,
+                    false,
+                    null,
+                    Numbers.LONG_NULL,
+                    null,
+                    -1,
+                    Long.MIN_VALUE,
+                    Numbers.LONG_NULL,
+                    0,
+                    stateWriter
+            );
+
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = walWriter.newRow(0);
+                row.putByte(0, (byte) 1);
+                row.append();
+                walWriter.commit();
+                row = walWriter.newRow(0);
+                row.putByte(0, (byte) 2);
+                row.append();
+                walWriter.commitMatView(42, 42, 42, 0, 1);
+                addColumn(walWriter, "c", ColumnType.INT);
+            }
+            try (TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(tableToken, 2)) {
+                assertTrue(cursor.hasNext());
+                assertEquals(3, cursor.getTxn());
+                assertEquals(TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID, cursor.getWalId());
+                assertFalse(cursor.hasNext());
+            }
+
+            // the refresh commit applied, the column added above it not
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 2));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // every transaction applied: the refresh commit below the applied column change
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+            // the applied seqTxn unknown: the column change counts as unapplied, and the refresh commit below it gives
+            // the state
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, -1));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+
+            path.trimTo(tableLen).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+            assertTrue(configuration.getFilesFacade().removeQuiet(path.$()));
+            // without the state file, the load goes on below the applied column change, to the refresh commit
+            assertTrue(WalUtils.readMatViewState(path.trimTo(tableLen), tableToken, configuration, txnMem, walEventReader, reader, matViewStateReader, 3));
+            assertEquals(42, matViewStateReader.getLastRefreshBaseTxn());
+        } finally {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, chunkSizeOld);
+        }
     }
 
     private static void testReadMatViewState(int chunkSize) {

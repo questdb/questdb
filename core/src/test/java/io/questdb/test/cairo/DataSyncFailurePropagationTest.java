@@ -176,6 +176,26 @@ public class DataSyncFailurePropagationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterMatViewAs() throws Exception {
+        // ALTER MATERIALIZED VIEW ... AS writes its definition event, and with WITH BASE the invalidation before it,
+        // through the view's WAL writer.
+        assertEveryFlushFailureFollowsMode(
+                table -> {
+                    createWalTable(table);
+                    createWalTable(table + "_2");
+                    execute("CREATE MATERIALIZED VIEW mv_" + table + " AS (SELECT ts, count() c FROM " + table + " SAMPLE BY 1h) PARTITION BY DAY");
+                    drainWalAndMatViewQueues();
+                },
+                table -> {
+                    execute("ALTER MATERIALIZED VIEW mv_" + table + " AS (SELECT ts, count() c FROM " + table + " WHERE i > 1 SAMPLE BY 1h)");
+                    drainWalAndMatViewQueues();
+                    execute("ALTER MATERIALIZED VIEW mv_" + table + " WITH BASE " + table + "_2 AS (SELECT ts, count() c FROM " + table + "_2 SAMPLE BY 1h)");
+                    drainWalAndMatViewQueues();
+                }
+        );
+    }
+
+    @Test
     public void testCreateAndRefreshMatView() throws Exception {
         assertEveryFlushFailureFollowsMode(
                 DataSyncFailurePropagationTest::createWalTable,

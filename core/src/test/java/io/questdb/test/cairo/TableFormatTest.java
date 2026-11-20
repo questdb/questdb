@@ -126,7 +126,7 @@ public class TableFormatTest extends AbstractCairoTest {
 
     @Test
     public void testAlterTableSetFormatParquetRejectedOnMatView() throws Exception {
-        // compileAlterTable runs checkMatViewModification before dispatching to
+        // compileAlterTable runs checkViewModification before dispatching to
         // alterTableSetFormat, so ALTER TABLE on a matview never reaches the
         // FORMAT-specific "not supported on materialized views" branch in
         // SqlCompilerImpl.alterTableSetFormat or in TableWriter.setMetaTableFormat.
@@ -135,7 +135,7 @@ public class TableFormatTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
-            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) FROM base SAMPLE BY 1m) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, avg(x) AS avg FROM base SAMPLE BY 1m) PARTITION BY DAY");
             drainWalQueue();
             try {
                 execute("ALTER TABLE mv SET FORMAT PARQUET");

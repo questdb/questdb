@@ -35,13 +35,17 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.file.ReadableBlock;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.Vm;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocaleFactory;
@@ -64,6 +68,10 @@ public class MatViewDefinition implements Mutable {
     // Timer refresh means that the mat view is refreshed on time intervals.
     public static final int REFRESH_TYPE_TIMER = 1;
     private static final Log LOG = LogFactory.getLog(MatViewDefinition.class);
+    // Not persisted, parsed from matViewSql on first use, see getBareSelectNames(). Null until then, and after a
+    // parse that failed. Written by the WAL apply job of the view's base table, one thread at a time, and never
+    // changed once set, so a volatile reference to the set is enough. Setting the SQL resets it.
+    private volatile LowerCaseCharSequenceHashSet bareSelectNames;
     private String baseTableName;
     private TimestampDriver baseTableTimestampDriver;
     private int baseTableTimestampType = ColumnType.UNDEFINED;
@@ -204,6 +212,39 @@ public class MatViewDefinition implements Mutable {
         periodDelayUnit = 0;
         baseTableTimestampDriver = null;
         baseTableTimestampType = ColumnType.UNDEFINED;
+    }
+
+    /**
+     * Returns the bare select-list names of the view's own SQL text, see
+     * {@link SqlCompiler#collectMatViewBareSelectNames}, compared case-insensitively. The first call parses the SQL
+     * and keeps the names on the definition until its SQL changes. A passthrough view's refresh reads every bare name
+     * as a column, so no column change can switch one, and its set is empty.
+     *
+     * @param engine           the engine to parse the SQL with
+     * @param executionContext the context to parse the SQL with
+     * @return the names, or null when the SQL does not parse, so that the next call parses it again
+     */
+    public @Nullable LowerCaseCharSequenceHashSet getBareSelectNames(
+            @NotNull CairoEngine engine,
+            @NotNull SqlExecutionContext executionContext
+    ) {
+        LowerCaseCharSequenceHashSet names = bareSelectNames;
+        if (names != null) {
+            return names;
+        }
+        names = new LowerCaseCharSequenceHashSet();
+        if (!passthrough) {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.collectMatViewBareSelectNames(this, executionContext, names);
+            } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
+                LOG.info().$("could not parse materialized view SQL to find its bare select-list names [view=").$(matViewToken)
+                        .$(", error=").$safe(e.getFlyweightMessage())
+                        .I$();
+                return null;
+            }
+        }
+        bareSelectNames = names;
+        return names;
     }
 
     public String getBaseTableName() {
@@ -363,6 +404,7 @@ public class MatViewDefinition implements Mutable {
     @TestOnly
     public void setMatViewSqlForTesting(String matViewSql) {
         this.matViewSql = matViewSql;
+        this.bareSelectNames = null;
     }
 
     public void setPeriodSampler(TimestampSampler periodSampler) {
@@ -424,6 +466,40 @@ public class MatViewDefinition implements Mutable {
                 timerUnit,
                 timerStartUs,
                 Chars.toString(timerTimeZone),
+                periodLength,
+                periodLengthUnit,
+                periodDelay,
+                periodDelayUnit,
+                passthrough
+        );
+        return newDefinition;
+    }
+
+    /**
+     * Returns the definition that {@code ALTER MATERIALIZED VIEW ... AS} leaves: this one with the base table name and
+     * the SQL text replaced. The SAMPLE BY grid, time zone and offset stay, since the statement accepts only a SQL that
+     * keeps them, and so do the refresh settings and the passthrough flag. The base table's designated timestamp type
+     * is the view's, which the statement requires of a new base, so the caller passes the view's own and never opens
+     * the base table, which may be gone by then.
+     */
+    public MatViewDefinition updateSql(@NotNull String baseTableName, @NotNull String matViewSql, int baseTableTimestampType) {
+        final MatViewDefinition newDefinition = new MatViewDefinition();
+        newDefinition.init(
+                refreshType,
+                deferred,
+                baseTableTimestampType,
+                matViewToken,
+                matViewSql,
+                baseTableName,
+                samplingInterval,
+                samplingIntervalUnit,
+                timeZone,
+                timeZoneOffset,
+                refreshLimitHoursOrMonths,
+                timerInterval,
+                timerUnit,
+                timerStartUs,
+                timerTimeZone,
                 periodLength,
                 periodLengthUnit,
                 periodDelay,
@@ -622,6 +698,8 @@ public class MatViewDefinition implements Mutable {
         this.deferred = deferred;
         this.matViewToken = matViewToken;
         this.matViewSql = matViewSql;
+        // the names come from the SQL, parsed anew on first use
+        this.bareSelectNames = null;
         this.baseTableName = baseTableName;
         this.samplingInterval = samplingInterval;
         this.samplingIntervalUnit = samplingIntervalUnit;

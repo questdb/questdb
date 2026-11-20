@@ -224,7 +224,6 @@ public class CairoTextWriter implements Closeable, Mutable {
             }
             w.append();
             writtenLineCount++;
-            checkUncommittedRowCount();
         } catch (Exception e) {
             logError(line, timestampIndex, dus);
             if (atomicity == Atomicity.SKIP_ALL) {
@@ -237,7 +236,12 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 throw CairoException.nonCritical().put("bad syntax [line=").put(line).put(", col=").put(timestampIndex).put(']');
             }
+            return;
         }
+        // The batch commit stays out of the row catch above: its failure concerns every uncommitted
+        // row, which writtenLineCount already counts, so it fails the import in every atomicity
+        // mode, as the final commit does.
+        checkUncommittedRowCount();
     }
 
     public void setCreate(boolean create) {
@@ -413,7 +417,11 @@ public class CairoTextWriter implements Closeable, Mutable {
                 break;
             case TableUtils.TABLE_EXISTS:
                 tableToken = engine.getTableTokenIfExists(tableName);
-                if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE) {
+                // A mat view with a REFRESH LIMIT accepts direct backfill into its frozen zone,
+                // so it is the one non-TABLE kind this gate lets through. Not under overwrite
+                // though: that drops and recreates the target, which would destroy the view.
+                if (tableToken != null && tableToken.getType() != TableToken.Type.TABLE
+                        && (overwrite || !engine.isBackfillableMatView(tableToken))) {
                     throw CairoException.nonCritical().put("cannot modify ").put(tableToken.getType().keyword())
                             .put(" [view=").put(tableToken.getTableName()).put(']');
                 }

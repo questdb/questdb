@@ -105,7 +105,7 @@ public class MatViewRefreshTypeChangeTest extends AbstractCairoTest {
             assertQuery("SELECT invalidation_reason FROM materialized_views").withEngine(reopened).withContext(context)
                     .noRandomAccess().noLeakCheck().returns("""
                             invalidation_reason
-                            inconvertible value: `not-a-timestamp` [SYMBOL -> TIMESTAMP]
+                            inconvertible value: `not-a-timestamp` [SYMBOL -> TIMESTAMP] [from=at, to=at]
                             """);
         }
     }
@@ -129,7 +129,8 @@ public class MatViewRefreshTypeChangeTest extends AbstractCairoTest {
     }
 
     // Builds a valid view over a TIMESTAMP base column in a first engine, then changes the base column to
-    // newAtType, which invalidates the view.
+    // newAtType. The change invalidates no view when it applies: the view's next refresh that recomputes rows
+    // casts the changed column to the view column, so the view stays valid.
     private void createViewAndAlterBaseColumnType(DefaultTestCairoConfiguration conf, String newAtType) throws Exception {
         try (CairoEngine first = new CairoEngine(conf)) {
             first.load();
@@ -144,7 +145,7 @@ public class MatViewRefreshTypeChangeTest extends AbstractCairoTest {
             assertRows(first);
             first.execute("ALTER TABLE base_price ALTER COLUMN at TYPE " + newAtType);
             drainWalAndMatViewQueues(first);
-            assertStatus(first, "invalid");
+            assertStatus(first, "valid");
         }
     }
 }

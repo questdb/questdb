@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
@@ -44,6 +45,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.wal.WalTxnType.*;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -59,6 +61,7 @@ public class WalEventCursor {
     private final MemoryCMR eventMem;
     private final LiveViewDataInfo lvDataInfo = new LiveViewDataInfo();
     private final MatViewDataInfo mvDataInfo = new MatViewDataInfo();
+    private final MatViewDefinitionInfo mvDefinitionInfo = new MatViewDefinitionInfo();
     private final MatViewInvalidationInfo mvInvalidationInfo = new MatViewInvalidationInfo();
     private final SqlInfo sqlInfo = new SqlInfo();
     private final UnknownInfo unknownInfo = new UnknownInfo();
@@ -122,6 +125,13 @@ public class WalEventCursor {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_DATA, type=").put(type);
         }
         return mvDataInfo;
+    }
+
+    public MatViewDefinitionInfo getMatViewDefinitionInfo() {
+        if (type != MAT_VIEW_DEFINITION) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not MAT_VIEW_DEFINITION, type=").put(type);
+        }
+        return mvDefinitionInfo;
     }
 
     public MatViewInvalidationInfo getMatViewInvalidationInfo() {
@@ -380,6 +390,9 @@ public class WalEventCursor {
             case MAT_VIEW_INVALIDATE:
                 mvInvalidationInfo.read();
                 break;
+            case MAT_VIEW_DEFINITION:
+                mvDefinitionInfo.read();
+                break;
             case VIEW_DEFINITION:
                 viewDefinitionInfo.read();
                 break;
@@ -600,14 +613,64 @@ public class WalEventCursor {
         }
     }
 
+    /**
+     * The event of {@code ALTER MATERIALIZED VIEW ... AS}: the view's base table name, which the statement validated
+     * against, its SQL text, and whether the statement changed the base table.
+     */
+    public class MatViewDefinitionInfo {
+        private final StringSink baseTableName = new StringSink();
+        private final StringSink matViewSql = new StringSink();
+        private boolean isBaseTableChange;
+
+        public CharSequence getBaseTableName() {
+            return baseTableName;
+        }
+
+        public CharSequence getMatViewSql() {
+            return matViewSql;
+        }
+
+        public boolean isBaseTableChange() {
+            return isBaseTableChange;
+        }
+
+        private void read() {
+            baseTableName.clear();
+            baseTableName.put(readStr());
+            matViewSql.clear();
+            matViewSql.put(readStr());
+            isBaseTableChange = readBool();
+        }
+    }
+
     public class MatViewInvalidationInfo {
+        private final StringSink backlogLostReason = new StringSink();
         private final StringSink error = new StringSink();
         private final LongList refreshIntervals = new LongList();
+        private int baseTableId;
+        private boolean hasBacklogLostReason;
         private boolean invalid;
         private long lastPeriodHi;
         private long lastRefreshBaseTableTxn;
         private long lastRefreshTimestampUs;
         private long refreshIntervalsBaseTxn;
+
+        /**
+         * Returns the id of the base table that the refresh position and the cached intervals belong to, or
+         * {@link MatViewState#BASE_TABLE_ID_UNKNOWN} when the event carries none, as an event that a previous
+         * version wrote.
+         */
+        public int getBaseTableId() {
+            return baseTableId;
+        }
+
+        /**
+         * Returns the cause of a lost backlog that the event carries, or null when the view's backlog is tracked, the
+         * view is valid, or the event predates the marker.
+         */
+        public @Nullable CharSequence getBacklogLostReason() {
+            return hasBacklogLostReason ? backlogLostReason : null;
+        }
 
         public CharSequence getInvalidationReason() {
             return error;
@@ -659,6 +722,23 @@ public class WalEventCursor {
                 }
             } else {
                 refreshIntervalsBaseTxn = -1;
+            }
+
+            if (nextOffset - offset >= Integer.BYTES) {
+                baseTableId = readInt();
+            } else {
+                baseTableId = MatViewState.BASE_TABLE_ID_UNKNOWN;
+            }
+
+            // The backlog-lost marker follows the id; an event written before the marker existed ends at the id.
+            backlogLostReason.clear();
+            hasBacklogLostReason = false;
+            if (nextOffset - offset >= Integer.BYTES) {
+                final CharSequence reason = readStr();
+                if (reason != null) {
+                    backlogLostReason.put(reason);
+                    hasBacklogLostReason = true;
+                }
             }
         }
     }

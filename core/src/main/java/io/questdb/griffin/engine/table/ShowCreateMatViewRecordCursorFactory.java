@@ -41,9 +41,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
@@ -109,6 +111,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         protected final MatViewDefinition viewDefinition = new MatViewDefinition();
         private final Path path;
         private final ShowCreateMatViewRecord record = new ShowCreateMatViewRecord();
+        private final ObjList<CharSequence> viewColumnNames = new ObjList<>();
         protected SqlExecutionContext executionContext;
         protected CairoTable table;
         private boolean hasRun;
@@ -123,6 +126,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
         public void close() {
             sink.clear();
             viewDefinition.clear();
+            viewColumnNames.clear();
             Misc.free(path);
             Misc.free(reader);
         }
@@ -220,6 +224,21 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             hasRun = false;
         }
 
+        // Returns the view's SQL as SHOW CREATE prints it. The SQL of a view created before CREATE required
+        // explicit column names may rely on generated names or call zero-argument functions without parentheses;
+        // it comes with the names and parentheses that let it replay, see SqlCompiler.addExplicitColumnNames().
+        // Any other SQL, and one that no longer compiles, comes as stored.
+        private CharSequence getShownSql() {
+            viewColumnNames.clear();
+            for (int i = 0, n = table.getColumnCount(); i < n; i++) {
+                viewColumnNames.add(table.getColumnQuiet(i).getName());
+            }
+            try (SqlCompiler compiler = executionContext.getCairoEngine().getSqlCompiler()) {
+                final String sql = compiler.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext);
+                return sql != null ? sql : viewDefinition.getMatViewSql();
+            }
+        }
+
         private void showCreateMatView(CairoConfiguration configuration) {
             sink.putAscii("CREATE MATERIALIZED VIEW '")
                     .put(tableToken.getTableName())
@@ -270,7 +289,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
                 sink.putAscii(')');
             }
             sink.putAscii(" AS (\n");
-            ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getMatViewSql());
+            ShowCreateTableRecordCursorFactory.putTrimmed(sink, getShownSql());
             sink.putAscii('\n');
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);

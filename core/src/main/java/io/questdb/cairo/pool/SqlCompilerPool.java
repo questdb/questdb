@@ -26,12 +26,15 @@ package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.BatchCallback;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.ExpressionParserListener;
+import io.questdb.griffin.MatViewQueryValidator;
+import io.questdb.griffin.MatViewSqlValidator;
 import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -44,6 +47,7 @@ import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -127,8 +131,26 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public @Nullable String addExplicitColumnNames(
+                MatViewDefinition viewDefinition,
+                ObjList<CharSequence> viewColumnNames,
+                SqlExecutionContext executionContext
+        ) {
+            return delegate.addExplicitColumnNames(viewDefinition, viewColumnNames, executionContext);
+        }
+
+        @Override
         public void clear() {
             delegate.clear();
+        }
+
+        @Override
+        public void collectMatViewBareSelectNames(
+                MatViewDefinition viewDefinition,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceHashSet sink
+        ) throws SqlException {
+            delegate.collectMatViewBareSelectNames(viewDefinition, executionContext, sink);
         }
 
         @Override
@@ -300,6 +322,28 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         @Override
         public void updateTableToken(TableToken tableToken) {
             this.tableToken = tableToken;
+        }
+
+        @Override
+        public void compileMatViewSql(
+                SqlExecutionContext executionContext,
+                CharSequence matViewName,
+                String sql,
+                int sqlPosition,
+                MatViewQueryValidator validator
+        ) throws SqlException {
+            delegate.compileMatViewSql(executionContext, matViewName, sql, sqlPosition, validator);
+        }
+
+        @Override
+        public void validateMatViewSql(
+                MatViewDefinition viewDefinition,
+                boolean isCompiling,
+                boolean isReadingBareNamesAsColumns,
+                SqlExecutionContext executionContext,
+                MatViewSqlValidator validator
+        ) throws SqlException {
+            delegate.validateMatViewSql(viewDefinition, isCompiling, isReadingBareNamesAsColumns, executionContext, validator);
         }
     }
 }

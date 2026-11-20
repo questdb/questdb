@@ -3660,6 +3660,118 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testMatViewBackfillCannotAddColumn() throws Exception {
+        runInContext((port) -> {
+            // A view with REFRESH LIMIT takes backfill into its frozen zone, but not a column it lacks: its columns
+            // change only through ALTER MATERIALIZED VIEW. The refusal repeats under byte-identical replay, so it
+            // reaches the client as a terminal SCHEMA_MISMATCH.
+            execute("CREATE TABLE mv_base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO mv_base VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+            execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT sym, last(price) price, ts FROM mv_base SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv_target SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("mv_target")));
+
+            // a frozen-zone row: base max 12:00, limit 1h -> boundary 11:00
+            assertCoercionError(port, "mv_target",
+                    (s, t) -> s.table(t)
+                            .symbol("sym", "a")
+                            .doubleColumn("extra", 42.0)
+                            .at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS),
+                    "materialized view has no such column, add it with ALTER MATERIALIZED VIEW ... ADD COLUMN",
+                    "[table=mv_target, column=extra]");
+
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT \"column\", type FROM table_columns('mv_target')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            sym\tSYMBOL
+                            price\tDOUBLE
+                            ts\tTIMESTAMP
+                            """);
+            assertQuery("mv_target")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t2.0\t2024-09-10T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMatViewBackfillRejectedAfterRefreshLimitRemoved() throws Exception {
+        runInContext((port) -> {
+            // A connection keeps the table it resolved, past the backfill gate, for as long as it stays open. Rows it
+            // sends after ALTER MATERIALIZED VIEW ... SET REFRESH LIMIT 0 meet the commit-time check, which refuses them
+            // with the gate's message, and none lands. How the client classifies the refusal is not pinned here.
+            execute("CREATE TABLE mv_base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO mv_base VALUES ('a', 1.0, '2024-09-10T09:10'), ('a', 2.0, '2024-09-10T12:00')");
+            execute("CREATE MATERIALIZED VIEW mv_target AS (SELECT sym, last(price) price, ts FROM mv_base SAMPLE BY 1h)");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW mv_target SET REFRESH LIMIT 1 HOUR");
+            drainWalAndMatViewQueues();
+            Assert.assertTrue(engine.isBackfillableMatView(engine.verifyTableName("mv_target")));
+
+            final CompletableFuture<SenderError> errorFut = new CompletableFuture<>();
+            final QwpWebSocketSender sender = connectWs(port, errorFut::complete, 1);
+            try {
+                // a frozen-zone row: base max 12:00, limit 1h -> boundary 11:00
+                sender.table("mv_target")
+                        .symbol("sym", "a")
+                        .doubleColumn("price", 5.0)
+                        .at(parseFloorPartialTimestamp("2024-09-10T08:00"), ChronoUnit.MICROS);
+                Assert.assertTrue(sender.awaitAckedFsn(sender.flushAndGetSequence(), 10_000));
+                drainWalAndMatViewQueues();
+                execute("ALTER MATERIALIZED VIEW mv_target SET REFRESH LIMIT 0 HOUR");
+                drainWalAndMatViewQueues();
+                Assert.assertFalse(engine.isBackfillableMatView(engine.verifyTableName("mv_target")));
+
+                sender.table("mv_target")
+                        .symbol("sym", "a")
+                        .doubleColumn("price", 99.0)
+                        .at(parseFloorPartialTimestamp("2024-09-10T12:00"), ChronoUnit.MICROS);
+                try {
+                    sender.flush();
+                } catch (LineSenderServerException e) {
+                    // the I/O thread latched the refusal before flush()'s own error poll ran
+                }
+                final SenderError error;
+                try {
+                    error = errorFut.get(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new AssertionError("the stale connection's commit must be refused", e);
+                }
+                final String message = error.getServerMessage();
+                Assert.assertTrue(
+                        "expected the gate's message, got: " + message,
+                        message != null && message.contains("cannot modify materialized view [view=mv_target]")
+                );
+            } finally {
+                // the refusal may latch a terminal error, which close() reports
+                assertRejectionTerminalOnClose(sender, new CompletableFuture<>(), null);
+            }
+
+            drainWalAndMatViewQueues();
+            assertQuery("mv_target")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            sym\tprice\tts
+                            a\t5.0\t2024-09-10T08:00:00.000000Z
+                            a\t1.0\t2024-09-10T09:00:00.000000Z
+                            a\t2.0\t2024-09-10T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMixedTimestampModesMicro() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_mixed_ts";

@@ -30,10 +30,12 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -61,6 +63,9 @@ import static io.questdb.TelemetryEvent.*;
  * full refresh). It is distinct from the reader's durable invalidationReason.
  */
 public class MatViewState implements QuietCloseable {
+    // The base table id of a view state that carries none: a state that a previous version wrote, or a new view's
+    // before its first refresh. A view with an unknown base id skips the base identity check.
+    public static final int BASE_TABLE_ID_UNKNOWN = -1;
     // Cold-start gap-width threshold used when no scan/commit samples have
     // been observed yet. Expressed as a wall-clock duration in microseconds
     // and converted to the base table's timestamp unit at read time, so a
@@ -71,6 +76,15 @@ public class MatViewState implements QuietCloseable {
     // EMA-derived threshold takes over.
     public static final long COLD_START_GAP_THRESHOLD_MICROS = 2_000_000L;
     public static final String MAT_VIEW_STATE_FILE_NAME = "_mv.s";
+    // Base table identity and backlog: the id of the base table that the refresh position and the cached refresh
+    // intervals belong to, followed by the backlog-lost marker, the cause of a lost backlog or null. Written after the
+    // frozen-zone block; absent in state files that a previous version wrote, so readers must default the id to
+    // BASE_TABLE_ID_UNKNOWN and the marker to null.
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE = 5;
+    // Frozen-zone runtime state: backfill frontier high-water mark + last published
+    // boundary floor. Written after the intervals block; absent in state files
+    // produced before the frozen-zone feature, so readers must default it.
+    public static final int MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE = 4;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE = 3;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_PERIOD_MSG_TYPE = 2;
     public static final int MAT_VIEW_STATE_FORMAT_EXTRA_TS_MSG_TYPE = 1;
@@ -98,8 +112,27 @@ public class MatViewState implements QuietCloseable {
     // refresh may have just armed. See clearRefreshRetry(long).
     private static final AtomicLongFieldUpdater<MatViewState> REFRESH_RETRY_AFTER_UPDATER =
             AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
+    // Backfill frontier high-water mark in the base table's timestamp driver units:
+    // the largest boundary anchor (min(max(base_ts), now)) any accepted user backfill was
+    // validated against. Advanced lock-free from WAL commit threads via
+    // advanceBackfillFrontier; read by MatViewRefreshJob, which folds it into the refresh
+    // boundary anchor so a retreating max(base_ts) cannot wipe an already-accepted
+    // backfill. Long.MIN_VALUE until the first backfill is accepted. Persisted to the
+    // _mv.s state file (block type MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE) by the
+    // apply path when a backfill advances it, and restored on restart via initFromReader.
+    // Persistence is required because max(view_ts) cannot protect a pre-first-refresh
+    // backfill (the backfilled row IS the view's max), so without it a restart in the
+    // bootstrap window would let a retreating max(base_ts) pull the boundary back over an
+    // already-accepted backfill; see MatViewRefreshJob.findRefreshIntervals.
+    private final AtomicLong backfillFrontier = new AtomicLong(Long.MIN_VALUE);
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // Serializes the writers of bareNameSwitches: the WAL apply threads of the view's base tables.
+    private final Object bareNameSwitchesLock = new Object();
+    // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+    // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
+    // the new SQL. Kept in memory only: a restart loses it.
+    private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
     // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
     // itself deferred. See MatViewRefreshJob#tryLockForFullRefresh.
@@ -143,6 +176,23 @@ public class MatViewState implements QuietCloseable {
     // refresh iteration's base-table scan, in nanoseconds. See
     // avgScanRangeTsUnits.
     private volatile long avgScanSampleNanos;
+    // The cause of a lost backlog, or null while the view's backlog is tracked, see MatViewBacklog. An invalid view
+    // keeps recording its base table's changes in its refresh-interval cache until the backlog is lost. Written under
+    // this.latch and by the load, cleared when the view becomes valid; persisted with every view state event.
+    private volatile String backlogLostReason;
+    // The bare-name switches that the bare-name guard recorded on this view, see recordBareNameSwitch(): one entry per
+    // name and base table. Writers publish a new list under bareNameSwitchesLock and never change a published one, so
+    // RESUME reads it without a lock. Kept in memory only.
+    private volatile ObjList<BareNameSwitch> bareNameSwitches = new ObjList<>();
+    // The id of the base table that the refresh position and the cached refresh intervals belong to, or
+    // BASE_TABLE_ID_UNKNOWN. Written under this.latch by incremental refresh (when unknown), FULL and RESUME, and
+    // by the load; read under the latch by the base identity check of every refresh except FULL.
+    private volatile int baseTableId = BASE_TABLE_ID_UNKNOWN;
+    // What the column mapping that the last compile of the view's SQL built leaves out, for materialized_views():
+    // null before the first such compile in this process and after one that failed. Refresh writes it under the
+    // latch, view ADD COLUMN's check without it, and the catalogue reads it, so it is one volatile reference to an
+    // immutable summary. Kept in memory only.
+    private volatile MatViewColumnMapping.Summary columnMappingSummary;
     // Set once the owner store tears this state down (e.g. a role demote frees
     // the discarded store). A refresh worker that holds the latch across the
     // teardown consults this in the *refreshSuccess* park methods: rather than
@@ -153,9 +203,21 @@ public class MatViewState implements QuietCloseable {
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
     private long cursorFactoryExpiryPolicyVersion = -1;
+    // Protected by this.latch.
+    // The SQL text the cached factory was compiled from. ALTER MATERIALIZED VIEW ... AS replaces the view's SQL, and
+    // a refresh that finds a factory of another SQL discards it, see acquireRecordFactory(String).
+    private String cursorFactorySql;
     private volatile boolean dropped;
     private volatile boolean invalid;
-    private String invalidationReason;
+    private volatile String invalidationReason;
+    // Set under this.latch while REFRESH MATERIALIZED VIEW ... RESUME recovers the view. An invalidation published
+    // while it is set is kept as a pending marker, as during a pending FULL refresh, so that the release of the
+    // latch re-drives it once RESUME has made the view valid.
+    private volatile boolean isResuming;
+    // Protected by this.latch.
+    // Whether the cached factory's SQL relies on generated column names, so the cached copier, and one rebuilt
+    // for the factory after a view schema change, copies by position; see MatViewColumnMapping.
+    private boolean isRecordCopyPositional;
     // Atomic token/txn pair covered by the last successful FULL refresh. This is intentionally
     // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
@@ -167,8 +229,35 @@ public class MatViewState implements QuietCloseable {
     // Stands for last successful incremental refresh base table reader txn.
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastRefreshBaseTxn = -1;
+    // The error of the last user REFRESH ... RANGE that failed, or null: a failed user RANGE leaves the view valid,
+    // and materialized_views() reports its error as last_refresh_error until the next user RANGE succeeds. The
+    // refresh job writes it under this.latch and the catalogue reads it, so it is one volatile reference to an
+    // immutable string. Kept in memory only.
+    private volatile String lastRefreshError;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
+    // Snapped REPLACE_RANGE.lo (the bucket floor) that the most recent
+    // REFRESH LIMIT-bounded refresh tick computed and committed to. The
+    // backfill validator and materialized_views().backfill_max_ts read this
+    // so their accepted frozen zone never overlaps refresh's coverage. Stays
+    // at LONG_NULL until the first refresh tick that runs under a non-zero
+    // REFRESH LIMIT publishes a floor; from then on it advances monotonically
+    // (modulo ALTER SET REFRESH LIMIT, which can move the floor in either
+    // direction on the next refresh tick). Driver units (base table's
+    // timestamp driver). Publishing the snapped floor -- not the raw anchor --
+    // is what closes the SHRINK-LIMIT race: refresh's REPLACE_RANGE.lo is the
+    // value that survives an ALTER, so the validator clamps to it directly
+    // instead of re-applying the (now-different) LIMIT.
+    private volatile long lastRefreshFrozenBoundaryFloor = Numbers.LONG_NULL;
+    private volatile int lastRefreshFrozenBoundaryLimitHoursOrMonths;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
+    @TestOnly
+    private volatile Runnable onAlterValidatedForTesting;
+    @TestOnly
+    private volatile Runnable onBareNameSwitchCopiedForTesting;
+    @TestOnly
+    private volatile Runnable onBareNameSwitchRecordedForTesting;
+    @TestOnly
+    private volatile Runnable onDefinitionWaitForTesting;
     @TestOnly
     private volatile Runnable onBeforeUnlockForTesting;
     @TestOnly
@@ -181,6 +270,16 @@ public class MatViewState implements QuietCloseable {
     private volatile Runnable onPendingIncrementalRefreshRequestForTesting;
     @TestOnly
     private volatile Runnable onPendingInvalidationMarkerReadForTesting;
+    @TestOnly
+    private volatile Runnable onResumeFlagSetForTesting;
+    @TestOnly
+    private volatile Runnable onResumeHoldingLockForTesting;
+    @TestOnly
+    private volatile Runnable onResumeLatchBusyForTesting;
+    @TestOnly
+    private volatile Runnable onResumeWalAppliedForTesting;
+    @TestOnly
+    private volatile Runnable onResumeWalWaitForTesting;
     // Single atomic marker for a deferred invalidation, collapsing the former
     // (pendingInvalidation, pendingInvalidationReason) two-volatile composite. Writers publish
     // off-latch before attempting the view latch; holders inspect the same atomic reference after
@@ -198,6 +297,11 @@ public class MatViewState implements QuietCloseable {
     // claims these bits and retries only the failed facets, avoiding duplicate queue amplification when
     // one facet succeeded before another allocation failed.
     private volatile int pendingTaskRetryFlags;
+    // Highest backfillFrontier value already written to the _mv.s state file. Lets the
+    // backfill apply path skip a redundant state-file rewrite when no new backfill has
+    // advanced the frontier since the last persist. Mutated only from the (single-threaded
+    // per table) WAL apply path and seeded from disk in initFromReader.
+    private long persistedBackfillFrontier = Long.MIN_VALUE;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -239,6 +343,41 @@ public class MatViewState implements QuietCloseable {
             long lastPeriodHi,
             @Nullable LongList refreshIntervals,
             long refreshIntervalsBaseTxn,
+            long backfillFrontier,
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
+            @NotNull BlockFileWriter writer
+    ) {
+        append(
+                lastRefreshTimestamp,
+                lastRefreshBaseTxn,
+                invalid,
+                invalidationReason,
+                lastPeriodHi,
+                refreshIntervals,
+                refreshIntervalsBaseTxn,
+                backfillFrontier,
+                frozenBoundaryFloor,
+                frozenBoundaryLimitHoursOrMonths,
+                BASE_TABLE_ID_UNKNOWN,
+                null,
+                writer
+        );
+    }
+
+    public static void append(
+            long lastRefreshTimestamp,
+            long lastRefreshBaseTxn,
+            boolean invalid,
+            @Nullable CharSequence invalidationReason,
+            long lastPeriodHi,
+            @Nullable LongList refreshIntervals,
+            long refreshIntervalsBaseTxn,
+            long backfillFrontier,
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
+            int baseTableId,
+            @Nullable CharSequence backlogLostReason,
             @NotNull BlockFileWriter writer
     ) {
         AppendableBlock block = writer.append();
@@ -253,6 +392,12 @@ public class MatViewState implements QuietCloseable {
         block = writer.append();
         appendRefreshIntervals(refreshIntervals, refreshIntervalsBaseTxn, block);
         block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_INTERVALS_MSG_TYPE);
+        block = writer.append();
+        appendFrozenZoneState(backfillFrontier, frozenBoundaryFloor, frozenBoundaryLimitHoursOrMonths, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_FROZEN_MSG_TYPE);
+        block = writer.append();
+        appendBaseTable(baseTableId, backlogLostReason, block);
+        block.commit(MAT_VIEW_STATE_FORMAT_EXTRA_BASE_TABLE_MSG_TYPE);
         writer.commit();
     }
 
@@ -267,6 +412,11 @@ public class MatViewState implements QuietCloseable {
                     refreshState.getLastPeriodHi(),
                     refreshState.getRefreshIntervals(),
                     refreshState.getRefreshIntervalsBaseTxn(),
+                    refreshState.getBackfillFrontier(),
+                    refreshState.getFrozenBoundaryFloor(),
+                    refreshState.getFrozenBoundaryLimitHoursOrMonths(),
+                    refreshState.getBaseTableId(),
+                    refreshState.getBacklogLostReason(),
                     writer
             );
         } else {
@@ -278,9 +428,30 @@ public class MatViewState implements QuietCloseable {
                     Numbers.LONG_NULL,
                     null,
                     -1,
+                    Long.MIN_VALUE,
+                    Numbers.LONG_NULL,
+                    0,
                     writer
             );
         }
+    }
+
+    // kept public for tests
+    public static void appendBaseTable(int baseTableId, @Nullable CharSequence backlogLostReason, @NotNull AppendableBlock block) {
+        block.putInt(baseTableId);
+        block.putStr(backlogLostReason);
+    }
+
+    // kept public for tests
+    public static void appendFrozenZoneState(
+            long backfillFrontier,
+            long frozenBoundaryFloor,
+            int frozenBoundaryLimitHoursOrMonths,
+            @NotNull AppendableBlock block
+    ) {
+        block.putLong(backfillFrontier);
+        block.putLong(frozenBoundaryFloor);
+        block.putInt(frozenBoundaryLimitHoursOrMonths);
     }
 
     // kept public for tests
@@ -419,6 +590,30 @@ public class MatViewState implements QuietCloseable {
         return factory;
     }
 
+    /**
+     * Takes the cached factory when it was compiled from the given SQL text, and discards it otherwise: ALTER
+     * MATERIALIZED VIEW ... AS replaced the view's SQL since. The refresh that takes the factory compiles from that
+     * SQL text, so the factory it caches next, the one it took or one it compiled, comes from it. The caller holds the
+     * latch.
+     */
+    public RecordCursorFactory acquireRecordFactory(@NotNull String viewSql) {
+        assert latch.get();
+        RecordCursorFactory factory = cursorFactory;
+        cursorFactory = null;
+        if (factory != null && !Chars.equals(viewSql, cursorFactorySql)) {
+            factory = Misc.free(factory);
+        }
+        cursorFactorySql = viewSql;
+        return factory;
+    }
+
+    /**
+     * Records the telemetry event of ALTER MATERIALIZED VIEW ... AS, once its definition event is in the view's WAL.
+     */
+    void alterSuccess(boolean isBaseTableChange) {
+        telemetryFacade.store(MAT_VIEW_ALTER, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, isBaseTableChange ? "base change" : null, 0);
+    }
+
     public long getRecordFactoryExpiryPolicyVersion() {
         assert latch.get();
         return cursorFactoryExpiryPolicyVersion;
@@ -457,6 +652,15 @@ public class MatViewState implements QuietCloseable {
         return PENDING_TASK_RETRY_FLAGS_UPDATER.getAndSet(this, 0);
     }
 
+    /**
+     * Clears the backlog-lost marker, for REFRESH ... FULL, which rebuilds the view from its base table and so has no
+     * backlog to keep. The caller holds the latch.
+     */
+    void clearBacklogLost() {
+        assert latch.get();
+        this.backlogLostReason = null;
+    }
+
     boolean clearPendingFullRefresh(Object expectedOwner) {
         assert latch.get();
         final Runnable onClear = onClearPendingFullRefreshForTesting;
@@ -474,6 +678,7 @@ public class MatViewState implements QuietCloseable {
                     pending.reason,
                     pending.invalidationBaseTableToken,
                     pending.invalidationBaseTxn,
+                    pending.hasBaseTableChange,
                     pending.isInvalidationForced,
                     null
             )
@@ -582,6 +787,39 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Returns the cause of a lost backlog, see {@link MatViewBacklog}, or null while the view's backlog is tracked or
+     * the view is valid.
+     */
+    public @Nullable String getBacklogLostReason() {
+        return backlogLostReason;
+    }
+
+    /**
+     * Returns the bare-name switches recorded on the view, see {@link #recordBareNameSwitch}. The caller must not
+     * change the list.
+     */
+    ObjList<BareNameSwitch> getBareNameSwitches() {
+        return bareNameSwitches;
+    }
+
+    /**
+     * Returns the id of the base table that the refresh position and the cached refresh intervals belong to, or
+     * {@link #BASE_TABLE_ID_UNKNOWN} when the view's state carries none.
+     */
+    public int getBaseTableId() {
+        return baseTableId;
+    }
+
+    /**
+     * Returns what the column mapping that the last compile of the view's SQL built leaves out: the view columns the
+     * SQL does not produce and the SQL's columns the view lacks. Returns null before the first such compile in this
+     * process and after one that failed. Refresh compiles the SQL, and so does view ADD COLUMN's check.
+     */
+    public @Nullable MatViewColumnMapping.Summary getColumnMappingSummary() {
+        return columnMappingSummary;
+    }
+
+    /**
      * Returns the gap-width threshold below which two adjacent cached refresh
      * intervals should be merged into one cluster. Units match the base
      * table's timestamp column (us for TIMESTAMP, ns for TIMESTAMP_NS), the
@@ -649,12 +887,50 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshBaseTxn;
     }
 
+    /**
+     * Returns the error of the last user {@code REFRESH ... RANGE} that failed, or null when the last one
+     * succeeded or none failed in this process. A failed user RANGE leaves the view valid instead of invalidating
+     * it, so this is where its error shows.
+     */
+    public @Nullable String getLastRefreshError() {
+        return lastRefreshError;
+    }
+
     public long getLastRefreshFinishTimestampUs() {
         return lastRefreshFinishTimestampUs;
     }
 
+    public long getBackfillFrontier() {
+        return backfillFrontier.get();
+    }
+
+    public long getLastRefreshFrozenBoundaryFloor() {
+        return lastRefreshFrozenBoundaryFloor;
+    }
+
+    public int getLastRefreshFrozenBoundaryLimitHoursOrMonths() {
+        return lastRefreshFrozenBoundaryLimitHoursOrMonths;
+    }
+
+    /**
+     * The highest {@link #getBackfillFrontier() backfill frontier} value already written to the
+     * {@code _mv.s} state file. The apply path persists the frontier only when it has advanced
+     * past this, so a stream of refresh-only applies pays no extra state-file write. Apply thread only.
+     */
+    public long getPersistedBackfillFrontier() {
+        return persistedBackfillFrontier;
+    }
+
     public long getLastRefreshStartTimestampUs() {
         return lastRefreshStartTimestampUs;
+    }
+
+    /**
+     * Returns the sequencer txn of the definition event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
+     * or -1 when it ran none since it started.
+     */
+    public long getPendingDefinitionSeqTxn() {
+        return pendingDefinitionSeqTxn.get();
     }
 
     Object getPendingFullRefreshOwner(Object marker) {
@@ -699,6 +975,13 @@ public class MatViewState implements QuietCloseable {
 
     public long getRecordRowCopierMetadataVersion() {
         return recordRowCopierMetadataVersion;
+    }
+
+    // Returns the projection that the cached copier reads the query's record through, or null when the copier
+    // reads it as it is, for an identity or positional column mapping.
+    @TestOnly
+    public @Nullable SelectedRecord getRecordProjectionForTesting() {
+        return MatViewColumnMapping.getRecordProjection(recordToRowCopier);
     }
 
     public RecordToRowCopier getRecordToRowCopier() {
@@ -755,6 +1038,21 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Returns whether the marker's reason stands for a base table change, which a publication names with the base
+     * table's token and the change's sequencer txn, such as the bare-name guard's: true also when a merge with a
+     * publication of another or no provenance dropped the token and txn, see
+     * {@link #getPendingInvalidationBaseTableToken}.
+     */
+    boolean hasPendingInvalidationBaseTableChange(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.hasBaseTableChange;
+    }
+
+    @TestOnly
+    public boolean hasPendingInvalidationBaseTableChangeForTesting() {
+        return hasPendingInvalidationBaseTableChange(pendingInvalidationMarker);
+    }
+
+    /**
      * Returns true only when the pending marker carries an invalidation reason. The refresh and
      * WAL-purge gates use this reason-only view: a full-refresh-only marker must not freeze a
      * valid view's refreshes -- those refreshes' post-release finalize is the redelivery channel
@@ -763,6 +1061,16 @@ public class MatViewState implements QuietCloseable {
      */
     public boolean hasPendingInvalidationReason() {
         return pendingInvalidationMarker instanceof PendingInvalidation pending && pending.reason != null;
+    }
+
+    /**
+     * Returns true when the view keeps a backlog that is not known to be lost: it has completed a refresh, its state
+     * knows the id of its base table, and no lost cause is set. While such a view is invalid, it keeps recording its
+     * base table's changes in its refresh-interval cache, and holds back base WAL purging at its cache position, see
+     * {@link MatViewBacklog}.
+     */
+    public boolean hasTrackedBacklog() {
+        return lastRefreshBaseTxn != -1 && baseTableId != BASE_TABLE_ID_UNKNOWN && backlogLostReason == null;
     }
 
     public void incrementRefreshIntervalsSeq() {
@@ -786,10 +1094,30 @@ public class MatViewState implements QuietCloseable {
         this.refreshIntervalsBaseTxn = reader.getRefreshIntervalsBaseTxn();
         refreshIntervals.clear();
         refreshIntervals.addAll(reader.getRefreshIntervals());
+        // Restore the frozen-zone runtime state. Defaults (MIN_VALUE / LONG_NULL) when the
+        // state file predates the frozen-zone feature or no backfill/refresh has persisted it.
+        final long frontier = reader.getBackfillFrontier();
+        this.backfillFrontier.set(frontier);
+        this.persistedBackfillFrontier = frontier;
+        this.lastRefreshFrozenBoundaryFloor = reader.getFrozenBoundaryFloor();
+        this.lastRefreshFrozenBoundaryLimitHoursOrMonths = reader.getFrozenBoundaryLimitHoursOrMonths();
+        this.baseTableId = reader.getBaseTableId();
+        this.backlogLostReason = Chars.toString(reader.getBacklogLostReason());
     }
 
     public boolean isClosed() {
         return closed;
+    }
+
+    /**
+     * Returns true when the last successful FULL refresh rebuilt the view from a snapshot of the base table that
+     * includes the transaction: the view's rows read the base table as it was from that transaction on. The
+     * caller holds the latch, under which FULL records its snapshot.
+     */
+    boolean isCoveredByLastFullRefresh(int baseTableId, long baseTableTxn) {
+        assert latch.get();
+        final FullRefreshCoverage coverage = lastFullRefreshCoverage;
+        return coverage != null && coverage.baseTableToken.getTableId() == baseTableId && coverage.baseTableTxn >= baseTableTxn;
     }
 
     public boolean isDropped() {
@@ -802,6 +1130,14 @@ public class MatViewState implements QuietCloseable {
 
     public String getInvalidationReason() {
         assert latch.get();
+        return invalidationReason;
+    }
+
+    /**
+     * Returns the invalidation reason without the latch, for a statement that reports it: the reason a concurrent
+     * holder writes may not match the invalid flag read before it.
+     */
+    public String getInvalidationReasonForReport() {
         return invalidationReason;
     }
 
@@ -833,6 +1169,17 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public boolean isPendingInvalidationForcedForTesting() {
         return isPendingInvalidationForced(pendingInvalidationMarker);
+    }
+
+    public boolean isRecordCopyPositional() {
+        return isRecordCopyPositional;
+    }
+
+    /**
+     * Returns true while REFRESH MATERIALIZED VIEW ... RESUME holds the view latch to recover the view.
+     */
+    public boolean isResuming() {
+        return isResuming;
     }
 
     /**
@@ -872,6 +1219,7 @@ public class MatViewState implements QuietCloseable {
                     pending.reason,
                     pending.invalidationBaseTableToken,
                     pending.invalidationBaseTxn,
+                    pending.hasBaseTableChange,
                     pending.isInvalidationForced,
                     fullRefreshOwner
             )
@@ -917,8 +1265,13 @@ public class MatViewState implements QuietCloseable {
             TableToken combinedBaseTableToken = invalidationBaseTableToken;
             long combinedBaseTxn = invalidationBaseTxn;
             boolean isCombinedForced = isInvalidationForced;
+            // A publication that names a base table stands for a change of it. Sticky across merges: a merge with a
+            // publication of another or no provenance drops the token and txn, but RESUME must still tell that the
+            // reason may stand for a base table change, see hasPendingInvalidationBaseTableChange().
+            boolean hasCombinedBaseTableChange = invalidationBaseTableToken != null;
             if (pending != null && pending.reason != null) {
                 isCombinedForced |= pending.isInvalidationForced;
+                hasCombinedBaseTableChange |= pending.hasBaseTableChange;
                 if (combinedBaseTableToken == null
                         || combinedBaseTxn == Numbers.LONG_NULL
                         || pending.invalidationBaseTableToken == null
@@ -937,6 +1290,7 @@ public class MatViewState implements QuietCloseable {
                     invalidationReason,
                     combinedBaseTableToken,
                     combinedBaseTxn,
+                    hasCombinedBaseTableChange,
                     isCombinedForced,
                     fullRefreshOwner
             );
@@ -964,8 +1318,20 @@ public class MatViewState implements QuietCloseable {
     public void markAsValid() {
         this.invalid = false;
         this.invalidationReason = null;
+        // A valid view has no backlog; it starts a tracked one when it goes invalid.
+        this.backlogLostReason = null;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
+    }
+
+    /**
+     * Records that the view's backlog is lost, with its cause, see {@link MatViewBacklog}. The view stops tracking its
+     * base table's changes, and REFRESH MATERIALIZED VIEW ... RESUME refuses it until SKIP BACKLOG is given. The
+     * caller holds the latch and persists the marker with the next view state event.
+     */
+    void markBacklogLost(@NotNull String cause) {
+        assert latch.get();
+        this.backlogLostReason = cause;
     }
 
     /**
@@ -1044,6 +1410,28 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Records a range refresh that recomputed nothing and committed only the period it reached: a period refresh
+     * whose period the partition clip emptied. A range refresh leaves the refresh position and the cached refresh
+     * intervals to the incremental refreshes, so this keeps both, as {@link #rangeRefreshSuccess} does.
+     */
+    public void rangeRefreshSuccessNoRows(
+            long refreshFinishedTimestampUs,
+            long refreshTriggeredTimestampUs,
+            long periodHi
+    ) {
+        assert latch.get();
+        this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
+        this.lastPeriodHi = periodHi;
+        telemetryFacade.store(
+                MAT_VIEW_REFRESH_SUCCESS,
+                viewDefinition.getMatViewToken(),
+                -1,
+                null,
+                refreshFinishedTimestampUs - refreshTriggeredTimestampUs
+        );
+    }
+
+    /**
      * Folds a sampled REPLACE_RANGE commit latency into the rolling average used
      * for {@link #getCommitGapThresholdTsUnits()}. Samples in nanoseconds.
      * <p>
@@ -1059,9 +1447,49 @@ public class MatViewState implements QuietCloseable {
         avgCommitNanos = foldEma(avgCommitNanos, sampleNanos);
     }
 
+    /**
+     * Records that a column change of the base table, at the base table's transaction, switches the bare select-list
+     * name of the view's SQL between a column and a call of the zero-argument function of that name, see
+     * {@link MatViewBareNameGuard}. One entry per name, compared without regard to case, and base table keeps the
+     * highest transaction: a FULL refresh that covers it covers the lower ones. Nothing removes an entry; a FULL
+     * refresh from a snapshot that includes its transaction covers it, see {@link #isCoveredByLastFullRefresh}. A
+     * refresh that commits a refresh position below the transaction publishes the guard's invalidation again, see
+     * {@code MatViewRefreshJob.publishBareNameSwitchAboveRefreshPosition()}.
+     */
+    void recordBareNameSwitch(CharSequence name, int baseTableId, long baseTableTxn) {
+        synchronized (bareNameSwitchesLock) {
+            final ObjList<BareNameSwitch> switches = bareNameSwitches;
+            final ObjList<BareNameSwitch> updatedSwitches = new ObjList<>(switches.size() + 1);
+            long switchTxn = baseTableTxn;
+            for (int i = 0, n = switches.size(); i < n; i++) {
+                final BareNameSwitch bareNameSwitch = switches.getQuick(i);
+                if (bareNameSwitch.baseTableId == baseTableId && Chars.equalsIgnoreCase(bareNameSwitch.name, name)) {
+                    switchTxn = Math.max(switchTxn, bareNameSwitch.baseTableTxn);
+                } else {
+                    updatedSwitches.add(bareNameSwitch);
+                }
+            }
+            updatedSwitches.add(new BareNameSwitch(Chars.toString(name), baseTableId, switchTxn));
+            final Runnable onCopied = onBareNameSwitchCopiedForTesting;
+            if (onCopied != null) {
+                onBareNameSwitchCopiedForTesting = null;
+                onCopied.run();
+            }
+            bareNameSwitches = updatedSwitches;
+        }
+    }
+
     void recordFullRefreshSuccess(TableToken baseTableToken, long baseTableTxn) {
         assert latch.get();
         lastFullRefreshCoverage = new FullRefreshCoverage(baseTableToken, baseTableTxn);
+    }
+
+    /**
+     * Records the sequencer txn of the definition event that ALTER MATERIALIZED VIEW ... AS wrote, see
+     * {@link #getPendingDefinitionSeqTxn()}. The record only grows.
+     */
+    void recordPendingDefinitionSeqTxn(long seqTxn) {
+        pendingDefinitionSeqTxn.accumulateAndGet(seqTxn, Math::max);
     }
 
     /**
@@ -1086,6 +1514,23 @@ public class MatViewState implements QuietCloseable {
         }
         avgScanSampleNanos = foldEma(avgScanSampleNanos, sampleNanos);
         avgScanRangeTsUnits = foldEma(avgScanRangeTsUnits, rangeTsUnits);
+    }
+
+    /**
+     * Records a user {@code REFRESH ... RANGE} that failed. The view stays valid, with its rows, refresh position and
+     * refresh timestamps, since RANGE never moves the refresh position and commits only complete replace ranges;
+     * the error shows in {@link #getLastRefreshError()} until the next user RANGE succeeds.
+     */
+    public void rangeRefreshFail(CharSequence errorMessage) {
+        assert latch.get();
+        this.lastRefreshError = Chars.toString(errorMessage);
+        telemetryFacade.store(MAT_VIEW_REFRESH_FAIL, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, errorMessage, 0);
+    }
+
+    // A user REFRESH ... RANGE that succeeded clears the error of the one that failed before it.
+    public void rangeRefreshSucceeded() {
+        assert latch.get();
+        this.lastRefreshError = null;
     }
 
     public void refreshFail(long refreshTimestamp, CharSequence errorMessage) {
@@ -1202,6 +1647,110 @@ public class MatViewState implements QuietCloseable {
         }
     }
 
+    /**
+     * Makes the view valid again after REFRESH MATERIALIZED VIEW ... RESUME persisted its new state: the refresh
+     * position, the last refreshed period and the base table id that the state event carried. Catching up keeps the
+     * cached refresh intervals, the view's backlog, for its next incremental refresh; a jump clears them. Either way
+     * the backlog-lost marker goes. The caller holds the latch.
+     */
+    void resumeSuccess(
+            long lastRefreshBaseTxn,
+            long lastPeriodHi,
+            int baseTableId,
+            boolean isCatchUp,
+            @NotNull CharSequence mode
+    ) {
+        assert latch.get();
+        markAsValid();
+        this.lastRefreshBaseTxn = lastRefreshBaseTxn;
+        this.lastPeriodHi = lastPeriodHi;
+        this.baseTableId = baseTableId;
+        if (!isCatchUp) {
+            this.refreshIntervalsBaseTxn = -1;
+            refreshIntervals.clear();
+        }
+        telemetryFacade.store(MAT_VIEW_RESUME, viewDefinition.getMatViewToken(), lastRefreshBaseTxn, mode, 0);
+    }
+
+    void runAlterValidatedSeamForTesting() {
+        final Runnable seam = onAlterValidatedForTesting;
+        if (seam != null) {
+            onAlterValidatedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runBareNameSwitchRecordedSeamForTesting() {
+        final Runnable seam = onBareNameSwitchRecordedForTesting;
+        if (seam != null) {
+            onBareNameSwitchRecordedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runDefinitionWaitSeamForTesting() {
+        final Runnable seam = onDefinitionWaitForTesting;
+        if (seam != null) {
+            onDefinitionWaitForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeFlagSetSeamForTesting() {
+        final Runnable seam = onResumeFlagSetForTesting;
+        if (seam != null) {
+            onResumeFlagSetForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeHoldingLockSeamForTesting() {
+        final Runnable seam = onResumeHoldingLockForTesting;
+        if (seam != null) {
+            onResumeHoldingLockForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeLatchBusySeamForTesting() {
+        final Runnable seam = onResumeLatchBusyForTesting;
+        if (seam != null) {
+            onResumeLatchBusyForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeWalAppliedSeamForTesting() {
+        final Runnable seam = onResumeWalAppliedForTesting;
+        if (seam != null) {
+            onResumeWalAppliedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runResumeWalWaitSeamForTesting() {
+        final Runnable seam = onResumeWalWaitForTesting;
+        if (seam != null) {
+            onResumeWalWaitForTesting = null;
+            seam.run();
+        }
+    }
+
+    /**
+     * Sets the id of the base table that the refresh position and the cached refresh intervals belong to. The
+     * caller holds the latch and persists the id with the next view state event.
+     */
+    public void setBaseTableId(int baseTableId) {
+        assert latch.get();
+        this.baseTableId = baseTableId;
+    }
+
+    // Keeps the summary of a column mapping that a compile of the view's SQL built, or null after one that failed, see
+    // getColumnMappingSummary().
+    public void setColumnMappingSummary(@Nullable MatViewColumnMapping.Summary columnMappingSummary) {
+        this.columnMappingSummary = columnMappingSummary;
+    }
+
     public void setLastPeriodHi(long lastPeriodHi) {
         this.lastPeriodHi = lastPeriodHi;
     }
@@ -1210,12 +1759,91 @@ public class MatViewState implements QuietCloseable {
         lastRefreshBaseTxn = txn;
     }
 
+    public void setLastRefreshFrozenBoundaryFloor(long floor, int limitHoursOrMonths) {
+        assert latch.get();
+        lastRefreshFrozenBoundaryFloor = floor;
+        lastRefreshFrozenBoundaryLimitHoursOrMonths = limitHoursOrMonths;
+    }
+
+    /**
+     * Records that the {@code _mv.s} state file now holds {@code frontier} as the persisted
+     * backfill frontier. Called by the WAL apply path right after it (re)writes the state file.
+     * Apply thread only.
+     */
+    public void setPersistedBackfillFrontier(long frontier) {
+        persistedBackfillFrontier = frontier;
+    }
+
+    /**
+     * Advance the backfill frontier high-water mark to {@code anchor} (a monotonic max;
+     * lower values are ignored). Called from the WAL apply path
+     * ({@link io.questdb.cairo.wal.ApplyWal2TableJob#reconstructBackfillFrontier}) after a user
+     * backfill txn has been committed, with the boundary anchor derived from the committed row
+     * ({@code bucketEnd + LIMIT}). It is deliberately NOT advanced by the commit-time validator,
+     * which is a pre-commit hook: advancing before the txn is sealed could leave this no-rollback
+     * max permanently over-advanced if the commit fails. The refresh job folds this value into
+     * its boundary anchor (alongside {@code max(base_ts)} and {@code max(view_ts)}), so once a
+     * backfill has been accepted as frozen, a later {@code max(base_ts)} retreat (base partition
+     * drop / re-ingestion) cannot pull the boundary back over it -- the case {@code max(view_ts)}
+     * alone cannot cover because a backfilled row is older than the view's materialised frontier.
+     * <p>
+     * Lock-free CAS max: the apply path advances it while the refresh job reads it concurrently.
+     */
+    public void advanceBackfillFrontier(long anchor) {
+        long current;
+        while (anchor > (current = backfillFrontier.get())) {
+            if (backfillFrontier.compareAndSet(current, anchor)) {
+                break;
+            }
+        }
+    }
+
     public void setLastRefreshStartTimestampUs(long timestampUs) {
         lastRefreshStartTimestampUs = timestampUs;
     }
 
     public void setLastRefreshTimestampUs(long timestampUs) {
         this.lastRefreshFinishTimestampUs = timestampUs;
+    }
+
+    /**
+     * Test seam: runs once, in ALTER MATERIALIZED VIEW ... AS, between the validation of the new SQL and the write of
+     * its definition event.
+     */
+    @TestOnly
+    public void setOnAlterValidatedForTesting(Runnable onAlterValidatedForTesting) {
+        this.onAlterValidatedForTesting = onAlterValidatedForTesting;
+    }
+
+    /**
+     * Test seam: runs once in {@link #recordBareNameSwitch}, under the lock that serializes its writers, after it built
+     * the updated copy of the view's bare-name switches and before it publishes the copy. Tests use it to hold the
+     * bare-name guard of one base table there while the guard of another base table records a switch on the same view.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnBareNameSwitchCopiedForTesting(Runnable onBareNameSwitchCopiedForTesting) {
+        this.onBareNameSwitchCopiedForTesting = onBareNameSwitchCopiedForTesting;
+    }
+
+    /**
+     * Test seam: runs once in the bare-name guard, after it recorded the bare-name switches of a base column change on
+     * the view, see {@link MatViewBareNameGuard}: in its check before the change applies, before it reads the view's
+     * resuming and invalid flags; in its check after the change, before it reads the view's refresh position. Tests use
+     * it to run RESUME or a refresh in that window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnBareNameSwitchRecordedForTesting(Runnable onBareNameSwitchRecordedForTesting) {
+        this.onBareNameSwitchRecordedForTesting = onBareNameSwitchRecordedForTesting;
+    }
+
+    /**
+     * Test seam: runs once, while a REFRESH waits for the definition event of an ALTER MATERIALIZED VIEW ... AS to
+     * apply, see {@link MatViewAlter#awaitPendingDefinition}.
+     */
+    @TestOnly
+    public void setOnDefinitionWaitForTesting(Runnable onDefinitionWaitForTesting) {
+        this.onDefinitionWaitForTesting = onDefinitionWaitForTesting;
     }
 
     /**
@@ -1280,6 +1908,62 @@ public class MatViewState implements QuietCloseable {
         this.onPendingInvalidationMarkerReadForTesting = onPendingInvalidationMarkerReadForTesting;
     }
 
+    /**
+     * Test seam: runs once while REFRESH MATERIALIZED VIEW ... RESUME holds the view latch, right after it set the
+     * view's resuming flag and before it reads the view's bare-name switches, see {@link MatViewResume}. Tests use it
+     * to make the bare-name guard record a switch in that window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeFlagSetForTesting(Runnable onResumeFlagSetForTesting) {
+        this.onResumeFlagSetForTesting = onResumeFlagSetForTesting;
+    }
+
+    /**
+     * Test seam: runs once while REFRESH MATERIALIZED VIEW ... RESUME holds the view latch, right after it took it
+     * and before it checks the view again. Tests use it to make an invalidation, a FULL refresh request, a demote or
+     * a base table replacement arrive while RESUME holds the latch. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeHoldingLockForTesting(Runnable onResumeHoldingLockForTesting) {
+        this.onResumeHoldingLockForTesting = onResumeHoldingLockForTesting;
+    }
+
+    /**
+     * Test seam: runs once when REFRESH MATERIALIZED VIEW ... RESUME finds the view latch held by another holder,
+     * before it polls the latch again. Tests use it to release the latch, or to cancel the statement, at a known
+     * point of the wait. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeLatchBusyForTesting(Runnable onResumeLatchBusyForTesting) {
+        this.onResumeLatchBusyForTesting = onResumeLatchBusyForTesting;
+    }
+
+    /**
+     * Test seam: runs once after REFRESH MATERIALIZED VIEW ... RESUME found the view's WAL applied and before it
+     * tries the view latch. Tests use it to commit a view WAL transaction in that window. One-shot: the seam clears
+     * itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeWalAppliedForTesting(Runnable onResumeWalAppliedForTesting) {
+        this.onResumeWalAppliedForTesting = onResumeWalAppliedForTesting;
+    }
+
+    /**
+     * Test seam: runs once when REFRESH MATERIALIZED VIEW ... RESUME finds the view's WAL not applied yet, before it
+     * checks the statement's timeout and waits. Tests use it to drop the view, or to expire the statement's timeout,
+     * while RESUME waits. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnResumeWalWaitForTesting(Runnable onResumeWalWaitForTesting) {
+        this.onResumeWalWaitForTesting = onResumeWalWaitForTesting;
+    }
+
+    // Records how the copier built from the next cached factory copies, see isRecordCopyPositional.
+    public void setRecordCopyPositional(boolean isRecordCopyPositional) {
+        assert latch.get();
+        this.isRecordCopyPositional = isRecordCopyPositional;
+    }
+
     public void setRefreshIntervals(LongList refreshIntervals) {
         this.refreshIntervals.clear();
         this.refreshIntervals.addAll(refreshIntervals);
@@ -1302,6 +1986,14 @@ public class MatViewState implements QuietCloseable {
         this.avgCommitNanos = Math.max(0, commitNanos);
         this.avgScanSampleNanos = Math.max(0, scanSampleNanos);
         this.avgScanRangeTsUnits = Math.max(0, scanRangeTsUnits);
+    }
+
+    /**
+     * Sets or clears the resuming flag, see {@link #isResuming()}. The caller holds the latch.
+     */
+    void setResuming(boolean isResuming) {
+        assert latch.get();
+        this.isResuming = isResuming;
     }
 
     public void setViewDefinition(MatViewDefinition viewDefinition) {
@@ -1348,6 +2040,20 @@ public class MatViewState implements QuietCloseable {
         }
     }
 
+    // A base column change that switches a bare select-list name of the view's SQL, see recordBareNameSwitch().
+    static final class BareNameSwitch {
+        final int baseTableId;
+        final long baseTableTxn;
+        // the name as the view's SQL wrote it when the bare-name guard recorded the switch
+        final String name;
+
+        private BareNameSwitch(String name, int baseTableId, long baseTableTxn) {
+            this.name = name;
+            this.baseTableId = baseTableId;
+            this.baseTableTxn = baseTableTxn;
+        }
+    }
+
     private static final class FullRefreshCoverage {
         private final TableToken baseTableToken;
         private final long baseTableTxn;
@@ -1360,11 +2066,15 @@ public class MatViewState implements QuietCloseable {
 
     private static final class PendingInvalidation {
         private final Object fullRefreshOwner;
+        // Whether a reason publication merged into this marker carried a base table change, a base token and txn,
+        // also when the merge lost them.
+        private final boolean hasBaseTableChange;
         private final TableToken invalidationBaseTableToken;
         private final long invalidationBaseTxn;
         private final boolean isInvalidationForced;
         private final String reason;
 
+        // A marker without a base table change, such as one that carries a full refresh owner only.
         private PendingInvalidation(
                 String reason,
                 TableToken invalidationBaseTableToken,
@@ -1372,7 +2082,19 @@ public class MatViewState implements QuietCloseable {
                 boolean isInvalidationForced,
                 Object fullRefreshOwner
         ) {
+            this(reason, invalidationBaseTableToken, invalidationBaseTxn, false, isInvalidationForced, fullRefreshOwner);
+        }
+
+        private PendingInvalidation(
+                String reason,
+                TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean hasBaseTableChange,
+                boolean isInvalidationForced,
+                Object fullRefreshOwner
+        ) {
             this.fullRefreshOwner = fullRefreshOwner;
+            this.hasBaseTableChange = hasBaseTableChange;
             this.invalidationBaseTableToken = invalidationBaseTableToken;
             this.invalidationBaseTxn = invalidationBaseTxn;
             this.isInvalidationForced = isInvalidationForced;

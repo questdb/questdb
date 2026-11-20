@@ -32,6 +32,9 @@ public class WalTxnType {
     public static final byte DATA = 0;
     public static final byte LIVE_VIEW_DATA = 6;
     public static final byte MAT_VIEW_DATA = 3;
+    // ALTER MATERIALIZED VIEW ... AS: the view's new base table name and SQL text, and whether the statement changed
+    // the base table. Every node applies them as stored, see ApplyWal2TableJob.
+    public static final byte MAT_VIEW_DEFINITION = 7;
     public static final byte MAT_VIEW_INVALIDATE = 4;
     public static final byte NONE = -1;
     public static final byte SQL = 1;

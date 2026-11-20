@@ -34,6 +34,9 @@ import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.mv.MatViewBacklog;
+import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.str.Path;
 import org.junit.Assert;
@@ -62,9 +65,19 @@ import java.util.List;
 @RunWith(Parameterized.class)
 public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
     private static final byte CUSTOM_EVENT_TYPE = 64;
+    private static final String MAT_VIEW_SQL = "SELECT ts, max(v) AS v FROM t SAMPLE BY 1d";
+    private static final String MAT_VIEW_WITH_BASE_SQL = "SELECT ts, sum(v) AS v FROM t2 SAMPLE BY 1d";
     private final String commitMode;
     private final long groupWindowUs;
     private final String path;
+    // the base table name and SQL of the last MAT_VIEW_DEFINITION record on disk
+    private String lastMatViewBaseTableName;
+    // the state of the last MAT_VIEW_INVALIDATE record on disk
+    private String lastMatViewInvalidationBacklogLostReason;
+    private int lastMatViewInvalidationBaseTableId;
+    private boolean lastMatViewInvalidationIsInvalid;
+    private String lastMatViewInvalidationReason;
+    private String lastMatViewSql;
     private String lastViewSql;
 
     public WalWriteOrderCrashTest(String commitMode, long groupWindowUs, String path) {
@@ -92,7 +105,10 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                 "custom event",
                 "alter view",
                 "alter view in a new segment",
-                "alter view in a new segment, directories synced"
+                "alter view in a new segment, directories synced",
+                "alter materialized view",
+                "alter materialized view with base",
+                "resume materialized view"
         };
         final List<Object[]> params = new ArrayList<>();
         for (Object[] mode : modes) {
@@ -117,6 +133,7 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
             execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO t VALUES (0, 1), ('1970-01-02', 2)");
             final boolean isView = path.startsWith("alter view");
+            final boolean isMatView = path.contains("materialized view");
             if (isView) {
                 execute("CREATE VIEW v AS (SELECT ts, v FROM t)");
                 if (path.equals("alter view")) {
@@ -125,19 +142,34 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                     execute("ALTER VIEW v AS (SELECT ts, v FROM t WHERE v > 0)");
                 }
             }
+            if (isMatView) {
+                // A refreshed view, whose WAL segment exists and is durable before the case starts.
+                execute("CREATE MATERIALIZED VIEW mv AS (SELECT ts, sum(v) AS v FROM t SAMPLE BY 1d) PARTITION BY DAY");
+                if (path.equals("alter materialized view with base")) {
+                    execute("CREATE TABLE t2 (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("INSERT INTO t2 VALUES ('1970-01-03', 5)");
+                }
+                drainWalAndMatViewQueues();
+                if (path.equals("resume materialized view")) {
+                    engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), "test");
+                    drainWalAndMatViewQueues();
+                    Assert.assertTrue(engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv")).isInvalid());
+                }
+            }
             drainWalAndViewQueues();
             if (path.equals("insert in a new writer") || path.startsWith("add column on an empty segment")) {
                 // The case's writer opens its segment 0 after the baseline.
                 engine.releaseAllWalWriters();
             }
-            final TableToken token = engine.verifyTableName(isView ? "v" : "t");
+            final TableToken token = engine.verifyTableName(isView ? "v" : (isMatView ? "mv" : "t"));
             final long txnBefore = engine.getTableSequencerAPI().lastTxn(token);
             markDurableBaseline();
 
             runPath();
 
             final long seqTxn = engine.getTableSequencerAPI().lastTxn(token);
-            final int sequencedTxns = path.startsWith("add column on an empty segment") ? 2 : 1;
+            // a base change writes the view's invalidation, then its definition
+            final int sequencedTxns = path.startsWith("add column on an empty segment") || path.equals("alter materialized view with base") ? 2 : 1;
             Assert.assertEquals("the operation must sequence its txns", txnBefore + sequencedTxns, seqTxn);
             // Any writer may flush the shared log now: a peer's batch flush under a window, or the operation's own.
             engine.getTableSequencerAPI().fdatasyncTxnLog(token);
@@ -149,7 +181,14 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                 }
             }
 
-            final TableToken[] tokens = isView ? new TableToken[]{engine.verifyTableName("t"), token} : new TableToken[]{token};
+            final TableToken[] tokens;
+            if (path.equals("alter materialized view with base")) {
+                tokens = new TableToken[]{engine.verifyTableName("t"), engine.verifyTableName("t2"), token};
+            } else if (isView || isMatView) {
+                tokens = new TableToken[]{engine.verifyTableName("t"), token};
+            } else {
+                tokens = new TableToken[]{token};
+            }
             simulateRestart(tokens);
             Assert.assertEquals("the flushed log must name the txn", seqTxn, engine.getTableSequencerAPI().lastTxn(token));
             assertEveryNamedRecordOnDisk(token);
@@ -168,6 +207,11 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                     "must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
                     engine.getTableSequencerAPI().isSuspended(token)
             );
+            if (isMatView) {
+                // A booting server loads the view states from disk.
+                engine.getMatViewStateStore().clear();
+                engine.hydrateMatViewStateStore();
+            }
             assertEffect();
             releaseEngineHandles();
         });
@@ -187,6 +231,41 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
             // The harness does not rebuild the view graph as a booting server does: the durable record is the effect.
             case "alter view", "alter view in a new segment", "alter view in a new segment, directories synced" ->
                     Assert.assertEquals("SELECT ts FROM t", lastViewSql);
+            // The apply writes the view's definition from the durable record.
+            case "alter materialized view" -> {
+                Assert.assertEquals("t", lastMatViewBaseTableName);
+                Assert.assertEquals(MAT_VIEW_SQL, lastMatViewSql);
+                final MatViewDefinition definition = matViewDefinition();
+                Assert.assertEquals("t", definition.getBaseTableName());
+                Assert.assertEquals(MAT_VIEW_SQL, definition.getMatViewSql());
+                Assert.assertFalse(matViewState().isInvalid());
+            }
+            // The view follows the new base, invalid with a lost backlog, until RESUME SKIP BACKLOG.
+            case "alter materialized view with base" -> {
+                Assert.assertEquals("t2", lastMatViewBaseTableName);
+                Assert.assertEquals(MAT_VIEW_WITH_BASE_SQL, lastMatViewSql);
+                Assert.assertTrue(lastMatViewInvalidationIsInvalid);
+                Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_CHANGED, lastMatViewInvalidationReason);
+                Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_CHANGED, lastMatViewInvalidationBacklogLostReason);
+                Assert.assertEquals(engine.verifyTableName("t").getTableId(), lastMatViewInvalidationBaseTableId);
+                final MatViewDefinition definition = matViewDefinition();
+                Assert.assertEquals("t2", definition.getBaseTableName());
+                Assert.assertEquals(MAT_VIEW_WITH_BASE_SQL, definition.getMatViewSql());
+                final MatViewState state = matViewState();
+                Assert.assertTrue(state.isInvalid());
+                Assert.assertEquals(MatViewBacklog.LOST_BASE_TABLE_CHANGED, state.getBacklogLostReason());
+            }
+            // The view is valid again, at the base's position, with its backlog skipped.
+            case "resume materialized view" -> {
+                Assert.assertFalse(lastMatViewInvalidationIsInvalid);
+                Assert.assertNull(lastMatViewInvalidationBacklogLostReason);
+                final int baseTableId = engine.verifyTableName("t").getTableId();
+                Assert.assertEquals(baseTableId, lastMatViewInvalidationBaseTableId);
+                final MatViewState state = matViewState();
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(baseTableId, state.getBaseTableId());
+                Assert.assertNull(state.getBacklogLostReason());
+            }
             default -> throw new AssertionError("unknown path: " + path);
         }
     }
@@ -227,9 +306,30 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
                     if (events.getType() == WalTxnType.VIEW_DEFINITION) {
                         lastViewSql = events.getViewDefinitionInfo().getViewSql();
                     }
+                    if (events.getType() == WalTxnType.MAT_VIEW_DEFINITION) {
+                        final WalEventCursor.MatViewDefinitionInfo info = events.getMatViewDefinitionInfo();
+                        lastMatViewBaseTableName = info.getBaseTableName().toString();
+                        lastMatViewSql = info.getMatViewSql().toString();
+                    }
+                    if (events.getType() == WalTxnType.MAT_VIEW_INVALIDATE) {
+                        final WalEventCursor.MatViewInvalidationInfo info = events.getMatViewInvalidationInfo();
+                        lastMatViewInvalidationIsInvalid = info.isInvalid();
+                        lastMatViewInvalidationReason = info.getInvalidationReason().toString();
+                        final CharSequence backlogLostReason = info.getBacklogLostReason();
+                        lastMatViewInvalidationBacklogLostReason = backlogLostReason != null ? backlogLostReason.toString() : null;
+                        lastMatViewInvalidationBaseTableId = info.getBaseTableId();
+                    }
                 }
             }
         }
+    }
+
+    private MatViewDefinition matViewDefinition() {
+        return engine.getDependentViewGraph().getViewDefinition(engine.verifyTableName("mv"));
+    }
+
+    private MatViewState matViewState() {
+        return engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
     }
 
     private void runPath() throws Exception {
@@ -257,7 +357,12 @@ public class WalWriteOrderCrashTest extends AbstractAdaptiveCrashTest {
             }
             case "alter view", "alter view in a new segment", "alter view in a new segment, directories synced" ->
                     execute("ALTER VIEW v AS (SELECT ts FROM t)");
+            case "alter materialized view" -> execute("ALTER MATERIALIZED VIEW mv AS (" + MAT_VIEW_SQL + ")");
+            case "alter materialized view with base" ->
+                    execute("ALTER MATERIALIZED VIEW mv WITH BASE t2 AS (" + MAT_VIEW_WITH_BASE_SQL + ")");
+            case "resume materialized view" -> execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
             default -> throw new AssertionError("unknown path: " + path);
         }
     }
+
 }

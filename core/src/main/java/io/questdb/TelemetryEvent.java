@@ -30,11 +30,13 @@ public final class TelemetryEvent {
     public static final short HTTP_STATIC_CONTENT = 115;
     public static final short HTTP_TEXT_IMPORT = 112;
     public static final short ILP_RESERVE_WRITER = 102;
+    public static final short MAT_VIEW_ALTER = 206;
     public static final short MAT_VIEW_CREATE = 200;
     public static final short MAT_VIEW_DROP = 201;
     public static final short MAT_VIEW_INVALIDATE = 202;
     public static final short MAT_VIEW_REFRESH_FAIL = 203;
     public static final short MAT_VIEW_REFRESH_SUCCESS = 204;
+    public static final short MAT_VIEW_RESUME = 205;
     public static final short QUERY_RESULT_EXPORT_CSV = 110;
     public static final short QUERY_RESULT_EXPORT_PARQUET = 111;
     public static final short READ_PARQUET = 150;

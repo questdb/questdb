@@ -446,6 +446,18 @@ public class RowExpiryKeepLatestTest extends AbstractCairoTest {
             }
             drainWalAndMatViewQueues();
 
+            // The replace commit emptied, and so removed, the base's 2024-01-02 partition. The partition
+            // clip keeps the view's rows in a range the base no longer holds, so A@2024-01-02 stays latest.
+            assertQuery("SELECT k, v, ts FROM mv ORDER BY k").expectSize().noLeakCheck().returns("""
+                    k\tv\tts
+                    A\t2.0\t2024-01-02T00:00:00.000000Z
+                    B\t3.0\t2024-01-03T00:00:00.000000Z
+                    """);
+
+            // Dropping the view's 2024-01-02 partition removes A@2024-01-02. The fallback A@2024-01-01,
+            // which the cleanup kept, becomes the latest A.
+            execute("ALTER MATERIALIZED VIEW mv DROP PARTITION LIST '2024-01-02'");
+            drainWalAndMatViewQueues();
             assertQuery("SELECT k, v, ts FROM mv ORDER BY k").expectSize().noLeakCheck().returns("""
                     k\tv\tts
                     A\t1.0\t2024-01-01T00:00:00.000000Z
