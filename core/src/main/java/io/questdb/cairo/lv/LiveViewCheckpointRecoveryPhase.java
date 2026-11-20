@@ -59,7 +59,8 @@ public final class LiveViewCheckpointRecoveryPhase {
     /**
      * A whole-view rebuild from the applied base would have dropped rows the view
      * retains, so {@link LiveViewRebuildRestatementGuard} refused it before it
-     * committed. Refresh is stopped exactly as for {@link #BLOCKED}: the view's rows
+     * committed - never for a view over a materialized view, whose rebuilds the guard
+     * does not check. Refresh is stopped exactly as for {@link #BLOCKED}: the view's rows
      * and watermarks are as the refused rebuild found them, a timeline the rebuild
      * would have retired is still on disk, and the view stays queryable, reports
      * {@code invalid} and releases its base WAL floor. The reason names the route

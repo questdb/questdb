@@ -42,10 +42,10 @@ import org.jetbrains.annotations.NotNull;
  * The pinned base must include every transaction represented by durable view output;
  * an unflushed lead is outside this comparison.
  * <p>
- * Abstain for disabled checking, empty output, older-format upgrades, dedup-restore
- * mismatch, or a materialized-view backlog that legitimately removes output. Unreadable
- * backlog weakens checks only when the base can hide such removals. Filtered dedup
- * replacement disables shortfall alone: timestamps and partitions remain protected.
+ * Abstain for disabled checking, empty output, older-format upgrades, a materialized-view
+ * base, dedup-restore mismatch, or a REPLACE_RANGE backlog. Filtered dedup replacement,
+ * read or possibly hidden in unreadable backlog, disables shortfall alone: timestamps and
+ * partitions remain protected.
  * Use the snapshot dedup flag and subsequent DEDUP changes; other schema changes do
  * not prove replacement. Earlier dedup state may be unknowable after a later change.
  * <p>
@@ -63,8 +63,9 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     public static final int ABSTAIN_BACKLOG_MAY_REMOVE = 3;
     /**
      * A backlog transaction could not be read, and the base can produce one that lowers the
-     * output legitimately. When that one can only be a dedup replacement, only the row shortfall
-     * stands down, and the history floor and the lost partition check still compare.
+     * output legitimately. That one can only be a dedup replacement a filter rejects, so only
+     * the row shortfall stands down, and the history floor and the lost partition check still
+     * compare.
      */
     public static final int ABSTAIN_BACKLOG_UNREADABLE = 4;
     /**
@@ -88,6 +89,14 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      * it finds, without refusing.
      */
     public static final int ABSTAIN_FORMAT_UPGRADE = 5;
+    /**
+     * The view's base is a materialized view. Its own refreshes replace and remove output
+     * legitimately - a REPLACE_RANGE over the buckets they recompute, a TRUNCATE for a full
+     * refresh - and nothing a restart reads tells such a removal from a loss once the WAL that
+     * carried it is purged, so the rebuild follows the materialized view, as every rebuild did
+     * before the guard.
+     */
+    public static final int ABSTAIN_MAT_VIEW_BASE = 7;
     /**
      * The guard is armed and compares the history floor and the row shortfall. A guard that
      * compares less reports the abstention that stood the rest down.
@@ -118,12 +127,6 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
      * an output row at or below the durable frontier, and may move the base's earliest row.
      */
     public static final int BACKLOG_MAY_REMOVE = 1;
-    /**
-     * Returned by the job's backlog walk: a transaction in the backlog could not be read, and
-     * the base is a materialized view, which can produce a transaction that removes output
-     * legitimately and moves the base's earliest row.
-     */
-    public static final int BACKLOG_UNREADABLE = 2;
     /**
      * Returned by the job's backlog walk: a transaction in the backlog could not be read, and
      * the only transaction the base can produce that removes output legitimately is a dedup
@@ -175,6 +178,7 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
             case ABSTAIN_BACKLOG_UNREADABLE -> "backlog unreadable";
             case ABSTAIN_FORMAT_UPGRADE -> "format upgrade";
             case ABSTAIN_DEDUP_RESTORE_MISMATCH -> "dedup restore mismatch";
+            case ABSTAIN_MAT_VIEW_BASE -> "materialized view base";
             default -> "not evaluated";
         };
     }

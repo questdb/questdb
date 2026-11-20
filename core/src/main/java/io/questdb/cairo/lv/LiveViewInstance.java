@@ -2357,10 +2357,11 @@ public class LiveViewInstance implements QuietCloseable {
      * output legitimately - the price of the released floor - a DEDUP change landed
      * on the base behind the backlog, or a dedup history the guard could not read
      * reads again. On a base {@link LiveViewRebuildRestatementGuard} names as able to
-     * hide such a commit, the guard then stands down the checks the commit could
-     * confound - every check over a materialized view, only the row shortfall over a
-     * filtering view's base, where the history floor and the lost partition check
-     * still refuse - and a rebuild no remaining check refuses follows the base table.
+     * hide such a commit - a filtering view's deduplicating base - the guard then stands
+     * down the row shortfall the commit could confound, the history floor and the lost
+     * partition check still refuse, and a rebuild neither refuses follows the base table.
+     * A view over a materialized view never takes this block: the guard stands down for
+     * every rebuild over one.
      */
     public void markCheckpointRebuildBlocked(@Nullable CharSequence reason) {
         markBlocked(LiveViewCheckpointRecoveryPhase.REBUILD_BLOCKED, reason);

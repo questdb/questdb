@@ -58,7 +58,9 @@ import java.io.File;
  * An incremental refresh is the other half: it commits a REPLACE_RANGE over the buckets it
  * recomputes, which the live view repairs as out-of-order data, and which can remove a bucket
  * the view derived output from. The anchored cases follow such refreshes through the repair,
- * the restart restore and the restatement guard of a rebuild.
+ * the restart restore and a whole-view rebuild. No restatement guard checks a rebuild over a
+ * materialized view: it follows the mat view and drops the rows the mat view no longer holds,
+ * which the cases over a mat view with TTL follow through every route that rebuilds.
  */
 public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
 
@@ -96,6 +98,16 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     // A one-minute RANGE frame over the mat view's one-minute buckets.
     private static final String MINUTE_RANGE_VIEW_SQL = "SELECT ts, k, sum(sv) OVER (PARTITION BY k ORDER BY ts "
             + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s FROM mvbase";
+    // The rows the view over the mat view with TTL holds once a rebuild has followed the mat view,
+    // which no longer holds 2026-01-01: the running sums start again at 2026-01-02.
+    private static final String TTL_REBUILT_ROWS = """
+            ts\tk\tsv\ts
+            2026-01-02T00:00:00.000000Z\ta\t2.0\t2.0
+            2026-01-03T05:00:00.000000Z\ta\t4.0\t6.0
+            """;
+    private static final String TTL_VIEW_ROWS_QUERY = "SELECT ts, k, sv, s FROM lv_on_mv";
+    private static final String TTL_VIEW_SQL = "SELECT ts, k, sv, sum(sv) OVER (PARTITION BY k ORDER BY ts "
+            + "ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) AS s FROM mvbase";
     private static final String VIEW_ROWS_QUERY = "SELECT ts, k, s, c FROM lv_on_mv ORDER BY k, ts";
 
     @Test
@@ -177,11 +189,11 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
 
     @Test
     public void testARebuildOverAMatViewWhoseBacklogIsUnreadableRunsWithoutTheGuard() throws Exception {
-        // The backlog of a materialized view may hold a REPLACE_RANGE or a TRUNCATE in any commit
-        // the rebuild cannot read, so when its WAL is gone the restatement guard has nothing it
-        // may compare (guardChecks=none) and the rebuild follows the mat view. Here the backlog it
-        // cannot read is the refresh that dropped a bucket, which a guard comparing the row count
-        // would refuse as a loss.
+        // The backlog of a materialized view may hold a REPLACE_RANGE or a TRUNCATE in any commit,
+        // and once its WAL is gone nothing tells such a removal from a loss. No restatement guard
+        // runs over a materialized view, so the rebuild never reads the backlog and follows the
+        // mat view. Here the backlog whose WAL is gone is the refresh that dropped a bucket, which a
+        // guard comparing the row count would refuse as a loss.
         assertMemoryLeak(() -> {
             seedAnchoredViewOverMatView();
             applyBucketRemovingRefreshWithoutTheView();
@@ -206,10 +218,9 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     "the rebuild must follow the mat view: " + instance.getCheckpointRecoveryReason(),
                     instance.isCheckpointRecoveryBlocked()
             );
-            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE, guard.getAbstention());
-            capture.assertLogged("live view could not read the rebuild's base backlog [view=lv_on_mv");
-            capture.assertLogged("guardChecks=none,");
-            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=backlog unreadable]");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE, guard.getAbstention());
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=materialized view base]");
             capture.assertNotLogged("live view rebuild from the applied base refused");
             assertViewRowsAfterTheBucketRemoval();
             assertViewActive();
@@ -217,12 +228,13 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testARebuildOverAMatViewWithNoTimelineStandsTheGuardDownForItsRefresh() throws Exception {
+    public void testARebuildOverAMatViewWithNoTimelineFollowsItsRefresh() throws Exception {
         // Every incremental refresh of a materialized view commits a REPLACE_RANGE over the
         // buckets it recomputes, and one that leaves a bucket empty removes a row the live view
         // derived output from. A restart that finds no timeline rebuilds from the applied mat
-        // view, which reproduces one row fewer than the view holds. The refresh is in the
-        // rebuild's backlog, so the guard must stand down rather than refuse it as a loss.
+        // view, which reproduces one row fewer than the view holds. No restatement guard runs
+        // over a materialized view, so the rebuild follows the refresh rather than refuse it as
+        // a loss.
         assertMemoryLeak(() -> {
             seedAnchoredViewOverMatView();
             applyBucketRemovingRefreshWithoutTheView();
@@ -246,12 +258,235 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     "the rebuild must follow the mat view: " + instance.getCheckpointRecoveryReason(),
                     instance.isCheckpointRecoveryBlocked()
             );
-            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE, guard.getAbstention());
-            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=backlog may remove rows]");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE, guard.getAbstention());
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=materialized view base]");
             capture.assertNotLogged("live view could not read the rebuild's base backlog");
             capture.assertNotLogged("live view rebuild from the applied base refused");
             assertViewRowsAfterTheBucketRemoval();
             assertViewActive();
+        });
+    }
+
+    @Test
+    public void testARestartWithNoTimelineOverAMatViewThatLostRowsFollowsTheMatView() throws Exception {
+        // The mat view's TTL evicted a day the live view keeps. A restart that finds no timeline -
+        // the disk a CHECKPOINT restore leaves - rebuilds from the applied mat view. No restatement
+        // guard runs over a materialized view, so the rebuild drops the evicted day and starts the
+        // running sums again at the mat view's earliest row, as every rebuild did before the guard,
+        // rather than stop the view.
+        assertMemoryLeak(() -> {
+            seedViewOverTtlMatView();
+            shutdown();
+            removeTimeline();
+
+            final LogCapture capture = new LogCapture();
+            final LiveViewRebuildRestatementGuard guard;
+            capture.start();
+            try {
+                guard = restart();
+                capture.drain();
+            } finally {
+                capture.stop();
+            }
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(
+                    "the rebuild must follow the mat view: " + instance.getCheckpointRecoveryReason(),
+                    instance.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv_on_mv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=materialized view base]");
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertTtlViewActive();
+            assertTtlViewRows(TTL_REBUILT_ROWS);
+            assertTtlViewMatchesRecompute();
+            assertNoRefreshFaults("lv_on_mv");
+        });
+    }
+
+    @Test
+    public void testARunningRecoveryOverAMatViewThatLostRowsRebuildsWhenItsRestoreFails() throws Exception {
+        // A refresh fails mid-drain, and the running recovery's restore from the timeline fails on
+        // an error that names no cause. Over a table base that lost rows the view keeps, the guard
+        // refuses the rebuild and the recovery retries the restore. No guard runs over a
+        // materialized view, so the rebuild commits in the failing turn and follows the mat view,
+        // which no longer holds the day its TTL evicted.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "sv", "k");
+        assertMemoryLeak(fault.facade(), () -> {
+            seedViewOverTtlMatView();
+            fault.of(engine.verifyTableName("mvbase").getDirName());
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(instance);
+            final String rebuiltRows = """
+                    ts\tk\tsv\ts
+                    2026-01-02T00:00:00.000000Z\ta\t2.0\t2.0
+                    2026-01-03T05:00:00.000000Z\ta\t4.0\t6.0
+                    2026-01-03T08:00:00.000000Z\ta\t16.0\t22.0
+                    2026-01-03T09:00:00.000000Z\ta\t32.0\t54.0
+                    2026-01-03T10:00:00.000000Z\ta\t64.0\t118.0
+                    """;
+
+            final LogCapture capture = new LogCapture();
+            capture.start();
+            try {
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    // The first refresh lands in the view's un-flushed lead, and the next two
+                    // coalesce behind it into one pass, which fails reading the third.
+                    setCurrentMicros(instance.getLastFlushTimeUs());
+                    execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T08:10:00.000000Z', 'a', 16.0)");
+                    drainWalAndMatViewQueues(engine);
+                    drainJob(job);
+                    execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T09:10:00.000000Z', 'a', 32.0)");
+                    drainWalAndMatViewQueues(engine);
+                    execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T10:10:00.000000Z', 'a', 64.0)");
+                    drainWalAndMatViewQueues(engine);
+                    fault.arm(1);
+                    fault.armTimelineOpen(0);
+                    drainJob(job);
+                    Assert.assertTrue("the drain must fail mid-pass", fault.hasFired());
+                    Assert.assertFalse("the restore must fail opening the timeline", fault.isTimelineOpenArmed());
+                    final LiveViewRebuildRestatementGuard guard = job.rebuildRestatementGuardForTest();
+                    Assert.assertEquals("no guard runs over a mat view", LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+                    Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE, guard.getAbstention());
+                    Assert.assertFalse(
+                            "the rebuild must follow the mat view: " + instance.getCheckpointRecoveryReason(),
+                            instance.isCheckpointRecoveryBlocked()
+                    );
+                    Assert.assertFalse("the rebuild recovered the window state in the failing turn", instance.isWindowStateDirty());
+                    drainWalQueue();
+                    assertTtlViewRows(rebuiltRows);
+
+                    fault.disarmAll();
+                    driveRefreshToQuiescence(job);
+                }
+                capture.drain();
+            } finally {
+                capture.stop();
+            }
+            capture.assertLogged("live view recomputed window state from applied base [view=lv_on_mv, cause=mid-drain refresh failure]");
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=materialized view base]");
+            capture.assertNotLogged("retrying the restore");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertTtlViewActive();
+            assertTtlViewRows(rebuiltRows);
+            assertTtlViewMatchesRecompute();
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertTtlViewActive();
+            assertTtlViewRows(rebuiltRows);
+        });
+    }
+
+    @Test
+    public void testAViewRebuiltOverAMatViewKeepsRowsTheMatViewEvictsLater() throws Exception {
+        // Once the restart's rebuild has followed the mat view, the view refreshes again, so a day
+        // the mat view's TTL evicts after the rebuild stays in the view, as incremental refresh
+        // keeps every row its base loses. A purge of the mat view's WAL and another restart then
+        // restore the view from its timeline with that day still in it.
+        configureWalPurge();
+        assertMemoryLeak(() -> {
+            seedViewOverTtlMatView();
+            shutdown();
+            removeTimeline();
+            restart();
+            final LiveViewInstance rebuilt = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(rebuilt);
+            Assert.assertFalse(
+                    "the rebuild must follow the mat view: " + rebuilt.getCheckpointRecoveryReason(),
+                    rebuilt.isCheckpointRecoveryBlocked()
+            );
+            assertRebuiltFromAppliedBase("lv_on_mv");
+            assertTtlViewRows(TTL_REBUILT_ROWS);
+
+            // TTL reads min(newest row, wall clock): this commit's refresh evicts 2026-01-02.
+            setCurrentMicros(ts("2026-01-05T00:00:00.000000Z"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-04T05:10:00.000000Z', 'a', 16.0)");
+            }
+            assertQuery("SELECT ts, k, sv FROM mvbase")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tsv
+                            2026-01-03T05:00:00.000000Z\ta\t4.0
+                            2026-01-04T05:00:00.000000Z\ta\t16.0
+                            """);
+            final String keptRows = """
+                    ts\tk\tsv\ts
+                    2026-01-02T00:00:00.000000Z\ta\t2.0\t2.0
+                    2026-01-03T05:00:00.000000Z\ta\t4.0\t6.0
+                    2026-01-04T05:00:00.000000Z\ta\t16.0\t22.0
+                    """;
+            assertTtlViewRows(keptRows);
+            final long matViewSeqTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("mvbase"));
+            final long segmentsLeft = purgeBaseWalAndCountSegments("mvbase");
+            Assert.assertTrue(
+                    "the purge must take mat-view WAL [segmentsLeft=" + segmentsLeft + ", matViewSeqTxn=" + matViewSeqTxn + ']',
+                    segmentsLeft < matViewSeqTxn
+            );
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertTtlViewActive();
+            assertTtlViewRows(keptRows);
+            assertNoRefreshFaults("lv_on_mv");
+        });
+    }
+
+    @Test
+    public void testAWalLossRederiveOverAMatViewThatLostRowsFollowsTheMatView() throws Exception {
+        // The mat view refreshes a bucket the live view has not drained, and then the mat view's
+        // WAL is lost. The restart restores the view from its timeline, the drain meets the lost
+        // segment, and once the flush-retry budget runs out the view re-derives from the applied
+        // mat view. No guard runs over a materialized view, so the rebuild never walks the backlog
+        // it could not read, and follows the mat view, which no longer holds the day its TTL evicted.
+        assertMemoryLeak(() -> {
+            seedViewOverTtlMatView();
+            final LiveViewInstance seeded = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(seeded);
+            final long processedBefore = seeded.getLastProcessedSeqTxn();
+            execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-03T08:10:00.000000Z', 'a', 16.0)");
+            drainWalAndMatViewQueues(engine);
+            Assert.assertEquals("the view must not drain the refresh", processedBefore, seeded.getLastProcessedSeqTxn());
+            shutdown();
+            removeBaseWal("mvbase");
+
+            final LogCapture capture = new LogCapture();
+            final LiveViewRebuildRestatementGuard guard;
+            capture.start();
+            try {
+                guard = restart();
+                capture.drain();
+            } finally {
+                capture.stop();
+            }
+
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            capture.assertLogged("live view re-derived from the applied base after base WAL loss [view=lv_on_mv");
+            capture.assertLogged("live view rebuild from the applied base runs without the restatement guard [view=lv_on_mv, reason=materialized view base]");
+            capture.assertNotLogged("live view could not read the rebuild's base backlog");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isInvalid());
+            assertTtlViewActive();
+            assertTtlViewRows("""
+                    ts\tk\tsv\ts
+                    2026-01-02T00:00:00.000000Z\ta\t2.0\t2.0
+                    2026-01-03T05:00:00.000000Z\ta\t4.0\t6.0
+                    2026-01-03T08:00:00.000000Z\ta\t16.0\t22.0
+                    """);
+            assertTtlViewMatchesRecompute();
         });
     }
 
@@ -713,6 +948,36 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
         assertNoRefreshFaults("lv_on_mv");
     }
 
+    // Active, with no recovery phase and no reason: the view was neither stopped nor left waiting.
+    private void assertTtlViewActive() throws Exception {
+        assertQuery("SELECT view_status, checkpoint_recovery_phase, checkpoint_recovery_reason FROM live_views() WHERE view_name = 'lv_on_mv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tcheckpoint_recovery_phase\tcheckpoint_recovery_reason
+                        active\t\t
+                        """);
+    }
+
+    private void assertTtlViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + TTL_VIEW_SQL + ") ORDER BY ts",
+                TTL_VIEW_ROWS_QUERY + " ORDER BY ts",
+                LOG,
+                true
+        );
+    }
+
+    private void assertTtlViewRows(String expected) throws Exception {
+        assertQuery(TTL_VIEW_ROWS_QUERY)
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(expected);
+    }
+
     private void assertViewMatchesRecompute() throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
@@ -865,6 +1130,44 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
             refreshMatViewAndView(job, DAY_TWO_ROWS);
         }
         assertViewMatchesRecompute();
+    }
+
+    /**
+     * Creates a mat view with a one-day TTL over hourly buckets and a live view over it, then
+     * refreshes three days of base rows through both, a day per commit. TTL reads min(newest row,
+     * wall clock), so the clock moves to 2026-01-04 before the third commit, whose refresh evicts
+     * the mat view's 2026-01-01 partition. The live view keeps that day's row, as incremental
+     * refresh keeps every row its base loses.
+     */
+    private void seedViewOverTtlMatView() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base SAMPLE BY 1h) PARTITION BY DAY TTL 1 DAY");
+        drainWalAndMatViewQueues(engine);
+        setCurrentMicros(0L);
+        execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + TTL_VIEW_SQL);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
+            refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-02T00:10:00.000000Z', 'a', 2.0)");
+            setCurrentMicros(ts("2026-01-04T00:00:00.000000Z"));
+            refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-03T05:10:00.000000Z', 'a', 4.0)");
+        }
+        assertQuery("SELECT ts, k, sv FROM mvbase")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tk\tsv
+                        2026-01-02T00:00:00.000000Z\ta\t2.0
+                        2026-01-03T05:00:00.000000Z\ta\t4.0
+                        """);
+        assertTtlViewRows("""
+                ts\tk\tsv\ts
+                2026-01-01T00:00:00.000000Z\ta\t1.0\t1.0
+                2026-01-02T00:00:00.000000Z\ta\t2.0\t3.0
+                2026-01-03T05:00:00.000000Z\ta\t4.0\t7.0
+                """);
+        assertNoRefreshFaults("lv_on_mv");
     }
 
     /**

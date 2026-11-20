@@ -1609,8 +1609,8 @@ public interface CairoConfiguration {
 
     /**
      * Whether a live view refuses a whole-view rebuild from its base table that would drop output
-     * it already retains, and stops refreshing as invalid instead. See
-     * {@code LiveViewRebuildRestatementGuard}.
+     * it already retains, and stops refreshing as invalid instead. A view over a materialized view
+     * never refuses one. See {@code LiveViewRebuildRestatementGuard}.
      */
     boolean isLiveViewRebuildRestatementGuardEnabled();
 

@@ -15377,6 +15377,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a breach is logged rather than refused, so a view that came back without rows its base
      * lost has a line saying so. The row shortfall is not: it needs the replay's count.
      * <p>
+     * A view over a materialized view stands the guard down for every rebuild that has rows to
+     * lose, before anything reads the backlog
+     * ({@link LiveViewRebuildRestatementGuard#ABSTAIN_MAT_VIEW_BASE}). The mat view's own
+     * refreshes replace and remove output legitimately, and a stopped view cannot hold the WAL
+     * that carried them, so the rebuild follows the materialized view, dropping the rows it no
+     * longer holds. The upgrade, the configuration switch and an empty view keep their own
+     * abstentions ahead of it.
+     * <p>
      * A rebuild that stands in for a restore whose replay did not reproduce the view's durable
      * row count and frontier ({@link #isRestoreReplayMismatched}) stands the guard down too, when
      * the pinned snapshot deduplicates. The forward drain of such a base reads the applied base,
@@ -15428,6 +15436,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         assert effectiveSeqTxn >= rebuildSnapshotFloor(instance)
                 : "a whole-view rebuild pinned a snapshot behind the view [effectiveSeqTxn=" + effectiveSeqTxn
                 + ", floor=" + rebuildSnapshotFloor(instance) + ']';
+        if (instance.getDefinition().getBaseTableToken().isMatView()) {
+            standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_MAT_VIEW_BASE);
+            return;
+        }
         if (isRestoreReplayMismatched && hasDedupKeys(reader.getMetadata())) {
             // The rebuild stands in for a restore whose replay of the raw WAL disagreed with the
             // view's table, over a base whose dedup keys can collapse a duplicate the replay
@@ -15444,8 +15456,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         switch (backlog) {
             case LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE ->
                     standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_MAY_REMOVE);
-            case LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE ->
-                    standDownRestatementGuard(instance, LiveViewRebuildRestatementGuard.ABSTAIN_BACKLOG_UNREADABLE);
             case LiveViewRebuildRestatementGuard.BACKLOG_MAY_DEDUP_REPLACE -> standDownRestatementRowShortfall(
                     instance,
                     reader,
@@ -15518,16 +15528,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Classifies backlog (fromSeqTxn, toSeqTxn] for legitimate output removal below the
-     * frontier. REPLACE_RANGE and a materialized-view base's TRUNCATE disable the whole
-     * restatement guard. Filtered dedup replacement disables only the row-shortfall check:
-     * it preserves timestamps and partitions, so history-floor and lost-partition checks
-     * still apply. Ordinary TRUNCATE, partition removal and TTL must not disable the guard.
+     * frontier. REPLACE_RANGE disables the whole restatement guard. Filtered dedup
+     * replacement disables only the row-shortfall check: it preserves timestamps and
+     * partitions, so history-floor and lost-partition checks still apply. TRUNCATE,
+     * partition removal and TTL must not disable the guard. The base is never a
+     * materialized view: {@link #armRebuildRestatementGuard} stands the guard down for one
+     * before it classifies anything.
      * <p>
-     * Unreadable WAL weakens only checks the base could confound: all checks for a
-     * materialized-view base, or shortfall for a filtered base that may have deduplicated.
-     * Only DEDUP ENABLE/DISABLE can change that property. Classify commits using the
-     * snapshot flag and subsequent DEDUP changes in the sequencer metadata log; other
-     * structural changes and unreadable metadata changes provide no such evidence.
+     * Unreadable WAL weakens only the check the base could confound: shortfall for a
+     * filtered base that may have deduplicated. Only DEDUP ENABLE/DISABLE can change that
+     * property. Classify commits using the snapshot flag and subsequent DEDUP changes in
+     * the sequencer metadata log; other structural changes and unreadable metadata changes
+     * provide no such evidence.
      * <p>
      * The log cannot recover dedup state before its first change. A later no-op DISABLE
      * can therefore look like the end of dedup and suppress shortfall conservatively.
@@ -15541,11 +15553,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             long toSeqTxn,
             long frontierTs
     ) {
+        assert !instance.getDefinition().getBaseTableToken().isMatView()
+                : "armRebuildRestatementGuard stands the guard down over a materialized view";
         if (fromSeqTxn >= toSeqTxn) {
             return LiveViewRebuildRestatementGuard.BACKLOG_ADDITIVE;
         }
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
-        final boolean isMatViewBase = baseToken.isMatView();
         final boolean hasFilter = instance.getCompiledPlan().getFilter() != null;
         final boolean isFilterFlippable = hasFilter && hasDedupKeys(reader.getMetadata());
         final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
@@ -15583,11 +15596,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         .concat(WAL_NAME_BASE).put(walId).slash().put(txnCursor.getSegmentId());
                 final WalEventCursor eventCursor =
                         WalTxnDetails.openWalEFile(walPath, eventReader, txnCursor.getSegmentTxn(), txn);
-                final byte type = eventCursor.getType();
-                if (!WalTxnType.isDataType(type)) {
-                    if (isMatViewBase && type == WalTxnType.TRUNCATE) {
-                        return LiveViewRebuildRestatementGuard.BACKLOG_MAY_REMOVE;
-                    }
+                if (!WalTxnType.isDataType(eventCursor.getType())) {
                     continue;
                 }
                 final WalEventCursor.DataInfo dataInfo = eventCursor.getDataInfo();
@@ -15605,14 +15614,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
         } catch (CairoException e) {
             // The commit the walk failed on may reach the frontier, so a DEDUP change after it
-            // leaves the same doubt as one after a commit it read. On a materialized view it may
-            // be a REPLACE_RANGE or a TRUNCATE too.
+            // leaves the same doubt as one after a commit it read.
             final int backlog;
             final String guardChecks;
-            if (isMatViewBase) {
-                backlog = LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE;
-                guardChecks = "none";
-            } else if (isDedupReplacementPossible
+            if (isDedupReplacementPossible
                     || isFilterFlippable
                     || (hasFilter && hasDedupChangeAfter(instance, baseToken, walkedTxn, toSeqTxn))) {
                 backlog = LiveViewRebuildRestatementGuard.BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE;
