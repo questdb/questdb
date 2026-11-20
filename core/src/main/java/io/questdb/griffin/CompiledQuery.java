@@ -80,7 +80,8 @@ public interface CompiledQuery {
     // upgrade for as long as the telemetry retention window holds rows written by both binaries.
     short CREATE_LIVE_VIEW = TABLE_REBASE + 1; // 39
     short EMPTY = CREATE_LIVE_VIEW + 1;
-    short TYPES_COUNT = EMPTY;
+    short COMPACT = EMPTY + 1;
+    short TYPES_COUNT = COMPACT;
 
     void closeAllButSelect();
 

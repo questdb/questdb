@@ -51,6 +51,10 @@ public class SeqTxnTracker {
     // A commit that moves the txn without a WAL transaction (a partition removed or converted by the writer
     // itself) leaves it above the newest save point's pin, which WalPurgeJob reads for the idle save point.
     private volatile long committedTxn = -1;
+    // The table txn of the latest Delta catalog init that moved no seqTxn, -1 before one. A reader below it may read
+    // the partition's native base with no catalog pin, so Delta retention waits for it. In memory only: no reader
+    // predates a restart.
+    private volatile long deltaCatalogInitTxn = -1;
     // The seqTxn of the table's newest durable save point. 0 means none yet, which keeps all WAL of a fresh
     // adaptive table; it advances as save points publish. WalPurgeJob reads it as the purge floor under
     // adaptive, and in any mode while the table holds a save point pin.
@@ -215,6 +219,10 @@ public class SeqTxnTracker {
         return dedupSignalTrackedFromSeqTxn;
     }
 
+    public long getDeltaCatalogInitTxn() {
+        return deltaCatalogInitTxn;
+    }
+
     public String getErrorMessage() {
         return errorMessage;
     }
@@ -362,16 +370,23 @@ public class SeqTxnTracker {
             }
         }
         // seqTxn has to be initialized before writerTxn since isInitialised() method checks writerTxn
+        // The gauges count an uninitialised txn as 0 and move only when a CAS changes the txn
         long stxn = seqTxn;
-        while (stxn < newSeqTxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+        while (stxn < newSeqTxn) {
+            if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
+                break;
+            }
             stxn = seqTxn;
         }
-        metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
         long wtxn = writerTxn;
-        while (newWriterTxn > wtxn && !Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
+        while (newWriterTxn > wtxn) {
+            if (Unsafe.cas(this, WRITER_TXN_OFFSET, wtxn, newWriterTxn)) {
+                metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
+                break;
+            }
             wtxn = writerTxn;
         }
-        metrics.walMetrics().addWriterTxn(newWriterTxn - Math.max(0, wtxn));
         fireWaiters();
         return seqTxn > 0 && seqTxn > writerTxn;
     }
@@ -417,7 +432,11 @@ public class SeqTxnTracker {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
         long stxn = seqTxn;
-        while (newSeqTxn > stxn && !Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+        while (stxn < newSeqTxn) {
+            if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
+                metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
+                break;
+            }
             stxn = seqTxn;
         }
         return writerTxn < seqTxn && suspendedState > 0 && pressureControl.isReadyToProcess();
@@ -429,7 +448,7 @@ public class SeqTxnTracker {
         long stxn = seqTxn;
         while (newSeqTxn > stxn) {
             if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, newSeqTxn)) {
-                metrics.walMetrics().addSeqTxn(newSeqTxn - stxn);
+                metrics.walMetrics().addSeqTxn(newSeqTxn - Math.max(0, stxn));
                 break;
             }
             stxn = seqTxn;
@@ -452,8 +471,8 @@ public class SeqTxnTracker {
                 metrics.tableWriterMetrics().decSuspendedTables();
             }
         }
-        metrics.walMetrics().addSeqTxn(-seqTxn);
-        metrics.walMetrics().addWriterTxn(-writerTxn);
+        metrics.walMetrics().addSeqTxn(-Math.max(0, seqTxn));
+        metrics.walMetrics().addWriterTxn(-Math.max(0, writerTxn));
         // Release this table's share of the engine-wide durable-ack gauge (wal_apply_local_durable_seq_txn), so a
         // dropped table does not leave its last value there. resetDurableFrontier() makes the one decrement, and
         // the dropped guard above makes this run at most once per table.
@@ -506,6 +525,10 @@ public class SeqTxnTracker {
      */
     public void setCommittedTxn(long committedTxn) {
         this.committedTxn = committedTxn;
+    }
+
+    public void setDeltaCatalogInitTxn(long txn) {
+        deltaCatalogInitTxn = txn;
     }
 
     public void setHardSuspended(boolean hardSuspended) {
@@ -873,13 +896,13 @@ public class SeqTxnTracker {
         final long epochTxn = pinnedEpochTxn;
         if (epochTxn > -1) {
             final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
-            final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn);
+            final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR);
             assert pinned : "epoch pin slot busy on a new scoreboard";
         }
         final long otherEpochTxn = otherPinnedEpochTxn;
         if (otherEpochTxn > -1) {
             final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A;
-            final boolean pinned = scoreboard.incrementTxn(slotId, otherEpochTxn);
+            final boolean pinned = scoreboard.incrementTxn(slotId, otherEpochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR);
             assert pinned : "other epoch pin slot busy on a new scoreboard";
         }
     }
@@ -908,14 +931,22 @@ public class SeqTxnTracker {
             if (dropped) {
                 return false;
             }
-            long prevWriterTxn = this.writerTxn;
+            // initTxns() CASes writerTxn without the monitor, so swap it atomically to count from the exact
+            // previous value
+            long prevWriterTxn;
+            do {
+                prevWriterTxn = this.writerTxn;
+            } while (!Unsafe.cas(this, WRITER_TXN_OFFSET, prevWriterTxn, writerTxn));
             long prevDirtyWriterTxn = this.dirtyWriterTxn;
-            this.writerTxn = writerTxn;
             this.dirtyWriterTxn = dirtyWriterTxn;
+            // The gauge counts an uninitialised writerTxn as 0: a reset takes the table's share out
+            long gaugeDelta = Math.max(0, writerTxn) - Math.max(0, prevWriterTxn);
+            if (gaugeDelta != 0) {
+                metrics.walMetrics().addWriterTxn(gaugeDelta);
+            }
             // Progress made means table is not suspended
             if (writerTxn > prevWriterTxn) {
                 setSuspendedState(1);
-                metrics.walMetrics().addWriterTxn(writerTxn - prevWriterTxn);
                 progressMade = true;
             } else if (dirtyWriterTxn > prevDirtyWriterTxn) {
                 setSuspendedState(1);

@@ -18,6 +18,7 @@ ignore = [
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is a transitive dev-dependency of parquet, not shipped" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is a transitive dev-dependency of parquet, not shipped" },
     { id = "RUSTSEC-2026-0435", reason = "thrift 0.17 is a transitive dev-dependency of parquet, not shipped" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono is a transitive dev-dependency of parquet and arrow, not shipped" },
 ]
 
 [licenses]
