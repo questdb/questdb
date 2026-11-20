@@ -192,6 +192,34 @@ final class LiveViewFuzzAnchor {
     }
 
     /**
+     * A shape whose segments start at UTC midnight, the floor of a {@code PARTITION BY DAY}
+     * base's partitions: {@code ANCHOR DAILY '00:00'} over data from any of the starts, or
+     * {@code ANCHOR EXPRESSION timestamp_floor('1d', ts)} over data from 2026-01-01.
+     */
+    static LiveViewFuzzAnchor drawUtcMidnight(Rnd rnd) {
+        if (rnd.nextBoolean()) {
+            final long start = MicrosTimestampDriver.floor(STARTS[rnd.nextInt(STARTS.length)]);
+            return new LiveViewFuzzAnchor(
+                    DAILY_PLAIN,
+                    "ANCHOR DAILY '00:00'",
+                    "timestamp_floor('1d', ts, '1970-01-01T00:00:00.000000Z'::timestamp)",
+                    start,
+                    start - 86_400_000_000L,
+                    false
+            );
+        }
+        final long start = MicrosTimestampDriver.floor(STARTS[3]);
+        return new LiveViewFuzzAnchor(
+                EXPRESSION,
+                "ANCHOR EXPRESSION timestamp_floor('1d', ts)",
+                "timestamp_floor('1d', ts)",
+                start,
+                start - 86_400_000_000L,
+                false
+        );
+    }
+
+    /**
      * The FROM source of the oracle over {@code table}, whose columns are
      * {@code (ts, sym, i, x)}, filtered by {@code where}, which is empty or starts with a
      * space. A run oracle adds a {@code run} column: each key's runs of equal anchor values

@@ -33,6 +33,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointCaptureLedger;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
@@ -517,15 +518,23 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // Of rowlessAnchorEpisodes, the ones whose chained correction the chain price refused, which
     // leaves no rowless anchor to depart above: see departNewestRowsAboveARowlessAnchor.
     private int rowlessAnchorEpisodesPricedOut;
-    // Set while testFuzzResumeChainPrice runs: runDedupFuzz then draws its knobs for the chain
-    // price, checks the oracle after every restart, and runs a new-key episode in one run of two.
+    // Set while testFuzzResumeChainPrice or testFuzzHeadMissChainPrice runs: runDedupFuzz then
+    // draws its knobs for the chain price, checks the oracle after every restart, and runs a
+    // new-key episode in one run of two, or a head-miss new-key episode in every run.
     private boolean isChainPriceArm;
+    // Set while testFuzzHeadMissChainPrice runs, beside isChainPriceArm: every run commits a
+    // head-miss new-key episode instead of the resume's. See commitHeadMissNewKeyEpisode.
+    private boolean isHeadMissChainPriceArm;
     // Runs of the chain price arm that could commit a new-key episode: every other one, from the
     // first, does. See commitNewKeyEpisode.
     private int newKeyEpisodeCandidates;
     // New-key episodes the batch ran, and the ones the price refused after a boundary froze.
     private int newKeyEpisodes;
     private int newKeyEpisodeLateDeclines;
+    // Head-miss new-key episodes the batch ran, and the chained head-miss splices they published
+    // ahead of the correction the price refused. See commitHeadMissNewKeyEpisode.
+    private int headMissNewKeyEpisodes;
+    private int headMissChainedSplices;
     // Departure episodes of a batch whose departed rows no root sealed, so the resume repairing
     // their departure anchored on the head's own root and emitted nothing: see departNewestRows.
     private int unsealedDepartures;
@@ -1366,6 +1375,40 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         coverage.assertReachedStat(LiveViewRefreshStats.RESUME_CHAIN_KEY_BUDGET_DECLINE_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.RESUME_CHAIN_DISCARDED_ROOT_COUNT);
         coverage.assertReachedStat(LiveViewRefreshStats.TRUNCATE_ZERO_ROW_KEEP_COUNT);
+    }
+
+    @Test
+    public void testFuzzHeadMissChainPrice() throws Exception {
+        // The end-of-table head miss's chain price under the chain price arm's key budget: a head
+        // miss whose chain stands on nothing keeps it only while the keys its boundaries image
+        // whole fit max(the replay's estimated rows, scan.max.keys), checked at each boundary as
+        // the replay reaches it. testFuzzResumeChainPrice's anchored shapes, each imaging one
+        // function whole, over a DEDUP base and an anchor whose segments start at UTC midnight.
+        // Every run commits a head-miss new-key episode (see commitHeadMissNewKeyEpisode): a late
+        // row whose chained splice publishes, then a correction the price admits at its first
+        // boundary and refuses at its second, so both decline counters move in every run. The
+        // view equals the recompute after each of the two and at every other oracle point.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        isChainPriceArm = true;
+        isHeadMissChainPriceArm = true;
+        try {
+            assertMemoryLeak(checkpointFaults, () -> {
+                for (int variant : CHAIN_PRICE_ANCHORED_VARIANTS) {
+                    runDedupFuzz(rnd, variant, 120 + rnd.nextInt(160), true, true, rnd.nextBoolean(), true,
+                            LiveViewFuzzAnchor.drawUtcMidnight(rnd), -1);
+                }
+            });
+        } finally {
+            isChainPriceArm = false;
+            isHeadMissChainPriceArm = false;
+        }
+        coverage.log(LOG, "head-miss chain price");
+        LOG.info().$("LV fuzz head-miss chain price [episodes=").$(headMissNewKeyEpisodes)
+                .$(", chainedSplices=").$(headMissChainedSplices).I$();
+        Assert.assertEquals("every run publishes a chained head-miss splice", CHAIN_PRICE_ANCHORED_VARIANTS.length, headMissChainedSplices);
+        Assert.assertEquals("every run's price refuses its correction", CHAIN_PRICE_ANCHORED_VARIANTS.length, headMissNewKeyEpisodes);
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_DISCARDED_ROOT_COUNT);
     }
 
     @Test
@@ -3074,6 +3117,137 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             newKeyEpisodeLateDeclines++;
         }
         return true;
+    }
+
+    /**
+     * A correction the head miss's chain price admits at its first boundary and refuses at its
+     * second, after a late row whose chained splice it publishes. One row alone in the first UTC
+     * day above every row the base and the view hold, then four batches of four rows on keys the
+     * run uses in the day after it, a second apart from the day's floor. The lone row commits
+     * with the first batch, so that batch's seal lands above it and no root sits between it and
+     * the run's newest root; each batch's refresh seals a root at its newest row. The view's
+     * anchor starts its segments at UTC midnight, the floor of the base's DAY partitions, so a
+     * late row below the day's first root rebuilds from the day's floor and reads the day's
+     * partition whole, which the estimate counts exactly. A resume from the run's newest root
+     * reads that partition too, and the lone row's, which the estimate also counts whole, and
+     * the part of its own above the root: at least one row more. The rebuild is cheaper, so
+     * each late commit takes the head miss, whose chain stands on nothing, over the day's four
+     * roots.
+     * <p>
+     * The first late commit, one row just above the day's first row, runs with scan.max.keys at
+     * 0, which lifts the budget, so its chain publishes: the four roots re-versioned, the three
+     * above the first frozen incrementally. The second runs under the arm's budget: a row at the
+     * day's floor and {@link #NEW_KEY_EPISODE_KEYS} rows on keys the run never used just above
+     * the first batch's root, so B = max(16 + 1 + 1 + 50 = 68 rows, scan.max.keys of at most 5)
+     * = 68. Each shape images one function whole, holding the keys the replay has read: boundary
+     * 0 at most the two late rows' and the first batch's, 6, and 6 x 4 = 24 <= 68 admits it;
+     * boundary 1 at least the 50 new keys, and 50 x 3 = 150 > 68 refuses it, discarding the root
+     * boundary 0 froze. Every row the episode writes passes the run's filter (i > 0) and sits
+     * above its START FROM boundary. Draws from {@code episodeRnd} alone.
+     *
+     * @return false when the view is not active, so nothing was committed
+     */
+    private boolean commitHeadMissNewKeyEpisode(
+            Rnd episodeRnd,
+            LiveViewRefreshJob job,
+            int symCount,
+            String oracleOrderedSql,
+            String viewOrderedSql
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        if (instance == null || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
+            return false;
+        }
+        final long floorTs = Math.max(
+                Math.max(queryTimestamp("SELECT max(ts) FROM base"), instance.getLatestSeenTs()),
+                instance.getDefinition().getViewLowerBoundTimestamp()
+        );
+        final long loneDayTs = floorTs - floorTs % Micros.DAY_MICROS + Micros.DAY_MICROS;
+        final long loneTs = loneDayTs + episodeRnd.nextLong(Micros.DAY_MICROS);
+        final long dayTs = loneDayTs + Micros.DAY_MICROS;
+        final long[][] batchTs = new long[4][4];
+        final StringSink values = new StringSink();
+        appendEpisodeRow(values, loneTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        drawEpisodeBatch(episodeRnd, values, dayTs + 1, null, symCount, batchTs[0], null);
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("each batch seals its root", batchTs[0][3], instance.getHeadCheckpointMaxTs());
+        for (int b = 1; b < batchTs.length; b++) {
+            commitEpisodeBatch(episodeRnd, dayTs + 1 + b * Micros.SECOND_MICROS, null, symCount, batchTs[b], null);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+            Assert.assertEquals("each batch seals its root", batchTs[b][3], instance.getHeadCheckpointMaxTs());
+        }
+        assertHeadMissEpisodeRoots(instance, batchTs, loneTs);
+
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        final LiveViewCheckpointCaptureLedger ledger = instance.getCheckpointCaptureLedgerForTest();
+        final long incrementalBefore = ledger.getWindowIncrementalCaptures();
+        long declinesBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT);
+        long rangeRoutesBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD);
+        long versionedBefore = instance.getCheckpointRepairRootsVersioned();
+        values.clear();
+        appendEpisodeRow(values, batchTs[0][0] + 1, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        final long scanMaxKeys = engine.getConfiguration().getLiveViewCheckpointRepairScanMaxKeys();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, 0);
+        try {
+            execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS, scanMaxKeys);
+        }
+        Assert.assertEquals("the lifted budget keeps the chain", declinesBefore, stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT));
+        Assert.assertEquals("the late row takes the head miss", rangeRoutesBefore + 1, stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD));
+        Assert.assertEquals("the splice re-versions the day's four roots", versionedBefore + 4, instance.getCheckpointRepairRootsVersioned());
+        Assert.assertEquals("the chain freezes the window incrementally above its first root", incrementalBefore + 3, ledger.getWindowIncrementalCaptures());
+        headMissChainedSplices++;
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        assertHeadMissEpisodeRoots(instance, batchTs, loneTs);
+
+        values.clear();
+        appendEpisodeRow(values, dayTs, episodeRnd.nextInt(symCount), 1 + episodeRnd.nextInt(1000), episodeRnd.nextDouble() * 1000.0);
+        for (int k = 0; k < NEW_KEY_EPISODE_KEYS; k++) {
+            values.put(", (").put(batchTs[0][3] + 1).put("::timestamp, 'NK").put(k).put("', ")
+                    .put(1 + episodeRnd.nextInt(1000)).put(", ").put(episodeRnd.nextDouble() * 1000.0).put(')');
+        }
+        declinesBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT);
+        final long discardedBefore = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_DISCARDED_ROOT_COUNT);
+        rangeRoutesBefore = stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD);
+        versionedBefore = instance.getCheckpointRepairRootsVersioned();
+        execute("INSERT INTO base (ts, sym, i, x) VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long declines = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_KEY_BUDGET_DECLINE_COUNT) - declinesBefore;
+        final long discarded = stats.get(LiveViewRefreshStats.HEAD_MISS_SPLICE_DISCARDED_ROOT_COUNT) - discardedBefore;
+        LOG.info().$("LV fuzz head-miss new-key episode [loneTs=").$ts(loneTs)
+                .$(", dayTs=").$ts(dayTs)
+                .$(", newKeysTs=").$ts(batchTs[0][3] + 1)
+                .$(", declines=").$(declines)
+                .$(", discarded=").$(discarded).I$();
+        Assert.assertEquals("the price refuses the second boundary", 1, declines);
+        Assert.assertEquals("and discards the root the first one froze", 1, discarded);
+        Assert.assertEquals("the correction takes the head miss", rangeRoutesBefore + 1, stats.getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD));
+        Assert.assertEquals("the declined chain re-versions no root", versionedBefore, instance.getCheckpointRepairRootsVersioned());
+        headMissNewKeyEpisodes++;
+        return true;
+    }
+
+    // The four roots of a head-miss new-key episode's day, at its batches' newest rows, and below
+    // them no root at or above the lone row, so a resume from the newest root below the day reads
+    // that row: see commitHeadMissNewKeyEpisode.
+    private void assertHeadMissEpisodeRoots(LiveViewInstance instance, long[][] batchTs, long loneTs) {
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        final int top = ladder.size();
+        final int dayEntries = 2 * batchTs.length;
+        Assert.assertTrue("the day's four roots", top >= dayEntries);
+        for (int b = 0; b < batchTs.length; b++) {
+            Assert.assertEquals("the root of batch " + b, batchTs[b][3], ladder.getQuick(top - dayEntries + 2 * b));
+        }
+        if (top > dayEntries) {
+            Assert.assertTrue("no root between the lone row and the day", ladder.getQuick(top - dayEntries - 2) < loneTs);
+        }
     }
 
     // The departure departNewestRows commits: the departed batch upserted out of the filter or
@@ -6665,8 +6839,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             if (isDispatchedRing) {
                 assertDispatchedRingKeepsNoCheckpointDirtySet();
             }
-            // One run in two, counted rather than drawn, so every batch runs its share.
-            if (priceRnd != null && newKeyEpisodeCandidates++ % 2 == 0 && commitNewKeyEpisode(priceRnd, job, symCount)) {
+            if (isHeadMissChainPriceArm) {
+                // Every run, so each one pins the head miss's decline.
+                if (commitHeadMissNewKeyEpisode(priceRnd, job, symCount, oracleOrderedSql, viewOrderedSql)) {
+                    TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+                }
+            } else if (priceRnd != null && newKeyEpisodeCandidates++ % 2 == 0 && commitNewKeyEpisode(priceRnd, job, symCount)) {
+                // One run in two, counted rather than drawn, so every batch runs its share.
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
             }
             if (sparseDepartureShape >= 0) {
