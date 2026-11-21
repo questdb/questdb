@@ -62,6 +62,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
@@ -173,7 +174,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.recordCursorFactory = context.getSelectCache().poll(state.getSelectCacheKey(sqlExecutionContext.getSecurityContext()));
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                    CompiledQuery cc = compile(compiler, state, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
@@ -262,7 +263,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                                cc = compile(compiler, state, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && cc.getType() != CompiledQuery.EXPLAIN && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
@@ -542,6 +543,35 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
     }
 
+    // compiles the query with the variables the client declared, see QueryVariablesParameter
+    private static CompiledQuery compile(
+            SqlCompiler compiler,
+            ExportQueryProcessorState state,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws SqlException {
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
+        try {
+            return compiler.compile(state.sqlText, sqlExecutionContext);
+        } finally {
+            sqlExecutionContext.setQueryVariables(null, null);
+        }
+    }
+
+    // In TEMP_TABLE mode the exporter creates the temp table from the query's text, which reads
+    // the variables only while the context carries them.
+    private static void process(
+            HTTPSerialParquetExporter exporter,
+            ExportQueryProcessorState state,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) throws Exception {
+        sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
+        try {
+            exporter.process();
+        } finally {
+            sqlExecutionContext.setQueryVariables(null, null);
+        }
+    }
+
     private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
         assert state.copyID == -1;
         CopyExportContext.ExportTaskEntry entry = null;
@@ -564,16 +594,25 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 String tableName = getTableName(state.copyID);
                 state.setParquetExportTableName(tableName);
                 var exportModel = state.getExportModel();
-                var createOp = copyExportContext.validateAndCreateParquetExportTableOp(
-                        sqlExecutionContext,
-                        state.sqlText,
-                        exportModel.getPartitionBy(),
-                        tableName,
-                        "",
-                        0,
-                        exportModel.getBloomFilterColumns(),
-                        exportModel.getBloomFilterColumnsPosition()
-                );
+                // The temp table is CREATE TABLE AS on the query's text, which the variables reach
+                // only while the context carries them: here, and when the exporter creates the
+                // table, see copyQueryToParquetFile().
+                final CreateTableOperation createOp;
+                sqlExecutionContext.setQueryVariables(state.getQueryVariables(), state.sqlText);
+                try {
+                    createOp = copyExportContext.validateAndCreateParquetExportTableOp(
+                            sqlExecutionContext,
+                            state.sqlText,
+                            exportModel.getPartitionBy(),
+                            tableName,
+                            "",
+                            0,
+                            exportModel.getBloomFilterColumns(),
+                            exportModel.getBloomFilterColumnsPosition()
+                    );
+                } finally {
+                    sqlExecutionContext.setQueryVariables(null, null);
+                }
                 state.setParquetTempTableCreate(createOp);
             }
         } catch (Throwable th) {
@@ -749,7 +788,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 if (state.serialExporterInit) {
                     exporter.of(state.task);
                     exporter.setExportMode(state.parquetExportMode);
-                    exporter.process();
+                    process(exporter, state, sqlExecutionContext);
                     return;
                 }
                 state.initWriteCallback(this);
@@ -811,7 +850,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     }
                 }
                 state.serialExporterInit = true;
-                exporter.process();
+                process(exporter, state, sqlExecutionContext);
             } catch (PeerIsSlowToReadException e) {
                 cleanup = false;
                 throw e;
@@ -1159,6 +1198,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             sendException(response, 0, "Bad UTF8 encoding in query text", state);
             return false;
         }
+        try {
+            state.parseQueryVariables(request);
+        } catch (SqlException e) {
+            info(state).$("invalid variables [msg=").$safe(e.getFlyweightMessage()).I$();
+            state.storeVariablesError(e.getPosition(), e.getFlyweightMessage());
+            sendStoredError(response, state);
+            return false;
+        }
+        // for the log lines of the statements the request runs; the connection clears them
+        context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount).setRequestVariables(state.getQueryVariables());
         DirectUtf8Sequence fileName = request.getUrlParam(URL_PARAM_FILENAME);
         state.fileName.clear();
         if (fileName != null && fileName.size() > 0) {
@@ -1419,6 +1468,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         }
 
         state.storeError(errorPosition, errorMessage);
+        sendStoredError(response, state);
+    }
+
+    private void sendStoredError(
+            HttpChunkedResponse response,
+            ExportQueryProcessorState state
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         response.status(400, CONTENT_TYPE_JSON);
         response.headers().setKeepAlive(configuration.getKeepAliveHeader());
         response.sendHeader();

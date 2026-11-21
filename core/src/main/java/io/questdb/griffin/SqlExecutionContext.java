@@ -218,6 +218,35 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return -1;
     }
 
+    /**
+     * Returns the variables the client declared outside the text of the statement it sent, or
+     * {@code null} for none: the assignments of a DECLARE block, without the DECLARE keyword,
+     * such as {@code @from := '2026-01-01', @to := dateadd('d', 1, @from)}. The parser reads
+     * them as a DECLARE block that opens the text {@link #getQueryVariablesSqlText()} returns,
+     * whenever it parses that text, and never in another text it parses with this context.
+     */
+    default @Nullable CharSequence getQueryVariables() {
+        return null;
+    }
+
+    /**
+     * Returns the text of the statement the client sent {@link #getQueryVariables()} with, or
+     * {@code null} for none.
+     */
+    default @Nullable CharSequence getQueryVariablesSqlText() {
+        return null;
+    }
+
+    /**
+     * Returns the variables the client sent with the request this context runs, or {@code null}
+     * for none, for the log lines that show the statements it runs. Unlike
+     * {@link #getQueryVariables()}, they last for the whole request, and the parser never reads
+     * them.
+     */
+    default @Nullable CharSequence getRequestVariables() {
+        return null;
+    }
+
     Rnd getRandom();
 
     default TableReader getReader(TableToken tableToken, long version) {

@@ -526,6 +526,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         this.multipartContentHeaderParser.clear();
         this.csPool.clear();
         this.localValueMap.clear();
+        // The variables of the request that ended. Clearing the processors' state above closes
+        // its cursors, whose log lines still show them.
+        if (httpSqlExecutionContext != null) {
+            httpSqlExecutionContext.setRequestVariables(null);
+        }
         // Preserve the breaker for protocol-switched connections (e.g., WebSocket); a parked
         // credit-suspended egress stream still needs it. clear() resets it on pool return.
         if (httpCircuitBreaker != null && !isProtocolSwitched) {

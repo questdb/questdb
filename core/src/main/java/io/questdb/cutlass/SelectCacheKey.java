@@ -52,4 +52,33 @@ public final class SelectCacheKey {
         sink.put('\u0000').put(scope.length()).put(':').put(scope).put(sqlText);
         return sink;
     }
+
+    /**
+     * Returns the key of the SQL text compiled with the variables the client declared outside it,
+     * see {@link io.questdb.griffin.SqlExecutionContext#getQueryVariables()}, in the given scope.
+     * The compiled statement holds the values of the variables, so the same text with other
+     * values takes another key. Without variables, the key is the one {@link #of(CharSequence,
+     * CharSequence, StringSink)} returns. With them, the key starts with a NUL and a 'V', which
+     * no other key starts with, and length-prefixes the variables and the scope, so no
+     * combination can spell the key of another.
+     */
+    public static CharSequence of(
+            @Nullable CharSequence scope,
+            @NotNull CharSequence sqlText,
+            @NotNull CharSequence variables,
+            @NotNull StringSink sink
+    ) {
+        if (variables.length() == 0) {
+            return of(scope, sqlText, sink);
+        }
+        sink.clear();
+        sink.put('\u0000').put('V').put(variables.length()).put(':').put(variables);
+        if (scope == null) {
+            sink.put('-');
+        } else {
+            sink.put(scope.length()).put(':').put(scope);
+        }
+        sink.put(sqlText);
+        return sink;
+    }
 }

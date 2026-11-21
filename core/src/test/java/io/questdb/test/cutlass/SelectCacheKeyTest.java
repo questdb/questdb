@@ -59,4 +59,52 @@ public class SelectCacheKeyTest {
         Assert.assertNotEquals(sql, keyA);
         Assert.assertEquals(keyA, SelectCacheKey.of("alice", sql, sinkB).toString());
     }
+
+    @Test
+    public void testVariablesCannotSpellAnotherKey() {
+        final StringSink sink = new StringSink();
+        // moving characters between the variables, the scope and the SQL text changes the key
+        final String keyA = SelectCacheKey.of("s", "c", "@a := 1", sink).toString();
+        final String keyB = SelectCacheKey.of("s", "1c", "@a := ", sink).toString();
+        final String keyC = SelectCacheKey.of(null, "c", "@a := 1", sink).toString();
+        final String keyD = SelectCacheKey.of(null, "1c", "@a := ", sink).toString();
+        Assert.assertNotEquals(keyA, keyB);
+        Assert.assertNotEquals(keyC, keyD);
+        Assert.assertNotEquals(keyA, keyC);
+        // Variables that end with what follows them in another key: only the variables' length
+        // tells these apart. Unscoped, "@a := 1-" + "-" + "c" against "@a := 1" + "-" + "-c";
+        // scoped, "@a := 11:s" + "1:s" + "c" against "@a := 1" + "1:s" + "1:sc".
+        Assert.assertNotEquals(
+                SelectCacheKey.of(null, "c", "@a := 1-", sink).toString(),
+                SelectCacheKey.of(null, "-c", "@a := 1", sink).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("s", "c", "@a := 11:s", sink).toString(),
+                SelectCacheKey.of("s", "1:sc", "@a := 1", sink).toString()
+        );
+        // a key with variables starts with a NUL and a 'V'; a scoped key without them starts with
+        // a NUL and the scope's length, even when the scope starts with a 'V'
+        Assert.assertEquals('\u0000', keyA.charAt(0));
+        Assert.assertEquals('V', keyA.charAt(1));
+        Assert.assertEquals("\u00002:Vxc", SelectCacheKey.of("Vx", "c", sink).toString());
+    }
+
+    @Test
+    public void testVariablesQualifyTheKey() {
+        final String sql = "SELECT * FROM t WHERE v > @a";
+        final String keyA = SelectCacheKey.of(null, sql, "@a := 1", new StringSink()).toString();
+        final String keyB = SelectCacheKey.of(null, sql, "@a := 2", new StringSink()).toString();
+        Assert.assertNotEquals(keyA, keyB);
+        Assert.assertNotEquals(sql, keyA);
+        // without variables, the key is the one of the SQL text alone
+        Assert.assertSame(sql, SelectCacheKey.of(null, sql, "", new StringSink()));
+        Assert.assertEquals(
+                SelectCacheKey.of("alice", sql, new StringSink()).toString(),
+                SelectCacheKey.of("alice", sql, "", new StringSink()).toString()
+        );
+        Assert.assertNotEquals(
+                SelectCacheKey.of("alice", sql, "@a := 1", new StringSink()).toString(),
+                SelectCacheKey.of("bob", sql, "@a := 1", new StringSink()).toString()
+        );
+    }
 }

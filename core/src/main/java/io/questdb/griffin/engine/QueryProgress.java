@@ -130,6 +130,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         boolean isJit = executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED;
 
         CharSequence principal = executionContext.getSecurityContext().getPrincipal();
+        final CharSequence variables = executionContext.getRequestVariables();
         LogRecord log = null;
         try {
             if (leakedReadersCount > 0) {
@@ -142,8 +143,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 log.$("fin");
             }
             log.$(" [id=").$(sqlId)
-                    .$(", sql=`").$safe(sqlText)
-                    .$("`, ").$(executionContext)
+                    .$(", sql=`").$safe(sqlText);
+            putVariables(log, variables);
+            log.$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
             if (queryTrace != null) {
@@ -210,6 +212,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             // causing log sequence leaks.
             long durationNanos =
                     executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks() - beginNanos;
+            final CharSequence variables = executionContext.getRequestVariables();
             log = LOG.errorW();
             if (leakedReadersCount > 0) {
                 log.$("brk");
@@ -217,28 +220,23 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             } else {
                 log.$("err");
             }
+            // We need guaranteed logging for errors, hence errorW() call.
+            log.$(" [id=").$(sqlId)
+                    .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText);
+            putVariables(log, variables);
+            log.$("`, ").$(executionContext)
+                    .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
+                    .$(", time=").$(durationNanos);
             if (e instanceof FlyweightMessageContainer) {
                 final int pos = ((FlyweightMessageContainer) e).getPosition();
                 final int errno = e instanceof CairoException ? ((CairoException) e).getErrno() : 0;
                 final CharSequence message = ((FlyweightMessageContainer) e).getFlyweightMessage();
-                // We need guaranteed logging for errors, hence errorW() call.
-
-                log.$(" [id=").$(sqlId)
-                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
-                        .$("`, ").$(executionContext)
-                        .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
-                        .$(", time=").$(durationNanos)
-                        .$(", msg=").$safe(message)
+                log.$(", msg=").$safe(message)
                         .$(", errno=").$(errno)
                         .$(", pos=").$(pos);
             } else {
                 // This is unknown exception, can be OOM that can cause exception in logging.
-                log.$(" [id=").$(sqlId)
-                        .$(", sql=`").$safe(sqlText == null ? "**subquery**" : sqlText)
-                        .$("`, ").$(executionContext)
-                        .$(", jit=").$(executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED)
-                        .$(", time=").$(durationNanos)
-                        .$(", exception=").$(e);
+                log.$(", exception=").$(e);
             }
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
         } catch (Throwable th) {
@@ -260,11 +258,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             boolean jit
     ) {
         if (executionContext.shouldLogSql() && executionContext.getCairoEngine().getConfiguration().getLogSqlQueryProgressExe() && sqlText != null) {
-            LOG.info()
+            final CharSequence variables = executionContext.getRequestVariables();
+            final LogRecord log = LOG.info()
                     .$("exe")
                     .$(" [id=").$(sqlId)
-                    .$(", sql=`").$safe(sqlText)
-                    .$("`, ").$(executionContext)
+                    .$(", sql=`").$safe(sqlText);
+            putVariables(log, variables);
+            log.$("`, ").$(executionContext)
                     .$(", jit=").$(jit)
                     .I$();
         }
@@ -462,6 +462,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private static void appendLeakedReaderNames(ObjList<TableReader> leakedReaders, int leakedReadersCount, LogRecord log) {
         for (int i = 0; i < leakedReadersCount; i++) {
             log.$(", leaked=").$(leakedReaders.getQuick(i).getTableToken());
+        }
+    }
+
+    // Adds the variables the client sent with the statement, which the statement's text does not
+    // show, see SqlExecutionContext.getRequestVariables(). The record has just written the text
+    // after an opening backtick, and the caller closes the backtick this leaves open.
+    private static void putVariables(LogRecord log, @Nullable CharSequence variables) {
+        if (variables != null) {
+            log.$("`, vars=`").$safe(variables);
         }
     }
 
