@@ -8033,7 +8033,8 @@ public class JoinTest extends AbstractCairoTest {
         // joins below it open whatever the bind variable is. The nested loop LEFT join to cn runs after the RIGHT
         // join to l, which the query writes after it, and checks that join for each of its rows, see
         // OuterJoinNullCheck. A gate above the INNER join would leave the RIGHT join to l unopened while the bind
-        // variable is false, and the LEFT join would fail with "outer join cursor is not open".
+        // variable is false, and the check would leave that join out, see
+        // testKeylessLeftJoinAfterOuterJoinUnderRuntimeConstantInnerOnGate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (k INT, x INT)");
             execute("INSERT INTO a VALUES (1, 1), (2, 5)");
@@ -11098,6 +11099,422 @@ public class JoinTest extends AbstractCairoTest {
                                 4\t1\t4
                                 4\t3\t4
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterOuterJoinUnderRuntimeConstantGateAcrossExecutions() throws Exception {
+        // One factory of each query runs with $1 = 0, 1, 0, NULL and 1. (a.x > 0 AND false) OR $1 > 0 folds to
+        // $1 > 0, which gates the outer joins below the LEFT JOIN to b, as now() does in
+        // testKeylessLeftJoinAfterOuterJoinUnderRuntimeConstantWhereGate. The first execution, with a false gate,
+        // failed with "outer join cursor is not open". A false gate opens only the tables outside it: b, and c3, which
+        // the RIGHT JOIN after the gate hashes. A true execution after a false one checks the outer joins again: the
+        // FULL JOIN to c NULL-extends a for c row 4, and the LEFT join returns that row once, with NULL in b, although
+        // b row 4 has a NULL y and a.x >= b.y is true when both are NULL.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinGate();
+            execute("CREATE TABLE cc (k INT, v INT)");
+            final String fullJoin = "SELECT a.k, a.x, b.id, %1$s.k ck, %1$s.v FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN %1$s ON a.k = %1$s.k"
+                    + " WHERE (a.x > 0 AND false) OR $1 > 0 ORDER BY k, id, ck";
+            final String noRows = "k\tx\tid\tck\tv\n";
+            final String fullJoinRows = """
+                    k\tx\tid\tck\tv
+                    null\tnull\tnull\t4\t400
+                    1\t10\t1\t1\t100
+                    2\t20\t1\tnull\tnull
+                    2\t20\t2\tnull\tnull
+                    3\t30\t1\tnull\tnull
+                    3\t30\t2\tnull\tnull
+                    3\t30\t3\tnull\tnull
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertOuterJoinGateAcrossExecutions(fullJoin.formatted("c"), isFullFat, noRows, fullJoinRows, 1);
+                assertOuterJoinGateAcrossExecutions(
+                        "SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k"
+                                + " WHERE (a.x > 0 AND false) OR $1 > 0 ORDER BY k, id, ck",
+                        isFullFat,
+                        noRows,
+                        """
+                                k\tx\tid\tck\tv
+                                null\tnull\tnull\t4\t400
+                                1\t10\t1\t1\t100
+                                """,
+                        1
+                );
+                // the gate sits in the ON clause of the INNER JOIN to c2, below the RIGHT JOIN to c3, which returns
+                // every c3 row NULL-extended while the gate is false
+                assertOuterJoinGateAcrossExecutions(
+                        "SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k"
+                                + " JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR $1 > 0) RIGHT JOIN c c3 ON c3.k = c2.k ORDER BY c3k",
+                        isFullFat,
+                        """
+                                k\tid\tck\tc2k\tc3k
+                                null\tnull\tnull\tnull\t1
+                                null\tnull\tnull\tnull\t4
+                                """,
+                        """
+                                k\tid\tck\tc2k\tc3k
+                                1\t1\t1\t1\t1
+                                null\tnull\t4\t4\t4
+                                """,
+                        2
+                );
+                // an empty table in place of c
+                assertOuterJoinGateAcrossExecutions(
+                        fullJoin.formatted("cc"),
+                        isFullFat,
+                        noRows,
+                        """
+                                k\tx\tid\tck\tv
+                                1\t10\t1\tnull\tnull
+                                2\t20\t1\tnull\tnull
+                                2\t20\t2\tnull\tnull
+                                3\t30\t1\tnull\tnull
+                                3\t30\t2\tnull\tnull
+                                3\t30\t3\tnull\tnull
+                                """,
+                        1
+                );
+                // a row that the table gains after a false execution comes NULL-extended in the next true one
+                execute("CREATE TABLE cg (k INT, v INT)");
+                execute("INSERT INTO cg VALUES (1, 100), (4, 400)");
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 0);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.setFullFatJoins(isFullFat);
+                    try (RecordCursorFactory factory = select(compiler, fullJoin.formatted("cg"), sqlExecutionContext)) {
+                        new QueryAssertion(engine, factory).withContext(sqlExecutionContext).returns(noRows);
+                        execute("INSERT INTO cg VALUES (5, 500)");
+                        bindVariableService.setInt(0, 1);
+                        new QueryAssertion(engine, factory)
+                                .withContext(sqlExecutionContext)
+                                .returns("""
+                                        k\tx\tid\tck\tv
+                                        null\tnull\tnull\t4\t400
+                                        null\tnull\tnull\t5\t500
+                                        1\t10\t1\t1\t100
+                                        2\t20\t1\tnull\tnull
+                                        2\t20\t2\tnull\tnull
+                                        3\t30\t1\tnull\tnull
+                                        3\t30\t2\tnull\tnull
+                                        3\t30\t3\tnull\tnull
+                                        """);
+                    }
+                }
+                execute("DROP TABLE cg");
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterOuterJoinUnderRuntimeConstantInnerOnGate() throws Exception {
+        // The ON clause of the INNER JOIN to c2 names a.x, which the FULL JOIN to c NULL-extends, so it filters after
+        // that join, and folds to now() < '2000-01-01', a runtime constant. A gate tests it once per execution, above
+        // the INNER join, and the LEFT JOIN to b runs after every join, see OuterJoinNullCheck. A false gate opens no
+        // join below it, and the LEFT join failed with "outer join cursor is not open". A RIGHT or FULL JOIN to c3
+        // after the gate then NULL-extends every table before it for each c3 row, and the LEFT join returns such a
+        // row once, with NULL in b, although b row 4 has a NULL y and a.x >= b.y is true when both are NULL.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinGate();
+            final String isFalse = "(a.x > 0 AND false) OR now() < '2000-01-01'";
+            final String isTrue = "(a.x > 0 AND false) OR now() > '2000-01-01'";
+            final String innerJoin = "SELECT a.k, b.id, c.k ck, c2.k c2k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k"
+                    + " JOIN c c2 ON c2.k = c.k AND (%s)";
+            final String trailingJoin = "SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k"
+                    + " JOIN c c2 ON c2.k = c.k AND (%s) %s JOIN c c3 ON c3.k = c2.k";
+            final String trailingFalseRows = """
+                    k\tid\tck\tc2k\tc3k
+                    null\tnull\tnull\tnull\t1
+                    null\tnull\tnull\tnull\t4
+                    """;
+            final String trailingTrueRows = """
+                    k\tid\tck\tc2k\tc3k
+                    1\t1\t1\t1\t1
+                    null\tnull\t4\t4\t4
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                assertQuery(innerJoin.formatted(isFalse))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .returns("k\tid\tck\tc2k\n");
+                assertQuery(innerJoin.formatted(isTrue) + " ORDER BY c2k")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tck\tc2k
+                                1\t1\t1\t1
+                                null\tnull\t4\t4
+                                """);
+                for (String joinType : new String[]{"Right", "Full"}) {
+                    assertQuery(trailingJoin.formatted(isFalse, joinType.toUpperCase()) + " ORDER BY c3k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .withPlan("""
+                                    Encode sort
+                                      keys: [c3k]
+                                        SelectedRecord
+                                            Nested Loop Left Join
+                                              filter: a.x>=b.y
+                                              outerJoinCheck: true
+                                                Hash %s Outer Join%s
+                                                  condition: c3.k=c2.k
+                                                    Filter filter: now()<2000-01-01T00:00:00.000000Z
+                                                        Hash Join%s
+                                                          condition: c2.k=c.k
+                                                            Hash Full Outer Join%s
+                                                              condition: c.k=a.k
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: a
+                                                                Hash
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: c
+                                                            Hash
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: c
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: c
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: b
+                                    """.formatted(joinType, light, light, light))
+                            .returns(trailingFalseRows);
+                    assertQuery(trailingJoin.formatted(isTrue, joinType.toUpperCase()) + " ORDER BY c3k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns(trailingTrueRows);
+                }
+                final String trailingFalse = trailingJoin.formatted(isFalse, "RIGHT");
+                assertQuery("SELECT * FROM (" + trailingFalse + ") ORDER BY c3k LIMIT 1")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tck\tc2k\tc3k
+                                null\tnull\tnull\tnull\t1
+                                """);
+                assertQuery("SELECT * FROM (" + trailingFalse + ") ORDER BY c3k LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tck\tc2k\tc3k
+                                null\tnull\tnull\tnull\t4
+                                """);
+                // the CROSS JOIN reads the LEFT join again for each of its master rows
+                assertQuery("SELECT * FROM (SELECT 1 n UNION ALL SELECT 2) x CROSS JOIN (" + trailingFalse + ") q ORDER BY n, c3k")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                n\tk\tid\tck\tc2k\tc3k
+                                1\tnull\tnull\tnull\tnull\t1
+                                1\tnull\tnull\tnull\tnull\t4
+                                2\tnull\tnull\tnull\tnull\t1
+                                2\tnull\tnull\tnull\tnull\t4
+                                """);
+                assertQuery("SELECT * FROM (" + trailingFalse + " UNION ALL " + trailingJoin.formatted(isTrue, "RIGHT") + ") ORDER BY c3k, k, ck")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tck\tc2k\tc3k
+                                null\tnull\tnull\tnull\t1
+                                1\t1\t1\t1\t1
+                                null\tnull\tnull\tnull\t4
+                                null\tnull\t4\t4\t4
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterOuterJoinUnderRuntimeConstantWhereGate() throws Exception {
+        // The WHERE names a.x, which the RIGHT or FULL JOIN to c NULL-extends, so it filters after that join, and
+        // folds to now() < '2000-01-01', a runtime constant. A gate tests it once per execution, between the outer
+        // join and the LEFT JOIN to b, which runs after the outer join, see OuterJoinNullCheck. A false gate opens no
+        // join below it, and the LEFT join, which reads no row then, failed with "outer join cursor is not open".
+        // EXPLAIN opens the cursor too. A constant in place of now() needs no gate and returns the same rows.
+        assertMemoryLeak(() -> {
+            createTablesForOuterJoinGate();
+            final String isFalse = "(a.x > 0 AND false) OR now() < '2000-01-01'";
+            final String isTrue = "(a.x > 0 AND false) OR now() > '2000-01-01'";
+            final String fullJoin = "SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k WHERE ";
+            final String rightJoin = "SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k WHERE ";
+            // the gate holds the RIGHT JOIN to c and the FULL JOIN to d after it
+            final String twoOuterJoins = "SELECT a.k, b.id, c.k ck, d.k dk FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k"
+                    + " FULL JOIN c d ON d.k = c.k WHERE ";
+            final String noRows = "k\tx\tid\tck\tv\n";
+            final String fullJoinRows = """
+                    k\tx\tid\tck\tv
+                    null\tnull\tnull\t4\t400
+                    1\t10\t1\t1\t100
+                    2\t20\t1\tnull\tnull
+                    2\t20\t2\tnull\tnull
+                    3\t30\t1\tnull\tnull
+                    3\t30\t2\tnull\tnull
+                    3\t30\t3\tnull\tnull
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery(fullJoin + isFalse)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .withPlan("""
+                                SelectedRecord
+                                    Nested Loop Left Join
+                                      filter: a.x>=b.y
+                                      outerJoinCheck: true
+                                        Filter filter: now()<2000-01-01T00:00:00.000000Z
+                                            Hash Full Outer Join%s
+                                              condition: c.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: c
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                """.formatted(isFullFat ? "" : " Light"))
+                        .returns(noRows);
+                assertQuery(fullJoin + isTrue + " ORDER BY k, id, ck")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns(fullJoinRows);
+                assertQuery(rightJoin + isFalse)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .returns(noRows);
+                assertQuery(rightJoin + isTrue + " ORDER BY k, id, ck")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tx\tid\tck\tv
+                                null\tnull\tnull\t4\t400
+                                1\t10\t1\t1\t100
+                                """);
+                assertQuery(twoOuterJoins + isFalse)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .returns("k\tid\tck\tdk\n");
+                assertQuery(twoOuterJoins + isTrue + " ORDER BY dk")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tid\tck\tdk
+                                1\t1\t1\t1
+                                null\tnull\t4\t4
+                                """);
+                assertQuery(fullJoin + "(a.x > 0 AND false) OR 1 = 0")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .returns(noRows);
+                assertQuery(fullJoin + "(a.x > 0 AND false) OR 1 = 1 ORDER BY k, id, ck")
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns(fullJoinRows);
+                assertQuery("SELECT count(*) FROM (" + fullJoin + isFalse + ")")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .fullFatJoins(isFullFat)
+                        .returns("count\n0\n");
+                assertQuery("WITH q AS (" + fullJoin + isFalse + ") SELECT * FROM q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .fullFatJoins(isFullFat)
+                        .returns(noRows);
+            }
+        });
+    }
+
+    @Test
+    public void testKeylessLeftJoinAfterOuterJoinWithFilterUnderRuntimeConstantGate() throws Exception {
+        // The RIGHT or FULL JOIN to l has the filter l.k > 2 and runs on the filtered hash join. The LEFT JOIN to cn
+        // runs after it, see OuterJoinNullCheck, and the WHERE, which names a.x and folds to a runtime constant,
+        // gates the outer join. A false gate opens no join below it, and the LEFT join, which reads no row then,
+        // failed with "outer join cursor is not open". cn row 2 has a NULL y, and a.x >= cn.y is true when both are
+        // NULL, so a row that the outer join NULL-extends would come with cn row 2 if the LEFT join evaluated its ON
+        // clause for it.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            execute("CREATE TABLE cn (id INT, y INT)");
+            execute("INSERT INTO cn VALUES (1, 1), (2, null), (3, 5)");
+            final String query = "SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k"
+                    + " %s JOIN l ON b.k = l.k AND l.k > 2 WHERE (a.x > 0 AND false) OR %s";
+            final String noRows = "k\tid\tlk\n";
+            final String rightJoinRows = """
+                    k\tid\tlk
+                    null\tnull\t1
+                    null\tnull\t2
+                    null\tnull\t3
+                    4\t1\t4
+                    4\t3\t4
+                    """;
+            final String fullJoinRows = """
+                    k\tid\tlk
+                    2\t1\tnull
+                    2\t3\tnull
+                    6\t1\tnull
+                    6\t3\tnull
+                    null\tnull\t1
+                    null\tnull\t2
+                    null\tnull\t3
+                    4\t1\t4
+                    4\t3\t4
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                for (String joinType : new String[]{"Right", "Full"}) {
+                    final String sqlJoinType = joinType.toUpperCase();
+                    final String expectedTrue = joinType.equals("Right") ? rightJoinRows : fullJoinRows;
+                    assertQuery(query.formatted(sqlJoinType, "now() < '2000-01-01'"))
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .fullFatJoins(isFullFat)
+                            .withPlan("""
+                                    SelectedRecord
+                                        Nested Loop Left Join
+                                          filter: a.x>=cn.y
+                                          outerJoinCheck: true
+                                            Filter filter: now()<2000-01-01T00:00:00.000000Z
+                                                Hash %s Outer Join%s
+                                                  condition: l.k=b.k
+                                                  filter: 2<l.k
+                                                    Hash Join%s
+                                                      condition: b.k=a.k
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: a
+                                                        Hash
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: b
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: l
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: cn
+                                    """.formatted(joinType, light, light))
+                            .returns(noRows);
+                    assertQuery(query.formatted(sqlJoinType, "now() > '2000-01-01'") + " ORDER BY lk, k, id")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns(expectedTrue);
+                    assertOuterJoinGateAcrossExecutions(query.formatted(sqlJoinType, "$1 > 0") + " ORDER BY lk, k, id", isFullFat, noRows, expectedTrue, 1);
+                }
             }
         });
     }
@@ -21695,6 +22112,39 @@ public class JoinTest extends AbstractCairoTest {
         }
     }
 
+    // Runs one factory of the query, built on the light or the full-fat hash joins, with $1 = 0, 1, 0, NULL and 1. The
+    // query gates joins with $1 > 0, which is false for 0 and NULL, and then the execution opens only the tables
+    // outside the gate, falseReaderCount of them.
+    private void assertOuterJoinGateAcrossExecutions(
+            String query,
+            boolean isFullFat,
+            String expectedFalse,
+            String expectedTrue,
+            int falseReaderCount
+    ) throws Exception {
+        bindVariableService.clear();
+        bindVariableService.setInt(0, 0);
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            compiler.setFullFatJoins(isFullFat);
+            try (RecordCursorFactory factory = select(compiler, query, sqlExecutionContext)) {
+                for (int value : new int[]{0, 1, 0, Numbers.INT_NULL, 1}) {
+                    bindVariableService.setInt(0, value);
+                    final boolean isGateOpen = value == 1;
+                    final String message = query + ", $1=" + value + ", fullFat=" + isFullFat;
+                    if (!isGateOpen) {
+                        try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertEquals(message + ", tables that the execution opened", falseReaderCount, engine.getBusyReaderCount());
+                        }
+                    }
+                    new QueryAssertion(engine, factory)
+                            .withContext(sqlExecutionContext)
+                            .returns(isGateOpen ? expectedTrue : expectedFalse);
+                    Assert.assertEquals(message + ", tables left open", 0, engine.getBusyReaderCount());
+                }
+            }
+        }
+    }
+
     private void assertRepeatedJoinQuery(String query, String left, boolean expectSize) throws Exception {
         assertQuery(query.replace("#JOIN_TYPE#", left))
                 .noLeakCheck()
@@ -21906,6 +22356,17 @@ public class JoinTest extends AbstractCairoTest {
         execute("CREATE TABLE f5 (a5 INT, b5 INT)");
         execute("CREATE TABLE f6 (a6 INT, b6 INT)");
         execute("INSERT INTO f6 VALUES (200, 1), (5, 5)");
+    }
+
+    // b row 4 has a NULL y, and a.x >= b.y is true when both are NULL, so a row that a RIGHT or FULL join
+    // NULL-extends would come with b row 4 if the LEFT JOIN to b evaluated its ON clause for it
+    private void createTablesForOuterJoinGate() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT)");
+        execute("INSERT INTO a VALUES (1, 10), (2, 20), (3, 30)");
+        execute("CREATE TABLE b (id INT, y INT)");
+        execute("INSERT INTO b VALUES (1, 5), (2, 15), (3, 25), (4, null)");
+        execute("CREATE TABLE c (k INT, v INT)");
+        execute("INSERT INTO c VALUES (1, 100), (4, 400)");
     }
 
     private void createTablesForOuterJoinInnerDerivedKey() throws SqlException {

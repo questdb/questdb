@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Record;
 import io.questdb.std.ObjList;
 
@@ -42,6 +41,14 @@ import io.questdb.std.ObjList;
  * joins be written after such a LEFT join, and none of them moves a master that is a join to the side it
  * hashes, as a join cannot return its rows by row id. A later outer join that NULL-extends its own left
  * side is in the list too.
+ * <p>
+ * A WHERE or INNER join filter that is a runtime constant gates the joins below it, see
+ * RuntimeConstGateRecordCursorFactory. A false gate returns no row and opens none of the joins below it, so an
+ * outer join below it has no cursor in that execution, or the one of an earlier execution. The LEFT join then
+ * reads only the rows that a RIGHT or FULL join above the gate returns without a master row. Such an outer join
+ * runs after the one below the gate, so the query writes it after that one, and after the LEFT join, which puts
+ * it in the list. As it NULL-extends each of those rows, the check returns true for them whatever the outer
+ * join below the gate holds, and leaves that join out while it has no record.
  */
 public final class OuterJoinNullCheck {
     private final ObjList<Record> records = new ObjList<>();
@@ -66,16 +73,17 @@ public final class OuterJoinNullCheck {
         return false;
     }
 
-    // Reads the records of the outer joins. The LEFT join calls this once its master cursor, which opens the
-    // cursors of the outer joins, is open.
+    // Reads the records of the outer joins. The LEFT join calls this once its master cursor is open, which opens
+    // the cursors of the outer joins, except those below a false gate: an outer join that never opened a cursor
+    // has no record, and the check leaves it out, see the class comment.
     void of() {
         records.clear();
         for (int i = 0, n = sources.size(); i < n; i++) {
             final Record record = sources.getQuick(i).getOuterJoinRecord();
-            if (!(record instanceof RightOuterJoinRecord) && !(record instanceof FullOuterJoinRecord)) {
-                throw CairoException.critical(0).put("outer join cursor is not open");
+            if (record != null) {
+                assert record instanceof RightOuterJoinRecord || record instanceof FullOuterJoinRecord;
+                records.add(record);
             }
-            records.add(record);
         }
     }
 }

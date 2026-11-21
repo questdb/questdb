@@ -72,10 +72,18 @@ import java.util.regex.Pattern;
  * sub-query that LIMIT keeps whole, and filters its rows, so it takes no such copy. The LIMIT queries end the WHERE-heavy flat form with a LIMIT,
  * which may return any rows of the query but no fewer than it asks for, so a filter of a table before the
  * RIGHT or FULL join must not stop at the LIMIT.
+ * A WHERE conjunct, or a conjunct of an INNER join after a RIGHT or FULL join, may name a column but fold to
+ * $1 > 0, a runtime constant that gates the joins below it once per execution, see appendFoldedPredicate().
+ * Half of the LEFT joins have no join key, and SqlOptimiser may run such a LEFT join after the RIGHT and FULL
+ * joins written after it, see OuterJoinNullCheck.
  */
 public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // a join of the flat form: its type and the number of its table
     private static final Pattern FLAT_JOIN = Pattern.compile(" (JOIN|LEFT JOIN|CROSS JOIN|RIGHT JOIN|FULL JOIN|ASOF JOIN|LT JOIN) t(\\d)");
+    // queries that the folded predicate coverage test draws from a fixed seed
+    private static final int FOLDED_PREDICATE_CORPUS_SIZE = 1_000;
+    // the end of the predicate of appendFoldedPredicate()
+    private static final String FOLDED_PREDICATE_END = " IS NULL AND false) OR $1 > 0)";
     // a FULL join whose slave a later INNER join ties to an earlier table, with WHERE on the slave only
     private static final Pattern FULL_JOIN_SLAVE_ONLY_REJECTED = Pattern.compile(
             "FULL JOIN t(\\d) ON [^J]*\\d JOIN t(\\d) ON c\\d = c\\2 AND c\\1 = c\\2 [^W]*WHERE c\\1 > 0$"
@@ -251,6 +259,32 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueriesCoverFoldedConjunctsAfterKeylessLeftJoin() {
+        // A LEFT join without join keys may run after the RIGHT and FULL joins written after it and checks them for
+        // each of its rows, see OuterJoinNullCheck. The folded predicate in the ON clause of an INNER join after such
+        // an outer join gates the joins up to the INNER join, and the RIGHT or FULL join that ends the query returns
+        // rows from the gate while it is false. Before the check skipped an outer join that a false gate kept
+        // closed, the LEFT join failed with "outer join cursor is not open". A hundredth of the queries suffices for
+        // that shape: it needs a LEFT join without =, a RIGHT or FULL join and an INNER join that line up.
+        final Rnd rnd = new Rnd(42, 4242);
+        int foldedCount = 0;
+        int foldedAfterKeylessLeftJoinCount = 0;
+        for (int i = 0; i < FOLDED_PREDICATE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, false, false)[0];
+            if (flat.contains(FOLDED_PREDICATE_END)) {
+                foldedCount++;
+            }
+            if (hasFoldedPredicateAfterKeylessLeftJoin(flat, false)) {
+                foldedAfterKeylessLeftJoinCount++;
+            }
+        }
+        final String counts = "folded=" + foldedCount + ", foldedAfterKeylessLeftJoin=" + foldedAfterKeylessLeftJoinCount
+                + " of " + FOLDED_PREDICATE_CORPUS_SIZE;
+        Assert.assertTrue(counts, foldedCount * 20 >= FOLDED_PREDICATE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedAfterKeylessLeftJoinCount * 100 >= FOLDED_PREDICATE_CORPUS_SIZE);
+    }
+
+    @Test
     public void testQueriesCoverMultiTableConjunctsAfterOuterJoin() {
         // Without the multi-table branches of SqlOptimiser.addModelOnPredicateFromCollectedIndexes(), such a
         // conjunct of an INNER join filtered below the RIGHT or FULL join, which then NULL-extended the rows
@@ -278,17 +312,29 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         // predicates that the NULL probe parses, bind variables whose value may be NULL, several conjuncts
         // on one table, which a NULL-rejecting conjunct takes along, and a join that matches on the table
         // after a RIGHT or FULL join, after which a copy also filters. A twentieth of the queries suffices
-        // for the last: it needs a RIGHT or FULL join, a later ON clause and a WHERE that line up.
+        // for the last: it needs a RIGHT or FULL join, a later ON clause and a WHERE that line up. The folded
+        // predicate gates the joins below the WHERE, which may hold an outer join that a LEFT join without join
+        // keys written before it checks, see testQueriesCoverFoldedConjunctsAfterKeylessLeftJoin; a hundredth
+        // of the queries suffices for that shape.
         final Rnd rnd = new Rnd(42, 4242);
         int latestOnCount = 0;
         int symbolCount = 0;
         int bindCount = 0;
         int conjunctPairCount = 0;
         int nullExtensionMatchCount = 0;
+        int foldedCount = 0;
+        int foldedAfterKeylessLeftJoinCount = 0;
         for (int i = 0; i < WHERE_CORPUS_SIZE; i++) {
             final String flat = generateQueries(rnd, false, false, true, false)[0];
             if (hasJoinOnWhereTableAfterOuterJoin(flat)) {
                 nullExtensionMatchCount++;
+            }
+            final int whereIndex = flat.indexOf(" WHERE ");
+            if (whereIndex != -1 && flat.indexOf(FOLDED_PREDICATE_END, whereIndex) != -1) {
+                foldedCount++;
+            }
+            if (hasFoldedPredicateAfterKeylessLeftJoin(flat, true)) {
+                foldedAfterKeylessLeftJoinCount++;
             }
             if (flat.contains(" LATEST ON ts PARTITION BY k")) {
                 latestOnCount++;
@@ -305,12 +351,15 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
         final String counts = "latestOn=" + latestOnCount + ", symbol=" + symbolCount + ", bind=" + bindCount
                 + ", conjunctPair=" + conjunctPairCount + ", nullExtensionMatch=" + nullExtensionMatchCount
+                + ", folded=" + foldedCount + ", foldedAfterKeylessLeftJoin=" + foldedAfterKeylessLeftJoinCount
                 + " of " + WHERE_CORPUS_SIZE;
         Assert.assertTrue(counts, latestOnCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, symbolCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, bindCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, conjunctPairCount * 10 >= WHERE_CORPUS_SIZE);
         Assert.assertTrue(counts, nullExtensionMatchCount * 20 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedCount * 20 >= WHERE_CORPUS_SIZE);
+        Assert.assertTrue(counts, foldedAfterKeylessLeftJoinCount * 100 >= WHERE_CORPUS_SIZE);
     }
 
     private static void appendCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined, int left, boolean isOuterJoinHeavy) {
@@ -322,6 +371,25 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             sql.append(column).append(tables[left]).append(" < ").append(column).append(tables[joined]);
         } else {
             sql.append(column).append(tables[joined]).append(" > 0");
+        }
+    }
+
+    // Appends a predicate that names the INT column of the table but folds to $1 > 0, a runtime constant, which is
+    // false for half of WHERE_BIND_VALUES. SqlCodeGenerator tests it once per execution in a gate over the joins
+    // below it, see RuntimeConstGateRecordCursorFactory; a false gate opens none of them. The parentheses keep it
+    // whole next to another conjunct, and hasJoinOnWhereTableAfterOuterJoin() does not take IS NULL as false on
+    // NULL.
+    private static void appendFoldedPredicate(StringBuilder sql, int table) {
+        sql.append("((c").append(table).append(FOLDED_PREDICATE_END);
+    }
+
+    // Appends a condition without a join key on the table at index joined: cX < cJ over an earlier table X, or
+    // cJ > 0, which also holds for a row of the table next to a row that a RIGHT or FULL join NULL-extends.
+    private static void appendKeylessCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined) {
+        if (rnd.nextBoolean()) {
+            sql.append('c').append(tables[rnd.nextInt(joined)]).append(" < c").append(tables[joined]);
+        } else {
+            sql.append('c').append(tables[joined]).append(" > 0");
         }
     }
 
@@ -344,11 +412,12 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
 
     // Appends a WHERE predicate on the table, of a kind that rnd picks: comparisons of the INT column with
     // constants and INT bind variables, IS [NOT] NULL, a function over it, predicates on the SYMBOL column,
-    // and an equality with the INT column of another table of the query.
+    // an equality with the INT column of another table of the query, and the folded predicate of
+    // appendFoldedPredicate().
     private static void appendWherePredicate(Rnd rnd, StringBuilder where, int table, int[] tables, int modelCount) {
         final String c = "c" + table;
         final String s = "s" + table;
-        switch (rnd.nextInt(16)) {
+        switch (rnd.nextInt(17)) {
             case 0 -> where.append(c).append(" > 0");
             case 1 -> where.append(c).append(" IS NULL");
             case 2 -> where.append(c).append(" IS NOT NULL");
@@ -364,7 +433,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             case 12 -> where.append(c).append(" > $1");
             case 13 -> where.append(c).append(" >= $1");
             case 14 -> where.append(c).append(" >= $1 AND ").append(c).append(" < $2");
-            default -> where.append(c).append(" = $1");
+            case 15 -> where.append(c).append(" = $1");
+            default -> appendFoldedPredicate(where, table);
         }
     }
 
@@ -423,6 +493,9 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         int impliedKeySlave = -1;
         // index of the last RIGHT or FULL join so far, which NULL-extends the tables before it
         int outerJoined = -1;
+        // a LEFT join without = in its ON clause so far, and one before the last RIGHT or FULL join so far
+        boolean isKeylessLeftJoin = false;
+        boolean isKeylessLeftJoinBeforeOuterJoin = false;
         for (int joined = 1; joined < modelCount; joined++) {
             final boolean isLast = joined == modelCount - 1;
             final String joinType;
@@ -461,6 +534,10 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                     impliedKeySlave = tables[joined - 1];
                     join.append('c').append(impliedKeyMaster).append(" = c").append(tables[joined])
                             .append(" AND c").append(impliedKeySlave).append(" = c").append(tables[joined]);
+                } else if (!isImpliedKeyHeavy && joinType.equals("LEFT JOIN") && rnd.nextBoolean()) {
+                    // half of the LEFT joins have no join key, so that SqlOptimiser often runs such a nested loop
+                    // LEFT join after the RIGHT and FULL joins written after it, see OuterJoinNullCheck
+                    appendKeylessCondition(rnd, join, tables, joined);
                 } else {
                     appendCondition(rnd, join, tables, joined, rnd.nextInt(joined), isOuterJoinHeavy);
                     if (rnd.nextInt(3) == 0) {
@@ -477,10 +554,21 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                         join.append(" AND ");
                         appendMultiTableCondition(rnd, join, tables, joined);
                     }
+                    // an INNER join after a RIGHT or FULL join may also get the folded predicate over a table that the
+                    // outer join NULL-extends, which gates the joins up to the INNER join, and more often when a LEFT
+                    // join without = that SqlOptimiser may run after the outer join comes before it
+                    if (joinType.equals("JOIN") && outerJoined != -1 && rnd.nextInt(isKeylessLeftJoinBeforeOuterJoin ? 2 : 4) == 0) {
+                        join.append(" AND ");
+                        appendFoldedPredicate(join, tables[rnd.nextInt(outerJoined)]);
+                    }
                 }
+            }
+            if (joinType.equals("LEFT JOIN") && join.indexOf(" = ") == -1) {
+                isKeylessLeftJoin = true;
             }
             if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
                 outerJoined = joined;
+                isKeylessLeftJoinBeforeOuterJoin = isKeylessLeftJoin;
             }
             if (isLast) {
                 prefixSubQuery = "SELECT * FROM (SELECT * FROM " + firstTable + joins + ") p" + join;
@@ -524,6 +612,43 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
         flat.append(latestOn);
         return new String[]{flat.toString(), nested, prefixSubQuery, limitFenced};
+    }
+
+    // True when the flat query writes a LEFT join without = in its ON clause, a RIGHT or FULL join after it, and
+    // the folded predicate of appendFoldedPredicate() after that: in the WHERE when isWhere is set, else in the ON
+    // clause of a later INNER join. SqlOptimiser may run such a LEFT join after the outer join, see
+    // OuterJoinNullCheck, and the gate of the folded predicate then sits between the two joins.
+    private static boolean hasFoldedPredicateAfterKeylessLeftJoin(String flat, boolean isWhere) {
+        final int whereIndex = flat.indexOf(" WHERE ");
+        final int end = whereIndex == -1 ? flat.length() : whereIndex;
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            joinTypes.add(joinMatcher.group(1));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, end));
+        }
+        boolean isKeylessLeftJoin = false;
+        boolean isOuterJoinAfterLeftJoin = false;
+        for (int i = 0, n = joinTypes.size(); i < n; i++) {
+            final String joinType = joinTypes.get(i);
+            if (!isWhere && isOuterJoinAfterLeftJoin && joinType.equals("JOIN") && onClauses.get(i).contains(FOLDED_PREDICATE_END)) {
+                return true;
+            }
+            if (joinType.equals("LEFT JOIN") && !onClauses.get(i).contains(" = ")) {
+                isKeylessLeftJoin = true;
+            } else if (isKeylessLeftJoin && (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN"))) {
+                isOuterJoinAfterLeftJoin = true;
+            }
+        }
+        return isWhere && isOuterJoinAfterLeftJoin && flat.indexOf(FOLDED_PREDICATE_END, end) != -1;
     }
 
     // True when the WHERE of the flat query filters the first table, or a table of an INNER or CROSS join, with a

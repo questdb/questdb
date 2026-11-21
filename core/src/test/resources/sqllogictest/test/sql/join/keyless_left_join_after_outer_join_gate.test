@@ -1,0 +1,197 @@
+# A LEFT join without join keys that the query writes before a RIGHT or FULL join with join keys runs
+# after the outer join in QuestDB, and returns a row that the outer join NULL-extends once, with NULL
+# in its own columns. A WHERE or INNER ON conjunct that names a column of a table that the outer join
+# NULL-extends but folds to a runtime constant, here now() < '2000-01-01' or now() > '2000-01-01',
+# gates the joins below it once per execution, between the outer join and the LEFT join. A false gate
+# opens none of the joins below it.
+# The expected rows come from DuckDB. b and cn hold a NULL y, and QuestDB's NULL >= NULL is true where
+# DuckDB's is NULL; QuestDB never evaluates the ON clause of the LEFT join for a NULL-extended row, so the
+# rows match DuckDB's. The join keys hold no NULL, so QuestDB's NULL = NULL does not show either.
+# The tables are not partitioned, so they are not WAL tables and inserted rows are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS a
+
+statement ok
+DROP TABLE IF EXISTS b
+
+statement ok
+DROP TABLE IF EXISTS c
+
+statement ok
+DROP TABLE IF EXISTS l
+
+statement ok
+DROP TABLE IF EXISTS cn
+
+statement ok
+CREATE TABLE a (k INT, x INT)
+
+statement ok
+CREATE TABLE b (id INT, y INT)
+
+statement ok
+CREATE TABLE c (k INT, v INT)
+
+statement ok
+INSERT INTO a VALUES (1, 10), (2, 20), (3, 30)
+
+statement ok
+INSERT INTO b VALUES (1, 5), (2, 15), (3, 25), (4, NULL)
+
+statement ok
+INSERT INTO c VALUES (1, 100), (4, 400)
+
+# the WHERE names a.x, which the FULL JOIN to c NULL-extends, so its gate sits between that join and
+# the LEFT JOIN to b
+query IIIII rowsort
+SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k WHERE (a.x > 0 AND false) OR now() < '2000-01-01'
+----
+
+query IIIII rowsort
+SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k WHERE (a.x > 0 AND false) OR now() > '2000-01-01'
+----
+1	10	1	1	100
+2	20	1	NULL	NULL
+2	20	2	NULL	NULL
+3	30	1	NULL	NULL
+3	30	2	NULL	NULL
+3	30	3	NULL	NULL
+NULL	NULL	NULL	4	400
+
+# the same with a RIGHT JOIN to c
+query IIIII rowsort
+SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k WHERE (a.x > 0 AND false) OR now() < '2000-01-01'
+----
+
+query IIIII rowsort
+SELECT a.k, a.x, b.id, c.k ck, c.v FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k WHERE (a.x > 0 AND false) OR now() > '2000-01-01'
+----
+1	10	1	1	100
+NULL	NULL	NULL	4	400
+
+# the gate of the INNER JOIN to c2 sits above that join, after the FULL JOIN to c
+query IIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() < '2000-01-01')
+----
+
+query IIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() > '2000-01-01')
+----
+1	1	1	1
+NULL	NULL	4	4
+
+# a RIGHT JOIN to c3 after the gate NULL-extends every other table for each c3 row while the gate is
+# false
+query IIIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() < '2000-01-01') RIGHT JOIN c c3 ON c3.k = c2.k
+----
+NULL	NULL	NULL	NULL	1
+NULL	NULL	NULL	NULL	4
+
+query IIIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() > '2000-01-01') RIGHT JOIN c c3 ON c3.k = c2.k
+----
+1	1	1	1	1
+NULL	NULL	4	4	4
+
+# the same with a FULL JOIN to c3
+query IIIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() < '2000-01-01') FULL JOIN c c3 ON c3.k = c2.k
+----
+NULL	NULL	NULL	NULL	1
+NULL	NULL	NULL	NULL	4
+
+query IIIII rowsort
+SELECT a.k, b.id, c.k ck, c2.k c2k, c3.k c3k FROM a LEFT JOIN b ON a.x >= b.y FULL JOIN c ON a.k = c.k JOIN c c2 ON c2.k = c.k AND ((a.x > 0 AND false) OR now() > '2000-01-01') FULL JOIN c c3 ON c3.k = c2.k
+----
+1	1	1	1	1
+NULL	NULL	4	4	4
+
+# the gate holds the RIGHT JOIN to c and the FULL JOIN to d after it
+query IIII rowsort
+SELECT a.k, b.id, c.k ck, d.k dk FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k FULL JOIN c d ON d.k = c.k WHERE (a.x > 0 AND false) OR now() < '2000-01-01'
+----
+
+query IIII rowsort
+SELECT a.k, b.id, c.k ck, d.k dk FROM a LEFT JOIN b ON a.x >= b.y RIGHT JOIN c ON a.k = c.k FULL JOIN c d ON d.k = c.k WHERE (a.x > 0 AND false) OR now() > '2000-01-01'
+----
+1	1	1	1
+NULL	NULL	4	4
+
+statement ok
+DROP TABLE a
+
+statement ok
+DROP TABLE b
+
+statement ok
+DROP TABLE c
+
+statement ok
+CREATE TABLE a (k INT, x INT)
+
+statement ok
+CREATE TABLE b (k INT)
+
+statement ok
+CREATE TABLE l (k INT)
+
+statement ok
+CREATE TABLE cn (id INT, y INT)
+
+statement ok
+INSERT INTO a VALUES (1, 3), (2, 6), (3, 9), (4, 12), (5, 15), (6, 18)
+
+statement ok
+INSERT INTO b VALUES (2), (4), (6), (8)
+
+statement ok
+INSERT INTO l VALUES (1), (2), (3), (4)
+
+statement ok
+INSERT INTO cn VALUES (1, 1), (2, NULL), (3, 5)
+
+# the RIGHT JOIN to l has a filter, l.k > 2
+query III rowsort
+SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k AND l.k > 2 WHERE (a.x > 0 AND false) OR now() < '2000-01-01'
+----
+
+query III rowsort
+SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k RIGHT JOIN l ON b.k = l.k AND l.k > 2 WHERE (a.x > 0 AND false) OR now() > '2000-01-01'
+----
+4	1	4
+4	3	4
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+
+# the same with a FULL JOIN to l
+query III rowsort
+SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k FULL JOIN l ON b.k = l.k AND l.k > 2 WHERE (a.x > 0 AND false) OR now() < '2000-01-01'
+----
+
+query III rowsort
+SELECT a.k, cn.id, l.k lk FROM a LEFT JOIN cn ON a.x >= cn.y JOIN b ON a.k = b.k FULL JOIN l ON b.k = l.k AND l.k > 2 WHERE (a.x > 0 AND false) OR now() > '2000-01-01'
+----
+2	1	NULL
+2	3	NULL
+4	1	4
+4	3	4
+6	1	NULL
+6	3	NULL
+NULL	NULL	1
+NULL	NULL	2
+NULL	NULL	3
+
+statement ok
+DROP TABLE a
+
+statement ok
+DROP TABLE b
+
+statement ok
+DROP TABLE l
+
+statement ok
+DROP TABLE cn
