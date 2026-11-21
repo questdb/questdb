@@ -72,6 +72,34 @@ public class LtCharFunctionFactoryTest extends AbstractFunctionFactoryTest {
         });
     }
 
+    @Test
+    public void testCharColumnVersusSymbolComparesWholeSymbol() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (c CHAR, sym SYMBOL, isym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO m VALUES ('a', 'ab', 'ab', 0)");
+            final String expected = "a\tb\tc\td\n" +
+                    "false\ttrue\tfalse\ttrue\n";
+            assertQuery("SELECT c >= sym a, c < sym b, sym <= c c, sym > c d FROM m")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT c >= isym a, c < isym b, isym <= c c, isym > c d FROM m")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT count() FROM m WHERE c >= sym")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n0\n");
+            bindVariableService.setChar(0, 'a');
+            assertQuery("SELECT $1 >= sym a, $1 < sym b, sym <= $1 c, sym > $1 d FROM m")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new LtCharFunctionFactory();
