@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
@@ -285,6 +286,37 @@ public class StaleParquetColumnTopCompactionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWriterRebuildBitmapIndexColumnAbsent() throws Exception {
+        assertWriterRebuildRepairsIndex("bitmap_absent~9", "bitmap_absent", "select ts, x, v, s from bitmap_absent where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testWriterRebuildBitmapIndexColumnTop() throws Exception {
+        assertWriterRebuildRepairsIndex("bitmap_top~10", "bitmap_top", "select ts, x, v, s from bitmap_top where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testWriterRebuildCompactedAbsent() throws Exception {
+        // Only the stale top makes this one not compact: the copy keeps every column as it is.
+        assertWriterRebuildRepairsIndex("compacted_absent~9", "compacted_absent", "select ts, x, v, s from compacted_absent where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testWriterRebuildCoveringIndexColumnAbsent() throws Exception {
+        assertWriterRebuildRepairsIndex("covering_absent~13", "covering_absent", "select ts, v from covering_absent where s = 'a'", "ts\tv\n2024-01-01T05:05:00.000000Z\t42\n");
+    }
+
+    @Test
+    public void testWriterRebuildPostingIndexColumnAbsent() throws Exception {
+        assertWriterRebuildRepairsIndex("posting_absent~11", "posting_absent", "select ts, x, v, s from posting_absent where s = 'a'", ROW_A);
+    }
+
+    @Test
+    public void testWriterRebuildPostingIndexColumnTop() throws Exception {
+        assertWriterRebuildRepairsIndex("posting_top~12", "posting_top", "select ts, x, v, s from posting_top where s = 'a'", ROW_A);
+    }
+
     private static void assertNoDeadBytes(TableToken token) {
         try (TableReader reader = engine.getReader(token)) {
             reader.openPartition(0);
@@ -389,5 +421,27 @@ public class StaleParquetColumnTopCompactionTest extends AbstractCairoTest {
         } else {
             assertQuery(query).timestamp("ts").returns(expected);
         }
+    }
+
+    private void assertWriterRebuildRepairsIndex(String fixture, String table, String indexQuery, String day1Hour5Result) throws Exception {
+        final boolean covering = indexQuery.startsWith("select ts, v from");
+        assertMemoryLeak(() -> {
+            loadFixture(fixture);
+            final TableToken token = engine.verifyTableName(table);
+            Assert.assertFalse("stale column tops make the partition not compact", isParquetPartitionCompact(token, 0));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (TableWriter writer = engine.getWriter(token, "test")) {
+                Assert.assertTrue(writer.compactParquetPartition(0));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            Assert.assertTrue("the rebuilt partition must be compact", isParquetPartitionCompact(token, 0));
+            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
+            Assert.assertEquals(0, getColumnTop(token, DAY1, "v"));
+            assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
+            printSql(indexQuery.replace(" where s = ", " where s::string = "));
+            assertIndexQuery(indexQuery, covering, sink.toString());
+        });
     }
 }
