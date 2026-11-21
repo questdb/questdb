@@ -352,14 +352,14 @@ public class GenericNanosFormat extends AbstractDateFormat {
                         year = Nanos.getYear(nanos);
                         leap = Nanos.isLeapYear(year);
                     }
-                    NanosFormatUtils.appendYear0(sink, year % 100);
+                    NanosFormatUtils.appendYear0(sink, year);
                     break;
                 case NanosFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Nanos.getYear(nanos);
                         leap = Nanos.isLeapYear(year);
                     }
-                    NanosFormatUtils.appendYear00(sink, year % 1000);
+                    NanosFormatUtils.appendYear00(sink, year);
                     break;
                 case NanosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {

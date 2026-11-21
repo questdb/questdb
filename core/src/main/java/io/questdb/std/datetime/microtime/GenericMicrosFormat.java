@@ -351,14 +351,14 @@ public class GenericMicrosFormat extends AbstractDateFormat {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    MicrosFormatUtils.appendYear0(sink, year % 100);
+                    MicrosFormatUtils.appendYear0(sink, year);
                     break;
                 case MicrosFormatCompiler.OP_YEAR_THREE_DIGITS:
                     if (year == Integer.MIN_VALUE) {
                         year = Micros.getYear(micros);
                         leap = CommonUtils.isLeapYear(year);
                     }
-                    MicrosFormatUtils.appendYear00(sink, year % 1000);
+                    MicrosFormatUtils.appendYear00(sink, year);
                     break;
                 case MicrosFormatCompiler.OP_YEAR_FOUR_DIGITS:
                     if (year == Integer.MIN_VALUE) {
