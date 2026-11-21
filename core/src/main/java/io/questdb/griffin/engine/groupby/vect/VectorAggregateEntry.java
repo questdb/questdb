@@ -91,20 +91,25 @@ public class VectorAggregateEntry implements Mutable {
             // 0 and working out size differently or finding any fixed-size column and using that.
             final long valueAddress = valueColIndex > -1 ? frameMemory.getPageAddress(valueColIndex) : 0;
 
-            // Zero keyAddress means non-keyed aggregation or column top.
-            final long keyAddress = keyColIndex > -1 ? frameMemory.getPageAddress(keyColIndex) : 0;
-            if (pRosti != null && keyAddress != 0) {
-                final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
-                if (!func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount)) {
-                    if (oomCounter != null) {
-                        oomCounter.incrementAndGet();
-                    }
-                }
-                if (raf != null) {
-                    raf.updateMemoryUsage(pRosti[slot], oldSize);
-                }
-            } else {
+            if (pRosti == null) {
                 func.aggregate(valueAddress, frameRowCount, slot);
+                return;
+            }
+            final long keyAddress = frameMemory.getPageAddress(keyColIndex);
+            final long oldSize = Rosti.getAllocMemory(pRosti[slot]);
+            final boolean isAggregated;
+            if (keyAddress != 0) {
+                isAggregated = func.aggregate(pRosti[slot], keyAddress, valueAddress, frameRowCount);
+            } else {
+                // A column top reads as the NULL key, which must exist even when wrapUp() has no value to add to it.
+                isAggregated = Rosti.keyedIntDistinct(pRosti[slot], Rosti.getInitialValuesSlot(pRosti[slot]), 1);
+                func.aggregate(valueAddress, frameRowCount, slot);
+            }
+            if (!isAggregated && oomCounter != null) {
+                oomCounter.incrementAndGet();
+            }
+            if (raf != null) {
+                raf.updateMemoryUsage(pRosti[slot], oldSize);
             }
         } finally {
             perWorkerLocks.releaseSlot(slot);

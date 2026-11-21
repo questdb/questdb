@@ -41,13 +41,20 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.groupby.CountRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
@@ -209,6 +216,7 @@ public final class QueryRunner {
     private final boolean diffFused;
     private final boolean diffJit;
     private final boolean diffShadow;
+    private final boolean diffStream;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
     // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
@@ -239,6 +247,7 @@ public final class QueryRunner {
     private int fusedAxisCompletedRuns;
     private int fusedAxisRuns;
     private int fusedAxisSelected;
+    private int streamAxisRuns;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -267,6 +276,7 @@ public final class QueryRunner {
             boolean diffJit,
             boolean diffShadow,
             boolean diffFused,
+            boolean diffStream,
             Overrides mapPageOverrides,
             boolean verifyCursor,
             ObjList<FuzzTable> tables,
@@ -278,6 +288,7 @@ public final class QueryRunner {
         this.mapPageOverrides = mapPageOverrides;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
+        this.diffStream = diffStream;
         this.verifyCursor = verifyCursor;
         this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
@@ -361,6 +372,10 @@ public final class QueryRunner {
      */
     public int getFusedAxisSelected() {
         return fusedAxisSelected;
+    }
+
+    public int getStreamAxisRuns() {
+        return streamAxisRuns;
     }
 
     /**
@@ -1085,6 +1100,22 @@ public final class QueryRunner {
         return false;
     }
 
+    static boolean factoryHasLimitOverStream(RecordCursorFactory factory) {
+        boolean hasLimit = false;
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof StreamGroupByRecordCursorFactory || f instanceof AsyncStreamGroupByRecordCursorFactory) {
+                return hasLimit;
+            }
+            if (f instanceof LimitRecordCursorFactory) {
+                hasLimit = true;
+            } else if (!(f instanceof QueryProgress || f instanceof SelectedRecordCursorFactory
+                    || f instanceof VirtualRecordCursorFactory || f instanceof FilteredRecordCursorFactory)) {
+                return false;
+            }
+        }
+        return false;
+    }
+
     private static String renderOutcome(Outcome outcome, CharSequence rows) {
         if (outcome.failure == null) {
             return "ok, " + outcome.rowsRead + " rows:\n" + rows;
@@ -1550,6 +1581,17 @@ public final class QueryRunner {
                 && executionContext.isParallelHashJoinGroupByEnabled();
     }
 
+    private boolean isLimitOverStream(String sql) {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = engine.select(compiler, sql, executionContext)
+        ) {
+            return factoryHasLimitOverStream(factory);
+        } catch (SqlException e) {
+            return false;
+        }
+    }
+
     /**
      * Reconciles {@code bF}, the run with the fused hash join GROUP BY disabled (see
      * {@link #runFusedOff}), against the pivot {@code bJ}, which ran with it enabled. The run with
@@ -1758,7 +1800,8 @@ public final class QueryRunner {
             if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
                 buildChoiceRuns++;
             }
-            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan),
+                    Chars.indexOf(plan, 0, plan.length(), "Stream Group By") >= 0, fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1778,9 +1821,44 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Runs the query on the primary at JIT-off with the stream GROUP BY disabled and reconciles it
+     * against the pivot {@code bJ}, whose plan used it. The hash GROUP BY is the oracle for every
+     * stream plan, including a SAMPLE BY nested under LATEST ON, a join or a LIMIT.
+     */
+    private Result runStreamVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        executionContext.setStreamGroupByEnabled(false);
+        Outcome bS;
+        try {
+            bS = runOnce(query.sql(), rowsE, primaryHasAnyParquet, query.deterministic());
+        } finally {
+            executionContext.setStreamGroupByEnabled(true);
+        }
+        streamAxisRuns++;
+        if (bS.hasStreamGroupBy) {
+            return Result.failed(query.sql(), new AssertionError(
+                    "the stream GROUP BY is disabled but the plan still uses it: " + query.sql()));
+        }
+        if (bS.failure instanceof ImplicitCastException && isLimitOverStream(query.sql())) {
+            return Result.skipped("stream early exit " + bS.exceptionClass);
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                bS,
+                rowsB,
+                rowsE,
+                query.deterministic(),
+                "stream GROUP BY divergence",
+                "stream on ",
+                "stream off"
+        );
+    }
+
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
+        if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && mapPageOverrides == null && !query.hasBind()
                 && query.referenceSql() == null) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
@@ -1856,6 +1934,13 @@ public final class QueryRunner {
                             return pageResult;
                         }
                     }
+                }
+            }
+
+            if (diffStream && bJ.hasStreamGroupBy) {
+                Result streamResult = runStreamVariant(query, bJ);
+                if (streamResult.isFailed()) {
+                    return streamResult;
                 }
             }
 
@@ -2023,6 +2108,7 @@ public final class QueryRunner {
             boolean hasBlockingAggregation,
             boolean usesParquet,
             boolean hasFusedHashJoin,
+            boolean hasStreamGroupBy,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -2030,15 +2116,15 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean hasStreamGroupBy, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, hasStreamGroupBy, fpColumnMask, null, null, null);
         }
     }
 

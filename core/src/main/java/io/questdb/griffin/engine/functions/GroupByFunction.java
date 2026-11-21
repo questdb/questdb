@@ -66,7 +66,7 @@ public interface GroupByFunction extends Function, Mutable {
      * This method:
      * <ul>
      *     <li>runs without a preceding {@link #computeFirst(MapValue, Record, long)} invocation;</li>
-     *     <li>is not followed by {@link #merge(MapValue, MapValue)};</li>
+     *     <li>may be followed by {@link #merge(MapValue, MapValue)} in parallel execution;</li>
      *     <li>is used only when {@link #supportsBatchComputation()} returns {@code true}.</li>
      * </ul>
      *
@@ -322,6 +322,14 @@ public interface GroupByFunction extends Function, Mutable {
 
     default boolean isScalar() {
         return true;
+    }
+
+    /**
+     * All per-group state is stored in the MapValue. After copying or merging it,
+     * the source state can be reused or released immediately.
+     */
+    default boolean isStateSelfContained() {
+        return false;
     }
 
     /**

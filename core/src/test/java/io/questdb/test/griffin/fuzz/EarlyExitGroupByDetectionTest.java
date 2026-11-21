@@ -100,6 +100,22 @@ public class EarlyExitGroupByDetectionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLimitOverStreamGroupByDetection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT x, timestamp_sequence(0, 1000000L) FROM long_sequence(10)");
+
+            assertLimitOverStream("SELECT ts, sum(l) s FROM t SAMPLE BY 1s LIMIT 3", true);
+            assertLimitOverStream("SELECT * FROM (SELECT ts, sum(l) s FROM t SAMPLE BY 1s) WHERE s > 0 LIMIT 3", true);
+            assertLimitOverStream("SELECT ts, s + 1 FROM (SELECT ts, sum(l) s FROM t SAMPLE BY 1s) LIMIT 3", true);
+            assertLimitOverStream("SELECT DISTINCT (x * x)::DECIMAL(9, 6), x FROM long_sequence(39) LIMIT 16", true);
+            assertLimitOverStream("SELECT ts, sum(l) s FROM t SAMPLE BY 1s", false);
+            assertLimitOverStream("SELECT ts, sum(l) s FROM t SAMPLE BY 1s LIMIT -3", false);
+            assertLimitOverStream("SELECT ts, sum(l::DOUBLE) s FROM t SAMPLE BY 1s ORDER BY s LIMIT 3", false);
+        });
+    }
+
     private static void assertBlockingAggregation(String sql, boolean expected) throws Exception {
         // engine.select wraps the plan in a QueryProgress factory, so the aggregation
         // is reached through getBaseFactory; the oracle walks that chain.
@@ -129,6 +145,13 @@ public class EarlyExitGroupByDetectionTest extends AbstractCairoTest {
                     break;
                 }
             }
+        }
+    }
+
+    private void assertLimitOverStream(String sql, boolean expected) throws Exception {
+        assertQuery(sql).noLeakCheck().assertsPlanContaining("Stream Group By");
+        try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
+            assertEquals("limit-over-stream detection for: " + sql, expected, QueryRunner.factoryHasLimitOverStream(factory));
         }
     }
 }

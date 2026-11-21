@@ -6341,7 +6341,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select day(ts), isin, last(start_price) from xetra where isin='cc' sample by 1d align to calendar")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             day\tisin\tlast
                             1\tcc\t0.7544827361952741
@@ -6368,7 +6368,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select day(ts), isin, last from (select ts, isin, last(start_price) from xetra where isin='cc' sample by 1d align to calendar)")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             day\tisin\tlast
                             1\tcc\t0.7544827361952741
@@ -7588,12 +7588,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .ddl(ddl)
                 .timestamp("")
-                .expectSize()
+                .noRandomAccess()
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async Stream Group By workers: 1
+                          segmentKey: a
                           keys: [b,c,d,e,f,g,h,a]
                           values: [max(i)]
                           filter: b!=''
@@ -7641,12 +7642,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .ddl(ddl)
                 .timestamp("")
-                .expectSize()
+                .noRandomAccess()
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async Stream Group By workers: 1
+                          segmentKey: a
                           keys: [b,c,d,e,f,g,h,a]
                           values: [max(i)]
                           filter: b!=''
@@ -7694,7 +7696,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .ddl(ddl)
                 .timestamp("")
-                .expectSize()
+                .noRandomAccess()
                 .returns("b\tc\td\te\tf\tg\th\ta\tj\n");
     }
 
@@ -7727,7 +7729,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
                 "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;")
                 .noRandomAccess()
-                .expectSize()
                 .noLeakCheck()
                 .returns("""
                         delta\ttimestamp
@@ -7874,7 +7875,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(x), sym timestamp from test1 sample by 15s align to calendar order by min")
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             min\ttimestamp
@@ -7902,13 +7902,13 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort light
+                                Encode sort
                                   keys: [min]
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: timestamp_floor_utc('15s',timestamp1)
                                       keys: [timestamp,timestamp1]
                                       keyFunctions: [timestamp_floor_utc('15s',timestamp1)]
                                       values: [min(x)]
-                                      filter: null
                                         SelectedRecord
                                             PageFrame
                                                 Row forward scan
@@ -7933,7 +7933,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                             """);
 
             assertQuery("select min(x), sym1 timestamp, sym2 timestamp0 from test2 sample by 15s align to calendar order by min")
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             min\ttimestamp\ttimestamp0
@@ -8184,7 +8183,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
             assertQuery("select distinct x as foo from long_sequence(1)")
                     .noLeakCheck()
                     .columnType(0, ColumnType.LONG)
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             foo
                             1
@@ -8713,7 +8712,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         SELECT timestamp, high FROM trades_agg
                     )""")
                     .noRandomAccess()
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             high
@@ -8746,7 +8744,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                         SELECT timestamp, max(price) AS high FROM trades SAMPLE BY 1m
                     )""")
                     .noRandomAccess()
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             high

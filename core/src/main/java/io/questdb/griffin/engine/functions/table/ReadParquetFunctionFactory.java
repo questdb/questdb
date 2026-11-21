@@ -88,6 +88,9 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
                 final GenericRecordMetadata metadata = new GenericRecordMetadata();
                 // `read_parquet` function will request symbols to be converted to varchar
                 decoder.metadata().copyToSansUnsupported(metadata, true);
+                if (metadata.getTimestampIndex() != -1 && !areRowGroupsInTimestampOrder(decoder)) {
+                    metadata.setTimestampIndex(-1);
+                }
                 if (metadata.getColumnCount() == 0) {
                     throw SqlException.$(argPos.getQuick(0), "no supported columns found in parquet file: ").put(filePath);
                 }
@@ -109,6 +112,21 @@ public class ReadParquetFunctionFactory implements FunctionFactory {
         } catch (Throwable e) {
             throw SqlException.$(argPos.getQuick(0), "failed to read parquet file: ").put(filePath).put(": ").put(e.getMessage());
         }
+    }
+
+    // sorting_columns orders the rows of each row group, but says nothing about the order of the row groups.
+    private static boolean areRowGroupsInTimestampOrder(ParquetFileDecoder decoder) {
+        final int timestampIndex = decoder.metadata().getTimestampIndex();
+        long previousMax = Long.MIN_VALUE;
+        for (int i = 0, n = decoder.metadata().getRowGroupCount(); i < n; i++) {
+            if (decoder.metadata().getRowGroupSize(i) > 0) {
+                if (decoder.rowGroupMinTimestamp(i, timestampIndex) < previousMax) {
+                    return false;
+                }
+                previousMax = decoder.rowGroupMaxTimestamp(i, timestampIndex);
+            }
+        }
+        return true;
     }
 
     private void checkPathIsSafeToRead(Path path, CharSequence filePath, int position, CairoConfiguration config) throws SqlException {
