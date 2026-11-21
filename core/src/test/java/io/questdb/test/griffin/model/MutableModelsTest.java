@@ -81,7 +81,7 @@ public class MutableModelsTest {
         model.setColumnType(ColumnType.STRING);
         model.setCastType(ColumnType.INT, 20);
         model.setIndexType(IndexType.BITMAP, 30, 256);
-        model.setIsDedupKey();
+        model.setIsDedupKey(40);
         model.setSymbolCacheFlag(true);
         model.setSymbolCapacity(1024);
         assertDifferentFromFresh(model, CreateTableColumnModel.FACTORY.newInstance());

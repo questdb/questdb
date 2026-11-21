@@ -24,6 +24,8 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
+
 public final class Vect {
     // Down is increasing scan direction
     public static final int BIN_SEARCH_SCAN_DOWN = 1;
@@ -120,7 +122,10 @@ public final class Vect {
                 dedupColumnData,
                 isSkipMode
         );
-        assert dedupRowCount != -1 : "unsorted data passed to deduplication";
+        if (dedupRowCount == -1) {
+            // -1 means unsorted data or a key column type the native dedup cannot compare, e.g. ARRAY
+            throw CairoException.critical(0).put("dedup failed, unsorted data or unsupported key column type");
+        }
         return dedupRowCount;
     }
 
