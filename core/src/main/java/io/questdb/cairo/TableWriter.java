@@ -145,6 +145,7 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.SingleCharCharSequence;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -24427,7 +24428,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putSym(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value));
+            // a NULL CHAR is stored as char 0, it must not become a symbol of its own
+            getPrimaryColumn(columnIndex).putInt(symbolMapWriters.getQuick(columnIndex).put(value == 0 ? null : SingleCharCharSequence.get(value)));
             setRowValueNotNull(columnIndex);
         }
 
@@ -24460,6 +24462,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putVarchar(int columnIndex, char value) {
+            // a NULL CHAR is stored as char 0, it must not become a one-character value
+            if (value == 0) {
+                putVarchar(columnIndex, (Utf8Sequence) null);
+                return;
+            }
             utf8Sink.clear();
             utf8Sink.put(value);
             VarcharTypeDriver.appendValue(
