@@ -5573,13 +5573,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // left the Java branch's copy invisible to the only catch that could free it.
         Function limitLoFunction = null;
         try {
-            if (filter.isRuntimeConstant()) {
+            if (filter.isRuntimeConstant() && !(filter instanceof GroupByFunction)) {
                 // The whole predicate is a runtime constant (e.g. a scalar boolean sub-query used
                 // directly, or its negation). Gate the outer scan behind a single per-execution
                 // evaluation instead of an async/serial per-row filter: false returns an empty
                 // cursor without opening the base, true delegates straight to the base. The
                 // retained expression clone backs the gate's filter-stealing contract, which the
                 // ASOF/LT join fast paths use to unwrap the gate over a time-frame-capable base.
+                // A top-level aggregate such as isOrdered($1) reports itself runtime-constant when
+                // its argument is one, yet it reads group-by state through a record and cannot be
+                // evaluated with the null record the gate passes, so it stays on the per-row path.
                 return new RuntimeConstGateRecordCursorFactory(factory, filter, deepClone(expressionNodePool, filterExpr));
             }
 
@@ -8262,16 +8265,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // closes only the remaining entries on failure.
                     ObjList<Function> postFilterPerWorkerFilters = null;
                     try {
-                        if (filter.isRuntimeConstant()) {
+                        if (filter.isRuntimeConstant() && !(filter instanceof GroupByFunction)) {
                             // The whole post-join filter is a runtime constant (e.g. a scalar
                             // boolean sub-query used directly, now(), or a bind variable). Gate the
                             // join output behind a single per-execution evaluation instead of an
                             // async/serial per-row filter: false returns an empty cursor without
                             // scanning the join output, true delegates straight to it with the
-                            // join's page-frame capability preserved. The gate retains `master` as
-                            // its base and frees it once on close, so - unlike the const-false
-                            // branch that builds EmptyTableRecordCursorFactory over the freed
-                            // master's JoinRecordMetadata - no incrementRefCount is needed here.
+                            // join's page-frame capability preserved. A top-level aggregate such as
+                            // isOrdered($1) reports itself runtime-constant when its argument is one,
+                            // yet it reads group-by state through a record and cannot be evaluated
+                            // with the null record the gate passes, so it stays on the per-row path.
+                            // The gate retains `master` as its base and frees it once on close, so -
+                            // unlike the const-false branch that builds EmptyTableRecordCursorFactory
+                            // over the freed master's JoinRecordMetadata - no incrementRefCount is
+                            // needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
                         } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
