@@ -888,7 +888,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             // Offsets 0, 1, and 2 select x=3,4,5; the last two exist only in the lead.
-            final long projectedLeadRows = countProjectedLeadRows("SELECT ts, x, x AS x0 FROM lv", false);
+            final long projectedLeadRows = countProjectedLeadRows("SELECT ts, x, x AS x0 FROM lv");
             final String query = "SELECT h.offset / 1_000_000 AS sec_offs, sum(l.x) AS agg, sum(l.x0) AS agg0 " +
                     "FROM probe t HORIZON JOIN (SELECT ts, x, x AS x0 FROM lv) l " +
                     "RANGE FROM 0s TO 2s STEP 1s AS h ORDER BY sec_offs";
