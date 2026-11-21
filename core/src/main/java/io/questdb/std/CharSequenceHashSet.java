@@ -239,7 +239,9 @@ public class CharSequenceHashSet extends AbstractCharSequenceHashSet implements 
         free -= n;
         for (int i = 0; i < n; i++) {
             final CharSequence key = list.getQuick(i);
-            keys[keyIndex(key)] = key;
+            if (key != null) {
+                keys[keyIndex(key)] = key;
+            }
         }
     }
 

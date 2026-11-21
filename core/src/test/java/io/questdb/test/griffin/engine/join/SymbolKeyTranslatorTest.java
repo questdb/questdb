@@ -214,6 +214,8 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 // Each probe key looked its text up in the build dictionary once.
                 Assert.assertEquals(11, build.keyOfCalls);
                 Assert.assertEquals(0, probe.keyOfCalls);
+                Assert.assertEquals(11, probe.valueOfOnceCalls);
+                Assert.assertEquals(0, probe.valueOfCalls);
 
                 // Found eligible, the same dictionaries fill from the build, which writes y's
                 // build key at key 9 alone. This is why only a dictionary that holds each text
@@ -280,7 +282,8 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
                 Assert.assertEquals("build lookups while opening", 0, buildLookupsWhileOpening);
                 Assert.assertEquals(4, probe.keyOfCalls);
                 Assert.assertEquals(0, probe.valueOfCalls);
-                Assert.assertEquals(4, build.valueOfCalls);
+                Assert.assertEquals(0, build.valueOfCalls);
+                Assert.assertEquals(4, build.valueOfOnceCalls);
                 view.close();
                 translator.close();
                 Assert.assertEquals(0, tracker.getUsed());
@@ -383,6 +386,7 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
         private final ObjList<String> texts = new ObjList<>();
         private int keyOfCalls;
         private int valueOfCalls;
+        private int valueOfOnceCalls;
 
         private Dictionary(String... texts) {
             this(false, texts);
@@ -431,6 +435,16 @@ public class SymbolKeyTranslatorTest extends AbstractCairoTest {
         @Override
         public CharSequence valueOf(int key) {
             valueOfCalls++;
+            return textAt(key);
+        }
+
+        @Override
+        public CharSequence valueOfOnce(int key) {
+            valueOfOnceCalls++;
+            return textAt(key);
+        }
+
+        private CharSequence textAt(int key) {
             return key >= 0 && key < texts.size() ? texts.getQuick(key) : null;
         }
     }

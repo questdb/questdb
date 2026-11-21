@@ -32,6 +32,18 @@ import org.junit.Test;
 public class DirectStringTest {
 
     @Test
+    public void testIsRawView() {
+        Assert.assertTrue(DirectString.isRawView(new DirectString()));
+        Assert.assertFalse(DirectString.isRawView(new DirectString() {
+            @Override
+            public char charAt(int index) {
+                return 'x';
+            }
+        }));
+        Assert.assertFalse(DirectString.isRawView("string"));
+    }
+
+    @Test
     public void testSubSequence() {
         final String string = "foobar";
         final int stringLen = string.length();

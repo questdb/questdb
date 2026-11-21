@@ -339,6 +339,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return retryAttemptAttributes;
     }
 
+    @TestOnly
+    public long getAsciiJsonWordCount() {
+        return responseSink.getAsciiJsonWordCount();
+    }
+
     public long getAuthenticationNanos() {
         return authenticationNanos;
     }

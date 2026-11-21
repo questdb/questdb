@@ -24,6 +24,9 @@
 
 package io.questdb.test.griffin.engine.functions.bool;
 
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -108,5 +111,62 @@ public class AllNotEqStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select * from tab where a <> all('{добрий,вечір}'::text[])")
                 .ddl("create table tab as (select cast(null as varchar) a from long_sequence(15));")
                 .returns("a\n");
+    }
+
+    @Test
+    public void testSymbolCastUsesKeyComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x::INT k, (CASE x % 4 WHEN 0 THEN 'aaa' WHEN 1 THEN 'bbb' WHEN 2 THEN '' END)::SYMBOL s FROM long_sequence(8))");
+            for (String lhs : new String[]{"s", "s::STRING"}) {
+                assertQuery("SELECT k FROM tab WHERE " + lhs + " <> ALL('{aaa,xyz}'::text[])")
+                        .noLeakCheck()
+                        .withPlanContaining("filter: s <> all [aaa,xyz]")
+                        .returns("""
+                                k
+                                1
+                                2
+                                5
+                                6
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSymbolCastWithWrongArgumentNamesString() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL, str STRING)");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE str <> ALL ('b')", 28, "there is no matching function `<>all` with the argument types: (STRING, CHAR)");
+            assertExceptionNoLeakCheck("SELECT * FROM tab WHERE s::STRING <> ALL ('b')", 34, "there is no matching function `<>all` with the argument types: (STRING, CHAR)");
+        });
+    }
+
+    @Test
+    public void testSymbolConstant() throws Exception {
+        assertQuery("SELECT 'aaa'::SYMBOL <> ALL('{abc}'::text[]) a, 'aaa'::SYMBOL <> ALL('{aaa}'::text[]) b, NULL::SYMBOL <> ALL('{abc}'::text[]) c")
+                .expectSize()
+                .returns("""
+                        a\tb\tc
+                        true\tfalse\tfalse
+                        """);
+    }
+
+    @Test
+    public void testSymbolReusedFactoryResolvesKeysPerExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s SYMBOL)");
+            execute("INSERT INTO tab VALUES ('aaa'), ('bbb')");
+            try (RecordCursorFactory factory = select("SELECT s FROM tab WHERE s <> ALL('{aaa,new}'::text[])")) {
+                assertFactoryRows("s\nbbb\n", factory);
+                execute("INSERT INTO tab VALUES ('new'), ('ccc')");
+                assertFactoryRows("s\nbbb\nccc\n", factory);
+            }
+        });
+    }
+
+    private void assertFactoryRows(String expected, RecordCursorFactory factory) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(expected, cursor, factory.getMetadata(), true);
+        }
     }
 }

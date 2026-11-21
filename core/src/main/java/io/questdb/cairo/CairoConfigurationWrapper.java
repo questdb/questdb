@@ -1665,6 +1665,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSymbolCacheMaxSize() {
+        return getDelegate().getSymbolCacheMaxSize();
+    }
+
+    @Override
     public int getSymbolPatternIndexThreshold() {
         return getDelegate().getSymbolPatternIndexThreshold();
     }

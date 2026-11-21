@@ -28,14 +28,30 @@ import io.questdb.cairo.CairoException;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.AbstractCharSequence;
 import io.questdb.std.str.DirectString;
 import org.junit.Assert;
 import org.junit.Test;
 
+
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class DirectSymbolMapTest {
+
+    @Test
+    public void testNativeMemoryBudgetOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            NativeMemoryBudget budget = new NativeMemoryBudget(Long.MAX_VALUE);
+            Assert.assertTrue(budget.tryReserve(Long.MAX_VALUE - 1));
+            Assert.assertFalse(budget.tryReserve(2));
+            Assert.assertTrue(budget.tryReserve(1));
+            Assert.assertFalse(budget.tryReserve(1));
+            budget.release(Long.MAX_VALUE);
+            Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
 
     @Test
     public void testClearResetsStateButKeepsBuffer() throws Exception {
@@ -162,7 +178,7 @@ public class DirectSymbolMapTest {
                     map.put(i, "value-" + i);
                 }
 
-                final class CountingCharSequence implements CharSequence {
+                final class CountingCharSequence extends AbstractCharSequence {
                     private int accesses;
                     private final String value = "absent-value";
 
@@ -179,7 +195,7 @@ public class DirectSymbolMapTest {
                     }
 
                     @Override
-                    public CharSequence subSequence(int start, int end) {
+                    protected CharSequence _subSequence(int start, int end) {
                         return value.subSequence(start, end);
                     }
                 }
@@ -421,11 +437,11 @@ public class DirectSymbolMapTest {
         // and used again. Prior state must not leak into the reopened instance.
         assertMemoryLeak(() -> {
             DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT);
-            try {
+            try (map) {
                 map.intern("before");
                 map.intern("close");
-                map.close();
-
+            }
+            try (map) {
                 map.reopen();
                 Assert.assertEquals(0, map.size());
                 Assert.assertNull(map.valueOf(0));
@@ -436,9 +452,8 @@ public class DirectSymbolMapTest {
                 Assert.assertEquals(1, map.intern("reopen"));
                 Assert.assertEquals("after", Chars.toString(map.valueOf(0)));
                 Assert.assertEquals(0, map.keyOf("after"));
-            } finally {
-                map.close();
             }
         });
     }
+
 }
