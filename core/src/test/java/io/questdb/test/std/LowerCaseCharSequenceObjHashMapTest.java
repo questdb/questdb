@@ -25,6 +25,8 @@
 package io.questdb.test.std;
 
 
+import io.questdb.cairo.TableToken;
+import io.questdb.std.Chars;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import org.junit.Assert;
@@ -37,6 +39,23 @@ import java.util.Map;
 
 public class LowerCaseCharSequenceObjHashMapTest {
     private static final String[] KEYS = {"a", "B", "c", "D", "e"};
+
+    @Test
+    public void testKeyIndexWithLowerCaseHashCode() {
+        final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
+        for (int i = 0; i < 100; i++) {
+            map.put("Key_" + i, i);
+        }
+        final TableToken token = new TableToken("KEY_42", "key_42~1", null, 1, false, false, false);
+        Assert.assertEquals(Chars.lowerCaseHashCode("KEY_42"), token.getTableNameLowerCaseHashCode());
+        Assert.assertEquals(Integer.valueOf(42), map.valueAt(map.keyIndex(token.getTableName(), token.getTableNameLowerCaseHashCode())));
+        // present and absent keys, in any case, land where keyIndex(key) lands
+        for (int i = 0; i < 200; i++) {
+            for (String key : new String[]{"key_" + i, "KEY_" + i, "Key_" + i}) {
+                Assert.assertEquals(key, map.keyIndex(key), map.keyIndex(key, Chars.lowerCaseHashCode(key)));
+            }
+        }
+    }
 
     @Test
     public void testPutIfAbsent() {

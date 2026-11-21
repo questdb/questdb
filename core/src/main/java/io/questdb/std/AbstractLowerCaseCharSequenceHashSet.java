@@ -90,6 +90,25 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
         return probe(key, index);
     }
 
+    /**
+     * Same as {@link #keyIndex(CharSequence)}, for a caller that holds the key's {@link Chars#lowerCaseHashCode(CharSequence)}
+     * already, so that a hot path does not hash the key again on every lookup, see
+     * {@link io.questdb.cairo.TableToken#getTableNameLowerCaseHashCode()}.
+     */
+    public int keyIndex(CharSequence key, int lowerCaseHashCode) {
+        int index = lowerCaseHashCode & mask;
+
+        if (keys[index] == noEntryKey) {
+            return index;
+        }
+
+        if (Chars.equalsIgnoreCase(key, keys[index])) {
+            return -index - 1;
+        }
+
+        return probe(key, index);
+    }
+
     public int keyIndex(CharSequence key, int lo, int hi) {
         int index = Chars.lowerCaseHashCode(key, lo, hi) & mask;
 

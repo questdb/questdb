@@ -383,7 +383,9 @@ public final class Chars {
         }
 
         for (int i = 0; i < ll; i++) {
-            if (Character.toLowerCase(l.charAt(i + lLo)) != Character.toLowerCase(r.charAt(i + rLo))) {
+            final char lc = l.charAt(i + lLo);
+            final char rc = r.charAt(i + rLo);
+            if (lc != rc && toLowerCase(lc) != toLowerCase(rc)) {
                 return false;
             }
         }
@@ -1145,7 +1147,7 @@ public final class Chars {
 
         int h = 0;
         for (int p = lo; p < hi; p++) {
-            h = 31 * h + Character.toLowerCase(value.charAt(p));
+            h = 31 * h + toLowerCase(value.charAt(p));
         }
         return h;
     }
@@ -1157,8 +1159,16 @@ public final class Chars {
         }
 
         int h = 0;
+        // A String's charAt() can be inlined; the call through CharSequence cannot be, once the many kinds of
+        // CharSequence this method hashes have made it megamorphic. Table and column names are Strings.
+        if (value instanceof String s) {
+            for (int p = 0; p < len; p++) {
+                h = 31 * h + toLowerCase(s.charAt(p));
+            }
+            return h;
+        }
         for (int p = 0; p < len; p++) {
-            h = 31 * h + Character.toLowerCase(value.charAt(p));
+            h = 31 * h + toLowerCase(value.charAt(p));
         }
         return h;
     }
@@ -1601,9 +1611,24 @@ public final class Chars {
         return true;
     }
 
+    // Compares the chars as they are first: equal chars are equal in lower case too, and the case-insensitive
+    // hash maps mostly compare a key with itself, spelled the same.
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len) {
+        // Strings first, see lowerCaseHashCode()
+        if (l instanceof String ls && r instanceof String rs) {
+            for (int i = 0; i < len; i++) {
+                final char lc = ls.charAt(i);
+                final char rc = rs.charAt(i);
+                if (lc != rc && toLowerCase(lc) != toLowerCase(rc)) {
+                    return false;
+                }
+            }
+            return true;
+        }
         for (int i = 0; i < len; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i))) {
+            final char lc = l.charAt(i);
+            final char rc = r.charAt(i);
+            if (lc != rc && toLowerCase(lc) != toLowerCase(rc)) {
                 return false;
             }
         }
@@ -1613,7 +1638,9 @@ public final class Chars {
     private static boolean equalsCharsIgnoreCase(@NotNull CharSequence l, @NotNull CharSequence r, int len, int rLo, int rHi) {
         assert len == (rHi - rLo);
         for (int i = 0; i < len; i++) {
-            if (Character.toLowerCase(l.charAt(i)) != Character.toLowerCase(r.charAt(i + rLo))) {
+            final char lc = l.charAt(i);
+            final char rc = r.charAt(i + rLo);
+            if (lc != rc && toLowerCase(lc) != toLowerCase(rc)) {
                 return false;
             }
         }
@@ -1637,6 +1664,16 @@ public final class Chars {
             }
         }
         return true;
+    }
+
+    // Same as Character.toLowerCase(c), which the case-insensitive hash maps and the case-insensitive comparisons
+    // depend on, but answers ASCII without the Unicode tables. Character.toLowerCase() maps 'A' to 'Z' and nothing
+    // else below 128.
+    private static char toLowerCase(char c) {
+        if (c < 128) {
+            return c >= 'A' && c <= 'Z' ? (char) (c + 32) : c;
+        }
+        return Character.toLowerCase(c);
     }
 
     static {

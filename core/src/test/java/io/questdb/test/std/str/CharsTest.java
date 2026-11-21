@@ -374,6 +374,41 @@ public class CharsTest {
     }
 
     @Test
+    public void testEqualsIgnoreCaseMatchesCharacterToLowerCase() {
+        // pairs that differ in case, and pairs that do not, for every char
+        final char[] others = new char[6];
+        for (int i = 0; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            others[0] = c;
+            others[1] = Character.toLowerCase(c);
+            others[2] = Character.toUpperCase(c);
+            others[3] = Character.toTitleCase(c);
+            others[4] = (char) (c ^ 0x20);
+            others[5] = (char) (c + 1);
+            for (char other : others) {
+                assertEqualsIgnoreCase(String.valueOf(c), String.valueOf(other));
+            }
+        }
+
+        // strings mixing ASCII, Latin-1 and other chars, some spelled in another case
+        final Random rnd = new Random(42);
+        final char[] alphabet = {'a', 'B', 'z', 'Z', '_', '0', '@', '[', '`', '{', 'é', 'É', 'ß', 'İ', 'ı', 'Ω', 'ω', 'K'};
+        final StringBuilder l = new StringBuilder();
+        final StringBuilder r = new StringBuilder();
+        for (int i = 0; i < 10_000; i++) {
+            l.setLength(0);
+            r.setLength(0);
+            for (int j = 0, n = rnd.nextInt(12); j < n; j++) {
+                final char c = alphabet[rnd.nextInt(alphabet.length)];
+                l.append(c);
+                final int spelling = rnd.nextInt(4);
+                r.append(spelling == 0 ? Character.toUpperCase(c) : spelling == 1 ? Character.toLowerCase(c) : spelling == 2 ? alphabet[rnd.nextInt(alphabet.length)] : c);
+            }
+            assertEqualsIgnoreCase(l.toString(), r.toString());
+        }
+    }
+
+    @Test
     public void testEqualsLowerCaseAscii() {
         Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "foo bar baz", 0, 11));
         Assert.assertTrue(Chars.equalsLowerCaseAscii("foo bar baz", "FoO bAr BaZ", 0, 11));
@@ -548,6 +583,21 @@ public class CharsTest {
         Assert.assertEquals(0, Chars.lastIndexOfDifferent("s  ", 0, 3, ' '));
         Assert.assertEquals(0, Chars.lastIndexOfDifferent("s s ", 0, 2, ' '));
         Assert.assertEquals(-1, Chars.lastIndexOfDifferent("s  ", 1, 3, ' '));
+    }
+
+    @Test
+    public void testLowerCaseHashCodeMatchesCharacterToLowerCase() {
+        // the hash of a single char is the char in lower case
+        for (int i = 0; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            final String value = "x" + c;
+            Assert.assertEquals("char " + i, Character.toLowerCase(c), Chars.lowerCaseHashCode(value, 1, 2));
+            Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(value));
+            // a CharSequence that is not a String takes another loop
+            Assert.assertEquals("char " + i, 31 * 'x' + Character.toLowerCase(c), Chars.lowerCaseHashCode(new StringBuilder(value)));
+        }
+        Assert.assertEquals(Chars.lowerCaseHashCode("ingest_sensor_measurements_eu1"), Chars.lowerCaseHashCode("Ingest_SENSOR_Measurements_EU1"));
+        Assert.assertEquals(Chars.lowerCaseHashCode("éΩ"), Chars.lowerCaseHashCode("ÉΩ"));
     }
 
     @Test
@@ -752,6 +802,24 @@ public class CharsTest {
                 expected10,
                 sink.toString()
         );
+    }
+
+    // Checks the case-insensitive comparisons against Character.toLowerCase(), char by char.
+    private static void assertEqualsIgnoreCase(String l, String r) {
+        boolean expected = l.length() == r.length();
+        for (int i = 0; expected && i < l.length(); i++) {
+            expected = Character.toLowerCase(l.charAt(i)) == Character.toLowerCase(r.charAt(i));
+        }
+        final String message = "l=" + l + ", r=" + r;
+        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, r));
+        // CharSequences that are not Strings take another loop
+        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(new StringBuilder(l), r));
+        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, new StringBuilder(r)));
+        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, "#" + r, 1, r.length() + 1));
+        Assert.assertEquals(message, expected, Chars.equalsLowerCase("#" + l, 1, l.length() + 1, "##" + r, 2, r.length() + 2));
+        if (expected) {
+            Assert.assertEquals(message, Chars.lowerCaseHashCode(l), Chars.lowerCaseHashCode(r));
+        }
     }
 
     private void assertThat(String expected, ObjList<Path> list) {

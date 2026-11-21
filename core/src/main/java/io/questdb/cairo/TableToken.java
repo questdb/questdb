@@ -59,6 +59,8 @@ public class TableToken implements Sinkable {
     private final int tableId;
     @NotNull
     private final String tableName;
+    // Chars.lowerCaseHashCode() of the table name, for lookups that match the name in any case on hot paths
+    private final int tableNameLowerCaseHashCode;
     private final Type type;
 
     public TableToken(@NotNull String tableName, @NotNull String dirName, @Nullable String dbLogName, int tableId, boolean isWal, boolean isSystem, boolean isProtected) {
@@ -71,6 +73,7 @@ public class TableToken implements Sinkable {
 
     private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
         this.tableName = tableName;
+        this.tableNameLowerCaseHashCode = Chars.lowerCaseHashCode(tableName);
         this.dirName = dirName;
         this.tableId = tableId;
         this.type = type;
@@ -143,6 +146,14 @@ public class TableToken implements Sinkable {
      */
     public @NotNull String getTableName() {
         return tableName;
+    }
+
+    /**
+     * @return {@link Chars#lowerCaseHashCode(CharSequence)} of the table name, computed once, for a lookup of the
+     * name in a case-insensitive hash map, see {@link io.questdb.std.AbstractLowerCaseCharSequenceHashSet#keyIndex(CharSequence, int)}
+     */
+    public int getTableNameLowerCaseHashCode() {
+        return tableNameLowerCaseHashCode;
     }
 
     public Type getType() {
