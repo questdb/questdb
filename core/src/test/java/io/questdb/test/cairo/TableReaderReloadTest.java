@@ -39,7 +39,6 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
@@ -102,7 +101,6 @@ public class TableReaderReloadTest extends AbstractCairoTest {
             final CountDownLatch readerRelease = new CountDownLatch(1);
             final AtomicBoolean isStallArmed = new AtomicBoolean(true);
             final AtomicReference<Throwable> readerError = new AtomicReference<>();
-            final MicrosecondClock clock = testMicrosClock;
             final Thread readerThread = new Thread(() -> {
                 try {
                     // the pool keeps the reader built across the writer's rollback
@@ -113,26 +111,29 @@ public class TableReaderReloadTest extends AbstractCairoTest {
                     Path.clearThreadLocals();
                 }
             });
-            // Stalls the reader thread on the deadline check of TableReader.reloadColumnVersion(), which it reaches
-            // after it read a _cv ahead of the _txn it loaded: a reader descheduled between two polls of its reload.
-            testMicrosClock = () -> {
-                final long ticks = clock.getTicks();
-                if (Thread.currentThread() == readerThread && isCalledFromColumnVersionReload() && isStallArmed.compareAndSet(true, false)) {
+            // Stalls the reader thread the first time it finds the _cv of F ahead of the _txn it loaded, which it
+            // has read by then: a reader descheduled between two polls of its reload. The deadline of the reload lies
+            // past the time G takes to commit on a slow machine.
+            spinLockTimeout = TimeUnit.MINUTES.toMillis(1);
+            ColumnVersionReader.setAheadOfTxnListener(() -> {
+                if (Thread.currentThread() == readerThread && isStallArmed.compareAndSet(true, false)) {
                     readerStalled.countDown();
                     awaitLatch(readerRelease);
                 }
-                return ticks;
-            };
-            readerThread.start();
+            });
             try {
-                awaitLatch(readerStalled);
-                // G: the writer opens, rolls _cv back, and merges a row into 2024-01-02, which predates column c
-                execute("INSERT INTO nt VALUES (6, '2024-01-02T00:30:00.000000Z', 60)");
-                Assert.assertEquals("G must reuse the version number of F", columnVersion + 1, readColumnVersionFileVersion(token));
+                readerThread.start();
+                try {
+                    awaitLatch(readerStalled);
+                    // G: the writer opens, rolls _cv back, and merges a row into 2024-01-02, which predates column c
+                    execute("INSERT INTO nt VALUES (6, '2024-01-02T00:30:00.000000Z', 60)");
+                    Assert.assertEquals("G must reuse the version number of F", columnVersion + 1, readColumnVersionFileVersion(token));
+                } finally {
+                    readerRelease.countDown();
+                    readerThread.join();
+                }
             } finally {
-                readerRelease.countDown();
-                readerThread.join();
-                testMicrosClock = clock;
+                ColumnVersionReader.setAheadOfTxnListener(null);
             }
             if (readerError.get() != null) {
                 throw new AssertionError(readerError.get());
@@ -242,16 +243,6 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         } catch (InterruptedException e) {
             throw new AssertionError(e);
         }
-    }
-
-    // Whether TableReader.reloadColumnVersion() reads the clock, under the clock wrappers of the test
-    private static boolean isCalledFromColumnVersionReload() {
-        return StackWalker.getInstance().walk(frames -> frames
-                .filter(f -> !f.getClassName().startsWith(TableReaderReloadTest.class.getName())
-                        && !f.getClassName().startsWith(CairoTestConfiguration.class.getName()))
-                .findFirst()
-                .map(f -> TableReader.class.getName().equals(f.getClassName()) && "reloadColumnVersion".equals(f.getMethodName()))
-                .orElse(false));
     }
 
     private static long readColumnVersionFileVersion(TableToken token) {

@@ -41,6 +41,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -68,6 +69,11 @@ public class ColumnVersionReader implements Closeable, Mutable {
     public static final long SYMBOL_TABLE_VERSION_PARTITION = COL_TOP_DEFAULT_PARTITION + 1;
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
+    // Test hook: runs on the thread of a reader each time readSafe(MillisecondClock, long, long) finds _cv ahead of
+    // the version _txn names. Null in production; firing it is one volatile read and a null check, on a path a
+    // reader takes only while a commit is in flight.
+    @TestOnly
+    private static volatile Runnable aheadOfTxnListener;
     protected final LongList cachedColumnVersionList = new LongList();
     private boolean isInitialChecksumVerificationRequired = true;
     private MemoryCMR mem;
@@ -264,6 +270,17 @@ public class ColumnVersionReader implements Closeable, Mutable {
         bodyChecksumFallbackCount = 0;
     }
 
+    /**
+     * Installs {@code listener} to run on the thread of a reader each time
+     * {@link #readSafe(MillisecondClock, long, long)} finds {@code _cv} ahead of the version {@code _txn} names,
+     * the commit in flight that the reader then waits for, before the reader reads {@code _txn} again. Pass null
+     * to uninstall.
+     */
+    @TestOnly
+    public static void setAheadOfTxnListener(@Nullable Runnable listener) {
+        aheadOfTxnListener = listener;
+    }
+
     public long getVersion() {
         return version;
     }
@@ -398,6 +415,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
      */
     public boolean readSafe(MillisecondClock microsecondClock, long spinLockTimeout, long expectedVersion) {
         if (isAheadOf(expectedVersion)) {
+            fireAheadOfTxnListener();
             return false;
         }
         readSafe(microsecondClock, spinLockTimeout);
@@ -408,6 +426,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             throw columnVersionBehindException(expectedVersion);
         }
         forgetVersion();
+        fireAheadOfTxnListener();
         return false;
     }
 
@@ -685,6 +704,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 size,
                 TableUtils.CV_CHECKSUM_MAGIC
         ) != ChecksumTrailer.MISMATCH;
+    }
+
+    private static void fireAheadOfTxnListener() {
+        final Runnable listener = aheadOfTxnListener;
+        if (listener != null) {
+            listener.run();
+        }
     }
 
     // Whether the header's geometry for an area describes whole blocks that the file holds. An empty area reads
