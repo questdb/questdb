@@ -143,11 +143,20 @@ Linux/macOS
 export JAVA_HOME="/path/to/java/"
 ```
 
-Windows
+Windows (PowerShell)
 
-```bash
-set JAVA_HOME="c:\path\to\java directory"
+```powershell
+$env:JAVA_HOME = 'C:\path\to\java directory'
 ```
+
+Windows (Command Prompt / cmd.exe)
+
+```bat
+set "JAVA_HOME=C:\path\to\java directory"
+```
+
+Replace the example path with your installed JDK root. These commands set
+`JAVA_HOME` for the current terminal session only.
 
 ### Compiling Java and frontend code
 
