@@ -48,6 +48,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -481,6 +482,16 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             }
         });
+    }
+
+    @Test
+    public void testPurgeAfterWalTableRename() throws Exception {
+        assertPurgeAfterWalTableRename(false);
+    }
+
+    @Test
+    public void testPurgeRetryAfterWalTableRenameAndNameReuse() throws Exception {
+        assertPurgeAfterWalTableRename(true);
     }
 
     @Test
@@ -5310,6 +5321,83 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     @NotNull
     private ColumnPurgeJob createPurgeJob() throws SqlException {
         return new ColumnPurgeJob(engine);
+    }
+
+    private void assertPurgeAfterWalTableRename(boolean isRetry) throws Exception {
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createRetryTable("WAL");
+                final ObjList<String> filesBeforePurge = new ObjList<>();
+                final ObjList<String> filesAfterPurge = new ObjList<>();
+                final ObjList<String> reusedTableFiles = new ObjList<>();
+                try (TableReader ignored = getReader("t")) {
+                    execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+                    drainWalQueue();
+                    for (int i = 0; i < 3; i++) {
+                        final String listing = listFiles(partitionDir("t", i));
+                        final String oldFiles = String.join(" ", filesOfInstance(listing, "sym", TableUtils.COLUMN_NAME_TXN_NONE));
+                        Assert.assertTrue(oldFiles, oldFiles.contains("sym.pk"));
+                        filesBeforePurge.add(listing);
+                        filesAfterPurge.add(withoutFiles(listing, oldFiles));
+                    }
+                    if (isRetry) {
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    }
+
+                    execute("RENAME TABLE t TO t_renamed");
+                    if (isRetry) {
+                        createRetryTable("WAL");
+                        for (int i = 0; i < 3; i++) {
+                            reusedTableFiles.add(listFiles(partitionDir("t", i)));
+                        }
+                    }
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals(filesBeforePurge.getQuick(i), listFiles(partitionDir("t_renamed", i)));
+                    }
+                }
+
+                // Reusing the name also applies the rename WAL transaction, advancing the save points.
+                if (!isRetry && isAdaptiveWal("WAL")) {
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                }
+                releaseSavePointHolds("t_renamed");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(filesAfterPurge.getQuick(i), listFiles(partitionDir("t_renamed", i)));
+                    if (isRetry) {
+                        Assert.assertEquals(reusedTableFiles.getQuick(i), listFiles(partitionDir("t", i)));
+                    }
+                }
+                assertQuery("SELECT x, sym FROM t_renamed")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\tsym
+                                1\tA
+                                2\tB
+                                3\tA
+                                """);
+                if (isRetry) {
+                    assertQuery("SELECT x, sym FROM t WHERE sym = 'A'")
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("""
+                                    x\tsym
+                                    1\tA
+                                    3\tA
+                                    """);
+                }
+            }
+        });
     }
 
     private void createTable(String upPartO3) throws SqlException {
