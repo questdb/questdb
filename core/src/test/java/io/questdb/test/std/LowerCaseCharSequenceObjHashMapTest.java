@@ -58,6 +58,34 @@ public class LowerCaseCharSequenceObjHashMapTest {
     }
 
     @Test
+    public void testKeyIndexWithLowerCaseHashCodeSkipsHashing() {
+        // the keys count the chars a lookup reads; hashing a key would read every one of them
+        final String name = "Some_Table_Name";
+        final int hashCode = Chars.lowerCaseHashCode(name);
+        final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
+
+        // absent from an empty map: the lookup reads nothing of the key
+        CountingCharSequence key = new CountingCharSequence(name);
+        Assert.assertTrue(map.keyIndex(key, hashCode) > -1);
+        Assert.assertEquals(0, key.charAtCount);
+        Assert.assertEquals(0, key.lengthCount);
+
+        // absent from a map of shorter keys: comparing keys of different length reads no char
+        for (int i = 0; i < 1_000; i++) {
+            map.put("k" + i, i);
+        }
+        key = new CountingCharSequence(name);
+        Assert.assertTrue(map.keyIndex(key, hashCode) > -1);
+        Assert.assertEquals(0, key.charAtCount);
+
+        // present, spelled in another case: only the comparison reads the chars, each once
+        map.put("SOME_table_NAME", 42);
+        key = new CountingCharSequence(name);
+        Assert.assertEquals(Integer.valueOf(42), map.valueAt(map.keyIndex(key, hashCode)));
+        Assert.assertEquals(name.length(), key.charAtCount);
+    }
+
+    @Test
     public void testPutIfAbsent() {
         final LowerCaseCharSequenceObjHashMap<Integer> lowerCaseMap = new LowerCaseCharSequenceObjHashMap<>();
         lowerCaseMap.put("a", 1);
@@ -306,5 +334,33 @@ public class LowerCaseCharSequenceObjHashMapTest {
         int keyIndex = map.keyIndex(key);
         Assert.assertTrue(keyIndex < 0);
         return -keyIndex - 1;
+    }
+
+    // Not a String, so that a test can count the chars a lookup reads.
+    private static class CountingCharSequence implements CharSequence {
+        private final String value;
+        private int charAtCount;
+        private int lengthCount;
+
+        private CountingCharSequence(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public char charAt(int index) {
+            charAtCount++;
+            return value.charAt(index);
+        }
+
+        @Override
+        public int length() {
+            lengthCount++;
+            return value.length();
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return value.subSequence(start, end);
+        }
     }
 }

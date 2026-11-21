@@ -806,18 +806,18 @@ public class CharsTest {
 
     // Checks the case-insensitive comparisons against Character.toLowerCase(), char by char.
     private static void assertEqualsIgnoreCase(String l, String r) {
-        boolean expected = l.length() == r.length();
-        for (int i = 0; expected && i < l.length(); i++) {
-            expected = Character.toLowerCase(l.charAt(i)) == Character.toLowerCase(r.charAt(i));
+        boolean isEqual = l.length() == r.length();
+        for (int i = 0; isEqual && i < l.length(); i++) {
+            isEqual = Character.toLowerCase(l.charAt(i)) == Character.toLowerCase(r.charAt(i));
         }
         final String message = "l=" + l + ", r=" + r;
-        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, r));
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, r));
         // CharSequences that are not Strings take another loop
-        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(new StringBuilder(l), r));
-        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, new StringBuilder(r)));
-        Assert.assertEquals(message, expected, Chars.equalsIgnoreCase(l, "#" + r, 1, r.length() + 1));
-        Assert.assertEquals(message, expected, Chars.equalsLowerCase("#" + l, 1, l.length() + 1, "##" + r, 2, r.length() + 2));
-        if (expected) {
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(new StringBuilder(l), r));
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, new StringBuilder(r)));
+        Assert.assertEquals(message, isEqual, Chars.equalsIgnoreCase(l, "#" + r, 1, r.length() + 1));
+        Assert.assertEquals(message, isEqual, Chars.equalsLowerCase("#" + l, 1, l.length() + 1, "##" + r, 2, r.length() + 2));
+        if (isEqual) {
             Assert.assertEquals(message, Chars.lowerCaseHashCode(l), Chars.lowerCaseHashCode(r));
         }
     }
