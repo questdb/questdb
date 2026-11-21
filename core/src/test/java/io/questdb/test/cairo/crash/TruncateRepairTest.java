@@ -473,13 +473,10 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
             final int points = ff.killPointCount() - base;
             execute("DROP TABLE " + countTable);
             Assert.assertTrue("TRUNCATE has no kill points", points > 0);
+            // the sweep reaches the emptying of the symbol maps, which TRUNCATE without KEEP SYMBOL MAPS does
             Assert.assertEquals("emptying the symbol maps", !isKeepSymbolMaps, ff.symbolMapTruncatePointCount() > 0);
 
             for (int k = 1; k <= points + 1; k++) {
-                if (k <= points && ff.isSymbolMapTruncatePoint(base + k)) {
-                    // a known gap of SymbolMapWriter, see SymbolMapTruncateCrashFacade
-                    continue;
-                }
                 final String table = "t_" + k;
                 createTable(table, isPartitioned);
                 engine.releaseAllReaders();

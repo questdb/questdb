@@ -558,9 +558,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
 
     @Override
     public void truncate() {
-        final int symbolCapacity = offsetMem.getInt(HEADER_CAPACITY);
-        offsetMem.truncate();
-        offsetMem.putInt(HEADER_CAPACITY, symbolCapacity);
+        // TableWriter.truncate0() publishes a _txn that counts no symbols in this map before it empties the map, so
+        // readers and the next writer open need nothing from its files but the headers. The offset file keeps its
+        // header here, and the index key file keeps its own, see BitmapIndexWriter.truncate(): a process killed at any
+        // instant leaves an empty map that both accept.
+        offsetMem.truncateKeepHeader(HEADER_SIZE);
         offsetMem.putBool(HEADER_CACHE_ENABLED, isCached());
         updateNullFlag(false);
         offsetMem.jumpTo(keyToOffset(0) + Long.BYTES);

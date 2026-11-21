@@ -27,10 +27,15 @@ package io.questdb.test.cairo.crash;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -158,6 +163,107 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testKillAfterIndexKeyCountDropsLeavesWritableTable() throws Exception {
+        // BitmapIndexWriter.truncate() drops the key count of a symbol map's index before it zeroes the key entries,
+        // and no kill point lies between the two. A process killed there leaves the old entries above a zero key
+        // count. The table reads empty, and the rows written after it take symbol keys of their own: the writer open
+        // zeroes those entries, which add() otherwise takes for empty ones.
+        final SymbolMapTruncateCrashFacade ff = new SymbolMapTruncateCrashFacade();
+        runWithCrashFacade(ff, () -> {
+            // the old symbols fill the buckets of the map index, which hashes a capacity of 512 into 256 buckets
+            final String createSql = "CREATE TABLE t (s SYMBOL CAPACITY 512 NOCACHE, x LONG)";
+            final String insertSql = "INSERT INTO t SELECT 'old' || x, x FROM long_sequence(300)";
+            execute(createSql);
+            execute(insertSql);
+            engine.releaseAllReaders();
+            final int base = ff.killPointCount();
+            ff.startRecording();
+            execute("TRUNCATE TABLE t");
+            ff.stopRecording();
+            final int points = ff.killPointCount() - base;
+            execute("DROP TABLE t");
+            int firstSymbolMapPoint = -1;
+            for (int k = points; k > 0; k--) {
+                if (ff.isSymbolMapTruncatePoint(base + k)) {
+                    firstSymbolMapPoint = k;
+                }
+            }
+            Assert.assertTrue("TRUNCATE does not empty the symbol map", firstSymbolMapPoint > 0);
+
+            // the kill at the first kill point inside SymbolMapWriter.truncate(): _txn names no symbols, and the index
+            // of the map is as it was
+            execute(createSql);
+            execute(insertSql);
+            engine.releaseAllReaders();
+            ff.armKillAt(ff.killPointCount() + firstSymbolMapPoint, tableDir());
+            execute("TRUNCATE TABLE t");
+            Assert.assertTrue(ff.isKillImageTaken());
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            ff.crash(tableDir());
+            engine.getTxnScoreboardPool().remove(engine.verifyTableName("t"));
+
+            // and the first store of BitmapIndexWriter.truncate(), which the kill lands after
+            try (Path keyFile = new Path().of(tableDir()).concat("s").put(".k")) {
+                final long fd = TableUtils.openRW(ff, keyFile.$(), LOG, configuration.getWriterFileOpenOpts());
+                try {
+                    Assert.assertTrue(ff.readNonNegativeInt(fd, BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT) > 128);
+                    final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Unsafe.putInt(buf, 0);
+                        Assert.assertEquals(Integer.BYTES, ff.write(fd, buf, Integer.BYTES, BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT));
+                    } finally {
+                        Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+
+            assertQuery("SELECT count() n, count_distinct(s) d FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("n\td\n0\t0\n");
+            assertQuery("SELECT count() n FROM t WHERE s = 'old7'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("n\n0\n");
+
+            // every new symbol twice: the second insert looks each one up in the index the first one built
+            execute("INSERT INTO t SELECT 'new' || x, x FROM long_sequence(300)");
+            execute("INSERT INTO t SELECT 'new' || x, x + 1_000 FROM long_sequence(300)");
+            assertQuery("SELECT count() n, count_distinct(s) d FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("n\td\n600\t300\n");
+            assertQuery("SELECT s, count() n FROM t WHERE s IN ('new1', 'new150', 'new300') ORDER BY s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tn
+                            new1\t2
+                            new150\t2
+                            new300\t2
+                            """);
+            assertQuery("SELECT x FROM t WHERE s = 'new7'")
+                    .noLeakCheck()
+                    .returns("""
+                            x
+                            7
+                            1007
+                            """);
+            assertQuery("SELECT count() n FROM t WHERE s IN ('old7', 'old123')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("n\n0\n");
+        });
+    }
+
+    @Test
     public void testKillAtEveryPointLeavesTableAsItWasOrEmpty() throws Exception {
         assertEveryKillPoint(false);
     }
@@ -269,14 +375,11 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
             ff.stopRecording();
             final int points = ff.killPointCount() - base;
             execute("DROP TABLE t");
+            // the sweep reaches the emptying of the symbol maps, which TRUNCATE without KEEP SYMBOL MAPS does
             Assert.assertEquals("emptying the symbol maps", !isKeepSymbolMaps, ff.symbolMapTruncatePointCount() > 0);
 
             int emptied = 0;
             for (int k = 1; k <= points; k++) {
-                if (ff.isSymbolMapTruncatePoint(base + k)) {
-                    // a known gap of SymbolMapWriter, see SymbolMapTruncateCrashFacade
-                    continue;
-                }
                 createTable();
                 engine.releaseAllReaders();
                 ff.armKillAt(ff.killPointCount() + k, tableDir());

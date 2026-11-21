@@ -32,6 +32,7 @@ import io.questdb.cairo.SymbolMapUtil;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -53,6 +54,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -1552,6 +1554,84 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateKeepsFileHeaders() throws Exception {
+        // TableWriter publishes zero symbol counts before it empties a map, so a process killed while the map empties
+        // leaves readers and the next writer open nothing to take from its files but the headers. Such a kill can land
+        // at each cut of a file: the offset file and the index key file show valid headers at all of them.
+        final HeaderAtCutFacade ff = new HeaderAtCutFacade();
+        assertMemoryLeak(ff, () -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 1024, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    // offsets and chars past their first page, index keys in every hash bucket
+                    for (int i = 0; i < 5_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, writer.put(null));
+                    Assert.assertTrue(writer.getNullFlag());
+                    final long sequence = ff.readNonNegativeLong(ff.keyFd, BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                    Assert.assertTrue(sequence > 0);
+
+                    ff.isRecording = true;
+                    writer.truncate();
+                    ff.isRecording = false;
+
+                    final String offsetHeader = "capacity=1024, cached=1, ";
+                    // create() makes the index with blocks of 4 values
+                    final String keyHeader = "signature=250, sequence=" + sequence + ", sequenceCheck=" + sequence
+                            + ", blockValueCount=4, keyCount=";
+                    // the offset file and the char file go first, while the index still holds the symbols
+                    final String[] cuts = ff.cuts.toString().split("\n");
+                    Assert.assertEquals(4, cuts.length);
+                    Assert.assertTrue(cuts[0], cuts[0].startsWith("cut x.o: " + offsetHeader + keyHeader));
+                    Assert.assertTrue(cuts[1], cuts[1].startsWith("cut x.c: " + offsetHeader + keyHeader));
+                    Assert.assertEquals("cut x.k: " + offsetHeader + keyHeader + "0, valueMemSize=0, maxValue=-1", cuts[2]);
+                    Assert.assertEquals("cut x.v: " + offsetHeader + keyHeader + "0, valueMemSize=0, maxValue=-1", cuts[3]);
+
+                    // the map starts over, with its capacity and cache flag, and without the null flag
+                    Assert.assertEquals(0, writer.getSymbolCount());
+                    Assert.assertFalse(writer.getNullFlag());
+                    Assert.assertEquals(1024, writer.getSymbolCapacity());
+                    Assert.assertTrue(writer.isCached());
+                    Assert.assertEquals(0, writer.put("symbol4999"));
+                    Assert.assertEquals(1, writer.put("new"));
+                }
+                // a writer open with the zero count of the published _txn, and a reader, take the emptied files
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, writer.put("symbol7"));
+                }
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1)) {
+                    Assert.assertEquals(0, reader.keyOf("symbol7"));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("symbol4999"));
+                    Assert.assertEquals("symbol7", String.valueOf(reader.valueOf(0)));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTruncateRestoresTheDroppedCache() throws Exception {
         // A column that runs its cache's key buffer out keeps working off the on-disk
         // index, at roughly twice the cost per lookup when the column's declared
@@ -1968,4 +2048,42 @@ public class SymbolMapTest extends AbstractCairoTest {
         }
     }
 
+
+    // Records the headers of x.o and x.k at each cut of a map file while recording: where a process kill can land.
+    private static class HeaderAtCutFacade extends TestFilesFacadeImpl {
+        private final StringSink cuts = new StringSink();
+        private boolean isRecording;
+        private long charFd = -1;
+        private long keyFd = -1;
+        private long offsetFd = -1;
+        private long valueFd = -1;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.endsWithAscii(name, "x.o")) {
+                offsetFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.c")) {
+                charFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.k")) {
+                keyFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.v")) {
+                valueFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean truncate(long fd, long size) {
+            if (isRecording) {
+                final String file = fd == offsetFd ? "x.o" : fd == charFd ? "x.c" : fd == keyFd ? "x.k" : fd == valueFd ? "x.v" : "?";
+                cuts.put("cut ").put(file)
+                        .put(": capacity=").put(readNonNegativeInt(offsetFd, SymbolMapWriter.HEADER_CAPACITY))
+                        .put(", cached=").put((int) readNonNegativeByte(offsetFd, SymbolMapWriter.HEADER_CACHE_ENABLED))
+                        .put(", ").put(BitmapIndexTest.readKeyFileHeader(this, keyFd))
+                        .put('\n');
+            }
+            return super.truncate(fd, size);
+        }
+    }
 }

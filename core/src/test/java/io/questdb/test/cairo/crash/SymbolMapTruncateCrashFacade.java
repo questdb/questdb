@@ -32,11 +32,10 @@ import io.questdb.std.str.Path;
 /**
  * A {@link CrashFaultFilesFacade} that tells which of its kill points {@link SymbolMapWriter#truncate()} takes.
  * <p>
- * {@code SymbolMapWriter.truncate()} zeroes the header of the offset file and of the index key file before it writes
- * them again, so a process killed in between leaves a symbol map that the reader and the next writer open reject.
- * TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps only once it has published the empty {@code _txn}, so the
- * table is empty at those kill points too, but a sweep of the TRUNCATE kill points has to leave them out until
- * {@code SymbolMapWriter} empties a map atomically.
+ * TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps once it has published the empty {@code _txn}, and
+ * {@code SymbolMapWriter.truncate()} keeps the headers of the map files valid while it empties them. A sweep of the
+ * TRUNCATE kill points uses the facade to show that it reaches those kill points, and a test that needs a state between
+ * two of them finds where they lie.
  */
 public class SymbolMapTruncateCrashFacade extends CrashFaultFilesFacade {
     private static final String SYMBOL_MAP_WRITER = SymbolMapWriter.class.getName();

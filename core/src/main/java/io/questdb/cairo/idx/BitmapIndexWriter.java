@@ -41,6 +41,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
@@ -300,6 +301,7 @@ public class BitmapIndexWriter implements IndexWriter {
             this.blockValueCountMod = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             assert blockValueCountMod > 0;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            zeroKeysAboveKeyCount();
         } catch (Throwable e) {
             close();
             if (kFdUnassigned) {
@@ -412,6 +414,7 @@ public class BitmapIndexWriter implements IndexWriter {
                 throw CairoException.critical(0).put("corrupt file ").put(path);
             }
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            zeroKeysAboveKeyCount();
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -543,8 +546,27 @@ public class BitmapIndexWriter implements IndexWriter {
         keyMem.syncFlushKick();
     }
 
+    /**
+     * Empties the index in place. A reader and the next writer open accept the key file at whatever instant a process
+     * kill stops this:
+     * <ul>
+     *     <li>the signature, the block value count and the sequence pair keep their values;</li>
+     *     <li>the key count drops to zero before any entry it covers changes;</li>
+     *     <li>the value memory size drops to zero before the value file shrinks.</li>
+     * </ul>
+     * A kill after the key count drops and before this zeroes the entries leaves stale entries above the key count,
+     * which the next writer open zeroes, see zeroKeysAboveKeyCount(). The header changes without the sequence
+     * protocol: a kill between its two halves would leave them unequal, and the writer open refuses such a key file.
+     * Emptying in place was never safe for a reader that maps the index, since the files shrink under its mapping:
+     * TRUNCATE TABLE keeps readers out with CairoEngine.lockReaders().
+     */
     public void truncate() {
-        initKeyMemory(keyMem, blockValueCountMod + 1);
+        keyMem.putInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT, 0);
+        Unsafe.storeFence();
+        keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, 0);
+        keyMem.putLong(MAX_VALUE_OFFSET, -1);
+        Unsafe.storeFence();
+        keyMem.truncateKeepHeader(BitmapIndexUtils.KEY_FILE_RESERVED);
         valueMem.truncate();
         keyCount = 0;
         valueMemSize = 0;
@@ -664,6 +686,16 @@ public class BitmapIndexWriter implements IndexWriter {
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE, valueMemSize);
         Unsafe.storeFence();
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
+    }
+
+    // add() takes an entry above the key count for a zero one. A process killed inside truncate() can leave the old
+    // entries there, and no reader reads them.
+    private void zeroKeysAboveKeyCount() {
+        final long lo = keyMemSize();
+        final long hi = keyMem.getAppendOffset();
+        if (hi > lo) {
+            Vect.memset(keyMem.addressOf(lo), hi - lo, 0);
+        }
     }
 
     void updateKeyCount(int key) {

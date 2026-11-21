@@ -66,10 +66,12 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -111,6 +113,26 @@ public class BitmapIndexTest extends AbstractCairoTest {
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
         } finally {
             path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Reads the header of an index key file through {@code keyFd}, as a process that opens the file after a kill
+     * finds it.
+     */
+    public static String readKeyFileHeader(FilesFacade ff, long keyFd) {
+        final long buf = Unsafe.malloc(BitmapIndexUtils.KEY_FILE_RESERVED, MemoryTag.NATIVE_DEFAULT);
+        try {
+            Assert.assertEquals(BitmapIndexUtils.KEY_FILE_RESERVED, ff.read(keyFd, buf, BitmapIndexUtils.KEY_FILE_RESERVED, 0));
+            return "signature=" + (Unsafe.getByte(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_SIGNATURE) & 0xff)
+                    + ", sequence=" + Unsafe.getLong(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE)
+                    + ", sequenceCheck=" + Unsafe.getLong(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK)
+                    + ", blockValueCount=" + Unsafe.getInt(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT)
+                    + ", keyCount=" + Unsafe.getInt(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT)
+                    + ", valueMemSize=" + Unsafe.getLong(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE)
+                    + ", maxValue=" + Unsafe.getLong(buf + BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE);
+        } finally {
+            Unsafe.free(buf, BitmapIndexUtils.KEY_FILE_RESERVED, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -1472,6 +1494,16 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOpenByFdZeroesKeysAboveKeyCount() throws Exception {
+        assertOpenZeroesKeysAboveKeyCount(true);
+    }
+
+    @Test
+    public void testOpenZeroesKeysAboveKeyCount() throws Exception {
+        assertOpenZeroesKeysAboveKeyCount(false);
+    }
+
+    @Test
     public void testRollbackOnEmptyIndexDiskFullKeepsHeaderCovered() throws Exception {
         // At the smallest value page the OS allows (4 KiB on Linux x86, 16 KiB on macOS arm64, 64 KiB on Windows) a
         // block of a quarter page of values (two pages and 16 bytes) is larger than the value file a new writer maps,
@@ -1757,6 +1789,62 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateKeepsKeyFileHeader() throws Exception {
+        // truncate() empties the index in place. A process killed when it cuts the key file or the value file finds
+        // the header with its signature, block value count and sequence pair as they were, and the key count, value
+        // memory size and max value already empty, so a reader and the next writer open take the key file.
+        final KeyFileCutFacade ff = new KeyFileCutFacade();
+        assertMemoryLeak(ff, () -> {
+            create(configuration, path.trimTo(plen), "x", 64);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // keys past the first key page, values over many blocks
+                for (int i = 0; i < 20_000; i++) {
+                    writer.add(i % 1_000, i);
+                }
+                writer.setMaxValue(19_999);
+                final long sequence = ff.readNonNegativeLong(ff.keyFd, BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE);
+                Assert.assertTrue(sequence > 0);
+                Assert.assertEquals(
+                        "signature=250, sequence=" + sequence + ", sequenceCheck=" + sequence + ", blockValueCount=64"
+                                + ", keyCount=1000, valueMemSize=" + writer.getValueMemSize() + ", maxValue=19999",
+                        readKeyFileHeader(ff, ff.keyFd)
+                );
+                final String emptyHeader = "signature=250, sequence=" + sequence + ", sequenceCheck=" + sequence
+                        + ", blockValueCount=64, keyCount=0, valueMemSize=0, maxValue=-1";
+
+                ff.isRecording = true;
+                writer.truncate();
+                ff.isRecording = false;
+
+                TestUtils.assertEquals(
+                        "cut x.k: " + emptyHeader + "\n"
+                                + "cut x.v: " + emptyHeader + "\n",
+                        ff.cuts
+                );
+                Assert.assertEquals(emptyHeader, readKeyFileHeader(ff, ff.keyFd));
+                Assert.assertEquals(0, writer.getKeyCount());
+                Assert.assertFalse(writer.getCursor(5).hasNext());
+            }
+            final LongList values = new LongList();
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                Assert.assertEquals(0, reader.getKeyCount());
+            }
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(5, 7);
+                writer.add(5, 8);
+                writer.setMaxValue(8);
+            }
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                Assert.assertEquals(6, reader.getKeyCount());
+                assertThat("[8,7]", reader.getCursor(5, 0, Long.MAX_VALUE), values);
+                for (int key = 0; key < 5; key++) {
+                    assertThat("[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testValueBlockAllocationDiskFullKeepsHeaderCovered() throws Exception {
         // At the smallest value page the OS allows, with blocks of a sixteenth of a page of values (half a page and
         // 16 bytes), the next block after the column-top rollback of an empty index ends past the one page the writer
@@ -2031,6 +2119,73 @@ public class BitmapIndexTest extends AbstractCairoTest {
         } catch (CairoException e) {
             assertTrue(Chars.contains(e.getMessage(), contains));
         }
+    }
+
+    // A process killed inside truncate() after the key count drops and before the entries are zeroed leaves the old
+    // entries above a zero key count, with the value file as it was. add() takes an entry above the key count for a
+    // zero one: the writer open zeroes those entries, or the keys below the next new key would carry old values.
+    private void assertOpenZeroesKeysAboveKeyCount(boolean isOpenByFd) throws Exception {
+        assertMemoryLeak(() -> {
+            create(configuration, path.trimTo(plen), "x", 64);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                for (int key = 0; key < 100; key++) {
+                    writer.add(key, 1_000 + key);
+                }
+                writer.setMaxValue(1_099);
+                // what the kill leaves: no close cuts the key file to the key count
+                writer.closeNoTruncate();
+            }
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long keyFd = TableUtils.openRW(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+            path.trimTo(plen);
+            try {
+                final long buf = Unsafe.malloc(Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.putInt(buf, 0);
+                    Assert.assertEquals(Integer.BYTES, ff.write(keyFd, buf, Integer.BYTES, BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT));
+                } finally {
+                    Unsafe.free(buf, Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+                Assert.assertTrue(readKeyFileHeader(ff, keyFd).contains(", keyCount=0,"));
+            } finally {
+                ff.close(keyFd);
+            }
+
+            final LongList values = new LongList();
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                if (isOpenByFd) {
+                    final long kFd = TableUtils.openRW(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+                    final long vFd = TableUtils.openRW(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+                    path.trimTo(plen);
+                    writer.of(configuration, kFd, vFd, false, 64);
+                } else {
+                    writer.of(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE);
+                }
+                Assert.assertEquals(0, writer.getKeyCount());
+                // a new key past the old ones' slots: every key below it becomes a hole that add() took for empty
+                writer.add(50, 5);
+                writer.add(10, 6);
+                writer.setMaxValue(6);
+                Assert.assertEquals(51, writer.getKeyCount());
+                assertThat("[5]", writer.getCursor(50), values);
+                assertThat("[6]", writer.getCursor(10), values);
+                for (int key = 0; key < 50; key++) {
+                    if (key != 10) {
+                        assertThat("[]", writer.getCursor(key), values);
+                    }
+                }
+            }
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                Assert.assertEquals(51, reader.getKeyCount());
+                assertThat("[5]", reader.getCursor(50, 0, Long.MAX_VALUE), values);
+                assertThat("[6]", reader.getCursor(10, 0, Long.MAX_VALUE), values);
+                for (int key = 0; key < 50; key++) {
+                    if (key != 10) {
+                        assertThat("[]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                    }
+                }
+            }
+        });
     }
 
     private void assertSpinTimeout(Runnable read) {
@@ -2538,6 +2693,33 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 writer.add(0, i);
                 writer.add(0, i);
             }
+        }
+    }
+
+    // Records the key file header at each cut of x.k or x.v while recording: where a process kill can land.
+    private static class KeyFileCutFacade extends TestFilesFacadeImpl {
+        private final StringSink cuts = new StringSink();
+        private boolean isRecording;
+        private long keyFd = -1;
+        private long valueFd = -1;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.endsWithAscii(name, "x.k")) {
+                keyFd = fd;
+            } else if (Utf8s.endsWithAscii(name, "x.v")) {
+                valueFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean truncate(long fd, long size) {
+            if (isRecording && (fd == keyFd || fd == valueFd)) {
+                cuts.put("cut ").put(fd == keyFd ? "x.k" : "x.v").put(": ").put(readKeyFileHeader(this, keyFd)).put('\n');
+            }
+            return super.truncate(fd, size);
         }
     }
 
