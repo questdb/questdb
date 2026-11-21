@@ -28,7 +28,12 @@ set -euxo pipefail
 QUESTDB_DATA_DIR=/var/lib/questdb
 GRAALVM_VERSION=25.0.2
 GRAALVM_HOME=/usr/lib/jvm/graalvm-community-java25
-GRAALVM_TARBALL=graalvm-community-jdk-${GRAALVM_VERSION}_linux-x64_bin.tar.gz
+case "$(uname -m)" in
+    x86_64)  GRAALVM_ARCH=x64 ;;
+    aarch64) GRAALVM_ARCH=aarch64 ;;
+    *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+GRAALVM_TARBALL=graalvm-community-jdk-${GRAALVM_VERSION}_linux-${GRAALVM_ARCH}_bin.tar.gz
 
 # Install dependencies
 sudo dnf update -y -q
