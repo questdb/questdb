@@ -151,7 +151,7 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
         // NOT exercise the parallel merge() path; that coverage lives in
         // RegressionR2ParallelGroupByTest. Group A is a perfect line y = x
         // (r^2 = 1.0); group B has constant Y with varying X (Syy = 0, Sxx > 0
-        // returns 1.0 by SQL:2003 §10.9).
+        // returns 1.0 by SQL:2003 10.9).
         assertMemoryLeak(() -> {
             execute(
                     "create table tbl1 as (" +
@@ -212,6 +212,43 @@ public class RegressionR2FunctionFactoryTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2LargeMagnitudeOverflow() throws Exception {
+        // Regression test for #7328: prior to the split-sqrt refactor, the
+        // denominator sumX * sumY overflowed to +Infinity for inputs of
+        // magnitude ~1e153, causing regr_r2() to return 0.0 instead of 1.0.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e153, 1e153), (-1e153, -1e153)");
+            assertQuery("select regr_r2(y, x) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("regr_r2\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testRegrR2SmallMagnitudeUnderflow() throws Exception {
+        // Regression test for #7328: for inputs of very small magnitude
+        // (~1e-150) the sums of squared deviations are ~1e-300, so their
+        // product sumX * sumY underflows to exactly 0.0 while each factor
+        // stays finite and non-zero. Prior to the split-sqrt fallback,
+        // sqrt(0.0) made the denominator 0.0 and regr_r2() returned NaN
+        // instead of the true r-squared.
+        assertMemoryLeak(() -> {
+            execute("create table tbl1(x double, y double)");
+            execute("insert into 'tbl1' VALUES (1e-150, 1e-150), (-1e-150, -1e-150)");
+            // The split-sqrt fallback uses two sqrt roundings, so the result
+            // can land 1 ULP below the true 1.0. Use round() to tolerate this.
+            assertQuery("select round(regr_r2(y, x), 10) from tbl1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("round\n1.0\n");
         });
     }
 
