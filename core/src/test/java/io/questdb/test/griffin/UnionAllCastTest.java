@@ -2083,6 +2083,76 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalMixedTimestampPrecision() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                (select interval('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-01T01:00:00.000000Z'::timestamp) i)
+                union all
+                (select interval('2020-01-02T00:00:00.000000000Z'::timestamp_ns, '2020-01-02T01:00:00.000000000Z'::timestamp_ns) i)
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        i
+                        ('2020-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000Z')
+                        ('2020-01-02T00:00:00.000Z', '2020-01-02T01:00:00.000Z')
+                        """));
+    }
+
+    @Test
+    public void testIntervalMixedTimestampPrecisionReversed() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                (select interval('2020-01-02T00:00:00.000000000Z'::timestamp_ns, '2020-01-02T01:00:00.000000000Z'::timestamp_ns) i)
+                union all
+                (select interval('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-01T01:00:00.000000Z'::timestamp) i)
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        i
+                        ('2020-01-02T00:00:00.000Z', '2020-01-02T01:00:00.000Z')
+                        ('2020-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000Z')
+                        """));
+    }
+
+    @Test
+    public void testIntervalMixedTimestampPrecisionUnion() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                (select interval('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-01T01:00:00.000000Z'::timestamp) i)
+                union
+                (select interval('2020-01-02T00:00:00.000000000Z'::timestamp_ns, '2020-01-02T01:00:00.000000000Z'::timestamp_ns) i)
+                """)
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        i
+                        ('2020-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000Z')
+                        ('2020-01-02T00:00:00.000Z', '2020-01-02T01:00:00.000Z')
+                        """));
+    }
+
+    @Test
+    public void testIntervalMixedTimestampPrecisionWithNull() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                (select interval('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-01T01:00:00.000000Z'::timestamp) i)
+                union all
+                (select null::interval i)
+                union all
+                (select interval('2020-01-02T00:00:00.000000000Z'::timestamp_ns, '2020-01-02T01:00:00.000000000Z'::timestamp_ns) i)
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        i
+                        ('2020-01-01T00:00:00.000Z', '2020-01-01T01:00:00.000Z')
+                        
+                        ('2020-01-02T00:00:00.000Z', '2020-01-02T01:00:00.000Z')
+                        """));
+    }
+
+    @Test
     public void testInterval1() throws Exception {
         assertMemoryLeak(() -> assertQuery("select i, typeOf(i) from ((select interval(100000,200000) i) union all (select interval(300000,400000) i) union all (select null::interval i))")
                 .noLeakCheck()

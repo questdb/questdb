@@ -103,6 +103,7 @@ import io.questdb.griffin.engine.functions.cast.CastIPv4ToVarcharFunctionFactory
 import io.questdb.griffin.engine.functions.cast.CastIntToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastIntToVarcharFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastIntervalToIntervalFunction;
 import io.questdb.griffin.engine.functions.cast.CastIntervalToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastLong256ToVarcharFunctionFactory;
@@ -4637,7 +4638,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                         break;
                     case INTERVAL:
-                        castFunctions.add(IntervalColumn.newInstance(i, toType));
+                        if (fromType != toType && fromTag == INTERVAL) {
+                            castFunctions.add(new CastIntervalToIntervalFunction(IntervalColumn.newInstance(i, fromType), toType));
+                        } else {
+                            castFunctions.add(IntervalColumn.newInstance(i, toType));
+                        }
                         break;
                     case ARRAY:
                         switch (fromTag) {
