@@ -764,11 +764,11 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
                     """)
                     .noRandomAccess()
                     .returns("""
-                    ts\tk\ta
-                    2024-01-01T05:00:00.000000Z\tk4\t5
-                    2024-01-01T03:00:00.000000Z\tk1\t2
-                    2024-01-01T04:00:00.000000Z\tk2\t3
-                    """);
+                            ts\tk\ta
+                            2024-01-01T05:00:00.000000Z\tk4\t5
+                            2024-01-01T03:00:00.000000Z\tk1\t2
+                            2024-01-01T04:00:00.000000Z\tk2\t3
+                            """);
         });
     }
 }
