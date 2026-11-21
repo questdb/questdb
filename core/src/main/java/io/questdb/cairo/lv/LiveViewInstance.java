@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -466,11 +465,6 @@ public class LiveViewInstance implements QuietCloseable {
     // window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart. Mutated
     // and read under the refresh latch.
     private long pendingReplacementLvSeqTxn = Numbers.LONG_NULL;
-    // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
-    // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
-    // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
-    private RecordToRowCopier recordToRowCopier;
-    private long recordRowCopierMetadataVersion = -1;
     // Lifetime count of refresh cycles that threw, incremented once per entry into
     // LiveViewRefreshJob.handleRefreshFailure. Unlike flushRetryCount this is never reset, because
     // most refresh faults are invisible after the fact: the job self-heals a mid-drain fault by
@@ -1222,14 +1216,6 @@ public class LiveViewInstance implements QuietCloseable {
         return pendingReplacementLvSeqTxn;
     }
 
-    public long getRecordRowCopierMetadataVersion() {
-        return recordRowCopierMetadataVersion;
-    }
-
-    public RecordToRowCopier getRecordToRowCopier() {
-        return recordToRowCopier;
-    }
-
     /**
      * @return the flag the refresh worker binds into its circuit breaker while it holds
      * this view's refresh latch, so a cancelled cycle throws out of whatever scan it is
@@ -1581,12 +1567,6 @@ public class LiveViewInstance implements QuietCloseable {
         // rebuilt factory recharges the same tracker (so the refresh memory limit still accounts
         // the surviving tier). Freeing the tracker here would strand the still-charged tier.
         freeCompiledArtifacts();
-        // Drop the cached row copier with the factory it was built for. Its cache key is
-        // the LV's own WAL metadata version, which a base-side schema change never moves,
-        // so it would otherwise survive the recompile and copy the new factory's records
-        // through the old factory's column layout.
-        recordToRowCopier = null;
-        recordRowCopierMetadataVersion = -1;
     }
 
     /**
@@ -2050,11 +2030,6 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void setPendingReplacementLvSeqTxn(long lvSeqTxn) {
         this.pendingReplacementLvSeqTxn = lvSeqTxn;
-    }
-
-    public void setRecordToRowCopier(RecordToRowCopier copier, long metadataVersion) {
-        this.recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = metadataVersion;
     }
 
     /**

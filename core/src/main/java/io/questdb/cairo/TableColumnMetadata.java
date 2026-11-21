@@ -163,6 +163,31 @@ public class TableColumnMetadata implements Plannable {
         this.originalWriterIndex = originalWriterIndex >= 0 ? originalWriterIndex : writerIndex;
     }
 
+    /**
+     * A copy of column {@code index} of {@code metadata} named {@code name}, which a metadata owner that changes its
+     * columns in place cannot change. The copy describes the column to the factory that reads it, so it leaves out the
+     * columns a covering index of the column covers, which only table metadata lists.
+     */
+    public static TableColumnMetadata copyOf(RecordMetadata metadata, int index, String name) {
+        final TableColumnMetadata source = metadata.getColumnMetadata(index);
+        final TableColumnMetadata copy = new TableColumnMetadata(
+                name,
+                metadata.getColumnType(index),
+                metadata.getColumnIndexType(index),
+                metadata.getIndexValueBlockCapacity(index),
+                metadata.isSymbolTableStatic(index),
+                metadata.getMetadata(index),
+                source.getWriterIndex(),
+                source.isDedupKeyFlag(),
+                source.getReplacingIndex(),
+                source.isSymbolCacheFlag(),
+                source.getSymbolCapacity(),
+                source.getOriginalWriterIndex()
+        );
+        copy.setParquetEncodingConfig(source.getParquetEncodingConfig());
+        return copy;
+    }
+
     public String getColumnName() {
         return columnName;
     }
@@ -230,6 +255,14 @@ public class TableColumnMetadata implements Plannable {
 
     public boolean isSymbolTableStatic() {
         return symbolTableStatic;
+    }
+
+    /**
+     * Whether ALTER COLUMN TYPE re-keyed the column, so its writer index differs from the writer index of the column
+     * it replaced.
+     */
+    public boolean isTypeConverted() {
+        return writerIndex != originalWriterIndex;
     }
 
     public void markDeleted() {

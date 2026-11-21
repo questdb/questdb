@@ -53,6 +53,11 @@ public class PgPostmasterStartTimeFunctionFactory implements FunctionFactory {
     };
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

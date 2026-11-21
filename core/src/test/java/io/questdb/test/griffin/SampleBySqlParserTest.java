@@ -25,11 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.griffin.SqlException;
 import io.questdb.test.cairo.TableModel;
 import org.junit.Test;
 
 public class SampleBySqlParserTest extends AbstractSqlParserTest {
+    private static final String DDL = "CREATE TABLE x (a DOUBLE, b SYMBOL, k TIMESTAMP, timestamp TIMESTAMP) TIMESTAMP(timestamp)";
 
     @Test
     public void testAlignExpected() throws Exception {
@@ -152,39 +152,79 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testAlignToCalendarWithTimeZoneAndLimit() throws SqlException {
-        assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp] a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
-                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' limit 1;",
-                model()
-        );
+    public void testAlignToCalendarWithTimeZoneAndLimit() throws Exception {
+        assertQuery("select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' limit 1;")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Limit
+                          lo: 1
+                          Project
+                            columns: [a, sum]
+                            Sort
+                              keys: [timestamp]
+                              Aggregate
+                                keys: [a, timestamp_floor_utc('1h', timestamp, null, '00:00', null) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, timestamp]
+                        """);
     }
 
     @Test
-    public void testAlignToCalendarWithTimeZoneAndOrderBy() throws SqlException {
-        assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp] a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by a desc)",
-                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;",
-                model()
-        );
+    public void testAlignToCalendarWithTimeZoneAndOrderBy() throws Exception {
+        assertQuery("select a, sum(a) from x sample by 1h align to calendar time zone 'UTC' order by a desc;")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Sort
+                          keys: [a desc]
+                          Project
+                            columns: [a, sum]
+                            Aggregate
+                              keys: [a, timestamp_floor_utc('1h', timestamp, null, '00:00', null) AS timestamp]
+                              values: [sum(a) AS sum]
+                              Scan
+                                table: x
+                                columns: [a, timestamp]
+                        """);
     }
 
     @Test
-    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws SqlException {
-        assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp] a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp)",
-                "select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';",
-                model()
-        );
+    public void testAlignToCalendarWithTimeZoneEndingWithSemicolon() throws Exception {
+        assertQuery("select a, sum(a) from x sample by 1h align to calendar time zone 'UTC';")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [a, sum]
+                          Sort
+                            keys: [timestamp]
+                            Aggregate
+                              keys: [a, timestamp_floor_utc('1h', timestamp, null, '00:00', null) AS timestamp]
+                              values: [sum(a) AS sum]
+                              Scan
+                                table: x
+                                columns: [a, timestamp]
+                        """);
     }
 
     @Test
-    public void testAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws SqlException {
-        assertQuery(
-                "select-choose a, sum from (select-group-by [a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp] a, sum(a) sum, timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp from (select [a, timestamp] from x timestamp (timestamp) stride 1h) order by timestamp limit 1)",
-                "select a, sum(a) from x sample by 1h align to calendar limit 1;",
-                model()
-        );
+    public void testAlignToCalendarWithoutTimezoneNorOffsetAndLimit() throws Exception {
+        assertQuery("select a, sum(a) from x sample by 1h align to calendar limit 1;")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Limit
+                          lo: 1
+                          Project
+                            columns: [a, sum]
+                            Sort
+                              keys: [timestamp]
+                              Aggregate
+                                keys: [a, timestamp_floor_utc('1h', timestamp, null, '00:00', null) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, timestamp]
+                        """);
     }
 
     @Test
@@ -198,93 +238,200 @@ public class SampleBySqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testCalendar() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar",
-                model()
-        );
+    public void testCalendar() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '00:00', null) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZone() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', 'CET') timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', 'CET') timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET'",
-                model()
-        );
+    public void testCalendarTimeZone() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '00:00', 'CET') AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZoneAndOffsetAsBindVariables() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, $2, $1) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, $2, $1) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone $1 with offset $2",
-                model()
-        );
+    public void testCalendarTimeZoneAndOffsetAsBindVariables() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone $1 with offset $2")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, $2, $1) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZoneAsOffset() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '+01:00') timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '+01:00') timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'",
-                model()
-        );
+    public void testCalendarTimeZoneAsOffset() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '+01:00'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '+01:00') AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZoneAsOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '-04:00') timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '-04:00') timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'",
-                model()
-        );
+    public void testCalendarTimeZoneAsOffsetNegative() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone '-04:00'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '00:00', '-04:00') AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZoneWithOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-00:15', 'CET') timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-00:15', 'CET') timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '-00:15'",
-                model()
-        );
+    public void testCalendarTimeZoneWithOffsetNegative() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '-00:15'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '-00:15', 'CET') AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarTimeZoneWithOffsetPositive() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:15', 'CET') timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '00:15', 'CET') timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '00:15'",
-                model()
-        );
+    public void testCalendarTimeZoneWithOffsetPositive() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar time zone 'CET' with offset '00:15'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '00:15', 'CET') AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarWithOffsetNegative() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) offset '-04:45' stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'",
-                model()
-        );
+    public void testCalendarWithOffsetNegative() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '-04:45'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '-04:45', null) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testCalendarWithOffsetPositive() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k from (select-choose [b, sum, k1, k1 k, timestamp] b, sum, k1, k1 k, timestamp from (select-group-by [b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp] b, sum(a) sum, k k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) timestamp from (select [b, a, k, timestamp] from x y timestamp (timestamp) offset '01:45' stride 3h) y) y order by timestamp)",
-                "select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'",
-                model()
-        );
+    public void testCalendarWithOffsetPositive() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to calendar with offset '01:45'")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k]
+                          Sort
+                            keys: [timestamp]
+                            Project
+                              columns: [b, sum, k1, k1 AS k, timestamp]
+                              Aggregate
+                                keys: [b, k AS k1, timestamp_floor_utc('3h', timestamp, null, '01:45', null) AS timestamp]
+                                values: [sum(a) AS sum]
+                                Scan
+                                  table: x
+                                  columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test
-    public void testFirstObservation() throws SqlException {
-        assertQuery(
-                "select-choose b, sum, k1, k1 k from (select-group-by [b, sum(a) sum, k1] b, sum(a) sum, k1 from (select-choose [b, a, k k1] b, a, k k1, timestamp from (select [b, a, k] from x y timestamp (timestamp)) y) y sample by 3h) y",
-                "select b, sum(a), k k1, k from x y sample by 3h align to first observation",
-                model()
-        );
+    public void testFirstObservation() throws Exception {
+        assertQuery("select b, sum(a), k k1, k from x y sample by 3h align to first observation")
+                .ddl(DDL)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [b, sum, k1, k1 AS k]
+                          SampleBy
+                            period: 3h
+                            keys: [b, k AS k1]
+                            values: [sum(a) AS sum]
+                            Scan
+                              table: x
+                              columns: [a, b, k, timestamp]
+                        """);
     }
 
     @Test

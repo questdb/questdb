@@ -91,19 +91,18 @@ public class MatViewPeriodsTest {
         final TimeZoneRules rules = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "America/New_York");
         // The grid starts at 03:00 local on 2022-03-13, which is 07:00Z, right after DST starts.
         sampler.setStart(MicrosTimestampDriver.floor("2022-03-13T03:00"));
-        // The sampler rounds 01:35 local up to the grid point at 02:00, which the clock skips, so the period starts at
-        // the change.
-        Assert.assertEquals(
-                MicrosTimestampDriver.floor("2022-03-13T07:00"),
-                MatViewPeriods.periodStart(sampler, rules, MicrosTimestampDriver.floor("2022-03-13T06:35"))
-        );
-        // Without a change in between, the result is the time of the grid point that the sampler rounds up to.
+        // Before the start, the grid extends back unchanged, and the period of a time starts at the grid point at or
+        // before it: 01:35 local, before the change, is in the period that starts at 01:00 local, 06:00Z.
         Assert.assertEquals(
                 MicrosTimestampDriver.floor("2022-03-13T06:00"),
+                MatViewPeriods.periodStart(sampler, rules, MicrosTimestampDriver.floor("2022-03-13T06:35"))
+        );
+        Assert.assertEquals(
+                MicrosTimestampDriver.floor("2022-03-13T05:00"),
                 MatViewPeriods.periodStart(sampler, rules, MicrosTimestampDriver.floor("2022-03-13T05:35"))
         );
         Assert.assertEquals(
-                MicrosTimestampDriver.floor("2022-03-13T02:00"),
+                MicrosTimestampDriver.floor("2022-03-13T01:00"),
                 MatViewPeriods.periodStart(sampler, null, MicrosTimestampDriver.floor("2022-03-13T01:35"))
         );
     }

@@ -25,24 +25,18 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
-import io.questdb.griffin.SqlCodeGenerator;
-import io.questdb.griffin.SqlCompiler;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.List;
-
-import static io.questdb.griffin.SqlOptimiser.aliasAppearsInFuncArgs;
-import static org.junit.Assert.*;
 
 public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
@@ -89,20 +83,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1) from (select x x1 from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x1, sum]
+                              Aggregate
+                                keys: [x1]
+                                values: [sum(x1) AS sum]
+                                Project
+                                  columns: [x AS x1]
+                                  Scan
+                                    table: y
+                                    columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             GroupBy vectorized: true workers: 1
-                              keys: [x1]
-                              values: [sum(x1)]
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: y
+                              keys: [x]
+                              values: [sum(x)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -112,23 +115,31 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select concat(lpad(x1::string, 5)), x1, sum(x1) from (select x x1 from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals(
-                    "select-group-by concat(lpad(x1::string, 5)) concat, x1, sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [concat, x1, sum]
+                              Aggregate
+                                keys: [concat(lpad(cast(x1, STRING), 5)) AS concat, x1]
+                                values: [sum(x1) AS sum]
+                                Project
+                                  columns: [x AS x1]
+                                  Scan
+                                    table: y
+                                    columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Async Group By workers: 1
                               keys: [concat,x1]
-                              keyFunctions: [concat([lpad(x1::string,5)])]
-                              values: [sum(x1)]
+                              keyFunctions: [concat([lpad(x::string,5)])]
+                              values: [sum(x)]
                               filter: null
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: y
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -138,22 +149,31 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select concat(lpad(x1::string, 5)), x1 from (select x x1 from y) group by x1";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-virtual concat(lpad(x1::string, 5)) concat, x1 from (select-group-by [x1] x1 from (select-choose [x x1] x x1 from (select [x] from y)))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [concat(lpad(cast(x1, STRING), 5)) AS concat, x1]
+                              Aggregate
+                                keys: [x1]
+                                values: []
+                                Project
+                                  columns: [x AS x1]
+                                  Scan
+                                    table: y
+                                    columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             VirtualRecord
                               functions: [concat([lpad(x1::string,5)]),x1]
                                 GroupBy vectorized: true workers: 1
-                                  keys: [x1]
+                                  keys: [x]
                                   values: [count(*)]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -164,20 +184,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1, sum(x1), max(X1) from (select x X1 from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x1, sum(x1) sum, max(x1) max from (select-choose [x X1] x X1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x1, sum, max]
+                              Aggregate
+                                keys: [X1 AS x1]
+                                values: [sum(X1) AS sum, max(X1) AS max]
+                                Project
+                                  columns: [x AS X1]
+                                  Scan
+                                    table: y
+                                    columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             GroupBy vectorized: true workers: 1
-                              keys: [X1]
-                              values: [sum(X1),max(X1)]
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: y
+                              keys: [x]
+                              values: [sum(x),max(x)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -188,21 +217,30 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select sum(x1) from (select x x1 from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by sum(x1) sum from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [sum]
+                              Aggregate
+                                keys: []
+                                values: [sum(x1) AS sum]
+                                Project
+                                  columns: [x AS x1]
+                                  Scan
+                                    table: y
+                                    columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Async Group By workers: 1
                               vectorized: true
-                              values: [sum(x1)]
+                              values: [sum(x)]
                               filter: null
-                                SelectedRecord
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: y
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: y
                             """);
         });
     }
@@ -213,10 +251,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int );");
             final String query = "select x1 from (select x x1 from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose x1 from (select-choose [x x1] x x1 from (select [x] from y))", model.toString0());
-            ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-            assert !aliasAppearsInFuncArgs(model, "x1", sqlNodeStack);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x AS x1]
+                              Scan
+                                table: y
+                                columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -233,13 +276,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -252,13 +308,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -271,13 +342,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -290,13 +376,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -440,16 +539,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Window
                           functions: [rank() over (partition by [hostname])]
                             VirtualRecord
-                              functions: [hostname,ts,memoize(usage_system),usage_system1+10]
-                                SelectedRecord
-                                    Filter filter: t2.ts<t1.ts
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
+                              functions: [memoize(t2.usage_system),t1.usage_system+10,t1.hostname,t1.ts]
+                                Filter filter: t2.ts<t1.ts
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
                         """);
         assertQuery(q3)
                 .noLeakCheck()
@@ -467,13 +565,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -486,8 +597,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(x) AS FIRST]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -509,23 +630,50 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             String queryTemplate = "select dateadd('m', -15, %s(ts)) from y";
             String[] functions = {"first", "last", "min", "max"};
             String[] scanDirection = {"forward", "backward", "forward", "backward"};
-            String modelTemplate = "select-virtual dateadd('m', -(15), %s) dateadd from (select-choose [ts %s] ts %s from (select [ts] from y timestamp (ts))%s limit 1)";
             String planTemplate = """
                     VirtualRecord
-                      functions: [dateadd('m',-15,%s)]
-                        Limit value: 1 skip-rows: 0 take-rows: 0
-                            SelectedRecord
+                      functions: [dateadd('m',-15,%1$s)]
+                        Timestamp Endpoint
+                          value: %1$s(ts)
+                            Limit value: 1 skip-rows: 0 take-rows: 0
                                 PageFrame
-                                    Row %s scan
-                                    Frame %s scan on: y
+                                    Row %2$s scan
+                                    Frame %2$s scan on: y
+                    """;
+            String ascLogicalPlanTemplate = """
+                    Project
+                      columns: [dateadd('m', -15, %1$s) AS dateadd]
+                      Aggregate
+                        keys: []
+                        values: [%1$s(ts) AS %1$s]
+                        Limit
+                          lo: 1
+                          Scan
+                            table: y
+                            columns: [ts]
+                    """;
+            String descLogicalPlanTemplate = """
+                    Project
+                      columns: [dateadd('m', -15, %1$s) AS dateadd]
+                      Aggregate
+                        keys: []
+                        values: [%1$s(ts) AS %1$s]
+                        Limit
+                          lo: 1
+                          Sort
+                            keys: [ts desc]
+                            Scan
+                              table: y
+                              columns: [ts]
                     """;
             for (int i = 0; i < functions.length; i++) {
                 String query = String.format(queryTemplate, functions[i]);
-                final IQueryModel model = compileModel(query);
-                TestUtils.assertEquals(String.format(modelTemplate, functions[i], functions[i], functions[i], i % 2 == 1 ? String.format(" order by %s desc", functions[i]) : ""), model.toString0());
                 assertQuery(query)
                         .noLeakCheck()
-                        .assertsPlan(String.format(planTemplate, functions[i], scanDirection[i], scanDirection[i]));
+                        .assertsLogicalPlan(String.format(i % 2 == 1 ? descLogicalPlanTemplate : ascLogicalPlanTemplate, functions[i]));
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan(String.format(planTemplate, functions[i], scanDirection[i]));
             }
         });
     }
@@ -628,10 +776,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query4)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Filter filter: 10<a_alias
-                                VirtualRecord
-                                  functions: [b1,memoize(a+1)]
-                                    SelectedRecord
+                            SelectedRecord
+                                Filter filter: 10<a_alias
+                                    VirtualRecord
+                                      functions: [memoize(a+1),b]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: x
@@ -743,21 +891,64 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         INNER join (select LAST(ts) from y2) as y2\s
                         on y2.LAST = y1.ts""").replaceAll("#JOIN_TYPE", joinType);
                 String queryNew = query + " union \n" + query;
-                final IQueryModel model = compileModel(queryNew);
-                assertEquals(
-                        ("select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                                "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) #JOIN_TYPE join " +
-                                "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                                "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                                "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                                " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                                "#JOIN_TYPE join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                                "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                                "limit 1) y2 on y2.LAST = y1.ts)").replaceAll("#JOIN_TYPE", joinType),
-                        model.toString0()
-                );
-                // TODO: there's a forward scan on y2 whereas it should be a backward scan;
-                //       it could have something to do with SqlOptimiser.optimiseOrderBy()
+                assertQuery(queryNew)
+                        .noLeakCheck()
+                        .assertsLogicalPlan("""
+                                Union
+                                  Project
+                                    columns: [y.x, y.ts, y1.x AS x1, y1.ts AS ts1, y2.LAST]
+                                    Join
+                                      Master y
+                                        Scan
+                                          table: y
+                                          columns: [x, ts]
+                                      #JOIN_TYPE y1
+                                        keys: [y1.x = y.x]
+                                        Scan
+                                          table: y1
+                                          columns: [x, ts]
+                                      INNER y2
+                                        keys: [y2.LAST = y1.ts]
+                                        Project
+                                          columns: [LAST]
+                                          Aggregate
+                                            keys: []
+                                            values: [last(ts) AS LAST]
+                                            Limit
+                                              lo: 1
+                                              Sort
+                                                keys: [ts desc]
+                                                Scan
+                                                  table: y2
+                                                  columns: [ts]
+                                  Project
+                                    columns: [y.x, y.ts, y1.x AS x1, y1.ts AS ts1, y2.LAST]
+                                    Join
+                                      Master y
+                                        Scan
+                                          table: y
+                                          columns: [x, ts]
+                                      #JOIN_TYPE y1
+                                        keys: [y1.x = y.x]
+                                        Scan
+                                          table: y1
+                                          columns: [x, ts]
+                                      INNER y2
+                                        keys: [y2.LAST = y1.ts]
+                                        Project
+                                          columns: [LAST]
+                                          Aggregate
+                                            keys: []
+                                            values: [last(ts) AS LAST]
+                                            Limit
+                                              lo: 1
+                                              Sort
+                                                keys: [ts desc]
+                                                Scan
+                                                  table: y2
+                                                  columns: [ts]
+                                """.replace("#JOIN_TYPE", joinType.toUpperCase()));
+                // TODO: there's a forward scan on y2 whereas it should be a backward scan
                 assertQuery(query)
                         .noLeakCheck()
                         .assertsPlan("SelectedRecord\n" +
@@ -773,7 +964,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: y1\n" +
                                 "        Hash\n" +
-                                "            SelectedRecord\n" +
+                                "            Timestamp Endpoint\n" +
+                                "              value: last(ts)\n" +
                                 "                Async Top K lo: 1 workers: 1\n" +
                                 "                  filter: null\n" +
                                 "                  keys: [ts desc]\n" +
@@ -798,17 +990,58 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     inner join (select count(distinct x) c from y1) as y1\s
                     on y.x = y1.c""";
 
-            String expectedModel = "select-choose y.x x, y.ts ts, y1.c c from (select [x, ts] from y timestamp (ts) " +
-                    "join select [c] from (select-group-by [count() c] count() c from (select-group-by x from " +
-                    "(select [x] from y1 timestamp (ts) where null != x))) y1 on y1.c = y.x)";
-            assertEquals(
-                    expectedModel,
-                    compileModel(queryA).toString0()
-            );
-            assertEquals(
-                    expectedModel,
-                    compileModel(queryB).toString0()
-            );
+            assertQuery(queryA)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [y.x, y.ts, y1.c]
+                              Join
+                                Master y
+                                  Scan
+                                    table: y
+                                    columns: [x, ts]
+                                INNER y1
+                                  keys: [y1.c = y.x]
+                                  Project
+                                    columns: [c]
+                                    Aggregate
+                                      keys: []
+                                      values: [count() AS c]
+                                      Aggregate
+                                        keys: [x]
+                                        values: []
+                                        Filter
+                                          predicate: null != x
+                                          Scan
+                                            table: y1
+                                            columns: [x]
+                            """);
+            assertQuery(queryB)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [y.x, y.ts, y1.c]
+                              Join
+                                Master y
+                                  Scan
+                                    table: y
+                                    columns: [x, ts]
+                                INNER y1
+                                  keys: [y1.c = y.x]
+                                  Project
+                                    columns: [c]
+                                    Aggregate
+                                      keys: []
+                                      values: [count() AS c]
+                                      Aggregate
+                                        keys: [x]
+                                        values: []
+                                        Filter
+                                          predicate: null != x
+                                          Scan
+                                            table: y1
+                                            columns: [x]
+                            """);
 
             String expectedPlan = """
                     SelectedRecord
@@ -840,13 +1073,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -859,8 +1107,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(x) AS LAST]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -880,13 +1138,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [max]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS max]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -899,8 +1172,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(x) AS MAX]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -920,13 +1203,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [min]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS min]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -939,8 +1235,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(x) AS MIN]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -957,22 +1263,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMoveClausesIncrementsPositionCounter() throws Exception {
-        // Regression test for a bug in SqlOptimiser.moveClauses() where the
-        // position counter 'p' was never incremented after matching a clause
-        // position. When swapJoinOrder0() called moveClauses() with multiple
-        // positions to steal, only the first clause was moved to the target
-        // context. The remaining clauses stayed in the source context, creating
-        // circular dependencies in the join graph and causing query compilation
-        // to fail.
+        // Regression test for a join-reordering bug: when a reorder moved
+        // several join clauses from one table to another, only the first one
+        // moved. The remaining clauses stayed behind, creating circular
+        // dependencies in the join graph and causing query compilation to fail.
+        // JoinOrderSolver owns join ordering now.
         //
         // The query uses three comma-joined tables with WHERE conditions:
         //   a.x = c.x AND b.y = c.y AND b.z = c.z
         //
-        // After analyseEquals, model c gets all three clauses. During
-        // reorderTables, swapJoinOrder0 tries to steal the two clauses
-        // referencing table b (b.y=c.y and b.z=c.z) from model c. With the
-        // bug, only b.y=c.y is moved; b.z=c.z stays on c, creating a cycle
-        // between models b and c that makes topological sort fail.
+        // Table c starts with all three clauses. Reordering moves the two
+        // clauses referencing table b (b.y=c.y and b.z=c.z) off c. With the
+        // bug, only b.y=c.y moved; b.z=c.z stayed on c, creating a cycle
+        // between b and c that made the topological sort fail.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab_a (x INT)");
             execute("CREATE TABLE tab_b (y INT, z INT)");
@@ -988,8 +1291,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     INSERT INTO tab_c VALUES (1, 10, 100), (2, 20, 200), (3, 10, 200), (1, 20, 200)
                     """);
 
-            // Cross join with WHERE conditions -- triggers reorderTables and
-            // swapJoinOrder0 with multiple clausesToSteal entries.
+            // Cross join with WHERE conditions -- reorders joins that carry
+            // multiple clauses.
             String implicitJoinQuery = """
                     SELECT tab_a.x, tab_b.y, tab_b.z, tab_c.x AS cx, tab_c.y AS cy, tab_c.z AS cz
                     FROM tab_a
@@ -1032,13 +1335,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -1051,17 +1367,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose LAST from " +
-                            "(select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -1074,17 +1401,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose MAX from " +
-                            "(select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -1097,13 +1435,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -1117,38 +1468,86 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
-                            " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
-                            "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
-                            "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
-                            "(select [ts] from y timestamp (ts)) order by max desc limit 1)",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Union
+                                Union
+                                  Union
+                                    Project
+                                      columns: [FIRST]
+                                      Aggregate
+                                        keys: []
+                                        values: [first(ts) AS FIRST]
+                                        Limit
+                                          lo: 1
+                                          Scan
+                                            table: y
+                                            columns: [ts]
+                                    Project
+                                      columns: [LAST]
+                                      Aggregate
+                                        keys: []
+                                        values: [last(ts) AS LAST]
+                                        Limit
+                                          lo: 1
+                                          Sort
+                                            keys: [ts desc]
+                                            Scan
+                                              table: y
+                                              columns: [ts]
+                                  Project
+                                    columns: [min]
+                                    Aggregate
+                                      keys: []
+                                      values: [min(ts) AS min]
+                                      Limit
+                                        lo: 1
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                                Project
+                                  columns: [max]
+                                  Aggregate
+                                    keys: []
+                                    values: [max(ts) AS max]
+                                    Limit
+                                      lo: 1
+                                      Sort
+                                        keys: [ts desc]
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Union
                                 Union
                                     Union
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: first(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: last(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit value: 1 skip-rows: 0 take-rows: 0
-                                        SelectedRecord
+                                    Timestamp Endpoint
+                                      value: min(ts)
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit value: 1 skip-rows: 0 take-rows: 0
-                                    SelectedRecord
+                                Timestamp Endpoint
+                                  value: max(ts)
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
                                             Frame backward scan on: y
@@ -1404,10 +1803,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             VirtualRecord
                               functions: [1]
                                 Hash Left Outer Join Light
-                                  condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                  condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                   filter: ep.ActionTypeId=8
                                     Hash Left Outer Join Light
-                                      condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                      condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                       filter: (ep0.ActionTypeId=13 and ep0.Message='2')
                                         Async JIT Filter workers: 1
                                           filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
@@ -1451,14 +1850,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               functions: [1]
                                 Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=2016-01-01T00:00:00.000000Z) and 2016-01-01T10:00:00.000000Z>=el.CreateDate)
                                     Hash Right Outer Join Light
-                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                       filter: ep.ActionTypeId=8
                                         Hash Right Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: WorkflowEvent
+                                            Async JIT Filter workers: 1
+                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: WorkflowEvent
+                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
                                             Hash
                                                 PageFrame
                                                     Row forward scan
@@ -1495,14 +1897,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               functions: [1]
                                 Filter filter: ((el.UserId=19 and el.TenantId=24024 and el.EventTypeId=1 and el.CreateDate>=2016-01-01T00:00:00.000000Z) and 2016-01-01T10:00:00.000000Z>=el.CreateDate)
                                     Hash Full Outer Join Light
-                                      condition: ep.WorkflowEventId=el.Id and ep.CreateDate=el.CreateDate
+                                      condition: ep.CreateDate=el.CreateDate and ep.WorkflowEventId=el.Id
                                       filter: ep.ActionTypeId=8
                                         Hash Full Outer Join Light
-                                          condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
+                                          condition: ep0.CreateDate=el.CreateDate and ep0.WorkflowEventId=el.Id
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: WorkflowEvent
+                                            Async JIT Filter workers: 1
+                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: WorkflowEvent
+                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
                                             Hash
                                                 PageFrame
                                                     Row forward scan
@@ -1513,7 +1918,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Frame forward scan on: WorkflowEventAction
                             """);
 
-            assertQuery("select-virtual 1 1 from (select [Id, CreateDate, UserId, TenantId, EventTypeId] from WorkflowEvent el timestamp (CreateDate) join (select [WorkflowEventId, CreateDate, ActionTypeId, Message] from WorkflowEventAction ep0 timestamp (CreateDate) where ActionTypeId = 13 and Message = '2') ep0 on ep0.WorkflowEventId = el.Id and ep0.CreateDate = el.CreateDate join (select [WorkflowEventId, CreateDate, ActionTypeId] from WorkflowEventAction ep timestamp (CreateDate) where ActionTypeId = 8) ep on ep.WorkflowEventId = el.Id and ep.CreateDate = el.CreateDate where UserId = 19 and TenantId = 24024 and EventTypeId = 1 and CreateDate >= to_timestamp('2016-01-01T00:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU') and CreateDate <= to_timestamp('2016-01-01T10:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU')) el", """
+            assertQuery("""
                     SELECT  1
                     FROM    WorkflowEvent el
                     
@@ -1532,7 +1937,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.TenantId = 24024
                       and   el.EventTypeId = 1
                       and   el.CreateDate >= to_timestamp('2016-01-01T00:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU')
-                      and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU')""");
+                      and   el.CreateDate <= to_timestamp('2016-01-01T10:00:00.000000', 'yyyy-MM-ddTHH:mm:ss.SSSUUU')""")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [1 AS 1]
+                              Join
+                                Master el
+                                  Filter
+                                    predicate: and(and(and(and(el.UserId = 19, el.TenantId = 24024), el.EventTypeId = 1), el.CreateDate >= 1451606400000000::TIMESTAMP), el.CreateDate <= 1451642400000000::TIMESTAMP)
+                                    Scan
+                                      table: WorkflowEvent
+                                      columns: [CreateDate, Id, TenantId, UserId, EventTypeId]
+                                INNER ep0
+                                  keys: [ep0.CreateDate = el.CreateDate, ep0.WorkflowEventId = el.Id]
+                                  Filter
+                                    predicate: and(ep0.ActionTypeId = 13, ep0.Message = '2')
+                                    Scan
+                                      table: WorkflowEventAction
+                                      columns: [CreateDate, WorkflowEventId, ActionTypeId, Message]
+                                INNER ep
+                                  keys: [ep.CreateDate = el.CreateDate, ep.WorkflowEventId = el.Id]
+                                  Filter
+                                    predicate: ep.ActionTypeId = 8
+                                    Scan
+                                      table: WorkflowEventAction
+                                      columns: [CreateDate, WorkflowEventId, ActionTypeId]
+                            """);
 
             assertQuery("""
                     SELECT  1
@@ -1607,16 +2038,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.CreateDate <= '2016-01-01T10:00:00Z'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    // RIGHT nulls the master, so the same WHERE must stay a post-join Filter: el is
-                    // fully scanned (no interval pruning) and the bounds are applied after the join.
-                    .withPlanContaining("Filter filter:", "Frame forward scan on: WorkflowEvent\n")
+                    // RIGHT nulls the master, so the same WHERE stays a post-join Filter; it rejects NULL, so a copy
+                    // also filters the el scan and the timestamp bounds prune it to an interval scan.
+                    .withPlanContaining("Filter filter:", "Interval forward scan on: WorkflowEvent")
                     .returns("""
                             CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage
                             2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2
                             """);
 
-            // FULL nulls the master the same way RIGHT does: the master-only WHERE stays post-join
-            // and loses interval pruning. The single matched row is the only output (no NULL rows).
+            // FULL nulls the master the same way RIGHT does: the master-only WHERE stays post-join, and its copy
+            // prunes the el scan to an interval. The single matched row is the only output (no NULL rows).
             assertQuery("""
                     SELECT  *
                     FROM    WorkflowEvent el
@@ -1634,7 +2065,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.CreateDate <= '2016-01-01T10:00:00Z'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Filter filter:", "Frame forward scan on: WorkflowEvent\n")
+                    .withPlanContaining("Filter filter:", "Interval forward scan on: WorkflowEvent")
                     .returns("""
                             CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage
                             2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2
@@ -1659,7 +2090,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: and(in(t1.ts, '2023-09-01T00:00:00.000Z'), t1.ts <= '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    ASOF t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -1703,7 +2155,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.ts, t1.s
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by ts, s limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [ts, s]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: and(in(t1.ts, '2023-09-01T00:00:00.000Z'), t1.ts <= '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    ASOF t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -1748,7 +2221,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         ORDER BY t1.s, t2.ts
                         LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: and(in(t1.ts, '2023-09-01T00:00:00.000Z'), t1.ts <= '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    ASOF t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -1792,7 +2286,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t2.s, t2.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s1, ts1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s1, ts1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: and(in(t1.ts, '2023-09-01T00:00:00.000Z'), t1.ts <= '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    ASOF t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -1836,7 +2351,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) asof join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    ASOF t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -1871,8 +2407,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1a() throws Exception {
-        // case when ordering by symbol, then timestamp - the scan cannot promise that order across page
-        // frames, so the sort sits above the join
+        // case when ordering by symbol, then timestamp - the symbol index scan walks each key across the page
+        // frames of the interval, so it delivers the order and no sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -1887,25 +2423,45 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts in '2023-09-01T00:00:00.000Z' and ts <= '2023-09-01T01:00:00.000Z') order by s, ts limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: and(in(t1.ts, '2023-09-01T00:00:00.000Z'), t1.ts <= '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                                SelectedRecord
+                                    Cross Join
+                                        SortedSymbolIndex
+                                            Index forward scan on: s
+                                              symbolOrder: asc
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T00:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """);
             assertQuery(query)
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -1923,8 +2479,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin1b() throws Exception {
-        // case when ordering by symbol, then timestamp - the scan cannot promise that order across page
-        // frames, so the sort sits above the join
+        // case when ordering by symbol, then timestamp - the symbol index scan walks each key across the page
+        // frames of the interval, so it delivers the order and no sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -1939,23 +2495,43 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s, ts]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                                SelectedRecord
+                                    Cross Join
+                                        SortedSymbolIndex
+                                            Index forward scan on: s
+                                              symbolOrder: asc
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """)
+                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2042,7 +2618,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts, t2.ts, t2.s
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1, s1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts, ts1, s1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2132,8 +2728,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
     @Test
     public void testOrderByAdviceWorksWithCrossJoin2() throws Exception {
-        // case when ordering by just symbol - the scan cannot promise that order across page frames, so
-        // the sort sits above the join
+        // case when ordering by just symbol - the symbol index scan walks each key across the page frames of the
+        // interval, so it delivers the order and no sort sits above the join
         assertMemoryLeak(() -> {
             execute(orderByAdviceDdl.replace(" t ", " t1 "));
             execute(orderByAdviceDdl.replace(" t ", " t2 "));
@@ -2148,23 +2744,43 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .withPlan("""
                             Limit value: 1000000 skip-rows-max: 0 take-rows-max: 1000000
-                                Encode sort
-                                  keys: [s]
-                                    SelectedRecord
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t2
+                                SelectedRecord
+                                    Cross Join
+                                        SortedSymbolIndex
+                                            Index forward scan on: s
+                                              symbolOrder: asc
+                                            Interval forward scan on: t1
+                                              intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
                             """)
+                    .noRandomAccess()
                     .returns("""
                             s\tts\ts1\tts1
                             a\t2023-09-01T00:00:00.000000Z\ta\t2023-09-01T00:00:00.000000Z
@@ -2251,7 +2867,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.ts, t1.s
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [ts, s]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2357,7 +2993,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.ts, t2.s, t1.s, t2.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) cross join select [s, ts] from t2 timestamp (ts) where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by ts, s1, s, ts1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [ts, s1, s, ts1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    CROSS t2
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2463,7 +3119,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         ORDER BY t1.s, t2.ts
                         LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) lt join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    LT t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2513,7 +3190,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ORDER BY t1.s, t1.ts, t2.ts
                     LIMIT 1000000;""";
 
-            assertQuery("select-choose t1.s s, t1.ts ts, t2.s s1, t2.ts ts1 from (select [s, ts] from t1 timestamp (ts) join select [s, ts] from t2 timestamp (ts) on t2.s = t1.s where ts between ('2023-09-01T00:00:00.000Z', '2023-09-01T01:00:00.000Z')) order by s, ts, ts1 limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Sort
+                                keys: [s, ts, ts1]
+                                Project
+                                  columns: [t1.s, t1.ts, t2.s AS s1, t2.ts AS ts1]
+                                  Join
+                                    Master t1
+                                      Filter
+                                        predicate: between(t1.ts, '2023-09-01T00:00:00.000Z'::TIMESTAMP, '2023-09-01T01:00:00.000Z'::TIMESTAMP)
+                                        Scan
+                                          table: t1
+                                          columns: [s, ts]
+                                    INNER t2
+                                      keys: [t2.s = t1.s]
+                                      Scan
+                                        table: t2
+                                        columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2526,12 +3224,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                                Frame forward scan on: t2
                                             Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: t2
+                                                    Interval forward scan on: t1
+                                                      intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -2574,7 +3272,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         ORDER BY t1.s, t1.ts
                         LIMIT 1000000;""";
 
-            assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit 1000000", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 1000000
+                              Project
+                                columns: [s, ts]
+                                Sort
+                                  keys: [s, ts]
+                                  Scan
+                                    table: t1
+                                    columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2602,7 +3312,19 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         ORDER BY t1.s, t1.ts
                         LIMIT -10;""";
 
-            assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by s, ts limit -(10)", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: -10
+                              Project
+                                columns: [s, ts]
+                                Sort
+                                  keys: [s, ts]
+                                  Scan
+                                    table: t1
+                                    columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2629,15 +3351,31 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         ORDER BY t1.ts, t1.s
                         LIMIT -10;""";
 
-            assertQuery("select-choose s, ts from (select [s, ts] from t1 timestamp (ts)) order by ts, s limit -(10)", query);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [s, ts]
+                              Sort
+                                keys: [ts, s]
+                                Limit
+                                  lo: 10
+                                  Sort
+                                    keys: [ts desc, s desc]
+                                    Scan
+                                      table: t1
+                                      columns: [s, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light lo: -10 partiallySorted: true
+                            Encode sort light
                               keys: [ts, s]
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: t1
+                                Encode sort light lo: 10 partiallySorted: true
+                                  keys: [ts desc, s desc]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t1
                             """);
 
             Misc.free(select(query, sqlExecutionContext));
@@ -2807,13 +3545,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -2826,8 +3577,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(x) AS FIRST]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2857,19 +3618,63 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     INNER join (select LAST(ts) from y2) as y2\s
                     on y2.LAST = y1.ts""";
             String queryNew = query + " union \n" + query;
-            final IQueryModel model = compileModel(queryNew);
-            TestUtils.assertEquals(
-                    "select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x, " +
-                            "y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) left join " +
-                            "select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from (select-choose " +
-                            "[ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc limit 1) y2 on " +
-                            "y2.LAST = y1.ts) union select-choose [y.x x, y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST] y.x x," +
-                            " y.ts ts, y1.x x1, y1.ts ts1, y2.LAST LAST from (select [x, ts] from y timestamp (ts) " +
-                            "left join select [x, ts] from y1 timestamp (ts) on y1.x = y.x join select [LAST] from " +
-                            "(select-choose [ts LAST] ts LAST from (select [ts] from y2 timestamp (ts)) order by LAST desc " +
-                            "limit 1) y2 on y2.LAST = y1.ts)",
-                    model.toString0()
-            );
+            assertQuery(queryNew)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Union
+                              Project
+                                columns: [y.x, y.ts, y1.x AS x1, y1.ts AS ts1, y2.LAST]
+                                Join
+                                  Master y
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                                  LEFT y1
+                                    keys: [y1.x = y.x]
+                                    Scan
+                                      table: y1
+                                      columns: [x, ts]
+                                  INNER y2
+                                    keys: [y2.LAST = y1.ts]
+                                    Project
+                                      columns: [LAST]
+                                      Aggregate
+                                        keys: []
+                                        values: [last(ts) AS LAST]
+                                        Limit
+                                          lo: 1
+                                          Sort
+                                            keys: [ts desc]
+                                            Scan
+                                              table: y2
+                                              columns: [ts]
+                              Project
+                                columns: [y.x, y.ts, y1.x AS x1, y1.ts AS ts1, y2.LAST]
+                                Join
+                                  Master y
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                                  LEFT y1
+                                    keys: [y1.x = y.x]
+                                    Scan
+                                      table: y1
+                                      columns: [x, ts]
+                                  INNER y2
+                                    keys: [y2.LAST = y1.ts]
+                                    Project
+                                      columns: [LAST]
+                                      Aggregate
+                                        keys: []
+                                        values: [last(ts) AS LAST]
+                                        Limit
+                                          lo: 1
+                                          Sort
+                                            keys: [ts desc]
+                                            Scan
+                                              table: y2
+                                              columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2886,7 +3691,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: y1
                                     Hash
-                                        SelectedRecord
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Async Top K lo: 1 workers: 1
                                               filter: null
                                               keys: [ts desc]
@@ -2903,13 +3709,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -2922,8 +3743,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(x) AS LAST]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2944,13 +3775,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [max]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS max]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -2963,8 +3809,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(x) AS MAX]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -2985,13 +3841,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [min]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS min]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -3004,8 +3873,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(x) AS MIN]
+                                Scan
+                                  table: y
+                                  columns: [x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3026,13 +3905,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -3045,13 +3937,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -3064,13 +3971,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -3083,13 +4005,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -3103,35 +4038,86 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select" +
-                    " [ts] from y timestamp (ts)) limit 1 union select-choose [ts LAST] ts LAST from (select " +
-                    "[ts] from y timestamp (ts)) order by LAST desc limit 1 union select-choose [ts min] ts min " +
-                    "from (select [ts] from y timestamp (ts)) limit 1 union select-choose [ts max] ts max from " +
-                    "(select [ts] from y timestamp (ts)) order by max desc limit 1)", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Union
+                                Union
+                                  Union
+                                    Project
+                                      columns: [FIRST]
+                                      Aggregate
+                                        keys: []
+                                        values: [first(ts) AS FIRST]
+                                        Limit
+                                          lo: 1
+                                          Scan
+                                            table: y
+                                            columns: [ts]
+                                    Project
+                                      columns: [LAST]
+                                      Aggregate
+                                        keys: []
+                                        values: [last(ts) AS LAST]
+                                        Limit
+                                          lo: 1
+                                          Sort
+                                            keys: [ts desc]
+                                            Scan
+                                              table: y
+                                              columns: [ts]
+                                  Project
+                                    columns: [min]
+                                    Aggregate
+                                      keys: []
+                                      values: [min(ts) AS min]
+                                      Limit
+                                        lo: 1
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                                Project
+                                  columns: [max]
+                                  Aggregate
+                                    keys: []
+                                    values: [max(ts) AS max]
+                                    Limit
+                                      lo: 1
+                                      Sort
+                                        keys: [ts desc]
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Union
                                 Union
                                     Union
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: first(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: last(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit value: 1 skip-rows: 0 take-rows: 0
-                                        SelectedRecord
+                                    Timestamp Endpoint
+                                      value: min(ts)
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit value: 1 skip-rows: 0 take-rows: 0
-                                    SelectedRecord
+                                Timestamp Endpoint
+                                  value: max(ts)
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
                                             Frame backward scan on: y
@@ -3144,8 +4130,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, FIRST]
+                              Aggregate
+                                keys: [x]
+                                values: [first(ts) AS FIRST]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3166,8 +4162,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, LAST]
+                              Aggregate
+                                keys: [x]
+                                values: [last(ts) AS LAST]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3188,8 +4194,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, MAX]
+                              Aggregate
+                                keys: [x]
+                                values: [max(ts) AS MAX]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3209,8 +4225,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, MIN]
+                              Aggregate
+                                keys: [x]
+                                values: [min(ts) AS MIN]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -3230,35 +4256,84 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
-                    " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
-                    "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
-                    "limit 1 union select-choose [ts max] ts max from (select [ts] from y timestamp (ts)) order by" +
-                    " max desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Union
+                              Union
+                                Union
+                                  Project
+                                    columns: [FIRST]
+                                    Aggregate
+                                      keys: []
+                                      values: [first(ts) AS FIRST]
+                                      Limit
+                                        lo: 1
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                                  Project
+                                    columns: [LAST]
+                                    Aggregate
+                                      keys: []
+                                      values: [last(ts) AS LAST]
+                                      Limit
+                                        lo: 1
+                                        Sort
+                                          keys: [ts desc]
+                                          Scan
+                                            table: y
+                                            columns: [ts]
+                                Project
+                                  columns: [min]
+                                  Aggregate
+                                    keys: []
+                                    values: [min(ts) AS min]
+                                    Limit
+                                      lo: 1
+                                      Scan
+                                        table: y
+                                        columns: [ts]
+                              Project
+                                columns: [max]
+                                Aggregate
+                                  keys: []
+                                  values: [max(ts) AS max]
+                                  Limit
+                                    lo: 1
+                                    Sort
+                                      keys: [ts desc]
+                                      Scan
+                                        table: y
+                                        columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Union
                                 Union
                                     Union
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: first(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: last(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit value: 1 skip-rows: 0 take-rows: 0
-                                        SelectedRecord
+                                    Timestamp Endpoint
+                                      value: min(ts)
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit value: 1 skip-rows: 0 take-rows: 0
-                                    SelectedRecord
+                                Timestamp Endpoint
+                                  value: max(ts)
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
                                             Frame backward scan on: y
@@ -3272,20 +4347,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -3295,20 +4383,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -3318,20 +4421,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -3341,20 +4459,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -3364,13 +4495,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts FIRST from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -3386,14 +4531,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts LAST from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                    "by LAST desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -3409,14 +4569,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts MAX from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                    "by MAX desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -3432,13 +4607,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts MIN from " +
-                    "(select [ts, x] from y timestamp (ts) where x = 3) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -3454,13 +4643,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -3473,13 +4675,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -3492,13 +4709,28 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Scan
+                                      table: y
+                                      columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
                                         Frame backward scan on: y
@@ -3511,13 +4743,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
-            final IQueryModel model = compileModel(query);
-            TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts1]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS ts1]
+                                Limit
+                                  lo: 1
+                                  Scan
+                                    table: y
+                                    columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 1 skip-rows: 0 take-rows: 0
-                                SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: y
@@ -4043,7 +5288,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             id\tts\tid0\tid1\tc
@@ -4101,7 +5345,6 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             assertQuery(query)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             id\tts\tid0\tid1\tid2\tc
@@ -4141,7 +5384,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 Encode sort light
                                   keys: [c desc, id0]
                                     VirtualRecord
-                                      functions: [memoize(id),id*2,c]
+                                      functions: [id,id*2,c]
                                         Async Group By workers: 1
                                           keys: [id]
                                           values: [count(*)]
@@ -4236,16 +5479,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'";
-            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' offset '10:00' stride 5d) order by ts";
-            assertModel(model, query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(ts >= '2017-12-20'::TIMESTAMP, ts < '2018-01-31'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
 
             final String target = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20' and ts < '2018-01-31'
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String tmodel = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and ts >= '2017-12-20' and ts < '2018-01-31' from '2017-12-20' to '2018-01-31' offset '10:00' stride 5d) order by ts";
-            assertModel(tmodel, target, ExecutionModel.QUERY);
+            assertQuery(target)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(and(and(ts >= '2017-12-20'::TIMESTAMP, ts < '2018-01-31'::TIMESTAMP), ts >= '2017-12-20'::TIMESTAMP), ts < '2018-01-31'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
         });
     }
 
@@ -4256,14 +5527,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d from '2017-12-20' align to calendar with offset '10:00'";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' from '2017-12-20' offset '10:00' stride 5d) order by ts", query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: ts >= '2017-12-20'::TIMESTAMP
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
 
             final String target = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-20' and ts >= '2017-12-20' from '2017-12-20' offset '10:00' stride 5d) order by ts", target, ExecutionModel.QUERY);
+            assertQuery(target)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(ts >= '2017-12-20'::TIMESTAMP, ts >= '2017-12-20'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
         });
     }
 
@@ -4274,16 +5575,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from fromto\n" +
                     "sample by 5d to '2018-01-31' align to calendar with offset '10:00'";
 
-            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' to '2018-01-31' offset '10:00' stride 5d) order by ts";
-            assertModel(model, query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, null, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: ts < '2018-01-31'::TIMESTAMP
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
 
             final String target = """
                     select ts, avg(x) from fromto
                     where ts < '2018-01-31'
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'""";
 
-            final String targetModel = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2018-01-31' and ts < '2018-01-31' to '2018-01-31' offset '10:00' stride 5d) order by ts";
-            assertModel(targetModel, target, ExecutionModel.QUERY);
+            assertQuery(target)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, null, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(ts < '2018-01-31'::TIMESTAMP, ts < '2018-01-31'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
         });
     }
 
@@ -4296,14 +5625,44 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     where ts >= '2017-12-20'
                     sample by 5d from '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-22', '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts >= '2017-12-22' and ts >= '2017-12-20' from '2017-12-22' offset '10:00' stride 5d) order by ts", fromNarrow, ExecutionModel.QUERY);
+            assertQuery(fromNarrow)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-22'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(ts >= '2017-12-20'::TIMESTAMP, ts >= '2017-12-22'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
 
             final String toNarrow = """
                     select ts, avg(x) from fromto
                     where ts >= '2017-12-20'
                     sample by 5d TO '2017-12-22' align to calendar with offset '10:00'""";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x] from fromto timestamp (ts) where ts < '2017-12-22' and ts >= '2017-12-20' to '2017-12-22' offset '10:00' stride 5d) order by ts", toNarrow, ExecutionModel.QUERY);
+            assertQuery(toNarrow)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, null, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(ts >= '2017-12-20'::TIMESTAMP, ts < '2017-12-22'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x]
+                            """);
         });
     }
 
@@ -4317,9 +5676,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and ts < '2018-01-31' and s != '5' from '2017-12-20' to '2018-01-31' offset '10:00' stride 5d) order by ts";
 
-            assertModel(model, query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(and(s != '5', ts >= '2017-12-20'::TIMESTAMP), ts < '2018-01-31'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x, s]
+                            """);
         });
     }
 
@@ -4333,9 +5706,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts >= '2017-12-20' and s != '5' from '2017-12-20' offset '10:00' stride 5d) order by ts";
 
-            assertModel(model, query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(s != '5', ts >= '2017-12-20'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x, s]
+                            """);
         });
     }
 
@@ -4349,9 +5736,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d to '2018-01-31' align to calendar with offset '10:00'
                     """;
 
-            final String model = "select-group-by timestamp_floor_utc('5d', ts, null, '10:00', null) ts, avg(x) avg from (select [ts, x, s] from fromto timestamp (ts) where ts < '2018-01-31' and s != '5' to '2018-01-31' offset '10:00' stride 5d) order by ts";
 
-            assertModel(model, query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, null, '10:00', null) AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: and(s != '5', ts < '2018-01-31'::TIMESTAMP)
+                                    Scan
+                                      table: fromto
+                                      columns: [ts, x, s]
+                            """);
         });
     }
 
@@ -4455,15 +5856,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Long Top K lo: 6
                               keys: [ts asc]
-                                Async Group By workers: 1
-                                  keys: [ts,s]
-                                  keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
-                                  values: [count(*)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: fromto
-                                          intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
+                                SelectedRecord
+                                    Async Group By workers: 1
+                                      keys: [ts,s]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2018-01-01T00:00:00.000Z')]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2018-01-01T00:00:00.000000Z","2018-12-31T23:59:59.999999Z")]
                             """);
         });
     }
@@ -5006,16 +6408,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   keys: [ts]
                                     GroupBy vectorized: false
                                       keys: [ts]
-                                      values: [avg(x)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: fromto2
+                                      values: [avg(fromto.x)]
+                                        AsOf Join Fast
+                                            PageFrame
+                                                Row forward scan
+                                                Interval forward scan on: fromto
+                                                  intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: fromto2
                             """);
             assertQuery(query)
                     .noLeakCheck()
@@ -5639,15 +7040,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [timestamp]
-                                Async Group By workers: 1
-                                  keys: [symbol,timestamp]
-                                  keyFunctions: [timestamp_floor_utc('1m',timestamp)]
-                                  values: [last(price)]
-                                  filter: symbol ~ BTC-USD [state-shared]
-                                    PageFrame
-                                        Row forward scan
-                                        Interval forward scan on: trades
-                                          intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
+                                SelectedRecord
+                                    Async Group By workers: 1
+                                      keys: [symbol,timestamp]
+                                      keyFunctions: [timestamp_floor_utc('1m',timestamp)]
+                                      values: [last(price)]
+                                      filter: symbol ~ BTC-USD [state-shared]
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: trades
+                                              intervals: [("2024-08-11T10:13:00.000000Z","2024-08-11T10:15:59.999999Z")]
                             """);
         });
     }
@@ -5663,14 +7065,17 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By
+                            Sample By Fill
+                              stride: '1d'
                               fill: null
-                              values: [avg(x)]
-                                Async JIT Filter workers: 1
-                                  filter: 4>=x
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: fromto
+                                Sample By
+                                  fill: none
+                                  values: [avg(x)]
+                                    Async JIT Filter workers: 1
+                                      filter: 4>=x
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: fromto
                             """);
         });
     }
@@ -5679,11 +7084,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByOnSubqueryWithFillFromTo() throws Exception {
         // Pins two related fixes for the subquery + SAMPLE BY + FROM/TO + FILL combination:
         //
-        // 1. SqlOptimiser.rewriteSampleByFromTo previously NPE'd on subquery
-        //    models because QueryModel.getTableName() returns null and the
-        //    timestamp prefixing path called Chars.indexOf(null, '.'). The
-        //    null-guard skips prefixing for subquery models (the timestamp
-        //    is already locally scoped through the nested model).
+        // 1. SAMPLE BY FROM/TO rewriting (SampleByBinder owns it now) used
+        //    to NPE on a sub-query source because the source has no table
+        //    name to prefix the timestamp with.
         //
         // 2. SampleByFillValueNotKeyedRecordCursor toggles record.current
         //    between functionsA (data) and functionsB (placeholder/NULL)
@@ -5722,7 +7125,22 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             final String query = "select ts, avg(x) from y\n" +
                     "sample by 5d from '2017-12-20' align to calendar time zone 'Europe/London' with offset '10:00'";
 
-            assertModel("select-group-by timestamp_floor_utc('5d', ts, '2017-12-20', '10:00', 'Europe/London') ts, avg(x) avg from (select [ts, x] from y timestamp (ts) where ts >= to_utc('2017-12-20', 'Europe/London') from '2017-12-20' stride 5d) order by ts", query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [ts]
+                              Project
+                                columns: [ts, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('5d', ts, '2017-12-20'::TIMESTAMP, '10:00', 'Europe/London') AS ts]
+                                  values: [avg(x) AS avg]
+                                  Filter
+                                    predicate: ts >= 1513728000000000::TIMESTAMP
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                            """);
         });
     }
 
@@ -5761,8 +7179,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, LAST]
+                              Aggregate
+                                keys: [x]
+                                values: [last(ts) AS LAST]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -5782,8 +7210,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, MAX]
+                              Aggregate
+                                keys: [x]
+                                values: [max(ts) AS MAX]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -5802,8 +7240,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, MIN]
+                              Aggregate
+                                keys: [x]
+                                values: [min(ts) AS MIN]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -5822,8 +7270,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x, FIRST]
+                              Aggregate
+                                keys: [x]
+                                values: [first(ts) AS FIRST]
+                                Scan
+                                  table: y
+                                  columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -5844,11 +7302,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
             final String queryA = "select count_distinct(x) from y;";
             final String queryB = "select count(distinct x) from y;";
-            String expectedModel = "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))";
-            assertEquals(
-                    expectedModel,
-                    compileModel(queryA).toString0()
-            );
+            assertQuery(queryA)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [count_distinct]
+                              Aggregate
+                                keys: []
+                                values: [count() AS count_distinct]
+                                Aggregate
+                                  keys: [x]
+                                  values: []
+                                  Filter
+                                    predicate: null != x
+                                    Scan
+                                      table: y
+                                      columns: [x]
+                            """);
             String expectedPlan = """
                     Count
                         Async JIT Group By workers: 1
@@ -5895,8 +7365,51 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampEndpointOverSubQueryMatchesTheTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 3_600_000_000L) ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW v AS (SELECT * FROM y)");
+            execute("CREATE VIEW vf AS (SELECT * FROM y WHERE x > 10)");
+            for (String f : new String[]{"min", "max", "first", "last"}) {
+                final String[][] cases = {
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM (SELECT * FROM y WHERE x > 10)"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM (SELECT * FROM (SELECT * FROM y) WHERE x > 10)"},
+                        {f + "(ts) FROM y WHERE x > 10 AND x < 20", f + "(ts) FROM (SELECT * FROM (SELECT * FROM y WHERE x > 10) WHERE x < 20)"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM vf"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM v WHERE x > 10"},
+                        {f + "(ts) FROM y", f + "(ts) FROM (SELECT * FROM y)"},
+                        {f + "(ts) FROM y", f + "(ts) FROM v"},
+                        {f + "(ts) FROM y WHERE x = -1", f + "(ts) FROM (SELECT * FROM y WHERE x = -1)"},
+                };
+                for (String[] c : cases) {
+                    assertSqlCursors("SELECT " + c[0], "SELECT " + c[1]);
+                    final StringSink plan = new StringSink();
+                    printSql("EXPLAIN SELECT " + c[1], plan);
+                    Assert.assertTrue(plan.toString(), Chars.contains(plan, "Timestamp Endpoint"));
+                }
+                assertSqlCursors("SELECT " + f + "(ts) FROM y WHERE x > 10", "WITH c AS (SELECT * FROM y WHERE x > 10) SELECT " + f + "(ts) FROM c");
+            }
+            // the row each aggregate reads, from the 100 hours of the table
+            final String[][] values = {
+                    {"SELECT first(ts) FROM (SELECT * FROM y ORDER BY x DESC)", "first\n2024-01-05T03:00:00.000000Z\n"},
+                    {"SELECT last(ts) FROM (SELECT * FROM y ORDER BY x DESC)", "last\n2024-01-01T00:00:00.000000Z\n"},
+                    {"SELECT last(ts) FROM (SELECT * FROM y LIMIT 5)", "last\n2024-01-01T04:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT * FROM y LIMIT 5)", "max\n2024-01-01T04:00:00.000000Z\n"},
+                    {"SELECT min(ts) FROM (SELECT * FROM y LIMIT -5)", "min\n2024-01-04T23:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT dateadd('d', 1, ts) ts FROM y)", "max\n2024-01-06T03:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT * FROM y WHERE x = -1)", "max\n\n"},
+                    {"SELECT max(t) FROM (SELECT ts t FROM y WHERE x < 3)", "max\n2024-01-01T01:00:00.000000Z\n"},
+            };
+            final StringSink sink = new StringSink();
+            for (String[] c : values) {
+                printSql(c[0], sink);
+                TestUtils.assertEquals(c[0], c[1], sink);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampOffsetRewriteModelBasic() throws Exception {
-        // Test that and_offset wrapper appears in the model when pushing predicates through offset models
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
@@ -5907,21 +7420,34 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final IQueryModel model = compileModel(query);
-            String modelStr = model.toString0();
-
-            // Verify that and_offset is present in the nested model's WHERE clause
-            // The predicate should be pushed with and_offset wrapper
-            assertTrue("Expected and_offset in model: " + modelStr,
-                    modelStr.contains("and_offset"));
-            assertTrue("Expected timestamp column reference in and_offset: " + modelStr,
-                    modelStr.contains("timestamp in '2022'") || modelStr.contains("timestamp in \"2022\""));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts, price, amount]
+                              Project
+                                columns: [dateadd('h', -1, timestamp) AS ts, price, amount]
+                                Filter
+                                  predicate: in(dateadd('h', -1, timestamp), '2022')
+                                  Scan
+                                    table: trades
+                                    columns: [timestamp, price, amount]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',-1,timestamp),price,amount]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T01:00:00.000000Z","2023-01-01T00:59:59.999999Z")]
+                            """);
         });
     }
 
     @Test
     public void testTimestampOffsetRewriteModelDaysUnit() throws Exception {
-        // Test and_offset with day units
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
@@ -5932,25 +7458,37 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts >= '2022-01-01' AND ts < '2022-12-31'
                     """;
 
-            final IQueryModel model = compileModel(query);
-            String modelStr = model.toString0();
-
-            // Verify and_offset with day unit
-            assertTrue("Expected and_offset in model: " + modelStr,
-                    modelStr.contains("and_offset"));
-            // The unit should be 'd' for days
-            assertTrue("Expected day unit 'd' in and_offset: " + modelStr,
-                    modelStr.contains("'d'") || modelStr.contains("d,"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts, price, amount]
+                              Project
+                                columns: [dateadd('d', -3, timestamp) AS ts, price, amount]
+                                Filter
+                                  predicate: and(dateadd('d', -3, timestamp) >= '2022-01-01'::TIMESTAMP, dateadd('d', -3, timestamp) < '2022-12-31'::TIMESTAMP)
+                                  Scan
+                                    table: trades
+                                    columns: [timestamp, price, amount]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [dateadd('d',-3,timestamp),price,amount]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-04T00:00:00.000000Z","2023-01-02T23:59:59.999999Z")]
+                            """);
         });
     }
 
     @Test
     public void testTimestampOffsetRewriteModelNoOffsetNoPush() throws Exception {
-        // Test that without dateadd, predicates are NOT wrapped in and_offset
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
-            // Query without dateadd - just column rename
             final String query = """
                     SELECT * FROM (
                         (SELECT timestamp as ts, price, amount FROM trades)
@@ -5958,22 +7496,34 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final IQueryModel model = compileModel(query);
-            String modelStr = model.toString0();
-
-            // Should NOT have and_offset since there's no dateadd transformation
-            assertFalse("Should NOT have and_offset without dateadd: " + modelStr,
-                    modelStr.contains("and_offset"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp AS ts, price, amount]
+                              Filter
+                                predicate: in(timestamp, '2022')
+                                Scan
+                                  table: trades
+                                  columns: [timestamp, price, amount]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2022-01-01T00:00:00.000000Z","2022-12-31T23:59:59.999999Z")]
+                            """);
         });
     }
 
     @Test
     public void testTimestampOffsetRewriteModelNonConstantNotWrapped() throws Exception {
-        // Test that non-constant dateadd offsets do NOT get and_offset wrapper
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
 
-            // Query with non-constant offset
             final String query = """
                     SELECT * FROM (
                         (SELECT dateadd('h', offset_val, timestamp) as ts, price, amount FROM trades)
@@ -5981,18 +7531,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts in '2022'
                     """;
 
-            final IQueryModel model = compileModel(query);
-            String modelStr = model.toString0();
-
-            // Should NOT have and_offset since offset is not constant
-            assertFalse("Should NOT have and_offset with non-constant offset: " + modelStr,
-                    modelStr.contains("and_offset"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts, price, amount]
+                              Filter
+                                predicate: in(ts, '2022')
+                                Project
+                                  columns: [dateadd('h', offset_val, timestamp) AS ts, price, amount]
+                                  Scan
+                                    table: trades
+                                    columns: [offset_val, timestamp, price, amount]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: ts in [1640995200000000,1672531199999999]
+                                    VirtualRecord
+                                      functions: [memoize(dateadd('h',offset_val,timestamp)),price,amount]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                            """);
         });
     }
 
     @Test
     public void testTimestampOffsetRewriteModelWithPositiveOffset() throws Exception {
-        // Test and_offset with positive offset (+1 hour in dateadd means -1 in and_offset)
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
@@ -6003,12 +7570,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     ) WHERE ts >= '2022-01-01'
                     """;
 
-            final IQueryModel model = compileModel(query);
-            String modelStr = model.toString0();
-
-            // Verify and_offset with offset value -1 (inverse of +1)
-            assertTrue("Expected and_offset in model: " + modelStr,
-                    modelStr.contains("and_offset"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts, price, amount]
+                              Project
+                                columns: [dateadd('h', 1, timestamp) AS ts, price, amount]
+                                Filter
+                                  predicate: dateadd('h', 1, timestamp) >= '2022-01-01'::TIMESTAMP
+                                  Scan
+                                    table: trades
+                                    columns: [timestamp, price, amount]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [dateadd('h',1,timestamp),price,amount]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2021-12-31T23:00:00.000000Z","MAX")]
+                            """);
         });
     }
 
@@ -6225,38 +7809,84 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
-                            " limit 1 union select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by " +
-                            "LAST desc limit 1 union select-choose [ts min] ts min from (select [ts] from y timestamp (ts)) " +
-                            "limit 1 union select-choose [ts max] ts max from (select [ts] from y timestamp (ts)) order by" +
-                            " max desc limit 1",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Union
+                              Union
+                                Union
+                                  Project
+                                    columns: [FIRST]
+                                    Aggregate
+                                      keys: []
+                                      values: [first(ts) AS FIRST]
+                                      Limit
+                                        lo: 1
+                                        Scan
+                                          table: y
+                                          columns: [ts]
+                                  Project
+                                    columns: [LAST]
+                                    Aggregate
+                                      keys: []
+                                      values: [last(ts) AS LAST]
+                                      Limit
+                                        lo: 1
+                                        Sort
+                                          keys: [ts desc]
+                                          Scan
+                                            table: y
+                                            columns: [ts]
+                                Project
+                                  columns: [min]
+                                  Aggregate
+                                    keys: []
+                                    values: [min(ts) AS min]
+                                    Limit
+                                      lo: 1
+                                      Scan
+                                        table: y
+                                        columns: [ts]
+                              Project
+                                columns: [max]
+                                Aggregate
+                                  keys: []
+                                  values: [max(ts) AS max]
+                                  Limit
+                                    lo: 1
+                                    Sort
+                                      keys: [ts desc]
+                                      Scan
+                                        table: y
+                                        columns: [ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Union
                                 Union
                                     Union
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: first(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        Limit value: 1 skip-rows: 0 take-rows: 0
-                                            SelectedRecord
+                                        Timestamp Endpoint
+                                          value: last(ts)
+                                            Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    Limit value: 1 skip-rows: 0 take-rows: 0
-                                        SelectedRecord
+                                    Timestamp Endpoint
+                                      value: min(ts)
+                                        Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                Limit value: 1 skip-rows: 0 take-rows: 0
-                                    SelectedRecord
+                                Timestamp Endpoint
+                                  value: max(ts)
+                                    Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
                                             Frame backward scan on: y
@@ -6270,17 +7900,68 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute("create table y (x int, z int);");
             final String queryA = "select count_distinct(x) from y union select count_distinct(z) from y;";
             final String queryB = "select count(distinct x) from y union select count_distinct(z) from y;";
-            String expectedModel = "select-group-by [count() count_distinct] count() count_distinct from (select-group-by x from (select [x] from y where null != x)) " +
-                    "union " +
-                    "select-group-by [count() count_distinct] count() count_distinct from (select-group-by z from (select [z] from y where null != z))";
-            assertEquals(
-                    expectedModel,
-                    compileModel(queryA).toString0()
-            );
-            assertEquals(
-                    expectedModel,
-                    compileModel(queryB).toString0()
-            );
+            assertQuery(queryA)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Union
+                              Project
+                                columns: [count_distinct]
+                                Aggregate
+                                  keys: []
+                                  values: [count() AS count_distinct]
+                                  Aggregate
+                                    keys: [x]
+                                    values: []
+                                    Filter
+                                      predicate: null != x
+                                      Scan
+                                        table: y
+                                        columns: [x]
+                              Project
+                                columns: [count_distinct]
+                                Aggregate
+                                  keys: []
+                                  values: [count() AS count_distinct]
+                                  Aggregate
+                                    keys: [z]
+                                    values: []
+                                    Filter
+                                      predicate: null != z
+                                      Scan
+                                        table: y
+                                        columns: [z]
+                            """);
+            assertQuery(queryB)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Union
+                              Project
+                                columns: [count_distinct]
+                                Aggregate
+                                  keys: []
+                                  values: [count() AS count_distinct]
+                                  Aggregate
+                                    keys: [x]
+                                    values: []
+                                    Filter
+                                      predicate: null != x
+                                      Scan
+                                        table: y
+                                        columns: [x]
+                              Project
+                                columns: [count_distinct]
+                                Aggregate
+                                  keys: []
+                                  values: [count() AS count_distinct]
+                                  Aggregate
+                                    keys: [z]
+                                    values: []
+                                    Filter
+                                      predicate: null != z
+                                      Scan
+                                        table: y
+                                        columns: [z]
+                            """);
             String expectedPlan = """
                     Union
                         Count
@@ -6312,23 +7993,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -6338,23 +8029,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -6364,23 +8067,35 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -6390,23 +8105,33 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3))",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -6416,16 +8141,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose ts FIRST from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [FIRST]
+                              Aggregate
+                                keys: []
+                                values: [first(ts) AS FIRST]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -6441,17 +8177,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose ts LAST from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                            "by LAST desc limit 1",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [LAST]
+                              Aggregate
+                                keys: []
+                                values: [last(ts) AS LAST]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -6467,17 +8215,29 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose ts MAX from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3) order " +
-                            "by MAX desc limit 1",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MAX]
+                              Aggregate
+                                keys: []
+                                values: [max(ts) AS MAX]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -6488,25 +8248,32 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         });
     }
 
-    //
-    // Tests for verifying the and_offset rewrite in the query model
-    //
-
     @Test
     public void testWhereClauseWithMinAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
-            final IQueryModel model = compileModel(query);
-            assertEquals(
-                    "select-choose ts MIN from " +
-                            "(select [ts, x] from y timestamp (ts) where x = 3) limit 1",
-                    model.toString0()
-            );
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [MIN]
+                              Aggregate
+                                keys: []
+                                values: [min(ts) AS MIN]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [x, ts]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            SelectedRecord
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -6522,9 +8289,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         // This test verifies that when a window function appears first inside an expression
         // (e.g., abs(row_number() over(...))) and then as a top-level window column
         // (e.g., row_number() over(...)), they are properly deduplicated.
-        // Bug: replaceIfWindowFunction() (called via emitWindowFunctions) adds window functions
-        // to windowModel but doesn't register them in windowFunctionHashMap, causing
-        // findDuplicateWindowFunction() to miss them when processing later identical windows.
+        // The bug: a window function nested in an expression was not registered for
+        // deduplication, so a later identical top-level window was computed twice.
+        // WindowBinder owns window deduplication now.
         assertMemoryLeak(() -> {
             execute("create table t ( x int, ts timestamp) timestamp(ts);");
             execute("insert into t select x, x::timestamp from long_sequence(3)");
@@ -6693,12 +8460,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 .assertsPlan("""
                         Encode sort
                           keys: [ts1 desc]
-                            Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
-                                Window
-                                  functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: cpu_ts
+                            Window
+                              functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cpu_ts
                         """);
         assertQuery(q3)
                 .noLeakCheck()
@@ -6730,14 +8496,13 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         Encode sort light
                           keys: [ts1 desc]
                             SelectedRecord
-                                Limit value: 9223372036854775807L skip-rows: 0 take-rows: 10
-                                    Encode sort
-                                      keys: [ts2]
-                                        Window
-                                          functions: [first_value(usage_system) over (partition by [hostname])]
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: cpu_ts
+                                Encode sort
+                                  keys: [ts2]
+                                    Window
+                                      functions: [first_value(usage_system) over (partition by [hostname])]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cpu_ts
                         """);
         assertQuery(q4)
                 .noLeakCheck()
@@ -6880,13 +8645,5 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             "198.162.0.11\t198.162.0.10\t198.162.0.9\t198.162.0.8\t1\n" +
                             "198.162.0.12\t198.162.0.11\t198.162.0.10\t198.162.0.9\t1\n");
         });
-    }
-
-    protected IQueryModel compileModel(String query) throws SqlException {
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            ExecutionModel model = compiler.generateExecutionModel(query, sqlExecutionContext);
-            assertEquals(ExecutionModel.QUERY, model.getModelType());
-            return (IQueryModel) model;
-        }
     }
 }

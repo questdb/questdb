@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -43,7 +42,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -54,11 +52,9 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,12 +82,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             @NotNull MessageBus messageBus,
             @NotNull RecordMetadata metadata,
             @NotNull RecordCursorFactory base,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
+            @NotNull AsyncFilterResources filterResources,
             @NotNull @Transient RecordComparatorCompiler recordComparatorCompiler,
             @NotNull ListColumnFilter orderByFilter,
             @NotNull @Transient RecordMetadata orderByMetadata,
@@ -102,14 +93,10 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         assert !(base instanceof AsyncTopKRecordCursorFactory);
         try {
             this.base = base;
+            final boolean hasFilter = filterResources.getFilter() != null;
             final AsyncTopKAtom atom = new AsyncTopKAtom(
                     configuration,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
+                    filterResources,
                     recordComparatorCompiler,
                     orderByFilter,
                     orderByMetadata,
@@ -121,7 +108,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_FIND_TOP_K : FIND_TOP_K,
+                    hasFilter ? FILTER_AND_FIND_TOP_K : FIND_TOP_K,
                     workerCount
             );
             this.cursor = new AsyncTopKRecordCursor();
@@ -129,7 +116,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             this.lo = lo;
             this.workerCount = workerCount;
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
+            Misc.free(filterResources, th);
             throw th;
         }
     }
@@ -220,11 +208,8 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame, false);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
         // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
         // have no reset and the atom outlives the query, so a leaked slot starves the pool.
         try {
@@ -236,25 +221,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             record.init(frameMemory);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
+            filterCtx.filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
 
             if (atom.isEncoded()) {
                 final IntHashSet skipColumnIndexes = atom.getEncodedSkipColumnIndexes();

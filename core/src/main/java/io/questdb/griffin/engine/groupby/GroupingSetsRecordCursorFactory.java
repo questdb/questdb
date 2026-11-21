@@ -87,7 +87,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             ObjList<Function> recordFunctions,
             ObjList<IntList> groupingSets,
             IntList keyColumnIndices
-    ) throws SqlException {
+    ) {
         super(groupByMetadata);
         try {
             this.base = base;
@@ -131,7 +131,7 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             }
 
             for (int i = 0, n = groupingFunctions.size(); i < n; i++) {
-                groupingFunctions.getQuick(i).init(groupingSets, keyColumnIndices);
+                groupingFunctions.getQuick(i).init(groupingSets);
             }
 
             GroupByFunctionsUpdater updater = GroupByFunctionsUpdaterFactory.getInstance(asm, groupByFunctions);
@@ -192,21 +192,6 @@ public class GroupingSetsRecordCursorFactory extends AbstractRecordCursorFactory
             }
         }
         return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
-            if (!keyFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return base.isStableWithinExecution();
     }
 
     @Override

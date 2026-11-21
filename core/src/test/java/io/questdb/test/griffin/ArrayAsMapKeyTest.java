@@ -174,16 +174,10 @@ public class ArrayAsMapKeyTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByConstArrayKeyWithNonThreadSafeAggDoesNotLeak() throws Exception {
-        // A thread-safe constant ARRAY key alongside a non-thread-safe aggregate
-        // (count_distinct) makes the async GROUP BY create per-worker copies (the aggregate
-        // forces it), while the array key itself stays thread-safe. The per-worker
-        // ArrayConstant copy must still be extracted and freed: the extraction must not skip
-        // it just because the key functions are thread-safe (regression for a NATIVE_ND_ARRAY
-        // leak distinct from the DISTINCT-plus-column case above).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO tab SELECT rnd_symbol('a','b','c'), (x*1_000_000)::timestamp FROM long_sequence(100)");
-            assertQuery("SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab")
+            assertQuery("SELECT ARRAY[0.5] k, count_distinct(sym) c FROM tab GROUP BY k")
                     .expectSize()
                     .noLeakCheck()
                     .returns("""

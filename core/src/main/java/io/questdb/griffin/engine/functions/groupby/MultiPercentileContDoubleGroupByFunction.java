@@ -31,16 +31,15 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntHashSet;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
 
-public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
+public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDiscDoubleGroupByFunction implements BinaryFunction, GroupByFunction {
     private final IntHashSet indexSet = new IntHashSet();
     private int[] contIndices = new int[0];
 
@@ -133,10 +132,5 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
     @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
     }
 }

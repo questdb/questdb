@@ -38,8 +38,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -82,7 +83,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         Function arg0 = args.getQuick(0);
         int arg0ColType = arg0.getType();
         if (ColumnType.tagOf(arg0ColType) != ColumnType.TIMESTAMP) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a TIMESTAMP, found: ").put(ColumnType.nameOf(args.getQuick(0).getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0ColType);
         }
         int arg0Type = ColumnType.getTimestampType(arg0ColType);
         int metadataType = metadata.getColumnType(0);
@@ -118,6 +119,10 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        private boolean isMatch(Record rec) {
             return Numbers.lessThan(
                     driver.from(leftFunc.getTimestamp(rec), leftTimestampType),
                     epoch,
@@ -126,7 +131,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class StrCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class StrCursorFunc extends ComparisonFunction implements BinaryFunction {
         private final TimestampDriver driver;
         private final RecordCursorFactory factory;
         private final Function leftFunc;
@@ -146,11 +151,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    leftFunc.getTimestamp(rec),
-                    epoch,
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -174,7 +175,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final CharSequence value = cursor.getRecord().getStrA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseCeilLiteral(driver, value);
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -200,7 +201,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (isThreadSafe()) {
                 sink.val(" [thread-safe]");
@@ -215,9 +216,17 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 sink.val(" [state-shared]");
             }
         }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
+        }
     }
 
-    private static class TimestampCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class TimestampCursorFunc extends ComparisonFunction implements BinaryFunction {
         protected final TimestampDriver driver;
         protected final Function leftFunc;
         private final RecordCursorFactory factory;
@@ -237,11 +246,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    leftFunc.getTimestamp(rec),
-                    epoch,
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -286,7 +291,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (leftFunc.isThreadSafe()) {
                 sink.val(" [thread-safe]");
@@ -301,9 +306,17 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 sink.val(" [state-shared]");
             }
         }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
+        }
     }
 
-    private static class VarcharCursorFunc extends NegatableBooleanFunction implements BinaryFunction {
+    private static class VarcharCursorFunc extends ComparisonFunction implements BinaryFunction {
         private final TimestampDriver driver;
         private final RecordCursorFactory factory;
         private final Function leftFunc;
@@ -323,11 +336,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThan(
-                    leftFunc.getTimestamp(rec),
-                    epoch,
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -351,7 +360,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
                 if (cursor.hasNext()) {
                     final Utf8Sequence value = cursor.getRecord().getVarcharA(0);
                     try {
-                        epoch = driver.parseFloorLiteral(value);
+                        epoch = IntervalUtils.parseCeilLiteral(driver, value == null ? null : value.asAsciiCharSequence());
                     } catch (NumericException e) {
                         throw SqlException.$(rightPos, "the cursor selected invalid timestamp value: ").put(value);
                     }
@@ -377,7 +386,7 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(leftFunc);
             if (leftFunc.isThreadSafe()) {
                 sink.val(" [thread-safe]");
@@ -391,6 +400,14 @@ public class LtTimestampCursorFunctionFactory implements FunctionFactory {
             if (stateShared) {
                 sink.val(" [state-shared]");
             }
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThan(
+                    leftFunc.getTimestamp(rec),
+                    epoch,
+                    negated
+            );
         }
     }
 }

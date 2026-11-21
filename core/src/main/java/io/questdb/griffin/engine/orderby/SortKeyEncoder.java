@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.orderby;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.PageFrameMemory;
@@ -168,6 +169,12 @@ public class SortKeyEncoder implements QuietCloseable {
         buildRankMap(getStaticSymbolTable(symbolTable), rankMap);
     }
 
+    /**
+     * Fills the rank map with the rank of each symbol key by the value of its symbol, from 1 for the lowest value, see
+     * {@link #rank(Object, int)}. The symbol map reader of a table column owns the order of its symbols, which it keeps
+     * across queries, see {@link SymbolMapReader#copySortedKeysTo(DirectIntList)}; any other symbol table is sorted
+     * here.
+     */
     public static void buildRankMap(StaticSymbolTable sst, DirectIntList rankMap) {
         int symbolCount = sst.getSymbolCount();
         if (symbolCount == 0) {
@@ -175,12 +182,16 @@ public class SortKeyEncoder implements QuietCloseable {
             return;
         }
         rankMap.setCapacity(symbolCount);
-        rankMap.setPos(symbolCount);
-        for (int k = 0; k < symbolCount; k++) {
-            rankMap.set(k, k);
+        if (sst instanceof SymbolMapReader reader) {
+            rankMap.clear();
+            reader.copySortedKeysTo(rankMap);
+        } else {
+            rankMap.setPos(symbolCount);
+            for (int k = 0; k < symbolCount; k++) {
+                rankMap.set(k, k);
+            }
+            quickSortRankMap(rankMap, sst, 0, symbolCount - 1);
         }
-
-        quickSortRankMap(rankMap, sst, 0, symbolCount - 1);
 
         for (int i = 0; i < symbolCount; i++) {
             int j = rankMap.get(i);
@@ -242,6 +253,16 @@ public class SortKeyEncoder implements QuietCloseable {
             indexes.add((encoded > 0 ? encoded : -encoded) - 1);
         }
         return indexes;
+    }
+
+    /**
+     * Whether a sort key column of the type tag encodes into an encoded sort key.
+     */
+    public static boolean isEncodable(int columnType) {
+        return switch (columnType) {
+            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> fixedColumnByteWidth(columnType) >= 0;
+        };
     }
 
     /**
@@ -784,13 +805,6 @@ public class SortKeyEncoder implements QuietCloseable {
             return cmp < 0;
         }
         return Long.compareUnsigned(l0, Numbers.LONG_NULL) < 0;
-    }
-
-    private static boolean isEncodable(int columnType) {
-        return switch (columnType) {
-            case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            default -> fixedColumnByteWidth(columnType) >= 0;
-        };
     }
 
     private static boolean isUuidBelowNull(long hi, long lo) {

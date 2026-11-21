@@ -30,7 +30,6 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.std.IntList;
@@ -51,24 +50,18 @@ import io.questdb.std.ObjList;
  * the stored value from the map record.</p>
  */
 public class GroupingFunction extends IntFunction implements GroupByFunction {
-    private final IntList argColumnIndices;
     private final ObjList<Function> argFunctions;
     private final IntList argKeyPositions;
-    private final IntList argPositions;
-    private final int position;
     private int currentValue;
     private int[] perSetValues;
     private int valueIndex;
 
-    public GroupingFunction(IntList argColumnIndices, ObjList<Function> argFunctions, IntList argPositions, int position) {
-        this.argColumnIndices = argColumnIndices;
-        this.argPositions = new IntList(argPositions);
+    public GroupingFunction(ObjList<Function> argFunctions) {
         // FunctionParser clears its scratch args list after the factory returns.
         // Keep our own list so close() releases the argument functions we own.
         this.argFunctions = new ObjList<>(argFunctions);
-        this.argKeyPositions = new IntList(argColumnIndices.size());
-        this.argKeyPositions.setAll(argColumnIndices.size(), -1);
-        this.position = position;
+        this.argKeyPositions = new IntList(argFunctions.size());
+        this.argKeyPositions.setAll(argFunctions.size(), -1);
     }
 
     @Override
@@ -85,14 +78,6 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         // All rows in a given grouping set produce the same bitmask,
         // so no update is needed after the first row.
-    }
-
-    public IntList getArgColumnIndices() {
-        return argColumnIndices;
-    }
-
-    public int getPosition() {
-        return position;
     }
 
     @Override
@@ -116,42 +101,23 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
      * {@link io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory}
      * after construction, once the grouping set layout is known.
      *
-     * @param groupingSets     per-set key positions the set groups by; every other key is rolled up
-     * @param keyColumnIndices maps key position to base column index
+     * @param groupingSets per-set key positions the set groups by; every other key is rolled up
      */
-    public void init(ObjList<IntList> groupingSets, IntList keyColumnIndices) throws SqlException {
+    public void init(ObjList<IntList> groupingSets) {
         int setCount = groupingSets.size();
-        int keyCount = keyColumnIndices.size();
         perSetValues = new int[setCount];
 
         for (int s = 0; s < setCount; s++) {
             IntList activeKeys = groupingSets.getQuick(s);
             int result = 0;
-            for (int a = 0, nArgs = argColumnIndices.size(); a < nArgs; a++) {
-                int argBaseIdx = argColumnIndices.getQuick(a);
-                // Find this arg's position in the key column list
+            for (int a = 0, nArgs = argKeyPositions.size(); a < nArgs; a++) {
                 int keyPos = argKeyPositions.getQuick(a);
-                if (keyPos < 0 && argBaseIdx >= 0) {
-                    for (int k = 0; k < keyCount; k++) {
-                        if (keyColumnIndices.getQuick(k) == argBaseIdx) {
-                            keyPos = k;
-                            break;
-                        }
-                    }
-                }
-                if (keyPos < 0) {
-                    int argumentPosition = argPositions.getQuick(a);
-                    if (argBaseIdx < 0) {
-                        throw SqlException.$(argumentPosition, "argument must be a column reference");
-                    }
-                    throw SqlException.$(argumentPosition, "argument must be a grouping key column");
-                }
-                argKeyPositions.setQuick(a, keyPos);
+                assert keyPos >= 0;
                 // The key is rolled up (1) when the set does not group by it, active (0)
                 // otherwise. GroupingIdFunctionFactory caps the arguments at 31, so the
                 // result fits an INT however many keys the query has.
                 if (!activeKeys.contains(keyPos)) {
-                    result |= 1 << (argColumnIndices.size() - 1 - a);
+                    result |= 1 << (nArgs - 1 - a);
                 }
             }
             perSetValues[s] = result;
@@ -190,16 +156,11 @@ public class GroupingFunction extends IntFunction implements GroupByFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("grouping(");
-        for (int i = 0, n = argColumnIndices.size(); i < n; i++) {
+        for (int i = 0, n = argFunctions.size(); i < n; i++) {
             if (i > 0) {
                 sink.val(',');
             }
-            int columnIndex = argColumnIndices.getQuick(i);
-            if (columnIndex >= 0) {
-                sink.putColumnName(columnIndex);
-            } else {
-                argFunctions.getQuick(i).toPlan(sink);
-            }
+            argFunctions.getQuick(i).toPlan(sink);
         }
         sink.val(')');
     }

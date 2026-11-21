@@ -29,8 +29,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -54,19 +54,18 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
-import io.questdb.std.FiberLocal;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.StringSink;
-import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.Nullable;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
-    private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.numericExtreme(argTypes);
+    }
 
     @Override
     public String getSignature() {
@@ -81,126 +80,48 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final IntHashSet counters = tlSet.get();
-        counters.clear();
-        final int argCount;
-        if (args == null || (argCount = args.size()) == 0) {
+        if (args == null || args.size() == 0) {
             throw SqlException.$(position, "at least one argument is required by LEAST(V)");
         }
-        boolean allNull = true;
-        for (int i = 0; i < argCount; i++) {
-            final Function arg = args.getQuick(i);
-            final int type = arg.getType();
-
-            switch (ColumnType.tagOf(type)) {
-                case ColumnType.FLOAT:
-                case ColumnType.DOUBLE:
-                case ColumnType.LONG:
-                case ColumnType.INT:
-                case ColumnType.SHORT:
-                case ColumnType.BYTE:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                case ColumnType.DECIMAL8:
-                case ColumnType.DECIMAL16:
-                case ColumnType.DECIMAL32:
-                case ColumnType.DECIMAL64:
-                case ColumnType.DECIMAL128:
-                case ColumnType.DECIMAL256:
-                    allNull = false;
-                case ColumnType.NULL:
-                    counters.add(type);
-                    continue;
-                default:
-                    throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final int type = args.getQuick(i).getType();
+            if (!ResultTypes.isNumericExtremeArgument(type)) {
+                throw SqlException.position(argPositions.getQuick(i)).put("unsupported type: ").put(ColumnType.nameOf(type));
             }
         }
-        if (allNull) {
+        final IntList argTypes = ResultTypes.argTypes(args);
+        final int type = getResultType(argTypes);
+        if (type == ColumnType.NULL) {
             return NullConstant.NULL;
         }
-
+        final boolean isTimestampConverted = argTypes.contains(ColumnType.DATE)
+                || (type == ColumnType.TIMESTAMP_NANO && argTypes.contains(ColumnType.TIMESTAMP_MICRO));
         // have to copy, args is mutable
-        final Function retVal = getLeastFunction(new ObjList<>(args), new IntList(argPositions), counters);
-        if (retVal != null) {
-            return retVal;
-        }
-        throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
-    }
-
-    private static @NotNull Function getDecimalLeastFunction(ObjList<Function> args, IntList argPositions) throws SqlException {
-        // We need to find the maximum scale/precision combination.
-        int precision = 1;
-        int scale = 0;
-
-        for (int i = 0, n = args.size(); i < n; i++) {
-            int type = args.getQuick(i).getType();
-            final int r = DecimalUtil.getTypePrecisionScale(type);
-            int argPrecision = Numbers.decodeLowShort(r);
-            int argScale = Numbers.decodeHighShort(r);
-            int finalScale = Math.max(scale, argScale);
-            precision = Math.max(precision - scale, argPrecision - argScale) + finalScale;
-            scale = finalScale;
-        }
-
-        final int type = ColumnType.getDecimalType(Math.min(precision, Decimals.MAX_PRECISION), scale);
+        final ObjList<Function> ownArgs = new ObjList<>(args);
         return switch (ColumnType.tagOf(type)) {
-            case ColumnType.DECIMAL128 -> new LeastDecimal128RecordFunction(type, scale, args);
-            case ColumnType.DECIMAL256 -> new LeastDecimal256RecordFunction(type, scale, args, argPositions);
-            default -> new LeastDecimal64RecordFunction(type, scale, args);
+            case ColumnType.DOUBLE -> new LeastDoubleRecordFunction(ownArgs);
+            case ColumnType.FLOAT ->
+                    new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new LeastDoubleRecordFunction(ownArgs));
+            case ColumnType.TIMESTAMP -> isTimestampConverted
+                    ? new LeastTimestampRecordFunction(ownArgs, type)
+                    : new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(ownArgs), type);
+            case ColumnType.DATE ->
+                    new CastLongToDateFunctionFactory.CastLongToDateFunction(new LeastLongRecordFunction(ownArgs));
+            case ColumnType.LONG -> new LeastLongRecordFunction(ownArgs);
+            case ColumnType.INT ->
+                    new CastLongToIntFunctionFactory.CastLongToIntFunction(new LeastLongRecordFunction(ownArgs));
+            case ColumnType.SHORT ->
+                    new CastLongToShortFunctionFactory.CastLongToShortFunction(new LeastLongRecordFunction(ownArgs));
+            case ColumnType.BYTE ->
+                    new CastLongToByteFunctionFactory.CastLongToByteFunction(new LeastLongRecordFunction(ownArgs));
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
+                    new LeastDecimal64RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs);
+            case ColumnType.DECIMAL128 ->
+                    new LeastDecimal128RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs);
+            case ColumnType.DECIMAL256 ->
+                    new LeastDecimal256RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs, new IntList(argPositions));
+            default -> throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");
         };
-    }
-
-    private static @Nullable Function getLeastFunction(ObjList<Function> args, IntList argPositions, IntHashSet set) throws SqlException {
-        if (set.contains(ColumnType.DOUBLE)) {
-            return new LeastDoubleRecordFunction(args);
-        }
-
-        if (set.contains(ColumnType.FLOAT)) {
-            return new CastDoubleToFloatFunctionFactory.CastDoubleToFloatFunction(new LeastDoubleRecordFunction(args));
-        }
-
-        // Decimals are able to represent numbers that are between -10⁷⁶-1 and 10⁷⁶-1, so we put them after double/float.
-        for (int i = 0, n = args.size(); i < n; i++) {
-            if (ColumnType.isDecimal(args.getQuick(i).getType())) {
-                return getDecimalLeastFunction(args, argPositions);
-            }
-        }
-
-        if (set.contains(ColumnType.TIMESTAMP_NANO)) {
-            if (set.contains(ColumnType.DATE) || set.contains(ColumnType.TIMESTAMP_MICRO)) {
-                return new LeastTimestampRecordFunction(args, ColumnType.TIMESTAMP_NANO);
-            }
-            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_NANO);
-        }
-
-        if (set.contains(ColumnType.TIMESTAMP_MICRO)) {
-            if (set.contains(ColumnType.DATE)) {
-                return new LeastTimestampRecordFunction(args, ColumnType.TIMESTAMP_MICRO);
-            }
-            return new CastLongToTimestampFunctionFactory.Func(new LeastLongRecordFunction(args), ColumnType.TIMESTAMP_MICRO);
-        }
-
-        if (set.contains(ColumnType.DATE)) {
-            return new CastLongToDateFunctionFactory.CastLongToDateFunction(new LeastLongRecordFunction(args));
-        }
-
-        if (set.contains(ColumnType.LONG)) {
-            return new LeastLongRecordFunction(args);
-        }
-
-        if (set.contains(ColumnType.INT)) {
-            return new CastLongToIntFunctionFactory.CastLongToIntFunction(new LeastLongRecordFunction(args));
-        }
-
-        if (set.contains(ColumnType.SHORT)) {
-            return new CastLongToShortFunctionFactory.CastLongToShortFunction(new LeastLongRecordFunction(args));
-        }
-
-        if (set.contains(ColumnType.BYTE)) {
-            return new CastLongToByteFunctionFactory.CastLongToByteFunction(new LeastLongRecordFunction(args));
-        }
-
-        return null;
     }
 
     private static class LeastDecimal128RecordFunction extends Decimal128Function implements MultiArgFunction {
@@ -410,7 +331,6 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
 
     private static class LeastDoubleRecordFunction extends DoubleFunction implements MultiArgFunction {
         private final ObjList<Function> args;
-        private final Decimal128 decimal128 = new Decimal128();
         private final Decimal256 decimal256 = new Decimal256();
         private final int n;
         private final StringSink sink = new StringSink();
@@ -534,13 +454,21 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             long value = Long.MAX_VALUE;
             boolean foundValidValue = false;
             for (int i = 0; i < n; i++) {
-                final long v = timestampDriver.from(args.getQuick(i).getTimestamp(rec), timestampTypes.getQuick(i));
+                final long v = load(rec, i);
                 if (v != Numbers.LONG_NULL) {
                     foundValidValue = true;
                     value = Math.min(value, v);
                 }
             }
             return foundValidValue ? value : Numbers.LONG_NULL;
+        }
+
+        private long load(Record rec, int index) {
+            final Function arg = args.getQuick(index);
+            final int timestampType = timestampTypes.getQuick(index);
+            return timestampType == ColumnType.UNDEFINED
+                    ? arg.getLong(rec)
+                    : timestampDriver.from(arg.getTimestamp(rec), timestampType);
         }
     }
 }

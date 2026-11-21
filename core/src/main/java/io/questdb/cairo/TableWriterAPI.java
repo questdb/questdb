@@ -79,6 +79,11 @@ public interface TableWriterAPI extends Closeable {
 
     long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException;
 
+    /**
+     * Applies the UPDATE, or, for a WAL table, records it for every node to apply. The caller runs
+     * {@link UpdateOperation#validate()} before this call: the WAL writer records the statement without evaluating
+     * it, so an error the statement's bind values raise would otherwise surface only when the WAL applies it.
+     */
     long apply(UpdateOperation operation);
 
     @Override

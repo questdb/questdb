@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -60,6 +61,11 @@ import io.questdb.std.ObjList;
 public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
     // Approximate meters per degree of latitude (constant everywhere on Earth)
     private static final double METERS_PER_DEG = 111_320.0;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {
@@ -138,11 +144,6 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            return other instanceof ConstNaNFunction;
-        }
-
-        @Override
         public void toPlan(PlanSink sink) {
             sink.val("NaN");
         }
@@ -181,8 +182,7 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(lat2Func);
-            Misc.free(lon2Func);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, lat2Func), lon2Func));
         }
 
         @Override
@@ -235,22 +235,16 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstPoint1GeoDistanceFunction that) {
-                return lat1 == that.lat1
-                        && lon1 == that.lon1
-                        && lat2Func.isEquivalentTo(that.lat2Func)
-                        && lon2Func.isEquivalentTo(that.lon2Func);
-            }
-            return false;
+        public boolean isThreadSafe() {
+            return lat2Func.isThreadSafe() && lon2Func.isThreadSafe();
         }
 
         @Override
-        public boolean isThreadSafe() {
-            return lat2Func.isThreadSafe() && lon2Func.isThreadSafe();
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstPoint1GeoDistanceFunction other) {
+                lat2Func.offerStateTo(other.lat2Func);
+                lon2Func.offerStateTo(other.lon2Func);
+            }
         }
 
         @Override
@@ -305,10 +299,9 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(lat1Func);
-            Misc.free(lon1Func);
-            Misc.free(lat2Func);
-            Misc.free(lon2Func);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, lat1Func), lon1Func);
+            failure = Misc.freeBestEffort(failure, lat2Func);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, lon2Func));
         }
 
         @Override
@@ -386,25 +379,21 @@ public class GeoDistanceMetersFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoDistanceFunction that) {
-                return lat1Func.isEquivalentTo(that.lat1Func)
-                        && lon1Func.isEquivalentTo(that.lon1Func)
-                        && lat2Func.isEquivalentTo(that.lat2Func)
-                        && lon2Func.isEquivalentTo(that.lon2Func);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isThreadSafe() {
             return lat1Func.isThreadSafe()
                     && lon1Func.isThreadSafe()
                     && lat2Func.isThreadSafe()
                     && lon2Func.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoDistanceFunction other) {
+                lat1Func.offerStateTo(other.lat1Func);
+                lat2Func.offerStateTo(other.lat2Func);
+                lon1Func.offerStateTo(other.lon1Func);
+                lon2Func.offerStateTo(other.lon2Func);
+            }
         }
 
         @Override

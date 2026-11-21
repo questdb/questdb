@@ -32,14 +32,6 @@ import org.jetbrains.annotations.NotNull;
 
 public final class TimestampSamplerFactory {
 
-    public static TimestampSampler getInstance(TimestampDriver driver, long interval, CharSequence units, int position) throws SqlException {
-        if (units.length() == 1) {
-            return getInstance(driver, interval, units.charAt(0), position);
-        }
-        // Just in case SqlParser will allow this in the future
-        throw SqlException.$(position, "expected one character interval qualifier");
-    }
-
     @NotNull
     public static TimestampSampler getInstance(TimestampDriver driver, long interval, char timeUnit, int position) throws SqlException {
         return driver.getTimestampSampler(interval, timeUnit, position);
@@ -54,10 +46,51 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
-        int k = CommonUtils.findPositiveIntervalEndIndex(cs, position, "sample");
-        assert cs.length() > k;
-
-        long n = CommonUtils.parsePositiveInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
-        return getInstance(driver, n, cs.charAt(k), position + k);
+        final long stride = parsePeriodStride(cs, position);
+        final int unitIndex = periodUnitIndex(cs);
+        return getSampleByInstance(driver, stride, cs.charAt(unitIndex), position + unitIndex);
     }
+
+    /**
+     * The sampler of a SAMPLE BY stride, which must be positive, whether a literal or a constant expression spells it,
+     * and must fit the interval the unit's sampler counts in, see {@link TimestampDriver#intSamplerInterval}. A stride
+     * that does not fails at {@code position} with the error a literal stride raises: a negative one, zero, or an
+     * invalid value for NULL or one too large. A literal stride is an INT by its syntax, while a constant expression
+     * may be a LONG.
+     *
+     * @param stride   the stride; {@link Numbers#LONG_NULL} for NULL
+     * @param position position in SQL text to report error against
+     */
+    public static TimestampSampler getSampleByInstance(TimestampDriver driver, long stride, char timeUnit, int position) throws SqlException {
+        if (stride == 0) {
+            throw SqlException.$(position, "zero is not a valid sample value");
+        }
+        if (stride < 0 && stride != Numbers.LONG_NULL) {
+            throw SqlException.$(position, "negative interval is not allowed");
+        }
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "invalid sample value [value=null]");
+        }
+        return getInstance(driver, stride, timeUnit, position);
+    }
+
+    /**
+     * The stride of the SAMPLE BY period literal {@code cs}, such as 15 for {@code 15m} or 1 for {@code m}: an optional
+     * positive INT followed by the one-letter unit that ends the literal, at {@link #periodUnitIndex}. The stride
+     * must also fit the timestamp range in that unit, which {@link #getSampleByInstance} checks.
+     *
+     * @param position position of the literal in SQL text to report error against
+     */
+    public static long parsePeriodStride(CharSequence cs, int position) throws SqlException {
+        final int unitIndex = CommonUtils.findPositiveIntervalEndIndex(cs, position, "sample");
+        return CommonUtils.parsePositiveInterval(cs, unitIndex, position, "sample", Numbers.INT_NULL, '?');
+    }
+
+    /**
+     * The index of the one-letter unit that ends the SAMPLE BY period literal {@code cs}; -1 for an empty literal.
+     */
+    public static int periodUnitIndex(CharSequence cs) {
+        return cs.length() - 1;
+    }
+
 }

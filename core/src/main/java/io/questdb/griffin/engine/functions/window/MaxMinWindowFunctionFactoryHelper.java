@@ -290,6 +290,7 @@ public class MaxMinWindowFunctionFactoryHelper {
                     }
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return currentRowConstructor.newFunction(args.get(0), name);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

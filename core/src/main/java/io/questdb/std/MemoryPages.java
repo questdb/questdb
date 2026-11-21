@@ -111,6 +111,15 @@ public class MemoryPages implements Closeable, Mutable, Reopenable {
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            long heldBytes = 0;
+            for (int i = 0, n = pages.size(); i < n; i++) {
+                if (pages.getQuick(i) != 0) {
+                    heldBytes += pageSize;
+                }
+            }
+            Unsafe.chargeHeldMemory(heldBytes, MemoryTag.NATIVE_TREE_CHAIN, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

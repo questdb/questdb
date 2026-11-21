@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -44,6 +45,11 @@ public class CastFloatToSymbolFunctionFactory implements FunctionFactory {
     // row collide with the empty slot. floatToIntBits canonicalises NaN to 0x7FC00000,
     // so 0x7FC00001 is a key it can never produce.
     private static final int NO_KEY_SENTINEL = 0x7FC00001;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
 
     @Override
     public String getSignature() {

@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -40,6 +41,11 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class AndFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.booleanConnective(argTypes.getQuick(0), argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {
@@ -111,6 +117,12 @@ public class AndFunctionFactory implements FunctionFactory {
             return right;
         }
 
+        // newInstance() folds a constant operand away, so no operand is constant.
+        @Override
+        public boolean isConstant() {
+            return false;
+        }
+
         @Override
         public void toPlan(PlanSink sink) {
             sink.val('(');
@@ -160,6 +172,11 @@ public class AndFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isConstant() {
+            return false;
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val('(');
             sink.val(func0);
@@ -202,6 +219,11 @@ public class AndFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public boolean isConstant() {
+            return false;
         }
 
         @Override

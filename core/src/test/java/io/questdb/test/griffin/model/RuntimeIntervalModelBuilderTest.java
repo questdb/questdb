@@ -24,27 +24,43 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.IntervalBoundSource;
+import io.questdb.griffin.IntervalExtractor;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
-import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -55,13 +71,14 @@ import org.junit.Test;
  * itself on rollback/no-op paths that never adopt the function.
  */
 public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
+    private static final int TIMESTAMP_COLUMN_ID = 7;
 
     @Test
     public void testBetweenDynamicAdoptionIsAtomicUnderAllocationFailure() {
         // Injects an allocation failure into the capacity reservation of a dynamic/dynamic
-        // BETWEEN and emulates the WhereClauseParser error handling: the catch in
-        // translateBetweenToTimestampModel frees the incoming endpoint, the finally in
-        // analyzeBetween0 rolls back the pending endpoint via clearBetweenParsing(). Every
+        // BETWEEN and emulates the IntervalExtractor error handling: the catch in
+        // setBetweenBoundary frees the incoming endpoint, the finally in intersectBetween
+        // rolls back the pending endpoint via clearBetweenParsing(). Every
         // endpoint must be closed exactly once and the builder must stay consistent.
         ReservationFailingBuilder builder = newFailingBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
@@ -73,10 +90,10 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
             Assert.assertFalse(builder.isBetweenBoundaryFunctionConsumed());
-            // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
+            // IntervalExtractor.setBetweenBoundary catch: frees the incoming func
             Misc.free(hi);
         }
-        // WhereClauseParser.analyzeBetween0 finally: rollback of the pending endpoint
+        // IntervalExtractor.intersectBetween finally: rollback of the pending endpoint
         builder.clearBetweenParsing();
         Assert.assertEquals("pending first endpoint must be closed exactly once", 1, lo.closeCount);
         Assert.assertEquals("incoming second endpoint must be closed exactly once", 1, hi.closeCount);
@@ -108,7 +125,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(pendingFailure, 0);
 
         try {
-            builder.setBetweenBoundary(Numbers.LONG_NULL);
+            builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
             Assert.fail("adopted close failure expected");
         } catch (RuntimeException e) {
             Assert.assertSame(adoptedFailure.failure, e);
@@ -138,7 +155,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
         builder.intersectRuntimeTimestamp(adoptedFailure, 0);
         builder.intersectRuntimeTimestamp(adoptedTail, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
 
         try {
             builder.setBetweenBoundary(incomingFailure, 0);
@@ -167,7 +184,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
@@ -175,14 +192,14 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenNegated(true);
         lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
         // constant NULL first, dynamic endpoint second
         builder = newBuilder();
         lo = new CloseCountingFunction();
-        builder.setBetweenBoundary(Numbers.LONG_NULL);
+        builder.setBetweenBoundary(Numbers.LONG_NULL, Numbers.LONG_NULL);
         builder.setBetweenBoundary(lo, 0);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
@@ -190,8 +207,8 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testBetweenRollbackClosesPendingFunction() {
-        // WhereClauseParser stores the first dynamic BETWEEN endpoint in the builder and rolls
-        // back via clearBetweenParsing() when the second endpoint cannot become an intrinsic.
+        // IntervalExtractor stores the first dynamic BETWEEN endpoint in the builder and rolls
+        // back via clearBetweenParsing() when the second endpoint cannot become an interval.
         // The rollback must close the pending, not-yet-adopted function.
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
@@ -312,18 +329,18 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     public void testBetweenSemiDynamicIncomingAdoptionIsAtomicUnderAllocationFailure() {
         // Constant first endpoint, dynamic second endpoint: an allocation failure in the
         // capacity reservation must leave the incoming function owned by the caller
-        // (WhereClauseParser frees it in its catch) and must not adopt it into the builder,
-        // otherwise the parser catch and the builder rollback double-close it.
+        // (IntervalExtractor frees it in its catch) and must not adopt it into the builder,
+        // otherwise the extractor catch and the builder rollback double-close it.
         ReservationFailingBuilder builder = newFailingBuilder();
         CloseCountingFunction hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.failNextReservation = true;
         try {
             builder.setBetweenBoundary(hi, 0);
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
             Assert.assertFalse(builder.isBetweenBoundaryFunctionConsumed());
-            // WhereClauseParser.translateBetweenToTimestampModel catch: frees the incoming func
+            // IntervalExtractor.setBetweenBoundary catch: frees the incoming func
             Misc.free(hi);
         }
         builder.clearBetweenParsing();
@@ -341,7 +358,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(lo, 0);
         builder.failNextReservation = true;
         try {
-            builder.setBetweenBoundary(2_000_000L);
+            builder.setBetweenBoundary(2_000_000L, 2_000_000L);
             Assert.fail("injected failure expected");
         } catch (RuntimeException e) {
             // no incoming function on this path; nothing for the parser to free
@@ -634,35 +651,6 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDynamicTimestampLiteralReservationFailureIsAtomic() throws Exception {
-        ReservationFailingBuilder builder = newFailingBuilder();
-        CloseCountingFunction adopted = new CloseCountingFunction();
-        builder.intersectRuntimeTimestamp(adopted, 11);
-        final int dynamicSize = builder.dynamicRangeSize();
-        final int staticSize = builder.staticIntervalsSize();
-        final String timestamp = "1970-01-01T00:00:00.000000Z";
-        builder.failNextReservation = true;
-
-        try {
-            builder.intersectTimestamp(timestamp, 0, timestamp.length(), 0);
-            Assert.fail("injected reservation failure expected");
-        } catch (RuntimeException e) {
-            Assert.assertSame(builder.reservationFailure, e);
-        }
-        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
-        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
-        Assert.assertEquals(0, adopted.closeCount);
-
-        builder.intersectTimestamp(timestamp, 0, timestamp.length(), 0);
-        Assert.assertEquals(dynamicSize + 1, builder.dynamicRangeSize());
-        Assert.assertEquals(staticSize + 4, builder.staticIntervalsSize());
-        RuntimeIntrinsicIntervalModel model = builder.build();
-        builder.clear();
-        Misc.free(model);
-        Assert.assertEquals(1, adopted.closeCount);
-    }
-
-    @Test
     public void testDynamicStaticUnionReservationFailureIsAtomic() {
         ReservationFailingBuilder builder = newFailingBuilder();
         CloseCountingFunction adopted = new CloseCountingFunction();
@@ -723,7 +711,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.setBetweenBoundary(pendingFailure, 0);
 
         try {
-            builder.setBetweenBoundary(1_000_000L);
+            builder.setBetweenBoundary(1_000_000L, 1_000_000L);
             Assert.fail("pending close failure expected");
         } catch (RuntimeException e) {
             Assert.assertSame(pendingFailure.failure, e);
@@ -737,7 +725,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder = newBuilder();
         builder.intersectEmpty();
         ThrowingCloseFunction incomingFailure = new ThrowingCloseFunction("incoming");
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         try {
             builder.setBetweenBoundary(incomingFailure, 0);
             Assert.fail("incoming close failure expected");
@@ -768,7 +756,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.intersectEmpty();
         lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, lo.closeCount);
 
@@ -776,7 +764,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder = newBuilder();
         builder.intersectEmpty();
         hi = new CloseCountingFunction();
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.setBetweenBoundary(hi, 0);
         builder.clearBetweenParsing();
         Assert.assertEquals(1, hi.closeCount);
@@ -784,7 +772,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
 
     @Test
     public void testEmptySetConsumesIncomingFunctions() {
-        // WhereClauseParser traverses AND predicates right-to-left, so `ts = NULL::TIMESTAMP` can
+        // IntervalExtractor traverses AND predicates right-to-left, so `ts = NULL::TIMESTAMP` can
         // empty the model before an earlier predicate parses its runtime function. Every
         // Function-accepting builder method must consume ownership even on the empty-set no-op
         // path; otherwise the function leaks with no owner.
@@ -815,10 +803,6 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         f = new CloseCountingFunction();
         builder.subtractRuntimeIntervals(f, 0);
         Assert.assertEquals(1, f.closeCount);
-
-        f = new CloseCountingFunction();
-        builder.unionRuntimeTimestamp(f, 0);
-        Assert.assertEquals(1, f.closeCount);
     }
 
     @Test
@@ -839,11 +823,72 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         ));
         Assert.assertEquals(1, head.closeCount);
         Assert.assertEquals(1, lo.closeCount);
         Assert.assertEquals(1, hi.closeCount);
+    }
+
+    @Test
+    public void testEmptySetIsUnionIdentity() throws Exception {
+        final RuntimeIntervalModelBuilder builder = newFailingBuilder();
+        builder.intersectEmpty();
+        builder.union(10, 20);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertEquals(new LongList(new long[]{10, 20}), builder.getStaticIntervals());
+
+        builder.clear();
+        builder.intersectEmpty();
+        builder.unionIntervals("2024-01-01", 0, 10, 0);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertEquals(new LongList(new long[]{1_704_067_200_000_000L, 1_704_153_599_999_999L}), builder.getStaticIntervals());
+
+        builder.clear();
+        builder.intersectEmpty();
+        final CloseCountingFunction f = new CloseCountingFunction();
+        builder.unionRuntimeTimestamp(f, 0);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertFalse(builder.isStatic());
+        Assert.assertEquals(0, f.closeCount);
+        final RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Assert.assertEquals(0, f.closeCount);
+        Misc.free(model);
+        Assert.assertEquals(1, f.closeCount);
+    }
+
+    @Test
+    public void testExtractorClosesBetweenBoundTheBuilderDidNotConsume() throws Exception {
+        assertMemoryLeak(() -> {
+            // the failure comes before the builder adopts the bound, whose close failure joins it as suppressed
+            final ThrowingTypeFunction afterConstant = new ThrowingTypeFunction(2);
+            final RuntimeException afterConstantFailure = extractBetweenFailure(timestampConstant(0), runtimeBound(), afterConstant);
+            Assert.assertSame(afterConstant.typeFailure, afterConstantFailure);
+            Assert.assertEquals(1, afterConstant.closeCount);
+            Assert.assertSame(afterConstant.closeFailure, afterConstantFailure.getSuppressed()[0]);
+
+            // the same with a function at the other end, which the rollback of the parsing closes
+            final CloseCountingFunction pending = new CloseCountingFunction();
+            final ThrowingTypeFunction afterFunction = new ThrowingTypeFunction(2);
+            final RuntimeException afterFunctionFailure = extractBetweenFailure(runtimeBound(), runtimeBound(), pending, afterFunction);
+            Assert.assertSame(afterFunction.typeFailure, afterFunctionFailure);
+            Assert.assertEquals(1, afterFunction.closeCount);
+            Assert.assertEquals(1, pending.closeCount);
+        });
+    }
+
+    @Test
+    public void testExtractorDoesNotCloseBetweenBoundTheBuilderConsumed() throws Exception {
+        assertMemoryLeak(() -> {
+            // the NULL end consumes the other one, which fails to close: a second close would run on a released function
+            final ThrowingCloseFunction function = new ThrowingCloseFunction("close");
+            final RuntimeException failure = extractBetweenFailure(new ConstantExpression().ofNull(0), runtimeBound(), function);
+            Assert.assertSame(function.failure, failure);
+            Assert.assertEquals(1, function.closeCount);
+            Assert.assertEquals(0, failure.getSuppressed().length);
+        });
     }
 
     @Test
@@ -895,37 +940,9 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
         builder.setBetweenBoundary(lo, 0);
-        builder.setBetweenBoundary(1_000_000L);
+        builder.setBetweenBoundary(1_000_000L, 1_000_000L);
         builder.freeAndClear();
         Assert.assertEquals(1, lo.closeCount);
-    }
-
-    @Test
-    public void testMergeWithAddMethodIntersectsAfterDynamicUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            final IntrinsicModel destination = new IntrinsicModel();
-            destination.of(ColumnType.TIMESTAMP, PartitionBy.DAY, engine.getConfiguration());
-            destination.intersectIntervals(10, 10);
-            destination.unionRuntimeTimestamp(new CloseCountingFunction(), 0);
-
-            final IntrinsicModel source = new IntrinsicModel();
-            source.of(ColumnType.TIMESTAMP, PartitionBy.DAY, engine.getConfiguration());
-            source.intersectIntervals(20, 30);
-            source.unionIntervals(50, 60);
-            destination.mergeIntervalModelWithAddMethod(
-                    source,
-                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getAddMethod('h'),
-                    0,
-                    true,
-                    ColumnType.getTimestampDriver(ColumnType.TIMESTAMP).getMaxDesignatedTimestamp()
-            );
-
-            try (RuntimeIntrinsicIntervalModel model = destination.buildIntervalModel()) {
-                destination.clear();
-                source.clear();
-                Assert.assertEquals(0, model.calculateIntervals(sqlExecutionContext).size());
-            }
-        });
     }
 
     @Test
@@ -946,6 +963,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         );
         try {
@@ -975,6 +993,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         );
         try {
@@ -990,26 +1009,52 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowJoinMergeIgnoresDynamicMasterIntervals() throws Exception {
-        final IntrinsicModel master = new IntrinsicModel();
-        master.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
-        master.intersectIntervals(10, 20);
-        final CloseCountingFunction dynamicUnion = new CloseCountingFunction();
-        master.unionRuntimeTimestamp(dynamicUnion, 0);
-        try (RuntimeIntrinsicIntervalModel masterModel = master.buildIntervalModel()) {
-            final RuntimeIntervalModelBuilder slaveBuilder = newBuilder();
-            slaveBuilder.intersect(0, 100);
-            slaveBuilder.merge((RuntimeIntervalModel) masterModel, 0, 0);
-            try (RuntimeIntrinsicIntervalModel slaveModel = slaveBuilder.build()) {
-                final LongList intervals = ((RuntimeIntervalModel) slaveModel).getStaticIntervals();
-                Assert.assertEquals(2, intervals.size());
-                Assert.assertEquals(0, intervals.getQuick(0));
-                Assert.assertEquals(100, intervals.getQuick(1));
+    public void testUnionPointsMatchesUnionOfEachPoint() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final long[] specials = {Numbers.LONG_NULL, Numbers.LONG_NULL + 1, -1, 0, 1, Long.MAX_VALUE - 1, Long.MAX_VALUE};
+        final LongList points = new LongList();
+        final LongList pointsCopy = new LongList();
+        for (int iteration = 0; iteration < 2_000; iteration++) {
+            final RuntimeIntervalModelBuilder each = newBuilder();
+            final RuntimeIntervalModelBuilder batch = newBuilder();
+            final int prior = rnd.nextInt(5);
+            final CloseCountingFunction eachFunction = new CloseCountingFunction();
+            final CloseCountingFunction batchFunction = new CloseCountingFunction();
+            for (RuntimeIntervalModelBuilder builder : new RuntimeIntervalModelBuilder[]{each, batch}) {
+                final Rnd priorRnd = new Rnd(iteration, prior);
+                switch (prior) {
+                    case 1 -> builder.intersectEmpty();
+                    case 2 -> {
+                        for (int i = 0, n = 1 + priorRnd.nextInt(4); i < n; i++) {
+                            final long lo = priorRnd.nextLong(40) - 10;
+                            builder.union(lo, lo + priorRnd.nextLong(5));
+                        }
+                    }
+                    case 3 -> builder.intersect(-5, 20);
+                    case 4 -> builder.unionRuntimeTimestamp(builder == each ? eachFunction : batchFunction, 0);
+                    default -> {
+                    }
+                }
             }
-            slaveBuilder.clear();
+            points.clear();
+            for (int i = 0, n = rnd.nextInt(30); i < n; i++) {
+                points.add(rnd.nextInt(8) == 0 ? specials[rnd.nextInt(specials.length)] : rnd.nextLong(40) - 10);
+            }
+            pointsCopy.clear();
+            pointsCopy.add(points);
+            for (int i = 0, n = points.size(); i < n; i++) {
+                each.union(points.getQuick(i), points.getQuick(i));
+            }
+            batch.unionPoints(pointsCopy);
+            Assert.assertEquals(each.getStaticIntervals(), batch.getStaticIntervals());
+            Assert.assertEquals(each.hasIntervalFilters(), batch.hasIntervalFilters());
+            Assert.assertEquals(each.isStatic(), batch.isStatic());
+            Assert.assertEquals(each.isEmptySet(), batch.isEmptySet());
+            each.clear();
+            batch.clear();
+            Assert.assertEquals(prior == 4 ? 1 : 0, eachFunction.closeCount);
+            Assert.assertEquals(prior == 4 ? 1 : 0, batchFunction.closeCount);
         }
-        master.clear();
-        Assert.assertEquals(1, dynamicUnion.closeCount);
     }
 
     @Test
@@ -1098,6 +1143,27 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         return builder;
     }
 
+    // ts BETWEEN lo AND hi over the functions the bounds hand out in turn, which must fail the extraction; the extractor
+    // then extracts a constant range as if nothing had happened.
+    private static RuntimeException extractBetweenFailure(BoundExpression lo, BoundExpression hi, Function... functions) throws Exception {
+        final OutputSchema input = new OutputSchema().add(TIMESTAMP_COLUMN_ID, "ts", ColumnType.TIMESTAMP, true);
+        final FunctionsBoundSource bounds = new FunctionsBoundSource(functions);
+        final IntervalExtractor extractor = new IntervalExtractor(configuration, new StringSink(), new LongList());
+        RuntimeException failure = null;
+        try {
+            extractor.extract(timestampBetween(lo, hi), TIMESTAMP_COLUMN_ID, input, bounds, null, 0, sqlExecutionContext);
+        } catch (RuntimeException e) {
+            failure = e;
+        }
+        Assert.assertNotNull("expected the extraction to fail", failure);
+        Assert.assertNull(extractor.extract(timestampBetween(timestampConstant(10), timestampConstant(20)), TIMESTAMP_COLUMN_ID, input, bounds, null, 0, sqlExecutionContext));
+        final LongList intervals = extractor.getStaticIntervals();
+        Assert.assertEquals(2, intervals.size());
+        Assert.assertEquals(10, intervals.getQuick(0));
+        Assert.assertEquals(20, intervals.getQuick(1));
+        return failure;
+    }
+
     private static RuntimeIntervalModelBuilder newBuilder() {
         RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -1114,6 +1180,27 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         ReservationFailingBuilder builder = new ReservationFailingBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, new DefaultCairoConfiguration("."));
         return builder;
+    }
+
+    private static BoundExpression runtimeBound() throws Exception {
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new BetweenTimestampFunctionFactory());
+        return new FunctionExpression().of(overload, new ObjList<>(), new IntList(), ColumnType.TIMESTAMP, BoundExpression.RUNTIME_CONSTANT, 0);
+    }
+
+    private static FunctionExpression timestampBetween(BoundExpression lo, BoundExpression hi) throws Exception {
+        final ObjList<BoundExpression> arguments = new ObjList<>();
+        arguments.add(new ColumnExpression().of(TIMESTAMP_COLUMN_ID, ColumnType.TIMESTAMP, 0));
+        arguments.add(lo);
+        arguments.add(hi);
+        final IntList positions = new IntList();
+        positions.add(0);
+        positions.add(0);
+        positions.add(0);
+        return new FunctionExpression().of(new FunctionFactoryDescriptor(new BetweenTimestampFunctionFactory()), arguments, positions, ColumnType.BOOLEAN, 0, 0);
+    }
+
+    private static BoundExpression timestampConstant(long value) {
+        return new ConstantExpression().ofTimestamp(value, ColumnType.TIMESTAMP, 0);
     }
 
     private static class BuildFailingBuilder extends RuntimeIntervalModelBuilder {
@@ -1206,6 +1293,60 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     private static class CursorPositionsExposingBuilder extends RuntimeIntervalModelBuilder {
         IntList cursorFunctionPositionsCopy() {
             return copyCursorFunctionPositions();
+        }
+    }
+
+    /**
+     * Hands out the functions of the bounds of a predicate in turn; nothing else of the source runs for a BETWEEN over
+     * the designated timestamp itself.
+     */
+    private static class FunctionsBoundSource implements IntervalBoundSource {
+        private final Function[] functions;
+        private int nextFunction;
+
+        private FunctionsBoundSource(Function[] functions) {
+            this.functions = functions;
+        }
+
+        @Override
+        public Function compileTickExpr(TimestampDriver timestampDriver, CairoConfiguration configuration, CharSequence seq, int lo, int lim, int position) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function instantiate(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) {
+            return functions[nextFunction++];
+        }
+
+        @Override
+        public Function instantiateTimestampCursor(CursorExpression cursor, SqlExecutionContext executionContext) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int invertMonotonic(BoundExpression operand, Function head, Interval io) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int monotonicColumnId(BoundExpression operand, Function head) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
+                                             long hiValue, boolean isBetween, boolean isNullBoundMatching, TimestampDriver timestampDriver) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function parkDeclinedBound(BoundExpression bound, Function function) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void publishScalarBound(BoundExpression bound, Function function) {
+            throw new UnsupportedOperationException();
         }
     }
 

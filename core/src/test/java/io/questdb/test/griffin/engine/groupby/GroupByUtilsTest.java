@@ -195,6 +195,60 @@ public class GroupByUtilsTest {
     }
 
     @Test
+    public void testFreeSampleByTemporalFunctionsClosesSharedFunctionOnce() {
+        final CloseCountingFunction timezone = new CloseCountingFunction();
+        final CloseCountingFunction bound = new CloseCountingFunction();
+        Assert.assertNull(GroupByUtils.freeSampleByTemporalFunctionsBestEffort(null, timezone, timezone, bound, bound));
+        Assert.assertEquals(1, timezone.closeCount);
+        Assert.assertEquals(1, bound.closeCount);
+
+        final CloseCountingFunction offset = new CloseCountingFunction();
+        final CloseCountingFunction to = new CloseCountingFunction();
+        Assert.assertNull(GroupByUtils.freeSampleByTemporalFunctionsBestEffort(null, null, offset, null, to));
+        Assert.assertEquals(1, offset.closeCount);
+        Assert.assertEquals(1, to.closeCount);
+
+        // FROM shares the offset's function and TO the timezone's
+        final CloseCountingFunction zone = new CloseCountingFunction();
+        final CloseCountingFunction shift = new CloseCountingFunction();
+        Assert.assertNull(GroupByUtils.freeSampleByTemporalFunctionsBestEffort(null, zone, shift, shift, zone));
+        Assert.assertEquals(1, zone.closeCount);
+        Assert.assertEquals(1, shift.closeCount);
+    }
+
+    @Test
+    public void testFreeSampleByTemporalFunctionsContinuesAfterFailure() {
+        final ThrowingCloseFunction timezone = new ThrowingCloseFunction("close failure 0");
+        final CloseCountingFunction offset = new CloseCountingFunction();
+        final ThrowingCloseFunction bound = new ThrowingCloseFunction("close failure 1");
+
+        final Throwable failure = GroupByUtils.freeSampleByTemporalFunctionsBestEffort(null, timezone, offset, bound, bound);
+
+        Assert.assertSame(timezone.failure, failure);
+        Assert.assertEquals(1, failure.getSuppressed().length);
+        Assert.assertSame(bound.failure, failure.getSuppressed()[0]);
+        Assert.assertEquals(1, timezone.closeAttempts);
+        Assert.assertEquals(1, offset.closeCount);
+        Assert.assertEquals(1, bound.closeAttempts);
+    }
+
+    @Test
+    public void testFreeSampleByTemporalFunctionsKeepsPrimary() {
+        final RuntimeException primary = new RuntimeException("primary");
+        final CloseCountingFunction timezone = new CloseCountingFunction();
+        final ThrowingCloseFunction offset = new ThrowingCloseFunction("close failure");
+        final CloseCountingFunction from = new CloseCountingFunction();
+
+        Assert.assertSame(primary, GroupByUtils.freeSampleByTemporalFunctionsBestEffort(primary, timezone, offset, from, offset));
+
+        Assert.assertEquals(1, primary.getSuppressed().length);
+        Assert.assertSame(offset.failure, primary.getSuppressed()[0]);
+        Assert.assertEquals(1, timezone.closeCount);
+        Assert.assertEquals(1, offset.closeAttempts);
+        Assert.assertEquals(1, from.closeCount);
+    }
+
+    @Test
     public void testFreeSurvivesThrowingClose() {
         // a throwing close() must not stop the walk: every other function still closes exactly
         // once, both lists end up cleared, and the first failure propagates with later

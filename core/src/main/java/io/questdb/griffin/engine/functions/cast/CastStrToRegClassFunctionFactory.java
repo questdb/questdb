@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -44,6 +45,11 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     private static final CharSequenceIntHashMap valueMap = new CharSequenceIntHashMap(4, 0.6, Numbers.INT_NULL);
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Sp)";
     }
@@ -58,11 +64,15 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            Function result = funcMap.get(arg.getStrA(null));
+            final CharSequence name = arg.getStrA(null);
+            if (name == null) {
+                return IntConstant.NULL;
+            }
+            final Function result = funcMap.get(name);
             if (result != null) {
                 return result;
             }
-            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStrA(null)).put(']');
+            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(name).put(']');
         }
         return new CastStrToRegClassFunction(arg);
     }

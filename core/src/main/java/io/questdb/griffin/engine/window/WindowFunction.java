@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.lv.LiveViewCheckpointDependency;
@@ -45,11 +46,11 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.DirectLongList;
@@ -632,25 +633,22 @@ public interface WindowFunction extends Function {
     default void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
     }
 
+    /**
+     * Order indexes are signed and one-based. The assembler, comparator compiler and scratch column filter, and the
+     * indexes, positions and directions are borrowed;
+     * names and their list are independent of compiler storage and may be retained for EXPLAIN.
+     */
     default void initRecordComparator(
-            SqlCodeGenerator sqlGenerator,
+            BytecodeAssembler asm,
+            RecordComparatorCompiler comparatorCompiler,
+            ListColumnFilter columnFilter,
             RecordMetadata metadata,
             ArrayColumnTypes chainTypes,
             IntList orderIndices,
-            ObjList<ExpressionNode> orderBy,
-            IntList orderByDirections
+            IntList orderPositions,
+            ObjList<CharSequence> orderNames,
+            IntList orderDirections
     ) throws SqlException {
-    }
-
-    /**
-     * The output-metadata column index this function writes its result to, as set by
-     * {@link #setColumnIndex(int)} during code generation. Used by the keep-flag filter fusion to
-     * confirm a WHERE literal references exactly this function's boolean output column.
-     *
-     * @return the output column index, or {@code -1} if not applicable.
-     */
-    default int getColumnIndex() {
-        return -1;
     }
 
     /**

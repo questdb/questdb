@@ -26,34 +26,19 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 
-public class FullOuterJoinRecord extends JoinRecord {
-    protected Record masterNullRecord;
-    protected Record slaveNullRecord;
-    private Record flappingMaster;
+public class FullOuterJoinRecord extends RightOuterJoinRecord {
+    private final Record slaveNullRecord;
     private Record flappingSlave;
 
     public FullOuterJoinRecord(int split, Record masterNullRecord, Record slaveNullRecord) {
-        super(split);
-        this.masterNullRecord = masterNullRecord;
+        super(split, masterNullRecord);
         this.slaveNullRecord = slaveNullRecord;
     }
 
+    @Override
     public void of(Record master, Record slave) {
         super.of(master, slave);
-        this.flappingMaster = master;
         this.flappingSlave = slave;
-    }
-
-    void hasMaster(boolean value) {
-        if (value) {
-            master = flappingMaster;
-        } else {
-            master = masterNullRecord;
-        }
-    }
-
-    boolean hasMaster() {
-        return master != masterNullRecord;
     }
 
     void hasSlave(boolean value) {

@@ -32,12 +32,11 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Regression test for the {@link io.questdb.griffin.WhereClauseParser} leak where a scalar
- * sub-query timestamp bound (e.g. {@code ts > (SELECT ...)}) is transferred into a borrowed
- * {@link io.questdb.griffin.model.IntrinsicModel}, and a subsequent LATEST BY residual-filter
- * compilation throws before {@code buildIntervalModel()} hands ownership downstream. The
- * borrowed model still owns the open scalar-query factory, which the pool's {@code clear()}
- * never freed, so the compiled sub-query factory (and its native allocations) leaked.
+ * Regression test for the leak where a scalar sub-query timestamp bound (e.g.
+ * {@code ts > (SELECT ...)}) moves into the {@code IntervalExtractor}'s interval builder, and a
+ * subsequent LATEST BY residual-filter compilation throws before {@code ScanFactoryGenerator}
+ * builds the interval model. The extractor still owns the open scalar-query factory, so the
+ * failure path must clear it or the compiled sub-query factory (and its native allocations) leaks.
  */
 public class ScalarSubqueryLatestByFilterLeakTest extends AbstractCairoTest {
 
@@ -65,8 +64,8 @@ public class ScalarSubqueryLatestByFilterLeakTest extends AbstractCairoTest {
             // so its close is a proxy for the scalar-query factory being freed.
             TestThrowingFilterFunctionFactory.reset(0);
             // The outer LATEST BY residual filter (test_fault()) throws on its first compile, after
-            // extract() already transferred the scalar-query factory into the borrowed model and
-            // before generateLatestByTableQuery() calls buildIntervalModel().
+            // IntervalExtractor.extract() already transferred the scalar-query factory into its
+            // interval builder and before ScanFactoryGenerator builds the interval model.
             TestFaultFunctionFactory.armToFailAfterCompiles(0);
             try {
                 final String sql = """

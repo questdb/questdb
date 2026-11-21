@@ -16,44 +16,45 @@ the follow-up work, if any.
 ### Time-frame joins and `LATEST BY` over a view whose policy is not a timestamp cutoff
 
 A policy that is a single comparison between the designated timestamp and a
-value `SqlParser.isTimestampFlippablePredicate` proves non-NULL, such as a
-constant, `now()` or `dateadd()` over them (`WHEN ts < dateadd('d', -30, now())`,
-`WHEN ts < '2020-01-01'`), is a timestamp cutoff. The parser flips it into an
-interval, and the time-frame joins below accept the view as they accept a table.
-The read still goes through a sub-query, which costs some query shapes their
-faster plans; see "Reads go through a filtered sub-query". Arithmetic on the
-clock (`now() - 3_600_000_000L`) does not qualify; see "Clock arithmetic
-thresholds do not prune". Every other policy reads the view through a sub-query
-that provides no time frames: a per-row filter under a value `WHEN`, and a
-`LATEST ON` or window-function sub-query under `KEEP` and window `WHEN` policies.
-These queries accept that sub-query only in part:
+constant or a value that reads the clock is a timestamp cutoff, for example
+`WHEN ts < dateadd('d', -30, now())`, `WHEN ts < now() - 3_600_000_000L` or
+`WHEN ts < '2020-01-01'`. `ExpiryReadBinder` binds every scalar policy as
+`NOT (<predicate>)` over the view's scan. `IntervalExtractor` reads a cutoff's
+negated comparison as an interval, evaluated when the cursor opens, so the
+time-frame joins below accept the view as they accept a table. A threshold that
+is NULL at that point opens the interval on both sides, so no row expires, as
+the predicate's truth value requires.
 
-| Query over the view | Timestamp cutoff | Any other policy |
-| --- | --- | --- |
-| Right-hand side of WINDOW JOIN | works | rejected |
-| Right-hand side of HORIZON JOIN | works | works under a value `WHEN`, rejected under `KEEP` and window policies |
-| Left-hand side of either join | works | works |
-| `LATEST ON` result fed to SAMPLE BY, ASOF JOIN or LT JOIN | works | works under a value `WHEN`, rejected under `KEEP` and window policies |
-| Deprecated `LATEST BY` result fed to the same | rejected | rejected |
+Every other policy needs more than an interval: a per-row filter under a value
+`WHEN`, and a `LATEST ON` or window-function query under `KEEP` and window `WHEN`
+policies. These queries accept such a read only in part:
+
+| Query over the view | Timestamp cutoff | Value `WHEN` | `KEEP` and window `WHEN` |
+| --- | --- | --- | --- |
+| Right-hand side of WINDOW JOIN | works | rejected | rejected |
+| Right-hand side of HORIZON JOIN | works | works | rejected |
+| Left-hand side of either join | works | works | works |
+| `LATEST ON` or deprecated `LATEST BY` result fed to SAMPLE BY, ASOF JOIN or LT JOIN | works | works | rejected |
 
 - **Why accepted:** every rejected case fails at compile time; no query returns
   wrong rows. Both joins require a right-hand side that provides time frames,
   and no row-filtered read does, including a filtered sub-query written by hand
   over a plain table. HORIZON JOIN takes a per-row filter off its right-hand
   side, reads the table's time frames, and applies the filter while it looks up
-  the prevailing row (`SqlCodeGenerator.generateHorizonJoinFactory()` and
-  `generateMultiHorizonJoinFactory()`). A `KEEP` or window `WHEN` policy decides
-  each row against the other rows of the view, so its read has no per-row filter
-  to take, and WINDOW JOIN takes no filter at all. The join errors name the view
-  (`SqlCodeGenerator.unsupportedTimeFrameSlave()`): WINDOW JOIN's names the
+  the prevailing row (`PlanToFactoryRules.horizonStolenFilter()`). A `KEEP` or
+  window `WHEN` policy decides each row against the other rows of the view, so
+  its read has no per-row filter to take, and WINDOW JOIN takes no filter at all.
+  `OperatorPlanning` names the view in the join errors: WINDOW JOIN's names the
   missing timestamp cutoff, and HORIZON JOIN's names the `KEEP` or window-function
-  policy when the parser has recorded one on the model
-  (`IQueryModel.isExpiryStructuralPolicy()`), and the missing cutoff otherwise.
-  The `LATEST ON` and
-  `LATEST BY` cases keep the generic
-  `TIMESTAMP column is required but not provided`.
+  policy, and the missing cutoff otherwise. The `LATEST ON` and `LATEST BY` cases
+  keep the generic `TIMESTAMP column is required but not provided`, because
+  `LatestBy light` over such a read publishes no designated timestamp.
 - **Pinned by:**
   `MatViewExpireRowsTest.testTimeFrameJoinOverPoliciedViewNamesTheView`,
+  `MatViewExpireRowsTest.testClockArithmeticThresholdPrunesPartitions`,
+  `MatViewExpireRowsTest.testClockThresholdNullAtReadKeepsEveryRow`,
+  `MatViewExpireRowsTest.testScalarPoliciedViewCarriesDesignatedTimestampThroughLatestOn`,
+  `MatViewExpireRowsTest.testDeprecatedLatestByOverPolicyFeedsSampleBy`,
   `MatViewExpireRowsTest.testRelativePoliciedViewRejectsTimestampOperatorAboveLatestOn`.
 - **Follow-up:** time-frame support for a row-filtered right-hand side of WINDOW
   JOIN and a windowed right-hand side of either join, and carrying the
@@ -372,55 +373,36 @@ view row, whatever time range it asks for: about 66 MB on a 4M-row view.
 - **Follow-up:** push `IN` lists, ranges and partially constrained composite
   keys below the window. They are excluded by predicate shape, not semantics.
 
-### Reads go through a filtered sub-query
+### SAMPLE BY over a policy runs single-threaded
 
-A scalar `WHEN` policy, a timestamp cutoff included, turns every read of the
-view into `SELECT * FROM <view> WHERE <keep-filter>`
-(`SqlParser.expandExpiringTable()`). The optimiser gives some query shapes a
-faster plan only when they read a table directly, and those shapes lose it,
-even when the policy hides no rows. On an 8M-row view with 4 query workers:
+A SAMPLE BY directly over a view with a policy runs in the SAMPLE BY cursor,
+where a plain table read gets a parallel GROUP BY over the bucket
+(`SampleByBinder.requiresSampleByCursor()`). A sub-query written by hand over a
+plain table gets the same plan, and `GROUP BY timestamp_floor('1h', ts)` keeps
+the parallel one. The cursor loses on a query read to its end whose buckets hold
+many rows per key, such as an unkeyed one. On an 8M-row view with 1,000 keys,
+4 query workers and the policy `WHEN v < -1`:
 
-| Query over the view | No policy | `WHEN ts < dateadd('d', -30, now())` |
+| Query over the view | Cursor | Parallel GROUP BY |
 | --- | --- | --- |
-| `SELECT k, sum(v) FROM mv SAMPLE BY 1h` | parallel, 72 ms | single-threaded, 179 ms |
-| `SELECT * FROM mv WHERE k = 'S5' LIMIT -5` | backward scan, 0.26 ms | forward scan, 2.7 ms |
+| `SELECT ts, count(), sum(v) FROM mv SAMPLE BY 1h` | 53 ms | 22 ms |
+| `SELECT ts, k, sum(v) FROM mv SAMPLE BY 1h` | 123 ms, 0.1 MB | 154 ms, 161 MB |
+| `SELECT ts, k, sum(v) FROM mv SAMPLE BY 1m` | 137 ms, 0.1 MB | 409 ms, 513 MB |
+| `SELECT ts, count() FROM mv SAMPLE BY 1h LIMIT 10` | 0.3 ms | 18 ms |
 
-The SAMPLE BY gap grows with the worker count: 1.3x at 2 workers, 2.4x at 4
-and about 4x at 8. Under a value policy such as `WHEN v < -1`, `count()`,
-`max(ts)` and `LIMIT -N` also scan the whole view, and their cost grows with
-it: at 8M rows they took 4.3 ms, 78 ms and 4.5 ms, against under 0.1 ms with no
-policy. A sub-query written by hand over a plain table gets the same plans.
-`GROUP BY timestamp_floor('1h', ts)` keeps the parallel plan, and
-`ORDER BY ts DESC LIMIT n` keeps the backward scan.
+Under a value policy such as `WHEN v < -1`, `count()` evaluates the filter on
+every row: 4.3 ms at 8M rows against under 0.1 ms with no policy. `max(ts)`,
+`LIMIT -N` and `ORDER BY ts DESC LIMIT n` scan backward and stop at the rows they
+need.
 
-- **Why accepted:** the sub-query applies the policy to the view's rows before
-  anything else in the query reads them, so the result is correct under every
-  join, `LATEST ON`, window function and `UNION` without a rule per context.
-  Merging the filter into the enclosing query instead would need its own
-  placement for outer joins, where a `WHERE` on the view's columns drops the
-  rows the join extends with NULLs; for ASOF, LT and SPLICE JOIN, where an
-  expired row must not be chosen as the match; for self-joins; and for
-  `LATEST ON`. A value policy's keep-filter is `NOT (<predicate>)` and keeps
-  NULL rows only while the optimiser leaves it intact, so merging it would
-  expose it to the predicate rewrites of the enclosing query. Each of these
-  costs wrong rows; the sub-query costs speed.
-- **Follow-up:** let parallel SAMPLE BY, the first/last rewrite and the
-  negative-LIMIT backward scan read through a `SELECT * FROM t WHERE ...`
-  sub-query. That also speeds up the same sub-queries written by hand.
-
-### Clock arithmetic thresholds do not prune
-
-`WHEN ts < now() - 3_600_000_000L` reads through a full scan with a per-row
-filter, so the WINDOW JOIN limitation above applies to it as well; HORIZON JOIN
-accepts it. `WHEN ts < dateadd('h', -1, now())` expresses the same window and
-reads as an interval scan.
-
-- **Why accepted:** the interval flip requires a threshold that is provably
-  non-NULL, and arithmetic with a clock under it is not provable at DDL time.
-  The policy still keeps the right rows and still reclaims disk. The public docs
-  recommend `dateadd`.
-- **Pinned by:** `MatViewExpireRowsTest.testClockArithmeticThresholdKeepsUnflippedFilter`,
-  `MatViewExpireRowsTest.testTimeFrameJoinOverPoliciedViewNamesTheView`.
+- **Why accepted:** `requiresSampleByCursor()` treats a policied read as it treats
+  any sub-query. The cursor streams: it emits a bucket as it closes, so a `LIMIT`
+  or a client that stops early reads only the rows of the buckets it gets, and a
+  keyed query holds the keys of one bucket rather than of every bucket. The
+  parallel plan has to read every row first and hold every group, which also makes
+  a keyed query slower unless each bucket holds many rows per key.
+- **Follow-up:** run the parallel plan for an unkeyed SAMPLE BY with no `LIMIT`
+  above it, which needs the binder to see the consumers of the SAMPLE BY.
 
 ### Fixed thresholds reclaim through the survivor scan
 
@@ -456,87 +438,73 @@ through the survivor scan".
   scans whose commit the sequencer gate would refuse anyway.
 - **Follow-up:** release the lock between partitions.
 
-### Latest-by rewrite scoped to scalar expiry
+### `LATEST ON` over a scalar policy filters on one thread
 
-A scalar `EXPIRE ROWS WHEN` policy turns a reference to `mv` into
-`SELECT * FROM mv WHERE <keep-filter>`, so a latest-by query over the view sees
-a subquery instead of a physical table. The random-access
-`LatestByLightRecordCursorFactory` returns its winning rows in key-map insertion
-order, not timestamp order, and correctly advertises no designated timestamp.
-The direct-table latest-by factories return rows in timestamp order.
-`SqlOptimiser.pushLatestByToTableModel()` hoists the latest-by out of the
-synthetic wrapper onto the physical read, so adding a scalar policy does not by
-itself break `SAMPLE BY` or timestamp joins above a direct latest-by read that
-was valid before. This holds for INT and other keys, non-indexed SYMBOL keys and
-indexed SYMBOL keys alike.
+`ExpiryReadBinder.bindScanRead()` binds a scalar `EXPIRE ROWS WHEN` policy as a
+filter over the view's scan, and the generator builds a `LATEST ON` of the view's
+designated timestamp into that scan, with the keep-filter as its residual
+predicate (`PlanToFactoryRules.latestByScan()`). The read returns rows in
+timestamp order and publishes the designated timestamp, as a filtered `LATEST ON`
+over a table does, so adding a scalar policy does not by itself break `SAMPLE BY`
+or timestamp joins above it. This holds for INT and other keys, non-indexed
+SYMBOL keys and indexed SYMBOL keys alike.
 
-The rewrite applies only to physical reads that `SqlParser.expandExpiringTable()`
-introduces for a scalar policy. The parser marks such a read with
-`isScalarExpiryRead`; it does not mark ordinary tables, ordinary view expansion,
-materialized views without a policy, or the relative and window policy
-expansions. An ordinary view or CTE that refers to a scalar-expiry view can
-still contain a marked read, and the existing shape and semantic guards must
-also accept the path to it. Mentioning an expiring view elsewhere in a join or
-UNION does not opt other reads into the rewrite. The marker records where the
-parser expanded the read, rather than looking up the current policy again
-during optimisation, and `QueryModel.clear()` resets it when the model pool
-reuses a model. It is separate from `isExpiryKeepFilter`, which protects
-nullable predicates from Boolean inversion and excludes timestamp predicates
-that the optimiser can turn into intervals. Those predicates still need the
-rewrite.
+Only the read of a policied view takes this path. A `LATEST ON` over an ordinary
+sub-query or SQL view keeps an async/JIT filter under the random-access
+`LatestByLightRecordCursorFactory`, which returns its winning rows in key-map
+insertion order and correctly advertises no designated timestamp. So does a
+`LATEST ON` of another timestamp column, or one under a `TIMESTAMP(...)` override
+of the view. `KEEP` and window `WHEN` policies read through `LatestBy light` as
+well, which is why the time-frame table above rejects them.
 
-The existing guards still reject rewrites that change timestamp choice,
-projection, alias scope, filters, joins, limits or ordering. Live views stay
-excluded, because direct latest-by reads their disk tier without the published
-in-memory lead. Relative and window policies keep their existing restrictions
-on timestamp-dependent operators above another latest-by.
+The generator builds the filter into the scan, so no async filter runs below it.
+`LatestByAllFilteredRecordCursor`, for example, scans backward on one thread and
+calls `filter.getBool(record)` for each row, which `LatestByCompiledFilter`
+answers from JIT-compiled batches when the filter compiles. A selective full-scan
+query over an expiring view can therefore run slower than the same filtered
+sub-query, including a query that does not need timestamp-ordered output. Index
+access, timestamp interval pruning and SYMBOL-key early termination still apply,
+depending on the factory and predicate chosen; an index does not guarantee an
+index-seek plan.
 
-On a hoisted read, `generateLatestByTableQuery()` consumes the residual
-predicate, so the later filtering stage cannot install an async/JIT filter below
-it. `LatestByAllFilteredRecordCursor`, for example, scans backward and calls
-`filter.getBool(record)` row by row. A selective full-scan query over an
-expiring view can therefore run slower than the same filtered subquery with the
-hoist disabled, including a query that does not need timestamp-ordered output.
-Index access, timestamp interval pruning and SYMBOL-key early termination still
-apply, depending on the factory and predicate chosen; an index does not
-guarantee an index-seek plan.
-
-At revision `5204d37e82`, the PR discussion measured a broad hoist that applied
-to every subquery: about 6 ms without the hoist against 15-18 ms with it for a
-selective filtered query, and about 96 ms against 1-2 ms the other way for an
-unfiltered indexed query. These measure the broad hoist, not the scoped rewrite,
-and do not predict every expiry workload. See the
+At revision `5204d37e82`, the PR discussion measured a rewrite that sent every
+sub-query down this path: about 6 ms on the async path against 15-18 ms on the
+direct one for a selective filtered query, and about 96 ms against 1-2 ms the
+other way for an unfiltered indexed query. These do not predict every expiry
+workload. See the
 [performance review](https://github.com/questdb/questdb/pull/7263#issuecomment-5379388414)
 and the earlier
 [ordering correction](https://github.com/questdb/questdb/pull/7263#issuecomment-5354023131).
 
-Scoping the rewrite to scalar-expiry reads keeps the plans of ordinary nested
-table queries, ordinary views over tables, and nested reads of materialized
-views without scalar expiry: a selective predicate there still uses async/JIT
-filtering before `LatestBy light`. It also gives up the broad indexed-subquery
-speedup and any extra timestamp-dependent query shapes that only the broad
-hoist enabled. Direct-table latest-by is unchanged.
+Keeping the path to policied reads keeps the plans of ordinary nested table
+queries, ordinary views over tables, and nested reads of materialized views
+without a scalar policy: a selective predicate there still uses async/JIT
+filtering before `LatestBy light`. They also do not get the indexed-subquery
+speedup or the timestamp-dependent query shapes of the direct path. Direct-table
+latest-by is unchanged.
 
-- **Why accepted:** the rewrite keeps the timestamp-order contract for
-  scalar-expiry reads and limits the row-by-row cost to them. Advertising a
-  timestamp on the unordered light output would permit wrong sampling, joins or
-  ORDER BY elision. Disabling the hoist for all predicates gives up the
-  contract, and restricting it to indexed keys makes query validity depend on an
-  index again. The cost comes from the current implementation, not from expiry
-  semantics. Widening the gate as a general performance optimisation would
-  spread the cost to unrelated queries.
-- **Pinned by:** `LatestByHoistEquivalenceTest` compares plans, rows,
-  projections and timestamp metadata with the hoist on and off: ordinary shapes
-  keep identical plans, and accepted scalar-expiry shapes change plans. Its
-  selective-filter regression covers INT, indexed SYMBOL and composite keys,
-  ordinary subqueries and SQL views, JIT on and off, NULL keys and filtering
-  before latest-by, and its scope tests fail when the marker check is removed.
-  It also covers model-pool reuse, a mixed ordinary and expiry UNION,
-  materialized views without expiry, and installing and dropping a flippable
-  timestamp policy. `MatViewExpireRowsTest` covers downstream SAMPLE BY and
-  ASOF without an index. `LatestByTest`, `ExplainPlanTest` and the live-view
-  read tests pin the ordinary plans, ordering and freshness. These assert plans
-  and results, not wall-clock speed.
+- **Why accepted:** the path keeps the timestamp-order contract for scalar-policy
+  reads and limits the single-threaded filter to them. Advertising a timestamp on
+  the unordered light output would permit wrong sampling, joins or ORDER BY
+  elision. Reading a scalar policy through `LatestBy light` gives up the contract,
+  and restricting the path to indexed keys makes query validity depend on an index
+  again. The cost comes from the current implementation, not from expiry
+  semantics. Widening the path as a general performance optimisation would spread
+  the cost to unrelated queries.
+- **Pinned by:** `LatestByOverPolicyEquivalenceTest` runs each shape as written and
+  with each read of the view spelled as a sub-query, and compares plans, rows,
+  projections and timestamp metadata: shapes on the direct path change plans, and
+  the others keep identical plans. Its
+  `testScalarExpiryFiltersBeforeLatestAndKeepsTimestampOrder` covers filtering
+  before latest-by, NULL keys and both timestamp precisions;
+  `testSelectiveOrdinaryReadsKeepAsyncFilter` covers INT, indexed SYMBOL and
+  composite keys, ordinary sub-queries and SQL views, JIT on and off;
+  `testOrdinaryReadsKeepPlansAfterExpiringRead` covers a mixed ordinary and expiry
+  UNION and materialized views without expiry; and
+  `testTimestampPolicyReadsDirectlyAfterPolicyChanges` covers installing and dropping
+  a timestamp policy. `MatViewExpireRowsTest` covers downstream SAMPLE BY and ASOF
+  without an index. `LatestByTest` and `ExplainPlanTest` pin the ordinary plans and
+  ordering. These assert plans and results, not wall-clock speed.
 - **Follow-up:** an execution path that combines async/JIT residual filtering
   with latest-by and genuinely timestamp-ordered output, keeping interval and
   index restriction and SYMBOL early exits rather than a full scan. One
@@ -681,3 +649,23 @@ through `secret < 20` needs SELECT on `secret`.
 - **Follow-up:** replacing the reason with a generic message for failures raised
   while the check opens its cursor would stop the values from showing, at the
   cost of the detail for every policy error found there.
+
+### A bare `count()` under a window policy needs SELECT on every column
+
+Under a `KEEP [N] HIGHEST/LOWEST` or window `WHEN` policy, `SELECT count() FROM mv`
+asks for SELECT on every column of the view, so in QuestDB Enterprise a user who
+holds SELECT only on the columns the policy reads gets an access error.
+`SELECT count() FROM (SELECT ts FROM mv)` returns the same count and needs only
+`ts` and the policy's columns. Under a scalar or `KEEP LATEST` policy,
+`SELECT count() FROM mv` asks only for the policy's columns.
+
+- **Why accepted:** the query fails closed: it returns an access error, never a
+  wrong count or a value the user cannot read, and the narrower spelling gives
+  the same answer. A count reads every column of an input that computes one
+  (`ColumnReads.isCountInputMaterialized()`), and this read computes its keep
+  column. Reading only the computed columns would change what every count over a
+  computing projection reads, for a case that has a workaround.
+- **Pinned by:**
+  `MatViewExpireRowsHardeningTest.testPolicyReadsAskSelectOnTheColumnsTheyRead`.
+- **Follow-up:** let a count read only the computed columns of such an input,
+  which also stops the window read caching columns the count never uses.

@@ -156,10 +156,23 @@ public class BitAndGroupByFunctionFactoryTest extends AbstractCairoTest {
     public void testBitAndConstant() throws Exception {
         assertQuery("select bit_and(42::long) from tab")
                 .ddl("create table tab as (select x from long_sequence(5))")
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         bit_and
                         42
+                        """);
+    }
+
+    @Test
+    public void testBitAndConstantEmptyTable() throws Exception {
+        assertQuery("SELECT count() c, bit_and(5::byte) b, bit_and(5::short) s, bit_and(5) i, bit_and(5::long) l FROM tab")
+                .ddl("CREATE TABLE tab (x LONG)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c\tb\ts\ti\tl
+                        0\t0\t0\tnull\tnull
                         """);
     }
 
@@ -272,5 +285,16 @@ public class BitAndGroupByFunctionFactoryTest extends AbstractCairoTest {
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
             }, configuration, LOG);
         }
+    }
+
+    @Test
+    public void testBitAndUntypedNull() throws Exception {
+        assertQuery("select bit_and(null) from long_sequence(3)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        bit_and
+                        null
+                        """);
     }
 }

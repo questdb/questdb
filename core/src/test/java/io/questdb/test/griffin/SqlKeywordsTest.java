@@ -268,6 +268,7 @@ public class SqlKeywordsTest {
         specialCases.put("isRespectWord", "respect");
         specialCases.put("isIgnoreWord", "ignore");
         specialCases.put("isNullsWord", "nulls");
+        specialCases.put("isGroupingIdKeyword", "grouping_id");
         specialCases.put("isTimestampNsKeyword", "timestamp_ns");
         specialCases.put("isDefaultTransactionReadOnly", "default_transaction_read_only");
         specialCases.put("isExcluding", "excluding");

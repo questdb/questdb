@@ -30,28 +30,25 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final LimitBounds bounds;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
-    private final Function hiFunction;
-    private final Function loFunction;
     private final ObjList<DirectIntList> rankMaps;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
@@ -60,30 +57,29 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     private LimitedSizeLongTreeChain chain;
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or LimitedSizePartiallySortedLightRecordCursor
-    private boolean isFirstN;
-    private long limit;
-    private long skipFirst;
-    private long skipLast;
 
     public LimitedSizeSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
             RecordComparator comparator,
-            Function loFunc,
-            @Nullable Function hiFunc,
+            LimitBounds bounds,
             ListColumnFilter sortColumnFilter,
             int timestampIndex // index of timestamp that base record cursor is already sorted on
     ) {
         super(metadata);
         this.base = base;
-        this.loFunction = loFunc;
-        this.hiFunction = hiFunc;
+        this.bounds = bounds;
         this.configuration = configuration;
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        try {
+            this.rankMaps = SortKeyEncoder.createRankMaps(metadata, sortColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -95,24 +91,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     // sorting itself introduces no value sources.
     @Override
     public boolean isNonDeterministic() {
-        if (loFunction != null && loFunction.isNonDeterministic()) {
-            return true;
-        }
-        if (hiFunction != null && hiFunction.isNonDeterministic()) {
-            return true;
-        }
-        return base.isNonDeterministic();
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        if (loFunction != null && !loFunction.isStableWithinExecution()) {
-            return false;
-        }
-        if (hiFunction != null && !hiFunction.isStableWithinExecution()) {
-            return false;
-        }
-        return base.isStableWithinExecution();
+        return bounds.isNonDeterministic() || base.isNonDeterministic();
     }
 
     @Override
@@ -144,20 +123,13 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return true;
     }
 
-    /*
-     * 1. "limit L" means we only need to keep :
-     * L >=0 - first L records
-     * L < 0 - last L records
-     * 2. "limit L, H" means we need to keep :
-     * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything)
-     * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
-     * L >= 0, H < 0  - the result spans from record L-th from the beginning up to H-th from the end, so the
-     * chain stays unbounded (limit -1) and the cursor skips L rows from the start and H from the end.
-     * <p>
-     * Similar to LimitRecordCursorFactory.LimitRecordCursor, but doesn't check the underlying count.
+    /**
+     * Resolves the bounds, then builds the chain that keeps the {@link LimitBounds.Values#getLimit} rows of the
+     * order, and the cursor that skips the {@link LimitBounds.Values#getSkipFirst} and
+     * {@link LimitBounds.Values#getSkipLast} rows of them.
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
-        computeLimits(baseCursor, executionContext);
+        bounds.init(baseCursor, executionContext);
         // Lazy variant: the chain skeleton is constructed but the key/value heaps
         // are not allocated until the first cursor's of() binds a MemoryTracker
         // and calls reopen(). This keeps malloc/free symmetric on the per-query
@@ -172,13 +144,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 false
         );
 
-        if (timestampIndex == -1 || !isFirstN) {
+        if (timestampIndex == -1 || !bounds.getValues().isFirstN()) {
             this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, rankMaps);
         } else {
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
         }
-        chain.updateLimits(isFirstN, limit);
-        ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
+        updateLimits();
     }
 
     @Override
@@ -189,10 +160,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Sort light");
-        sink.meta("lo").val(loFunction);
-        if (hiFunction != null) {
-            sink.meta("hi").val(hiFunction);
-        }
+        bounds.toPlan(sink);
         if (timestampIndex != -1) {
             sink.meta("partiallySorted").val(true);
         }
@@ -210,74 +178,13 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return base.usesIndex();
     }
 
-    private void computeLimits(RecordCursor baseCursor, SqlExecutionContext executionContext) throws SqlException {
-        loFunction.init(baseCursor, executionContext);
-        if (hiFunction != null) {
-            hiFunction.init(baseCursor, executionContext);
-        }
-
-        this.skipFirst = 0;
-        this.skipLast = 0;
-        this.limit = 0;
-        this.isFirstN = false;
-
-        long lo = loFunction.getLong(null);
-        if (lo < 0 && hiFunction == null) {
-            // last N rows
-            // lo is negative, -5 for example
-            // if we have 12 records we need to skip 12-5 = 7
-            // if we have 4 records = return all of them
-            // set limit to return remaining rows
-            this.limit = -lo;
-        } else if (lo > -1 && hiFunction == null) {
-            // first N rows
-            this.isFirstN = true;
-            this.limit = lo;
-        } else {
-            // at this stage we also have 'hi'
-            long hi = hiFunction.getLong(null);
-            // NULL lo with a non-NULL hi means "from the start"; NULL,NULL stays raw so lo == hi yields empty.
-            if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
-                lo = 0;
-            }
-            if (lo < 0) {
-                // right, here we are looking for something like -10,-5 five rows away from tail
-                if (lo == hi) {
-                    // this is invalid bottom range, for example -3, -10
-                    this.limit = 0;//produce empty result
-                } else {
-                    this.limit = -Math.min(hi, lo);
-                    this.skipLast = Math.max(-Math.max(hi, lo), 0);
-                }
-            } else { // lo >= 0
-                if (hi < 0) {
-                    // A NULL hi yields the empty result (limit stays 0); checking it here
-                    // also keeps skipLast = -hi from overflowing to Long.MIN_VALUE.
-                    if (hi != Numbers.LONG_NULL) {
-                        // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
-                        // (it's from lo up to end-hi so probably whole result anyway )
-                        this.limit = -1;
-                        this.skipFirst = lo;
-                        this.skipLast = -hi;
-                    }
-                } else { // both lo and hi are positive
-                    this.isFirstN = true;
-                    this.limit = Math.max(hi, lo);
-                    // but we've to skip to lo
-                    this.skipFirst = Math.min(hi, lo);
-                }
-            }
-        }
-    }
-
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         if (isInitialized()) {
             if (chain != null && cursor instanceof DynamicLimitCursor) {
-                computeLimits(baseCursor, executionContext);
+                bounds.init(baseCursor, executionContext);
                 // The cursor implementation was picked once, off the first execution's isFirstN;
                 // it has to re-gate any first-N-only behaviour on the value we just re-derived.
-                chain.updateLimits(isFirstN, limit);
-                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
+                updateLimits();
             }
             return;
         }
@@ -289,6 +196,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         return cursor != null;
     }
 
+    private void updateLimits() {
+        final LimitBounds.Values values = bounds.getValues();
+        chain.updateLimits(values.isFirstN(), values.getLimit());
+        ((DynamicLimitCursor) cursor).updateLimits(values.isFirstN(), values.getLimit(), values.getSkipFirst(), values.getSkipLast());
+    }
+
     @Override
     protected void _close() {
         final RecordCursorFactory base = this.base;
@@ -297,6 +210,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.cursor = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = bounds.close(failure);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

@@ -123,7 +123,13 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             }
             final String sql = "SELECT no_such_col FROM (" + q + ")";
             LOG.info().$("failing read [sql=").$(sql).I$();
-            assertExceptionNoLeakCheck(sql, 7, "Invalid column: no_such_col");
+            // The binder reads FROM before the select list, so the deepest EXISTS, which has no function, fails first.
+            final int existsPosition = sql.lastIndexOf("EXISTS (");
+            if (existsPosition > -1) {
+                assertExceptionNoLeakCheck(sql, existsPosition, "unknown function name: EXISTS(CURSOR)");
+            } else {
+                assertExceptionNoLeakCheck(sql, 7, "Invalid column: no_such_col");
+            }
 
             final TreeMap<String, Integer> expected = new TreeMap<>();
             collectViewClosure(viewName, expected);

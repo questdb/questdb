@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -42,13 +43,21 @@ import io.questdb.std.Rnd;
 public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.IPv4;
+    }
+
+    @Override
     public String getSignature() {
-        return "rnd_ipv4(ii)";
+        return "rnd_ipv4(si)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CharSequence subnetStr = args.getQuick(0).getStrA(null);
+        final CharSequence subnetStr = args.getQuick(0).getStrA(null);
+        if (subnetStr == null) {
+            throw SqlException.$(argPositions.getQuick(0), "subnet cannot be NULL");
+        }
         int nullRate = args.getQuick(1).getInt(null);
 
         try {

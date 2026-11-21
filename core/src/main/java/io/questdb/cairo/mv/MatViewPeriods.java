@@ -73,8 +73,7 @@ public final class MatViewPeriods {
 
     /**
      * Returns the latest UTC time at or before the given one at which a period starts. The last period that is
-     * complete at the given time ends there. Before the sampler's start, the sampler rounds the time up, and this
-     * method returns a later time.
+     * complete at the given time ends there. Before the sampler's start, the grid extends back unchanged.
      */
     public static long periodStart(TimestampSampler sampler, @Nullable TimeZoneRules rules, long utc) {
         if (rules == null) {

@@ -75,6 +75,12 @@ public class FaultInjectingConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public int getPageFrameReduceRowIdListCapacity() {
+        throwIfArmed(FaultMethod.PAGE_FRAME_REDUCE_ROW_ID_LIST_CAPACITY);
+        return super.getPageFrameReduceRowIdListCapacity();
+    }
+
+    @Override
     public int getSqlAsOfJoinLookAhead() {
         throwIfArmed(FaultMethod.SQL_AS_OF_JOIN_LOOK_AHEAD);
         return super.getSqlAsOfJoinLookAhead();
@@ -124,6 +130,7 @@ public class FaultInjectingConfiguration extends CairoConfigurationWrapper {
          */
         NONE,
         CIRCUIT_BREAKER_CONFIGURATION,
+        PAGE_FRAME_REDUCE_ROW_ID_LIST_CAPACITY,
         SQL_AS_OF_JOIN_LOOK_AHEAD,
         SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE,
         SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD,

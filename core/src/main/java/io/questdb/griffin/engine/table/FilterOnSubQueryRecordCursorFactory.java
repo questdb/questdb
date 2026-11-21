@@ -126,9 +126,9 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, rowCursorFactory);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, recordCursorFactory);
         factoriesA.clear();
         factoriesB.clear();
@@ -218,9 +218,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             cursorFactories.clear();
             targetFactories.clear();
             delegate.of(cursor, executionContext);
-            if (filter != null) {
-                filter.init(delegate, executionContext);
-            }
         }
 
         @Override

@@ -44,7 +44,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * Cursors returned by this class are not thread-safe.
  */
 public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
-    // @TestOnly observability for what countMatchesInRange() spends. The two block seeks read no rows
+    // @TestOnly observability for what the range counts spend. Their block seeks and walks read no rows
     // and pull no index entries, so every counter one level up reports zero for them, yet each hop is
     // a random read into the mapped value file and the chain a hot key builds is arbitrarily long.
     // Only a count of the hops themselves shows whether admission costs the posting list or the range.
@@ -58,6 +58,14 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
     private final RangeCountSeeker rangeCountSeeker = new RangeCountSeeker();
+    // The value block offsets of the key entry readKeyEntry() read last.
+    private long entryFirstValueBlockOffset;
+    private long entryLastValueBlockOffset;
+    // The positions of the values locateValues() found last, and the value blocks that hold the first and the last.
+    private long rangeHi;
+    private long rangeHiBlock;
+    private long rangeLo;
+    private long rangeLoBlock;
     // What the most recent countMatchesInRange() call spent, in block hops. Exhaustion charges the
     // whole budget the call was given. Same single-owner discipline as the seeker instance itself.
     private int lastRangeCountBlockHops;
@@ -124,61 +132,15 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         if (key < 0 || minValue > maxValue) {
             return 0;
         }
-        if (key >= keyCount) {
-            updateKeyCount();
-        }
-
-        long total = 0;
-        if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // Rows before columnTop predate the column, so the index holds no entry for them and
-            // getCursor() synthesizes them through NullCursor. Mirror its nullCount exactly. Those
-            // synthetic row ids all sit below columnTop while every key-0 posting sits at or above
-            // it, so this term and the posting count below cannot double-count a row.
-            final long nullCount = Math.min(columnTop, maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1);
-            total += Math.max(0, nullCount - minValue);
-        }
-        if (key >= keyCount) {
-            // Past the key count the index addresses nothing, so the null prefix is the whole answer.
-            return total;
-        }
-
-        final long offset = BitmapIndexUtils.getKeyEntryOffset(key);
-        keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
-        // Same seqlock protocol as Cursor.of(): read the value count first and last and retry while
-        // the two disagree, so the block offsets read in between belong to one consistent entry.
-        long valueCount;
-        long firstValueBlockOffset;
-        long lastValueBlockOffset;
-        long deadline = DEADLINE_UNARMED;
-        while (true) {
-            valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
-
-            Unsafe.loadFence();
-            if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
-                firstValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
-                lastValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
-
-                Unsafe.loadFence();
-                if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
-                    break;
-                }
-            }
-
-            if (deadline == DEADLINE_UNARMED) {
-                deadline = clock.getTicks() + spinLockTimeoutMs;
-            } else if (clock.getTicks() > deadline) {
-                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
-                throw CairoException.critical(0).put(INDEX_CORRUPT);
-            }
-        }
-
+        final long total = getNullRowCount(key, minValue, maxValue);
+        // Past the key count the index addresses nothing, so the null prefix is the whole answer.
+        final long valueCount = readKeyEntry(key);
         if (valueCount == 0) {
             return total;
         }
-        valueMem.extend(lastValueBlockOffset + blockCapacity);
         final int hopsBelowMin = BitmapIndexUtils.seekValueBlockLTR(
                 valueCount,
-                firstValueBlockOffset,
+                entryFirstValueBlockOffset,
                 valueMem,
                 minValue,
                 blockValueCountMod,
@@ -195,7 +157,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         final long countBelowMin = rangeCountSeeker.count;
         final int hopsAtOrBelowMax = BitmapIndexUtils.seekValueBlockRTL(
                 valueCount,
-                lastValueBlockOffset,
+                entryLastValueBlockOffset,
                 valueMem,
                 maxValue,
                 blockValueCountMod,
@@ -224,6 +186,54 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
      */
     public int getLastRangeCountBlockHops() {
         return lastRangeCountBlockHops;
+    }
+
+    /**
+     * The number of rows {@code key} matches within {@code [minValue, maxValue]}, or any number above
+     * {@code maxCount} once the count passes it.
+     * <p>
+     * Unlike {@link #countMatchesInRange(int, long, long, int)}, this never walks a posting list from one end to the
+     * far bound of the range. It reaches the nearer bound from its end of the list, then walks the range itself by
+     * whole value blocks, and stops at the far bound or after {@code maxCount} rows. Each of the two walks races a walk
+     * from the other end of the list, one block at a time, so it reads at most twice the blocks of the shorter way to
+     * each bound, and none of the blocks between the range and the far end of the list when the range is nearer.
+     * <p>
+     * Single-owner discipline applies, as for {@link #countMatchesInRange(int, long, long, int)}.
+     */
+    public long countRows(int key, long minValue, long maxValue, long maxCount) {
+        if (key < 0 || minValue > maxValue) {
+            return 0;
+        }
+        final long nullRowCount = getNullRowCount(key, minValue, maxValue);
+        if (nullRowCount > maxCount) {
+            return nullRowCount;
+        }
+        final long valueCount = readKeyEntry(key);
+        return valueCount > 0 ? nullRowCount + locateValues(valueCount, minValue, maxValue, maxCount - nullRowCount, 0) : nullRowCount;
+    }
+
+    /**
+     * The row a cursor in {@code direction} returns for {@code key} over {@code [minValue, maxValue]} after it
+     * skips {@code rowIndex} rows. The key must have more than {@code rowIndex} rows there.
+     * <p>
+     * It locates the values of the range as {@link #countRows(int, long, long, long)} does, stopping once it passes
+     * the requested row from the requested direction, then hops to the value block from the nearer located end.
+     *
+     * @param direction {@link IndexReader#DIR_FORWARD} or {@link IndexReader#DIR_BACKWARD}
+     */
+    public long getRow(int key, long minValue, long maxValue, int direction, long rowIndex) {
+        final long nullRowCount = getNullRowCount(key, minValue, maxValue);
+        // a forward cursor returns the NULL rows below the column top first, a backward one returns them last
+        if (direction == IndexReader.DIR_FORWARD && rowIndex < nullRowCount) {
+            return minValue + rowIndex;
+        }
+        final long valueRowIndex = direction == IndexReader.DIR_FORWARD ? rowIndex - nullRowCount : rowIndex;
+        final long valueCount = readKeyEntry(key);
+        final long valueRowCount = valueCount > 0 ? locateValues(valueCount, minValue, maxValue, valueRowIndex, direction) : 0;
+        if (valueRowIndex < valueRowCount) {
+            return getRangeValue(direction == IndexReader.DIR_FORWARD ? rangeLo + valueRowIndex : rangeHi - 1 - valueRowIndex);
+        }
+        return minValue + nullRowCount - 1 - (valueRowIndex - valueRowCount);
     }
 
     @Override
@@ -290,10 +300,220 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         testRangeCountBlockHops.set(0);
     }
 
-    private static void countBlockHops(int blockHops) {
+    private static void countBlockHops(long blockHops) {
         if (isBlockHopCounterEnabled) {
             testRangeCountBlockHops.addAndGet(blockHops);
         }
+    }
+
+    private long blockIndex(long position) {
+        return position / (blockValueCountMod + 1);
+    }
+
+    // Rows before the column top predate the column, so the index holds no entry for them and getCursor()
+    // synthesizes them as NULL rows of key 0 through NullCursor. This mirrors its nullCount exactly. Those row ids
+    // all sit below the column top while every key-0 posting sits at or above it, so they never double-count a row.
+    private long getNullRowCount(int key, long minValue, long maxValue) {
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            return Math.max(0, Math.min(columnTop, maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1) - minValue);
+        }
+        return 0;
+    }
+
+    // The value at the position, which lies in the range locateValues() found, reached from the nearer end of the range.
+    private long getRangeValue(long position) {
+        final long blockIndex = blockIndex(position);
+        final long loBlockHops = blockIndex - blockIndex(rangeLo);
+        final long hiBlockHops = blockIndex(rangeHi - 1) - blockIndex;
+        return getValue(loBlockHops <= hiBlockHops ? hopForward(rangeLoBlock, loBlockHops) : hopBackward(rangeHiBlock, hiBlockHops), position);
+    }
+
+    private long getValue(long block, long position) {
+        return valueMem.getLong(block + (position & blockValueCountMod) * Long.BYTES);
+    }
+
+    private long hopBackward(long block, long blockHops) {
+        for (long i = 0; i < blockHops; i++) {
+            block = valueMem.getLong(block + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED);
+        }
+        countBlockHops(blockHops);
+        return block;
+    }
+
+    private long hopForward(long block, long blockHops) {
+        for (long i = 0; i < blockHops; i++) {
+            block = valueMem.getLong(block + blockCapacity - BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED + 8);
+        }
+        countBlockHops(blockHops);
+        return block;
+    }
+
+    // Locates the values of the key entry readKeyEntry() read last that lie in [minValue, maxValue] and returns their
+    // number, or any number above maxCount once the count passes it from direction (0 allows either end). The located
+    // values sit at positions rangeLo, inclusive, to rangeHi, exclusive. The blocks rangeLoBlock and rangeHiBlock hold
+    // rangeLo and rangeHi - 1. A walk up from the first value block and a walk down from the last one race, a block at
+    // a time, to the bound nearer their end. A walk inside the range from that bound then races the walk from the other
+    // end to the other bound, retaining only a prefix or suffix when it stops after maxCount values.
+    private long locateValues(long valueCount, long minValue, long maxValue, long maxCount, int direction) {
+        final long blockStartMask = ~(long) blockValueCountMod;
+        long headBlock = entryFirstValueBlockOffset;
+        long headPosition = 0;
+        long tailBlock = entryLastValueBlockOffset;
+        long tailPosition = valueCount;
+        boolean isLoFound;
+        while (true) {
+            final long headEnd = Math.min(valueCount, headPosition + blockValueCountMod + 1);
+            if (getValue(headBlock, headEnd - 1) >= minValue) {
+                rangeLo = getValue(headBlock, headPosition) >= minValue ? headPosition
+                        : headPosition + BitmapIndexUtils.searchValueBlock(valueMem, headBlock, headEnd - headPosition, minValue - 1);
+                rangeLoBlock = headBlock;
+                isLoFound = true;
+                break;
+            }
+            if (headEnd == valueCount) {
+                return 0;
+            }
+            final long tailStart = tailPosition - 1 & blockStartMask;
+            if (getValue(tailBlock, tailStart) <= maxValue) {
+                rangeHi = getValue(tailBlock, tailPosition - 1) <= maxValue ? tailPosition
+                        : tailStart + BitmapIndexUtils.searchValueBlock(valueMem, tailBlock, tailPosition - tailStart, maxValue);
+                rangeHiBlock = tailBlock;
+                isLoFound = false;
+                break;
+            }
+            if (tailStart == 0) {
+                return 0;
+            }
+            headBlock = hopForward(headBlock, 1);
+            headPosition = headEnd;
+            tailBlock = hopBackward(tailBlock, 1);
+            tailPosition = tailStart;
+        }
+        long count = 0;
+        if (isLoFound) {
+            long block = rangeLoBlock;
+            long position = rangeLo;
+            long lowerBlock = block;
+            while (true) {
+                final long tailStart = tailPosition - 1 & blockStartMask;
+                if (getValue(tailBlock, tailStart) <= maxValue) {
+                    rangeHi = getValue(tailBlock, tailPosition - 1) <= maxValue ? tailPosition
+                            : tailStart + BitmapIndexUtils.searchValueBlock(valueMem, tailBlock, tailPosition - tailStart, maxValue);
+                    rangeHiBlock = tailBlock;
+                    break;
+                }
+                final long end = Math.min(valueCount, (position | blockValueCountMod) + 1);
+                if (getValue(block, end - 1) > maxValue) {
+                    if (getValue(block, position) > maxValue) {
+                        rangeHi = position;
+                        rangeHiBlock = lowerBlock;
+                    } else {
+                        final long cell = position & blockValueCountMod;
+                        rangeHi = position + BitmapIndexUtils.searchValueBlock(valueMem, block + cell * Long.BYTES, end - position, maxValue);
+                        rangeHiBlock = block;
+                    }
+                    break;
+                }
+                count += end - position;
+                if (end == valueCount) {
+                    rangeHi = valueCount;
+                    rangeHiBlock = block;
+                    break;
+                }
+                if (count > maxCount && direction != IndexReader.DIR_BACKWARD) {
+                    rangeHi = end;
+                    rangeHiBlock = block;
+                    return count;
+                }
+                lowerBlock = block;
+                position = end;
+                block = hopForward(block, 1);
+                tailBlock = hopBackward(tailBlock, 1);
+                tailPosition = tailStart;
+            }
+        } else {
+            long block = rangeHiBlock;
+            long position = rangeHi - 1;
+            long upperBlock = block;
+            while (true) {
+                final long headEnd = Math.min(valueCount, headPosition + blockValueCountMod + 1);
+                if (getValue(headBlock, headEnd - 1) >= minValue) {
+                    rangeLo = getValue(headBlock, headPosition) >= minValue ? headPosition
+                            : headPosition + BitmapIndexUtils.searchValueBlock(valueMem, headBlock, headEnd - headPosition, minValue - 1);
+                    rangeLoBlock = headBlock;
+                    break;
+                }
+                final long start = position & blockStartMask;
+                if (getValue(block, start) < minValue) {
+                    if (getValue(block, position) < minValue) {
+                        rangeLo = position + 1;
+                        rangeLoBlock = upperBlock;
+                    } else {
+                        rangeLo = start + BitmapIndexUtils.searchValueBlock(valueMem, block, position - start + 1, minValue - 1);
+                        rangeLoBlock = block;
+                    }
+                    break;
+                }
+                count += position - start + 1;
+                if (start == 0) {
+                    rangeLo = 0;
+                    rangeLoBlock = block;
+                    break;
+                }
+                if (count > maxCount && direction != IndexReader.DIR_FORWARD) {
+                    rangeLo = start;
+                    rangeLoBlock = block;
+                    return count;
+                }
+                upperBlock = block;
+                position = start - 1;
+                block = hopBackward(block, 1);
+                headBlock = hopForward(headBlock, 1);
+                headPosition = headEnd;
+            }
+        }
+        return Math.max(0, rangeHi - rangeLo);
+    }
+
+    // The value count of the key, with the offsets of its first and last value blocks in the entry fields, or 0
+    // when the key lies past the key count. Same seqlock protocol as Cursor.of(): read the value count first and
+    // last and retry while the two disagree, so the block offsets read in between belong to one consistent entry.
+    private long readKeyEntry(int key) {
+        if (key >= keyCount) {
+            updateKeyCount();
+            if (key >= keyCount) {
+                return 0;
+            }
+        }
+        final long offset = BitmapIndexUtils.getKeyEntryOffset(key);
+        keyMem.extend(offset + BitmapIndexUtils.KEY_ENTRY_SIZE);
+        long valueCount;
+        long deadline = DEADLINE_UNARMED;
+        while (true) {
+            valueCount = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT);
+
+            Unsafe.loadFence();
+            if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_COUNT_CHECK) == valueCount) {
+                entryFirstValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_FIRST_VALUE_BLOCK_OFFSET);
+                entryLastValueBlockOffset = keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_LAST_VALUE_BLOCK_OFFSET);
+
+                Unsafe.loadFence();
+                if (keyMem.getLong(offset + BitmapIndexUtils.KEY_ENTRY_OFFSET_VALUE_COUNT) == valueCount) {
+                    break;
+                }
+            }
+
+            if (deadline == DEADLINE_UNARMED) {
+                deadline = clock.getTicks() + spinLockTimeoutMs;
+            } else if (clock.getTicks() > deadline) {
+                LOG.error().$(INDEX_CORRUPT).$(" [timeout=").$(spinLockTimeoutMs).$("ms, key=").$(key).$(", offset=").$(offset).$(']').$();
+                throw CairoException.critical(0).put(INDEX_CORRUPT);
+            }
+        }
+        if (valueCount > 0) {
+            valueMem.extend(entryLastValueBlockOffset + blockCapacity);
+        }
+        return valueCount;
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {

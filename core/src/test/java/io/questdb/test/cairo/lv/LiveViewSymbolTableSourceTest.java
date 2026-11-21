@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.engine.lv.LiveViewSymbolTableSource;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -381,6 +382,16 @@ public class LiveViewSymbolTableSourceTest extends AbstractCairoTest {
         @Override
         public boolean containsNullValue() {
             return false;
+        }
+
+        @Override
+        public void copySortedKeysTo(DirectIntList keys) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void copySortedKeysTo(IntList keys) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

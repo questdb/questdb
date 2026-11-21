@@ -180,7 +180,9 @@ public class DirectLongHashSet implements Closeable, Mutable, Reopenable, Sinkab
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
-        assert memStart == 0 || this.memoryTracker == memoryTracker;
+        if (memoryTracker != this.memoryTracker && memStart != 0) {
+            Unsafe.chargeHeldMemory(memLimit - memStart, memoryTag, memoryTracker);
+        }
         this.memoryTracker = memoryTracker;
     }
 

@@ -26,13 +26,78 @@ package io.questdb.std.datetime.nanotime;
 
 import io.questdb.std.datetime.AbstractTimeZoneRules;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
 
 import java.time.zone.ZoneRules;
 
 public class TimeZoneRulesNanos extends AbstractTimeZoneRules {
+    // Transitions of the last years of the nanosecond range overflow, so instants and local times
+    // from this bound on convert through the microsecond rules.
+    private static final long UPPER_RANGE = Nanos.toNanos(2261, 1, 1);
+    private final TimeZoneRulesMicros upperRangeRules;
 
     public TimeZoneRulesNanos(ZoneRules rules) {
         super(rules, Nanos.SECOND_NANOS);
+        this.upperRangeRules = new TimeZoneRulesMicros(rules);
+    }
+
+    @Override
+    public long getDstGapOffset(long localEpoch) {
+        if (localEpoch < UPPER_RANGE) {
+            return super.getDstGapOffset(localEpoch);
+        }
+        final long micros = Math.floorDiv(localEpoch, Nanos.MICRO_NANOS);
+        final long remainder = Math.floorMod(localEpoch, Nanos.MICRO_NANOS);
+        final long gap = upperRangeRules.getDstGapOffset(micros);
+        if (gap == 0 && (remainder == 0 || upperRangeRules.getDstGapOffset(micros + 1) == 0)) {
+            return 0;
+        }
+        return gap * Nanos.MICRO_NANOS + remainder;
+    }
+
+    @Override
+    public long getFirstInstantAtOrAfter(long localEpoch) {
+        return localEpoch < UPPER_RANGE ? super.getFirstInstantAtOrAfter(localEpoch) : TimeZoneRules.firstInstantAtOrAfter(this, localEpoch);
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch) {
+        return localEpoch < UPPER_RANGE ? super.getLocalOffset(localEpoch) : upperRangeRules.getLocalOffset(Math.floorDiv(localEpoch, Nanos.MICRO_NANOS)) * Nanos.MICRO_NANOS;
+    }
+
+    @Override
+    public long getLocalOffset(long localEpoch, int year) {
+        return localEpoch < UPPER_RANGE ? super.getLocalOffset(localEpoch, year) : upperRangeRules.getLocalOffset(Math.floorDiv(localEpoch, Nanos.MICRO_NANOS), year) * Nanos.MICRO_NANOS;
+    }
+
+    @Override
+    public long getNextDST(long utcEpoch) {
+        return utcEpoch < UPPER_RANGE ? super.getNextDST(utcEpoch) : toNanos(upperRangeRules.getNextDST(Math.floorDiv(utcEpoch, Nanos.MICRO_NANOS)));
+    }
+
+    @Override
+    public long getNextDST(long utcEpoch, int year) {
+        return utcEpoch < UPPER_RANGE ? super.getNextDST(utcEpoch, year) : toNanos(upperRangeRules.getNextDST(Math.floorDiv(utcEpoch, Nanos.MICRO_NANOS), year));
+    }
+
+    @Override
+    public long getOffset(long utcEpoch) {
+        return utcEpoch < UPPER_RANGE ? super.getOffset(utcEpoch) : upperRangeRules.getOffset(Math.floorDiv(utcEpoch, Nanos.MICRO_NANOS)) * Nanos.MICRO_NANOS;
+    }
+
+    @Override
+    public long getOffset(long utcEpoch, int year) {
+        return utcEpoch < UPPER_RANGE ? super.getOffset(utcEpoch, year) : upperRangeRules.getOffset(Math.floorDiv(utcEpoch, Nanos.MICRO_NANOS), year) * Nanos.MICRO_NANOS;
+    }
+
+    @Override
+    public long getWallClockHighWater(long utcEpoch) {
+        return utcEpoch < UPPER_RANGE ? super.getWallClockHighWater(utcEpoch) : TimeZoneRules.wallClockHighWater(this, utcEpoch);
+    }
+
+    private static long toNanos(long micros) {
+        return micros > Long.MAX_VALUE / Nanos.MICRO_NANOS ? Long.MAX_VALUE : micros * Nanos.MICRO_NANOS;
     }
 
     @Override

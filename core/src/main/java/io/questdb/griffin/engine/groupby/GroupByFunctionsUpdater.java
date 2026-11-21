@@ -39,4 +39,6 @@ public interface GroupByFunctionsUpdater extends MapValueMergeFunction {
     void updateExisting(MapValue value, Record record, long rowId);
 
     void updateNew(MapValue value, Record record, long rowId);
+
+    void updateRetained(MapValue value, Record record, long rowId);
 }

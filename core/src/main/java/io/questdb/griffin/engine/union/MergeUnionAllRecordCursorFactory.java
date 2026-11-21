@@ -35,15 +35,12 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import org.jetbrains.annotations.Nullable;
 
 public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory {
     private ObjList<ObjList<Function>> castFunctions;
     private MergeUnionAllRecordCursor mergeCursor;
     private ObjList<RecordCursorFactory> sourceFactories;
     private IntList sourcePositions;
-    @Nullable
-    private final IntList symbolUnionColumns;
     private final boolean isAscending;
     private final int timestampIndex;
 
@@ -53,15 +50,13 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
             IntList sourcePositions,
             ObjList<ObjList<Function>> castFunctions,
             int timestampIndex,
-            boolean isAscending,
-            @Nullable IntList symbolUnionColumns
+            boolean isAscending
     ) {
         super(metadata);
         this.castFunctions = castFunctions;
         this.isAscending = isAscending;
         this.sourceFactories = sourceFactories;
         this.sourcePositions = sourcePositions;
-        this.symbolUnionColumns = symbolUnionColumns;
         this.timestampIndex = timestampIndex;
     }
 
@@ -113,11 +108,6 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
         return isAscending ? SCAN_DIRECTION_FORWARD : SCAN_DIRECTION_BACKWARD;
     }
 
-    @Nullable
-    public IntList getSymbolUnionColumns() {
-        return symbolUnionColumns;
-    }
-
     @Override
     public boolean isNonDeterministic() {
         for (int i = 0, n = sourceFactories.size(); i < n; i++) {
@@ -126,32 +116,6 @@ public class MergeUnionAllRecordCursorFactory extends AbstractSetRecordCursorFac
             }
         }
         return false;
-    }
-
-    @Override
-    public boolean isStableWithinExecution() {
-        for (int i = 0, n = sourceFactories.size(); i < n; i++) {
-            if (!sourceFactories.getQuick(i).isStableWithinExecution()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * Creates the merge cursor when the factory is known to be executable, which is what the generator
-     * does the moment it stops holding the factory open for flattening. Idempotent, and closes the
-     * factory on failure because the generator has not yet handed it to an owner that would free it.
-     * {@link #getCursor(SqlExecutionContext)} creates the cursor on its own, so calling this is an
-     * optimisation, not a precondition.
-     */
-    public void prepareCursor() {
-        try {
-            createCursor();
-        } catch (Throwable th) {
-            close();
-            throw th;
-        }
     }
 
     @Override

@@ -144,6 +144,11 @@ public class MillisTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        return timestamp == Numbers.LONG_NULL ? timestamp : -Math.floorDiv(-timestamp, unitsPerMilli(timestampType));
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Dates.ceilYYYY(timestamp);
     }
@@ -165,6 +170,11 @@ public class MillisTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        return timestamp == Numbers.LONG_NULL ? timestamp : Math.floorDiv(timestamp, unitsPerMilli(timestampType));
     }
 
     @Override
@@ -1124,5 +1134,12 @@ public class MillisTimestampDriver implements TimestampDriver {
 
     private static long partitionCeilYYYY(long millis) {
         return Dates.ceilYYYY(Math.max(millis, 0));
+    }
+
+    private static long unitsPerMilli(int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType)) {
+            return Nanos.MILLI_NANOS;
+        }
+        return ColumnType.isTimestampMicro(timestampType) ? Micros.MILLI_MICROS : 1;
     }
 }

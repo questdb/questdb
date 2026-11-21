@@ -253,8 +253,8 @@ public class RecordValueSinkFactory {
     /**
      * Reports whether {@link #getInstance} can materialize a column of this type into
      * a {@link MapValue}. Mirrors the switch in getInstance() - keep in sync. The
-     * caller must reject unsupported types up front (see SqlCodeGenerator's full-fat
-     * join guard) rather than hit getInstance()'s throwing default.
+     * caller must reject unsupported types up front (see operator planning's full-fat
+     * temporal join guard) rather than hit getInstance()'s throwing default.
      */
     public static boolean isSupportedColumnType(int columnType) {
         switch (ColumnType.tagOf(columnType)) {

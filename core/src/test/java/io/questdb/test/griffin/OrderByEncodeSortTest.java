@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -34,6 +35,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -44,6 +46,38 @@ import java.util.Collection;
 
 @RunWith(Parameterized.class)
 public class OrderByEncodeSortTest extends AbstractCairoTest {
+    // Queries that rank the symbols of a table column, each with a reference that orders their values as STRING, by
+    // UTF-16 code units, NULL first: the sorts, the top-K and the window functions.
+    private static final String[][] SYMBOL_ORDER_QUERIES = {
+            {"SELECT s, id FROM x ORDER BY s, id", "SELECT s, id FROM x ORDER BY s::STRING, id"},
+            {"SELECT s, id FROM x ORDER BY s DESC, id", "SELECT s, id FROM x ORDER BY s::STRING DESC, id"},
+            {"SELECT s, count() c FROM x ORDER BY s", "SELECT s, count() c FROM x ORDER BY s::STRING"},
+            {"SELECT s, id FROM x ORDER BY s, id LIMIT 10", "SELECT s, id FROM x ORDER BY s::STRING, id LIMIT 10"},
+            {"SELECT s, id FROM x ORDER BY s DESC, id LIMIT 10", "SELECT s, id FROM x ORDER BY s::STRING DESC, id LIMIT 10"},
+            {"SELECT s, id FROM x WHERE id > 5 ORDER BY s DESC, id LIMIT 3_000", "SELECT s, id FROM x WHERE id > 5 ORDER BY s::STRING DESC, id LIMIT 3_000"},
+            {
+                    """
+                    SELECT * FROM (
+                        SELECT id, s, cume_dist() OVER (ORDER BY s) c, percent_rank() OVER (PARTITION BY id % 3 ORDER BY s) p,
+                            rank() OVER (ORDER BY s DESC) r
+                        FROM x
+                    ) ORDER BY id""",
+                    """
+                    SELECT * FROM (
+                        SELECT id, s, cume_dist() OVER (ORDER BY ss) c, percent_rank() OVER (PARTITION BY id % 3 ORDER BY ss) p,
+                            rank() OVER (ORDER BY ss DESC) r
+                        FROM (SELECT *, s::STRING ss FROM x)
+                    ) ORDER BY id"""
+            }
+    };
+    // The keys of the symbols run in an order unlike that of their values, past the insertion sorts of the symbol map
+    // reader and of the rank maps.
+    private static final String SYMBOL_ORDER_TABLE = """
+            CREATE TABLE x AS (
+                SELECT CASE WHEN x % 7 = 0 THEN NULL ELSE 'k' || ((x * 7_919) % 1_000) END::SYMBOL s, x id,
+                    timestamp_sequence('2024-01-01', 60_000_000L) ts
+                FROM long_sequence(3_000)
+            ) TIMESTAMP(ts) PARTITION BY DAY""";
     private final SortMode sortMode;
 
     public OrderByEncodeSortTest(SortMode sortMode) {
@@ -1984,6 +2018,58 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrderBySymbolFollowsReaderOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(SYMBOL_ORDER_TABLE);
+            SymbolMapReaderImpl.isKeySortCounterEnabled = true;
+            try {
+                for (boolean isParallelTopK : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelTopKEnabled(isParallelTopK);
+                    for (String[] query : SYMBOL_ORDER_QUERIES) {
+                        engine.releaseAllReaders();
+                        SymbolMapReaderImpl.testKeySorts.set(0);
+                        printSql(query[0]);
+                        printSql(query[0]);
+                        Assert.assertEquals(query[0], 1, SymbolMapReaderImpl.testKeySorts.get());
+                    }
+                }
+            } finally {
+                SymbolMapReaderImpl.isKeySortCounterEnabled = false;
+            }
+            assertSymbolOrder();
+            // new symbols merge into the order of the reader: an empty value, multibyte and supplementary characters, and
+            // a value above the surrogates, which STRING orders after them unlike VARCHAR
+            execute("""
+                    INSERT INTO x VALUES ('', 3_001, '2024-01-03'), ('é', 3_002, '2024-01-03'), ('😀', 3_003, '2024-01-03'),
+                        ('\uFFFF', 3_004, '2024-01-03'), ('K', 3_005, '2024-01-03'), (NULL, 3_006, '2024-01-03'), ('k1000', 3_007, '2024-01-03')""");
+            assertSymbolOrder();
+        });
+    }
+
+    @Test
+    public void testOrderBySymbolFollowsReaderOrderMultiWorker() throws Exception {
+        // the owner of a parallel top-K builds its rank maps from the symbol map reader, and the workers that share them
+        // read the symbols through views of the reader
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(SYMBOL_ORDER_TABLE, sqlExecutionContext);
+                        sqlExecutionContext.setParallelTopKEnabled(true);
+                        for (int i = 0; i < 3; i++) {
+                            for (String[] query : SYMBOL_ORDER_QUERIES) {
+                                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, query[1], query[0], LOG);
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testOrderByTimestampAndVarcharColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v VARCHAR)");
@@ -2485,6 +2571,20 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                         8
                         9
                         """);
+    }
+
+    private void assertSymbolOrder() throws Exception {
+        for (boolean isParallelTopK : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelTopKEnabled(isParallelTopK);
+            for (String[] query : SYMBOL_ORDER_QUERIES) {
+                assertSqlCursors(query[1], query[0]);
+            }
+            if (isParallelTopK) {
+                assertQuery(SYMBOL_ORDER_QUERIES[5][0]).noLeakCheck().assertsPlanContaining("Async", "Top K lo: 3000");
+            } else {
+                assertQuery(SYMBOL_ORDER_QUERIES[5][0]).noLeakCheck().assertsPlanContaining(limitedSortPlanType() + " lo: 3000");
+            }
+        }
     }
 
     private String limitedSortPlanType() {

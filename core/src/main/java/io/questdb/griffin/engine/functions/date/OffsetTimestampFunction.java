@@ -31,30 +31,32 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Interval;
+import io.questdb.std.Numbers;
 
 class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
     private final long offset;
-    private final Function timestamp;
+    private final Function timestampFunc;
 
     public OffsetTimestampFunction(Function timestamp, long offset, int timestampType) {
         super(timestampType);
-        this.timestamp = timestamp;
+        this.timestampFunc = timestamp;
         this.offset = offset;
     }
 
     @Override
     public Function getArg() {
-        return timestamp;
+        return timestampFunc;
     }
 
     @Override
     public long getTimestamp(Record rec) {
-        return timestamp.getTimestamp(rec) + offset;
+        final long timestamp = timestampFunc.getTimestamp(rec);
+        return timestamp != Numbers.LONG_NULL ? timestamp + offset : Numbers.LONG_NULL;
     }
 
     @Override
     public Function getTimestampArg() {
-        return timestamp;
+        return timestampFunc;
     }
 
     @Override
@@ -64,6 +66,6 @@ class OffsetTimestampFunction extends TimestampFunction implements UnaryFunction
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(timestamp).val('+').val(offset);
+        sink.val(timestampFunc).val('+').val(offset);
     }
 }

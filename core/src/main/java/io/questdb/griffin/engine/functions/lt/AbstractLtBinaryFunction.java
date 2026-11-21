@@ -27,9 +27,9 @@ package io.questdb.griffin.engine.functions.lt;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 
-public abstract class AbstractLtBinaryFunction extends NegatableBooleanFunction implements BinaryFunction {
+public abstract class AbstractLtBinaryFunction extends ComparisonFunction implements BinaryFunction {
     protected final Function left;
     protected final Function right;
 
@@ -49,7 +49,7 @@ public abstract class AbstractLtBinaryFunction extends NegatableBooleanFunction 
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
+    protected void toComparisonPlan(PlanSink sink) {
         sink.val(left);
         if (negated) {
             sink.val(">=");

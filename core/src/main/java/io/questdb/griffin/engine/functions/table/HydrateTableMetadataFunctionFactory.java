@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -36,6 +37,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -54,6 +56,11 @@ import org.jetbrains.annotations.NotNull;
 public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(HydrateTableMetadataFunctionFactory.class);
     private static final String SIGNATURE = "hydrate_table_metadata(V)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -81,7 +88,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
 
         // check for hydrate_table_metadata('*') case
         if (args.size() == 1) {
-            final CharSequence tableName = args.getQuick(0).getStrA(null);
+            final CharSequence tableName = getTableName(args, argPositions, 0);
             if (tableName.length() == 1 && tableName.charAt(0) == '*') {
                 ObjHashSet<TableToken> tableHashSet = new ObjHashSet<>();
                 engine.getTableTokens(tableHashSet, false);
@@ -93,7 +100,7 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         // if we didn't hit the above case, then hydrate based on the other table names
         if (tableTokens.size() == 0) {
             for (int i = 0, n = args.size(); i < n; i++) {
-                final CharSequence tableName = args.getQuick(i).getStrA(null);
+                final CharSequence tableName = getTableName(args, argPositions, i);
 
                 if (tableName.length() == 1 && tableName.charAt(0) == '*' && args.size() > 1) {
                     throw SqlException.$(position, "cannot use wildcard alongside other table names");
@@ -113,6 +120,20 @@ public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
         } else {
             throw SqlException.$(position, "no valid table names provided");
         }
+    }
+
+    /**
+     * The table name the argument at the given index spells.
+     *
+     * @throws SqlException at the argument's position when it is not a text constant or is NULL
+     */
+    private static CharSequence getTableName(ObjList<Function> args, IntList argPositions, int index) throws SqlException {
+        final Function arg = args.getQuick(index);
+        final int type = arg.getType();
+        if (!arg.isConstant() || !(ColumnType.isSymbolOrStringOrVarchar(type) || ColumnType.isChar(type) || ColumnType.isNull(type))) {
+            throw SqlException.$(argPositions.getQuick(index), "STRING constant expected");
+        }
+        return SqlUtil.getTableName(arg, argPositions.getQuick(index));
     }
 
     private static class HydrateTableMetadataFunction extends BooleanFunction {

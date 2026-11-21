@@ -274,6 +274,32 @@ public class CommonUtils {
     }
 
     /**
+     * Returns the UTC start of the bucket at a local grid line of a {@code timestamp_floor_utc} grid. A sub-day
+     * stride converts with the zone's standard offset. A longer stride starts its bucket at the first instant at
+     * which the local wall clock reads the line or later: the line itself on a normal day, the transition when
+     * the line falls in a spring-forward gap, and its first occurrence when a fall-back repeats it.
+     */
+    public static long floorLocalToUtc(TimeZoneRules tzRules, long localGridLine, char unit) {
+        if (isSubDayUnit(unit)) {
+            return localGridLine - tzRules.getStandardOffset();
+        }
+        return tzRules.getFirstInstantAtOrAfter(localGridLine);
+    }
+
+    /**
+     * Returns the local time a {@code timestamp_floor_utc} grid floors for a UTC timestamp, so that the timestamp
+     * belongs to the latest bucket start, see {@link #floorLocalToUtc}, at or before it. A sub-day stride reads
+     * the zone's standard time. A longer stride reads the latest wall-clock time the zone has shown up to the
+     * timestamp: the interval a fall-back repeats keeps the reading from just before the transition.
+     */
+    public static long floorUtcToLocal(TimeZoneRules tzRules, long utcTimestamp, char unit) {
+        if (isSubDayUnit(unit)) {
+            return utcTimestamp + tzRules.getStandardOffset();
+        }
+        return tzRules.getWallClockHighWater(utcTimestamp);
+    }
+
+    /**
      * Find the end of the interval token in the input string. The interval token is expected to be an optional sign,
      * followed by a number, followed by a single letter qualifier. Supports negative and zero values.
      *
@@ -292,12 +318,8 @@ public class CommonUtils {
             throw SqlException.$(position, "expected interval qualifier");
         }
 
-        // look for end of digits (with optional leading sign)
-        int k = -1;
-        int start = 0;
-        boolean atLeastOneDigit = false;
-
         // Handle optional leading sign
+        int start = 0;
         if (cs.charAt(0) == '-' || cs.charAt(0) == '+') {
             start = 1;
             if (len == 1) {
@@ -305,20 +327,12 @@ public class CommonUtils {
             }
         }
 
-        for (int i = start; i < len; i++) {
-            char c = cs.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-            atLeastOneDigit = true;
-        }
-
-        if (!atLeastOneDigit) {
+        final int k = digitRunEnd(cs, start, '9');
+        if (k == start) {
             throw SqlException.$(position, "expected numeric value");
         }
 
-        if (k == -1) {
+        if (k == len) {
             // Allow unitless zero ("0", "+0", "-0") as a special case.
             // Return -1 as a sentinel value; the caller must handle this.
             if (len - start == 1 && cs.charAt(start) == '0') {
@@ -337,7 +351,8 @@ public class CommonUtils {
 
     /**
      * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
-     * a single letter qualifier.
+     * a single letter qualifier. The number may separate its digits with underscores, which
+     * {@link #parsePositiveInterval} validates as {@link Numbers#parseInt} does.
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
@@ -355,31 +370,16 @@ public class CommonUtils {
             throw SqlException.$(position, "expected interval qualifier");
         }
 
-        // look for end of digits
-        int k = -1;
-        boolean allZeros = true;
-        boolean atLeastOneDigit = false;
-        for (int i = 0; i < len; i++) {
-            char c = cs.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-            atLeastOneDigit = true;
-            if (c != '0') {
-                allZeros = false;
-            }
-        }
-
+        final int k = digitRunEnd(cs, 0, '9');
         if (k == 0 && cs.charAt(0) == '-') {
             throw SqlException.$(position, "negative interval is not allowed");
         }
 
-        if (allZeros && atLeastOneDigit) {
+        if (k > 0 && digitRunEnd(cs, 0, '0') == k) {
             throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
         }
 
-        if (k == -1) {
+        if (k == len) {
             throw SqlException.$(position + len, "expected interval qualifier");
         }
 
@@ -400,27 +400,6 @@ public class CommonUtils {
      */
     public static int getDaysPerMonth(int m, boolean leap) {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
-    }
-
-    /**
-     * Returns the timezone offset to use when converting a UTC timestamp to
-     * local time for floor/round bucket computations. Sub-day units use the
-     * standard (non-DST) offset to keep bucket widths uniform across DST
-     * transitions. Super-day units use the actual offset at the given instant.
-     * <p>
-     * Both {@code timestamp_floor_utc} (SAMPLE BY query path) and the mat view
-     * refresh iterator MUST call this method to ensure bucket boundaries agree.
-     * <p>
-     * Typical usage (zero-allocation, no closures):
-     * <pre>
-     *   long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTs, unit);
-     *   long local = utcTs + tzOff;
-     *   long floored = ... // caller's own floor/round
-     *   long utcResult = CommonUtils.offsetFlooredUtcResult(floored, tzOff, offset, tzRules, unit);
-     * </pre>
-     */
-    public static long getFloorUtcTzOffset(TimeZoneRules tzRules, long utcTimestamp, char unit) {
-        return isSubDayUnit(unit) ? tzRules.getStandardOffset() : tzRules.getOffset(utcTimestamp);
     }
 
     /**
@@ -518,21 +497,6 @@ public class CommonUtils {
 
     public static long nanosToMicros(long nanos) {
         return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
-    }
-
-    /**
-     * Converts a floored local timestamp back to UTC and applies the user
-     * offset. Must be paired with {@link #getFloorUtcTzOffset} — the
-     * {@code tzOff} parameter must come from that method for the same
-     * input timestamp. Pass {@code offset = 0} when the caller's floor
-     * operation already incorporates the offset (e.g. TimestampSampler).
-     */
-    public static long offsetFlooredUtcResult(long flooredLocal, long tzOff, long offset, TimeZoneRules tzRules, char unit) {
-        if (isSubDayUnit(unit)) {
-            return flooredLocal - tzOff + offset;
-        }
-        final long resultTzOff = tzRules.getOffset(flooredLocal - tzOff);
-        return flooredLocal - resultTzOff + offset;
     }
 
     public static void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, BytecodeAssembler asm, int localPos, int pHi, int pInputStr) {
@@ -688,6 +652,21 @@ public class CommonUtils {
         }
         final char next = sequence.charAt(p + 1);
         return next >= '0' && next <= '9';
+    }
+
+    /**
+     * The end, exclusive, of the run of digits from '0' to {@code maxDigit} that starts at {@code lo}, where an
+     * underscore after a digit of the run continues it; {@code lo} when no such digit is at {@code lo}.
+     */
+    private static int digitRunEnd(CharSequence cs, int lo, char maxDigit) {
+        final int len = cs.length();
+        for (int i = lo; i < len; i++) {
+            final char c = cs.charAt(i);
+            if ((c < '0' || c > maxDigit) && (c != '_' || i == lo)) {
+                return i;
+            }
+        }
+        return len;
     }
 
     @FunctionalInterface

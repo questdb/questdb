@@ -351,7 +351,7 @@ with one rule and no context-dependence.
 
 ### Constant folding
 
-`FunctionParser.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
+`FunctionResolver.functionToConstant0`'s INT arm folds to an `IntConstant` holding the wrap, or to
 `IntConstant.NULL` when `getInt()` carries the sentinel. The declared type of a constant expression
 no longer depends on its value, so:
 
@@ -540,7 +540,8 @@ Concatenation never reaches that guard. `SqlParser.rewriteConcat` converts every
 node into a `concat` `FUNCTION` node before the expression leaves the parser, and `addConcatArgs`
 folds a nested `concat` into its parent's argument list, so `(A || B) || C`, `A || (B || C)` and
 `A || B || C` all arrive at `FunctionParser` as one `concat(A, B, C)` node. `reassociateConstants`
-runs strictly after that rewrite - `FunctionParser.parseFunction` is its only production caller -
+runs strictly after that rewrite - `FunctionParser.parseFunction` and `FunctionBinder`'s expression
+binding are its only production callers -
 and it regroups only a binary `OPERATION` pair: a two-argument `concat` fails its
 `type != OPERATION` check, and a wider one takes the n-ary arm, which recurses into `args` without
 restructuring the node. A `||` pair is never a regrouping candidate in the first place. The
@@ -559,34 +560,24 @@ the frame bounds - for an inline `OVER (...)` and for a named `WINDOW w AS (...)
 `expr(...)` parses a `DECLARE` variable's value itself, so substituting that variable splices in
 an already-rewritten subtree.
 
-One production position escapes the rewrite: a live view's `ANCHOR EXPRESSION`.
-`ExpressionParser.parseWindowExpr` builds that node by calling `parseExpr` directly, and
-`SqlParser.rewriteWindowExpression` then walks only `PARTITION BY`, `ORDER BY`, `rowsLoExpr` and
-`rowsHiExpr` - never `WindowExpression.getAnchorExpression()`. `copySpecFrom` does not carry the
-anchor across either. A `||` written there therefore stays an `OPERATION` node on the model.
-
 **The text round-trip that follows is load-bearing - do not optimise it away.**
 `SqlParser.captureAnchoredWindow` renders the anchor node back to SQL with `toSink` and stores the
 text in `LvAnchorSpec.anchorExpressionSql`. Both consumers - `CairoEngine`'s CREATE-time pass-2
 anchor validator and `LiveViewRefreshJob.ensureAnchorFunction` - re-parse that text through
 `SqlCompilerImpl.parseExpression`, which calls the rewriting
-`parser.expr(lexer, (IQueryModel) null, this)` overload, and only then hand the result to
-`FunctionParser.parseFunction`. Nothing hands the raw anchor node to `FunctionParser`:
-`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone. A
-maintainer who deletes the round-trip and passes `w.getAnchorExpression()` straight to
-`parseFunction` would feed a `||` `OPERATION` node to `reassociateConstants` - exactly what this
-section rules out.
+`parser.expr(lexer, (QueryModel) null, this)` overload, and only then hand the result to
+`FunctionParser.parseFunction`. Nothing hands the anchor node to `FunctionParser`:
+`SqlParser`'s other read of `getAnchorExpression()` drives AST-level validation alone.
 
 Two `parseExpr` callers skip the rewrites. `ExpressionParser.parseWindowExpr` is the production one;
-`rewriteWindowExpression` re-applies them to every window sub-expression it does reach, which leaves
-`ANCHOR EXPRESSION` as the only unrewritten result. The other is the `@TestOnly`
+`rewriteWindowExpression` re-applies them to every window sub-expression. The other is the `@TestOnly`
 `SqlParser.expr(lexer, listener, callback)` overload, which only
 `SqlCompiler.testParseExpression(CharSequence, ExpressionParserListener)` reaches.
 
 That distinction matters to the tests. `ConstantReassociationTest.assertReassociation` uses the
 `@TestOnly` overload, so it is faithful only for the operators no rewrite touches - the arithmetic
 and boolean ones. The concatenation cases use `assertPostRewriteReassociation`, which routes
-through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts against the same
+through `testParseExpression(CharSequence, QueryModel)` and therefore asserts against the same
 `concat` tree production builds.
 
 ## NULL Sentinels by Type

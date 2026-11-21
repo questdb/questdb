@@ -30,7 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -80,7 +80,7 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
         return new LtStrFunctionFactory.Func(a, b);
     }
 
-    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnRightFunc extends ComparisonFunction implements UnaryFunction {
         private final Utf8Sequence constant;
         private final Function left;
 
@@ -96,11 +96,7 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Utf8s.lessThan(
-                    left.getVarcharA(rec),
-                    constant,
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -113,10 +109,18 @@ public class LtVarcharStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             sink.val(getName());
             sink.val('\'').val(constant).val('\'');
+        }
+
+        private boolean isMatch(Record rec) {
+            return Utf8s.lessThan(
+                    left.getVarcharA(rec),
+                    constant,
+                    negated
+            );
         }
     }
 }

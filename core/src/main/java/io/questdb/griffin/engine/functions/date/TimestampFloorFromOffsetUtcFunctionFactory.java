@@ -24,6 +24,9 @@
 
 package io.questdb.griffin.engine.functions.date;
 
+import io.questdb.cairo.sql.Function;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Floors timestamps with timezone-aware alignment but returns UTC results.
@@ -47,6 +50,11 @@ package io.questdb.griffin.engine.functions.date;
  */
 public class TimestampFloorFromOffsetUtcFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
     public static final String NAME = "timestamp_floor_utc";
+
+    @TestOnly
+    public static void toBucketCacheState(Function func, CharSink<?> sink) {
+        ((TimestampFloorUtcBucketCachingFunction) func).toCacheState(sink);
+    }
 
     @Override
     public String getSignature() {

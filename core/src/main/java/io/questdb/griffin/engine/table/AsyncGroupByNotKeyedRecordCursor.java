@@ -48,6 +48,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
     private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
     private boolean isExhausted;
     private boolean isOpen;
+    private boolean isOpenedByShared;
     private boolean isValueBuilt;
 
     public AsyncGroupByNotKeyedRecordCursor(ObjList<GroupByFunction> groupByFunctions) {
@@ -70,6 +71,7 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
 
     @Override
     public void close() {
+        isOpenedByShared = false;
         if (isOpen) {
             try {
                 if (frameSequence != null) {
@@ -161,6 +163,17 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         isValueBuilt = true;
     }
 
+    boolean isOpen() {
+        return isOpen;
+    }
+
+    /**
+     * True when a shared cursor opened this cursor before the factory handed it out.
+     */
+    boolean isOpenedByShared() {
+        return isOpenedByShared;
+    }
+
     void of(UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
         final AsyncGroupByNotKeyedAtom atom = frameSequence.getAtom();
         // Assign before reopen() so close() can drain a partially reopened atom on a breach.
@@ -177,5 +190,9 @@ class AsyncGroupByNotKeyedRecordCursor implements NoRandomAccessRecordCursor {
         // here would re-run stateful initialization, such as a cursor comparison re-executing its
         // scalar sub-query, and could diverge from the state the workers observe.
         toTop();
+    }
+
+    void setOpenedByShared(boolean isOpenedByShared) {
+        this.isOpenedByShared = isOpenedByShared;
     }
 }

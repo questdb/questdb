@@ -36,21 +36,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.Misc;
-import org.jetbrains.annotations.Nullable;
 
 public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
     private FilteredRecordCursor cursor;
     private Function filter;
-    private final @Nullable ExpressionNode filterExpr;
 
     public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter) {
-        this(base, filter, null);
-    }
-
-    public FilteredRecordCursorFactory(RecordCursorFactory base, Function filter, @Nullable ExpressionNode filterExpr) {
         super(base.getMetadata());
         // Some optimiser paths split a single WHERE into multiple model
         // filters (e.g. a predicate that does not reference any inner-model
@@ -59,16 +52,18 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
         // model's filter independently. Collapse those into one factory
         // here so we evaluate the combined boolean once per row instead of
         // chaining two RecordCursor wrappers.
-        if (base instanceof FilteredRecordCursorFactory existing) {
-            filter = new ChainedAndFilter(existing.filter, filter);
-            // A single expression cannot reproduce a collapsed chain of filters.
-            filterExpr = null;
-            base = existing.base;
-        }
         this.base = base;
-        this.cursor = new FilteredRecordCursor(filter);
         this.filter = filter;
-        this.filterExpr = filterExpr;
+        try {
+            if (base instanceof FilteredRecordCursorFactory existing) {
+                this.filter = new ChainedAndFilter(existing.filter, filter);
+                this.base = existing.base;
+            }
+            this.cursor = new FilteredRecordCursor(this.filter);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -88,11 +83,6 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
-    public boolean isStableWithinExecution() {
-        return filter.isStableWithinExecution() && base.isStableWithinExecution();
-    }
-
-    @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         RecordCursor cursor = base.getCursor(executionContext);
         try {
@@ -107,21 +97,6 @@ public class FilteredRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
-    }
-
-    @Override
-    public @Nullable ExpressionNode getStealFilterExpr() {
-        return filterExpr;
-    }
-
-    @Override
-    public boolean supportsFilterStealing() {
-        return filterExpr != null;
-    }
-
-    @Override
-    public void halfClose() {
-        Misc.free(cursor);
     }
 
     @Override

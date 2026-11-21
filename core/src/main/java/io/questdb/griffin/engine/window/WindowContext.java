@@ -72,6 +72,12 @@ public interface WindowContext {
 
     boolean isDefaultFrame();
 
+    /**
+     * Whether a window function factory read {@link #getTimestampIndex()} or {@link #isOrderedByDesignatedTimestamp()}
+     * since the context was configured: the function it built relies on the designated timestamp of its input.
+     */
+    boolean isDesignatedTimestampRead();
+
     boolean isEmpty();
 
     boolean isIgnoreNulls();
@@ -85,6 +91,12 @@ public interface WindowContext {
     boolean isOrdered();
 
     boolean isOrderedByDesignatedTimestamp();
+
+    /**
+     * Whether a window function factory read {@link #isOrderedByDesignatedTimestamp()} since the context was
+     * configured: the function it built requires its input in the order of the window.
+     */
+    boolean isTimestampOrderRead();
 
     void validate(int position, boolean supportTNullsDesc) throws SqlException;
 }

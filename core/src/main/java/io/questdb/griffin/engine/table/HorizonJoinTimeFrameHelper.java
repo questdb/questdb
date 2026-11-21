@@ -65,8 +65,9 @@ import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.sc
  * In backward-only mode, it drops the key cache at a new position as a restart does, see
  * {@link #dropKeyCache}.
  * <p>
- * An optional borrowed filter excludes rows before choosing the latest match. Its
- * factory or atom owns, initializes and closes it; this helper never frees it.
+ * An optional borrowed filter excludes rows before choosing the latest match, and an optional
+ * borrowed key check skips the lookup of a master row no slave row can match. Their factory or atom
+ * owns, initializes and closes them; this helper never frees them.
  */
 public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private static final int CIRCUIT_BREAKER_CHECK_INTERVAL = 64;
@@ -83,6 +84,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     // restarts a forward scan over a long gap, and whether a new position in backward-only mode
     // may keep key cache entries, see the constructor
     private final boolean isWindowSwitchEnabled;
+    private final @Nullable Function keyCheck;
     // Join key -> position with no qualifying row for the key at or below it, valid for the whole cursor.
     private final @Nullable Map keyMissMap;
     private final long lookahead;
@@ -135,7 +137,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             long bwdScanMinGap,
             long bwdScanSwitchFactor,
             @Nullable Function filter,
-            @Nullable ColumnTypes asOfJoinKeyTypes
+            @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable Function keyCheck
     ) {
         this(
                 configuration,
@@ -146,11 +149,14 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                 bwdScanSwitchFactor,
                 filter,
                 asOfJoinKeyTypes,
+                keyCheck,
                 false
         );
     }
 
     /**
+     * @param keyCheck              the predicate over the master row that a slave row can match it, or null when the
+     *                              join looks up every key, see {@link #findKeyedAsOfMatch}
      * @param isWindowSwitchEnabled whether the switch to forward scan mode also checks runs of
      *                              gaps below the min gap, see {@link #shouldSwitchToForwardScanOverWindow}.
      *                              Without a filter, forward scan mode is sticky until
@@ -187,9 +193,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             long bwdScanSwitchFactor,
             @Nullable Function filter,
             @Nullable ColumnTypes asOfJoinKeyTypes,
+            @Nullable Function keyCheck,
             boolean isWindowSwitchEnabled
     ) {
         this.filter = filter;
+        this.keyCheck = keyCheck;
         // Projection batches reset scan watermarks, but a key miss remains valid for the slave
         // cursor. Keep its bound so later batches scan only rows above it, as filtered joins do.
         this.keyMissMap = (filter != null || isWindowSwitchEnabled) && asOfJoinKeyTypes != null
@@ -246,7 +254,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * @param masterAsOfJoinMapSink   copier for master's join key columns
      * @param slaveAsOfJoinMapSink    copier for slave's join key columns
      * @param keyToRowIdMap           map to update with (key -> rowId) entries
-     * @param symbolTranslatingRecord nullable; when non-null, used to skip scan for non-existent slave symbols
+     * @param symbolTranslatingRecord nullable; when non-null, it is {@code masterRecord}, which translates the symbol
+     *                                keys of the master row, and used to skip scan for non-existent slave symbols
      * @return the rowId where target key was found, or Long.MIN_VALUE if not found
      */
     public long backwardScanForKeyMatch(
@@ -262,8 +271,10 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             return Long.MIN_VALUE;
         }
 
-        // Fast path: skip backward scan for keys with non-existent slave symbols
-        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()) {
+        // Fast path: skip backward scan for keys with non-existent slave symbols and for a master row the key check
+        // rejects, which it reads untranslated
+        if (symbolTranslatingRecord != null && symbolTranslatingRecord.hasNonExistentKey()
+                || keyCheck != null && !keyCheck.getBool(symbolTranslatingRecord != null ? symbolTranslatingRecord.getBaseRecord() : masterRecord)) {
             return Long.MIN_VALUE;
         }
 
@@ -674,7 +685,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
      * @param masterAsOfJoinMapSink   copier for master's join key columns
      * @param slaveAsOfJoinMapSink    copier for slave's join key columns
      * @param keyToRowIdMap           map to update with (key -> rowId) entries
-     * @param symbolTranslatingRecord nullable; when non-null, used to skip scan for non-existent slave symbols
+     * @param symbolTranslatingRecord nullable; when non-null, it is {@code masterKeyRecord}, which translates the
+     *                                symbol keys of the master row, and used to skip scan for non-existent slave symbols
      * @return the rowId where the target key was found, or Long.MIN_VALUE if not found
      */
     public long findKeyedAsOfMatch(

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.lock;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,6 +37,11 @@ import io.questdb.std.ObjList;
  * No-op handler for pg_advisory_unlock_all() calls.
  */
 public class AdvisoryUnlockAll implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

@@ -32,6 +32,7 @@ import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -81,6 +82,16 @@ public class LiveViewSymbolCacheConcurrencyTest {
         @Override
         public boolean containsNullValue() {
             return false;
+        }
+
+        @Override
+        public void copySortedKeysTo(DirectIntList keys) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void copySortedKeysTo(IntList keys) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
@@ -769,6 +780,16 @@ public class LiveViewSymbolCacheConcurrencyTest {
         @Override
         public boolean containsNullValue() {
             return false;
+        }
+
+        @Override
+        public void copySortedKeysTo(DirectIntList keys) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void copySortedKeysTo(IntList keys) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

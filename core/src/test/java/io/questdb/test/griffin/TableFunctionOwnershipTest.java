@@ -47,7 +47,8 @@ import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -58,6 +59,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TableFunctionTestUtils.CloseCountingRecordCursorFactory;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
@@ -68,21 +70,23 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * Ownership of the cursor factories {@code SqlOptimiser#parseFunctionAndEnumerateColumns} instantiates for
- * FROM/JOIN table functions. The optimiser holds such a factory until code generation takes it over, so a
+ * Ownership of the cursor factories {@code TableFunctionSources#bind} instantiates for
+ * FROM/JOIN table functions. Binding holds such a factory until code generation takes it over, so a
  * compile that rejects the statement in between, or never generates the model, has to close it. The tests
  * assert each close count exactly, in both directions: a missed close leaks the factory, and a second close
  * is a use-after-free.
  * <p>
  * The tests sweep these compile paths:
  * <ul>
- *     <li>The catch block of {@code SqlCompilerImpl#compileExecutionModel}. That method optimises INSERT and
- *     UPDATE models without generating them, and an INSERT ... SELECT whose column count does not match
- *     fails inside it ({@code testInsertAsSelectRejectedAfterOptimiseClosesTableFunctionFactoryOnce}, and
- *     the INSERT in {@code testPivotInSubQueryFailingCompileClosesTableFunctionFactoryOnce}).</li>
- *     <li>The catch block of {@code SqlCompilerImpl#compileUsingModel}, which walks the statement's models
- *     and then sweeps. The view modification check fails an INSERT into a view there, after the optimiser
- *     returned ({@code testInsertIntoView*} and the {@code *WhenRejectedAfterOptimise} tests).</li>
+ *     <li>The catch block of {@code SqlCompilerImpl#compileExecutionModel}. That method binds and
+ *     optimises INSERT and UPDATE models without generating them, and an INSERT ... SELECT whose column
+ *     count does not match fails inside it
+ *     ({@code testInsertAsSelectRejectedAfterOptimiseClosesTableFunctionFactoryOnce}, and the INSERT in
+ *     {@code testPivotInSubQueryFailingCompileClosesTableFunctionFactoryOnce}).</li>
+ *     <li>The catch block of {@code SqlCompilerImpl#compileUsingModel}, which sweeps the factories
+ *     binding still holds. The view modification check fails an INSERT into a view there, after the
+ *     optimiser returned ({@code testInsertIntoView*} and the {@code *WhenRejectedAfterOptimise}
+ *     tests).</li>
  *     <li>{@code SqlCompilerImpl#generateSelectOneShot}, which sweeps the factories the plan does not read,
  *     whether generation returns or throws. Every plan the tests generate passes through it: a SELECT, the
  *     SELECT of an INSERT, an EXPLAIN, the model of an UPDATE that selects its rows, each attempt of
@@ -90,20 +94,19 @@ import static org.junit.Assert.fail;
  *     CREATE VIEW, CREATE OR REPLACE VIEW, ALTER VIEW or CREATE MATERIALIZED VIEW operation generates when
  *     it executes ({@code testInsertAsSelectSuccessLeavesTableFunctionFactoryToTheGeneratedTree}, and the
  *     {@code testSubQueryNeverGenerated*} tests the previous item does not name).</li>
- *     <li>The plan of a {@code PIVOT ... FOR ... IN (SELECT ...)} sub-query. The optimiser opens the
- *     sub-query's table function, and {@code SqlOptimiser#preparePivotForSelectSubquery} borrows a second
- *     compiler to generate the sub-query through {@code generateSelectWithoutRetries()}, runs it, and
- *     closes the plan. The catch block of {@code SqlOptimiser#optimise} sweeps when the statement fails
- *     afterwards ({@code testPivotInSubQuery*}).</li>
- *     <li>{@code SqlCodeGenerator#generateFunctionQuery}, which takes over a factory that projects its
- *     columns, as {@code read_parquet()} does, then builds the projected metadata, and closes the factory
- *     when that throws ({@code *ProjectionFailure*}).</li>
+ *     <li>The plan of a {@code PIVOT ... FOR ... IN (SELECT ...)} sub-query. Binding opens the sub-query's
+ *     table function, and {@code SqlCompilerImpl#compileSubqueryFactory} generates the sub-query through
+ *     {@code generateSelectOneShot()}, runs it, and closes the plan. The statement's sweep runs when it
+ *     fails afterwards ({@code testPivotInSubQuery*}).</li>
+ *     <li>{@code ScanFactoryGenerator#generateFunctionSource}, which takes over a factory and projects its
+ *     columns, and {@code TableFunctionSources}, which opens the function again for a copy of its source and
+ *     refuses a factory whose columns changed since binding ({@code *ProjectionFailure*}).</li>
  * </ul>
  * {@code CreateMatViewTest} covers the rejection of a materialized view's query in
- * {@code SqlCompilerImpl#compileMatViewQuery}.
+ * {@code SqlCompilerImpl#compileCreateSelect}.
  * <p>
- * The optimiser also instantiates the factory of every sub-query it optimises, and code generation takes
- * over only the ones the plan reads. The {@code testSubQueryNeverGenerated*} tests cover the factories
+ * Binding also opens the table function of every sub-query it binds, and code generation takes over
+ * only the ones the plan reads. The {@code testSubQueryNeverGenerated*} tests cover the factories
  * generation never reaches, on the compile paths that return and on the ones that throw. The
  * {@code testSubQueryNeverGeneratedCloseFailure*} tests cover a close that throws on those paths: the
  * failure has to reach the statement's error, and the sweep has to carry on to the factories it has
@@ -144,22 +147,21 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                 FROM long_sequence(2)
             )""".formatted(FAILING_FUNCTION_NAME, FUNCTION_NAME);
     // The outer queries over this one select a and leave the other four columns out, so code
-    // generation takes over none of their factories and one sweep closes all four. The optimiser
-    // opens them in the order of the columns (optimiseExpressionModels() walks the sub-queries in
-    // the order the parser met them) and the sweep closes them in the order the optimiser opened
-    // them, so the two closes that throw, each a failure of its own, come first. Behind them,
-    // owned_cursor() counts its close, and read_parquet() holds native memory until something
-    // closes it.
+    // generation takes over none of their factories and one sweep closes all four. Binding opens
+    // them in the order of the columns and the sweep closes them in reverse, so the two closes
+    // that throw, each a failure of its own, come first, failing_cursor() before
+    // second_failing_cursor(). Behind them, read_parquet() holds native memory until something
+    // closes it, and owned_cursor() counts its close.
     private static final String SUB_QUERIES_WITH_TWO_CLOSE_FAILURES = """
             (
                 SELECT
                     x a,
                     x = (SELECT count() FROM %s()) b,
-                    x = (SELECT count() FROM %s()) c,
+                    x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) c,
                     x = (SELECT count() FROM %s()) d,
-                    x = (SELECT k FROM read_parquet('p.parquet') LIMIT 1) e
+                    x = (SELECT count() FROM %s()) e
                 FROM long_sequence(2)
-            )""".formatted(FAILING_FUNCTION_NAME, SECOND_FAILING_FUNCTION_NAME, FUNCTION_NAME);
+            )""".formatted(FUNCTION_NAME, SECOND_FAILING_FUNCTION_NAME, FAILING_FUNCTION_NAME);
     // While set, every compiler the engine hands out refuses each plan it generates, see
     // setUpStatic().
     private static boolean isPlanRefused;
@@ -167,8 +169,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     /**
      * Installs a compiler that refuses plans as Enterprise does: Enterprise generates a plan,
      * then refuses it when it cannot write the plan's audit, freeing the plan and throwing. Every
-     * compiler the engine pools is one, including the one PIVOT borrows to run its
-     * {@code FOR ... IN (SELECT ...)} sub-query. It stays inert until a test sets
+     * compiler the engine pools is one, and a PIVOT generates its {@code FOR ... IN (SELECT ...)}
+     * sub-query through {@code generateSelectOneShot()} too. It stays inert until a test sets
      * {@link #isPlanRefused}.
      */
     @BeforeClass
@@ -191,10 +193,10 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final String functionName = "owned_cursor";
             TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.NONE, factories);
             try {
-                // validateAndOptimiseInsertAsSelect() optimises FIRST and only then compares the column
-                // count, so the rejection lands in exactly the window this test is about: the optimiser
-                // has instantiated and is holding the table function, and generation - which would have
-                // taken it over - never runs.
+                // bindInsertAsSelect() binds and optimises FIRST and only then compares the column
+                // count, so the rejection lands in exactly the window this test is about: binding has
+                // opened and is holding the table function, and generation - which would have taken it
+                // over - never runs.
                 assertExceptionNoLeakCheck(
                         "insert into dest (a, b) select * from " + functionName + "()",
                         12,
@@ -204,7 +206,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                 assertEquals(1, factories.size());
                 assertEquals(1, factories.getQuick(0).getCloseCount());
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its binding state. A
                 // reference left behind there must not close the factory a second time.
                 execute("create table other (x long)");
                 assertEquals(1, factories.getQuick(0).getCloseCount());
@@ -254,10 +256,9 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
             try {
                 // The compiler rejects an INSERT into a view after it optimised the SELECT and before
-                // it generates it. The SELECT reads owned_cursor() in its FROM clause, so the catch
-                // block's walk of the statement's models closes that factory and detaches it from
-                // its model. The sweep that follows must leave it alone: closing everything the
-                // optimiser opened would close it a second time.
+                // it generates it. The SELECT reads owned_cursor() in its FROM clause, and binding
+                // still holds that factory, so the catch block's sweep closes it. Nothing may close
+                // it a second time.
                 assertExceptionNoLeakCheck(
                         "INSERT INTO v_plain SELECT * FROM " + FUNCTION_NAME + "()",
                         12,
@@ -277,8 +278,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     @Test
     public void testPivotInSubQueryCloseFailureIsSuppressedOnceWhenCompileFails() throws Exception {
         assertWithCloseFailures(fixture -> {
-            // The plan of the IN sub-query takes failing_cursor() over, and the optimiser's close
-            // of that plan throws. The statement fails and carries that failure as suppressed.
+            // The plan of the IN sub-query takes failing_cursor() over, and binding's close of
+            // that plan throws. The statement fails and carries that failure as suppressed.
             // The cleanup of the failed compile must leave the factory alone: a second close
             // would throw again and attach the same failure twice.
             final String sql = "SELECT * FROM src PIVOT (sum(v) FOR g IN (SELECT permission, permission p FROM failing_cursor()) GROUP BY k)";
@@ -303,8 +304,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             try {
                 TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
-                // The optimiser opens the table function of the IN sub-query, and the plan the
-                // borrowed compiler generates for the sub-query takes it over. The optimiser
+                // Binding opens the table function of the IN sub-query, and the plan
+                // compileSubqueryFactory() generates for the sub-query takes it over. Binding
                 // closes that plan once it has read the IN values. Each statement below then
                 // fails, and the cleanup of the failed compile must close only the factories no
                 // plan took over, or it closes this one a second time.
@@ -334,7 +335,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                         .fails(emptyInList.indexOf("SELECT permission"), "PIVOT IN subquery returned empty result set");
                 assertEachClosedOnce(factories, 2);
 
-                // The IN sub-query succeeds, and the optimiser rejects the statement later.
+                // The IN sub-query succeeds, and binding rejects the statement later.
                 assertQuery("SELECT nope FROM (SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_ONE_VALUE + ") GROUP BY k))")
                         .noLeakCheck()
                         .fails(7, "Invalid column: nope");
@@ -378,7 +379,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                         .fails(tooManyColumns.indexOf("SELECT permission"), "PIVOT produces too many columns: 2, limit is 1");
                 assertEachClosedOnce(factories, 7);
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its binding state. A
                 // reference left behind there must not close a factory a second time.
                 execute("CREATE TABLE other (x LONG)");
                 assertEachClosedOnce(factories, 7);
@@ -396,11 +397,11 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             try {
                 TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
-                // The IN values name the columns a PIVOT returns, so the optimiser runs the IN
-                // sub-query while it optimises the statement. It opens the sub-query's table
-                // function itself and borrows a second compiler to generate the sub-query, whose
-                // plan takes the factory over. The optimiser closes that plan once it read the
-                // values, and its own sweep has to leave the factory alone afterwards.
+                // The IN values name the columns a PIVOT returns, so binding runs the IN
+                // sub-query while it binds the statement. It opens the sub-query's table function
+                // itself, and compileSubqueryFactory() generates the sub-query, whose plan takes
+                // the factory over. Binding closes that plan once it read the values, and the
+                // statement's sweep has to leave the factory alone afterwards.
                 //
                 // The loop repeats each statement: a compile borrows a pooled compiler, and a
                 // reference the previous compile left in it must not close or leak a factory.
@@ -487,7 +488,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                     assertEachClosedOnce(factories, factoryCount + 1);
                 }
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its binding state. A
                 // reference left behind there must not close a factory a second time.
                 execute("CREATE TABLE other (x LONG)");
                 assertEachClosedOnce(factories, 6);
@@ -501,9 +502,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     public void testPivotInSubQueryOverTableFunctionFailingCompile() throws Exception {
         assertMemoryLeak(() -> {
             createParquetFile();
-            // The optimiser rejects the statement after the borrowed compiler generated the IN
-            // sub-query, so it still holds the table function of the pivoted source, which no
-            // plan took over.
+            // Binding rejects the statement after it generated the IN sub-query, so it still
+            // holds the table function of the pivoted source, which no plan took over.
             final String emptyInList = """
                     SELECT * FROM read_parquet('p.parquet')
                     PIVOT (
@@ -548,6 +548,36 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPivotInSubQueryProjectionFailureClosesReinstantiatedTableFunctionFactory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (g VARCHAR, k LONG, v LONG)");
+            execute("INSERT INTO src VALUES ('a', 1, 10), ('b', 2, 20)");
+
+            final ObjList<ProjectedCursorFactory> factories = new ObjList<>();
+            try {
+                registerProjectedCursor(RETYPED_FUNCTION_NAME, true, factories);
+                // As in testProjectionFailureClosesReinstantiatedTableFunctionFactory, but the
+                // refusal comes from the plan of the IN sub-query, which generates while the
+                // statement binds. The compiler binds the statement again: the third and fourth
+                // factories agree.
+                assertQuery("SELECT * FROM src PIVOT (sum(v) FOR g IN ("
+                        + "SELECT 'a'::VARCHAR FROM " + RETYPED_FUNCTION_NAME + "() t"
+                        + " JOIN LATERAL (SELECT count() c FROM long_sequence(3) l WHERE l.x::TIMESTAMP = t.ts) q"
+                        + " UNION ALL SELECT 'a'::VARCHAR FROM long_sequence(1)) GROUP BY k)")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ta
+                                1\t10
+                                """);
+                assertEquals(4, factories.size());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, RETYPED_FUNCTION_NAME);
+            }
+        });
+    }
+
+    @Test
     public void testPivotInSubQueryProjectionFailureClosesTableFunctionFactory() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (g VARCHAR, k LONG, v LONG)");
@@ -556,14 +586,13 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<ProjectedCursorFactory> factories = new ObjList<>();
             try {
                 registerProjectedCursor(PROJECTED_FUNCTION_NAME, false, factories);
-                // The optimiser opens the table function of the IN sub-query, and the borrowed
-                // compiler generates the sub-query. The optimiser calls the column col.zx zx, a
-                // name the factory's metadata does not resolve, so the generation fails while it
-                // projects the factory's columns. The factory holds native memory until it
-                // closes, so the leak check fails if the failed statement leaves it open.
+                // Binding opens the table function of the IN sub-query, then fails on zx, a name
+                // the factory's metadata does not resolve: the column is col.zx. The factory holds
+                // native memory until it closes, so the leak check fails if the failed statement
+                // leaves it open.
                 final String sql = "SELECT * FROM src PIVOT (sum(v) FOR g IN (SELECT zx FROM " + PROJECTED_FUNCTION_NAME + "()) GROUP BY k)";
                 for (int i = 0; i < 3; i++) {
-                    assertExceptionNoLeakCheck(sql, 0, "Invalid column: zx");
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("zx"), "Invalid column: zx");
                     assertEquals(i + 1, factories.size());
                 }
 
@@ -592,9 +621,9 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             try {
                 TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
-                // The borrowed compiler generates the plan of the IN sub-query, which takes the
-                // factory over, then refuses the plan and frees it. The optimiser fails with the
-                // refusal, and its cleanup must not close the factory a second time.
+                // The plan of the IN sub-query takes the factory over, and generateSelectOneShot()
+                // refuses the plan and frees it. Binding fails with the refusal, and the
+                // statement's cleanup must not close the factory a second time.
                 final String sql = "SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_ONE_VALUE + ") GROUP BY k)";
                 isPlanRefused = true;
                 try {
@@ -631,15 +660,17 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<ProjectedCursorFactory> factories = new ObjList<>();
             try {
                 registerProjectedCursor(RETYPED_FUNCTION_NAME, true, factories);
-                // The optimiser reads max(ts) as the timestamp of the last row. The model it
-                // builds for that read names the table function, but does not take over the
-                // factory the optimiser opened, so generation opens the function a second time.
-                // The second factory types ts as LONG, as a file rewritten in between would, and
-                // generation fails while it projects that factory's columns, before any plan
-                // takes the factory over.
-                final String sql = "SELECT max(ts) FROM " + RETYPED_FUNCTION_NAME + "() TIMESTAMP(ts)";
-                assertExceptionNoLeakCheck(sql, sql.lastIndexOf("ts)"), "not a TIMESTAMP");
-                assertEquals(2, factories.size());
+                // Decorrelation reads the outer source of the LATERAL join a second time, and
+                // generation opens the function again for that read. The second factory types ts
+                // as LONG, as a file rewritten in between would, so generation refuses it once it
+                // has taken over and projected the first one. Both factories have to close, and
+                // the compiler binds the statement again: the third and fourth factories agree.
+                final String sql = "SELECT t.ts FROM " + RETYPED_FUNCTION_NAME + "() t"
+                        + " JOIN LATERAL (SELECT count() c FROM long_sequence(3) l WHERE l.x::TIMESTAMP = t.ts) q";
+                try (RecordCursorFactory factory = select(sql)) {
+                    assertEquals(ColumnType.LONG, factory.getMetadata().getColumnType(0));
+                }
+                assertEquals(4, factories.size());
             } finally {
                 TableFunctionTestUtils.unregister(engine, RETYPED_FUNCTION_NAME);
             }
@@ -652,12 +683,13 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             final ObjList<ProjectedCursorFactory> factories = new ObjList<>();
             try {
                 registerProjectedCursor(PROJECTED_FUNCTION_NAME, false, factories);
-                // The optimiser calls the column col.zx zx, a name the factory's metadata does
-                // not resolve, so generation fails while it projects the factory's columns.
-                // Generation has taken the factory over from its model by then, and nothing
-                // else would close it.
+                // Binding names each column as the factory's metadata does, col.zx included, and
+                // generation takes the factory over and projects it by column index, so the
+                // statement reads every column and its plan closes the factory.
                 for (int i = 0; i < 3; i++) {
-                    assertExceptionNoLeakCheck("SELECT * FROM " + PROJECTED_FUNCTION_NAME + "()", 0, "Invalid column: zx");
+                    try (RecordCursorFactory factory = select("SELECT * FROM " + PROJECTED_FUNCTION_NAME + "()")) {
+                        TestUtils.assertEquals("col.zx", factory.getMetadata().getColumnName(1));
+                    }
                     assertEquals(i + 1, factories.size());
                 }
 
@@ -741,7 +773,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             execute("CREATE VIEW v_ok AS (SELECT x FROM long_sequence(1))");
             drainWalAndViewQueues();
 
-            // An ALTER VIEW borrows a second compiler to optimise and generate the new body, and
+            // An ALTER VIEW borrows a second compiler to bind and generate the new body, and
             // no catch block sweeps that compiler once generation has thrown. The sweep in the
             // catch block of generateSelectOneShot() is the only one that closes the factory of
             // the pruned b and attaches its failure to the generation error.
@@ -765,22 +797,20 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // A materialized view rejects a sub-query its plan reads, so the sub-query over
-            // failing_cursor() is the value of a variable the body declares and never reads:
-            // the optimiser opens its factory and generation never reaches it. Generation
-            // fails on m, and the generator's own cleanup closes the factory of the joined
-            // owned_cursor().
+            // failing_cursor() is the value of a column the body binds and never reads: binding
+            // opens its factory and generation never reaches it. A variable the body declares
+            // and never reads would not do, since binding never reaches its sub-query either.
+            // Binding then fails on m, after it has opened both factories.
             //
             // A CREATE MATERIALIZED VIEW compiles into an operation, as a CREATE VIEW does, and
-            // that operation optimises and generates the body when it executes. The statement's
-            // own compile has returned by then, so its catch block, which sweeps a second time
-            // when a plain SELECT fails, does not run. The sweep in the catch block of
-            // generateSelectOneShot() is the only one that closes the factory of @unread and
-            // attaches its failure to the generation error.
+            // that operation binds and generates the body when it executes. The statement's own
+            // compile has returned by then, so its catch block, which sweeps a second time when
+            // a plain SELECT fails, does not run. The sweep of the body's compile is the only one
+            // that closes the factory of the unread column and attaches its failure to the error.
             final String sql = """
                     CREATE MATERIALIZED VIEW mv_bad AS (
-                        DECLARE @unread := (SELECT count() FROM %s())
-                        SELECT t.ts, max(sin(t.x, t.x)) m
-                        FROM base t CROSS JOIN %s()
+                        SELECT ts, max(sin(x, x)) m
+                        FROM (SELECT t.ts, t.x, t.x = (SELECT count() FROM %s()) unread FROM base t CROSS JOIN %s())
                         SAMPLE BY 1d
                     ) PARTITION BY DAY
                     """.formatted(FAILING_FUNCTION_NAME, FUNCTION_NAME);
@@ -806,7 +836,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
             // A CREATE OR REPLACE VIEW that names an existing view takes the route of an ALTER
             // VIEW: compileCreate() hands the new body to alterViewExecution(), which borrows a
-            // second compiler to optimise and generate it. No catch block sweeps that compiler
+            // second compiler to bind and generate it. No catch block sweeps that compiler
             // once generation has thrown, so the sweep in the catch block of
             // generateSelectOneShot() is the only one that closes the factory of the pruned b
             // and attaches its failure to the generation error.
@@ -829,8 +859,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     @Test
     public void testSubQueryNeverGeneratedCloseFailureIsSuppressedWhenCreateViewGenerationFails() throws Exception {
         assertWithCloseFailures(fixture -> {
-            // A CREATE VIEW compiles into an operation, and that operation optimises and
-            // generates the view's body when it executes. The statement's own compile has
+            // A CREATE VIEW compiles into an operation, and that operation binds and generates
+            // the view's body when it executes. The statement's own compile has
             // returned by then, so its catch block, which sweeps a second time when a plain
             // SELECT fails, does not run. The sweep in the catch block of
             // generateSelectOneShot() is the only one that closes the factory of the pruned b
@@ -875,10 +905,10 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             drainWalAndViewQueues();
 
             // The compiler rejects an INSERT into a view after it optimised the SELECT and before
-            // it generates it. The catch block's walk of the statement's models does not reach
-            // the sub-queries in its columns, so the sweep that follows closes all three of their
-            // factories, and the close of b's throws. The statement still reports why it was
-            // rejected, and the close failure travels with that error as suppressed.
+            // it generates it. Binding still holds the factories of the three sub-queries in its
+            // columns, so the catch block's sweep closes all three, and the close of b's throws.
+            // The statement still reports why it was rejected, and the close failure travels with
+            // that error as suppressed.
             try {
                 execute("INSERT INTO v_plain SELECT a, c, d FROM " + SUB_QUERIES_WITH_CLOSE_FAILURE);
                 fail("the insert must be rejected");
@@ -945,7 +975,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                                 2\t2
                                 """);
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its binding state. A
                 // reference left behind there must not close a factory a second time.
                 execute("CREATE TABLE other (x LONG)");
                 assertEachClosedOnce(factories, 2);
@@ -998,7 +1028,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
             TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
             try {
                 // The compiler rejects an INSERT into a view after it optimised the SELECT and before
-                // it generates it, so the optimiser still holds both factories.
+                // it generates it, so binding still holds both factories.
                 assertExceptionNoLeakCheck(
                         "INSERT INTO v_plain SELECT a FROM " + SUB_QUERIES,
                         12,
@@ -1022,7 +1052,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
             final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
             TableFunctionTestUtils.register(engine, FUNCTION_NAME, SqlExecutionRequirements.NONE, factories);
-            // The first attempt generates against a table that changed after the optimiser read it,
+            // The first attempt generates against a table that changed after binding read it,
             // so the compiler discards the attempt's models and compiles the statement again. The
             // outer query does not select b, so neither attempt generates its sub-query, and each
             // attempt instantiates a factory of its own.
@@ -1073,7 +1103,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
     // Runs a close-failure test under the leak check, with p.parquet written and the fixture's
     // three table functions registered. Once the test's statement has failed, a second statement
-    // compiles: it borrows the same pooled compiler and clears its optimiser state, and a
+    // compiles: it borrows the same pooled compiler and clears its binding state, and a
     // reference the failed compile left behind there must not close a factory a second time.
     private static void assertWithCloseFailures(CloseFailureCode code) throws Exception {
         assertMemoryLeak(() -> {
@@ -1123,8 +1153,8 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
     // Registers a table function whose factories project their columns, as read_parquet() does,
     // and hold native memory until they close, so the leak check catches a factory nothing
-    // closed. A factory names its columns ts and col.zx. The optimiser keeps no dot in a column
-    // name and calls the second one zx, a name the factory's metadata does not resolve. When
+    // closed. A factory names its columns ts and col.zx. Binding names them as the factory does,
+    // so zx is a name neither binding nor the factory's metadata resolves. When
     // isTimestampRetyped is set, every factory after the first types ts as LONG instead of
     // TIMESTAMP.
     private static void registerProjectedCursor(
@@ -1189,11 +1219,12 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
 
         @Override
         protected RecordCursorFactory generateSelectOneShot(
-                IQueryModel selectQueryModel,
+                QueryModel selectQueryModel,
+                @Nullable Subquery subquery,
                 SqlExecutionContext executionContext,
                 boolean generateProgressLogger
         ) throws SqlException {
-            final RecordCursorFactory factory = super.generateSelectOneShot(selectQueryModel, executionContext, generateProgressLogger);
+            final RecordCursorFactory factory = super.generateSelectOneShot(selectQueryModel, subquery, executionContext, generateProgressLogger);
             if (isPlanRefused) {
                 Misc.free(factory);
                 throw SqlException.$(0, "refused plan");
@@ -1228,7 +1259,7 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
         }
     }
 
-    // Changes a table between the optimiser's read of it and the first generation attempt.
+    // Changes a table between binding's read of it and the first generation attempt.
     private static class StaleTableCompiler extends SqlCompilerImpl {
         private final String ddl;
         private int attemptCount;
@@ -1239,11 +1270,11 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
         }
 
         @Override
-        protected RecordCursorFactory generateSelectOneShot(IQueryModel model, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
+        protected RecordCursorFactory generateSelectOneShot(QueryModel model, @Nullable Subquery subquery, SqlExecutionContext context, boolean isProgressLogger) throws SqlException {
             if (attemptCount++ == 0) {
                 AbstractCairoTest.engine.execute(ddl, context);
             }
-            return super.generateSelectOneShot(model, context, isProgressLogger);
+            return super.generateSelectOneShot(model, subquery, context, isProgressLogger);
         }
     }
 }

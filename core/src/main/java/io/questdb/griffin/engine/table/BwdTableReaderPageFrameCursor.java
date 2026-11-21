@@ -34,6 +34,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
@@ -53,6 +54,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import org.jetbrains.annotations.Nullable;
 
 
@@ -265,6 +267,30 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public void setPageFrameMaxRows(int maxRows) {
+        pageFrameMaxRows = maxRows;
+    }
+
+    @Override
+    public boolean skipToCachedFrame(PageFrameAddressCache cache, int frameIndex) {
+        if (!reenterPartitionFrame || reenterParquetDecoder == null || hasActivePushdownFilter()
+                || cache.getFrameFormat(frameIndex) != PartitionFormat.PARQUET) {
+            return false;
+        }
+        final long rowId = cache.getRowIdOffset(frameIndex);
+        final long lo = Rows.toLocalRowID(rowId);
+        final long hi = lo + cache.getFrameSize(frameIndex);
+        if (Rows.toPartitionIndex(rowId) != reenterPartitionIndex || lo < reenterPartitionLo || hi > reenterPartitionHi) {
+            return false;
+        }
+        reenterPartitionHi = hi;
+        cachedRowGroupIndex = cache.getParquetRowGroup(frameIndex);
+        cachedRowGroupStartRow = lo - cache.getParquetRowGroupLo(frameIndex);
+        remainingRowsInInterval = hi - reenterPartitionLo;
+        return true;
+    }
+
+    @Override
     public long size() {
         return partitionFrameCursor.size();
     }
@@ -285,6 +311,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         cachedRowGroupIndex = -1;
         cachedRowGroupStartRow = 0;
         filterBufEnd = -1;
+        remainingRowsInInterval = 0;
         clearAddresses();
     }
 
@@ -867,6 +894,9 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
+            // A lightweight frame of next(skipTarget) may leave its partition closed, and an index reader takes the
+            // column top of the open partition.
+            reader.openPartition(partitionIndex);
             return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 

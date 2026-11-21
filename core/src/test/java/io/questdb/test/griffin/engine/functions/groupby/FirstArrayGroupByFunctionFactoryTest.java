@@ -172,8 +172,8 @@ public class FirstArrayGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueRejectedNonKeyed() throws Exception {
         // Non-keyed companion to testSampleByFillValueRejectedWithArrayColumns. The
-        // non-keyed path routes through SqlOptimiser.rewriteSampleBy + the propagation
-        // of fillValues onto groupByModel in rewriteSelectClause0. first(D[]) shares
+        // non-keyed path routes through SampleByBinder, which propagates the fill
+        // values onto the aggregate. first(D[]) shares
         // getSampleByFlags() = NONE|NULL|PREVIOUS with array_agg, so FILL(VALUE) must
         // be rejected here as well.
         assertMemoryLeak(() -> {

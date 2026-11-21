@@ -45,6 +45,11 @@ import io.questdb.std.ObjList;
 public class InTimestampIntervalFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "in(NΔ)";
     }
@@ -69,7 +74,7 @@ public class InTimestampIntervalFunctionFactory implements FunctionFactory {
         public Func(Function left, Function right) {
             this.left = left;
             this.right = right;
-            leftTimestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(left.getType()), ColumnType.TIMESTAMP_MICRO);
+            leftTimestampType = ColumnType.getImplicitTimestampType(left.getType());
             timestampDriver = ColumnType.getTimestampDriver(leftTimestampType);
         }
 

@@ -36,8 +36,8 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     public static final StrConstant EMPTY = new StrConstant("");
     public static final StrConstant NULL = new StrConstant(null);
     private final int length;
-    private final Utf8String utf8Value;
     private final String value;
+    private Utf8String utf8Value;
 
     public StrConstant(CharSequence value) {
         this(value, true);
@@ -46,7 +46,6 @@ public class StrConstant extends StrFunction implements ConstantFunction {
     private StrConstant(CharSequence value, boolean isSqlLiteral) {
         if (value == null) {
             this.value = null;
-            this.utf8Value = null;
             this.length = TableUtils.NULL_LEN;
         } else {
             if (isSqlLiteral && Chars.startsWith(value, '\'')) {
@@ -54,17 +53,19 @@ public class StrConstant extends StrFunction implements ConstantFunction {
             } else {
                 this.value = Chars.toString(value);
             }
-            this.utf8Value = new Utf8String(this.value);
             this.length = this.value.length();
         }
     }
 
-    public static StrConstant newInstance(CharSequence value) {
-        return value != null ? new StrConstant(value) : NULL;
+    /**
+     * Creates a constant from an already decoded value, without SQL unquoting.
+     */
+    public static StrConstant fromValue(CharSequence value) {
+        return value != null ? new StrConstant(value, false) : NULL;
     }
 
-    public static StrConstant newUnquotedInstance(CharSequence value) {
-        return new StrConstant(value, false);
+    public static StrConstant newInstance(CharSequence value) {
+        return value != null ? new StrConstant(value) : NULL;
     }
 
     @Override
@@ -84,17 +85,17 @@ public class StrConstant extends StrFunction implements ConstantFunction {
 
     @Override
     public Utf8Sequence getVarcharA(Record rec) {
-        return utf8Value;
+        return utf8Value();
     }
 
     @Override
     public Utf8Sequence getVarcharB(Record rec) {
-        return utf8Value;
+        return utf8Value();
     }
 
     @Override
     public int getVarcharSize(Record rec) {
-        return utf8Value != null ? utf8Value.size() : TableUtils.NULL_LEN;
+        return value != null ? utf8Value().size() : TableUtils.NULL_LEN;
     }
 
     @Override
@@ -109,5 +110,16 @@ public class StrConstant extends StrFunction implements ConstantFunction {
         } else {
             sink.val('\'').val(value).val('\'');
         }
+    }
+
+    /**
+     * The UTF-8 encoding of the value, which the constant builds on first read, so a literal no consumer reads as
+     * VARCHAR encodes nothing; null for the NULL constant.
+     */
+    private Utf8String utf8Value() {
+        if (utf8Value == null && value != null) {
+            utf8Value = new Utf8String(value);
+        }
+        return utf8Value;
     }
 }

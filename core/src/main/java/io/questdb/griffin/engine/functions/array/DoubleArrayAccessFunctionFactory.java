@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -49,6 +50,23 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        int resultNDims = ColumnType.decodeWeakArrayDimensionality(argTypes.getQuick(0));
+        if (resultNDims == -1) {
+            return ColumnType.UNDEFINED;
+        }
+        for (int i = 1, n = argTypes.size(); i < n; i++) {
+            if (isIndexArg(argTypes.getQuick(i))) {
+                resultNDims--;
+            }
+        }
+        if (resultNDims < 0) {
+            return ColumnType.UNDEFINED;
+        }
+        return resultNDims == 0 ? ColumnType.DOUBLE : ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+    }
 
     @Override
     public String getSignature() {
@@ -109,20 +127,16 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .put(", nArgs=").put(nArgs)
                     .put(']');
         }
-        int resultNDims = nDims;
         boolean indexArgsAreConstant = true;
         for (int i = 1, n = argsCopy.size(); i < n; i++) {
-            Function arg = argsCopy.getQuick(i);
-            final int argType = arg.getType();
-            if (isIndexArg(argType)) {
-                resultNDims--;
-                if (!arg.isConstant()) {
-                    indexArgsAreConstant = false;
-                }
+            final Function arg = argsCopy.getQuick(i);
+            if (isIndexArg(arg.getType()) && !arg.isConstant()) {
+                indexArgsAreConstant = false;
             }
         }
-        if (resultNDims != 0) {
-            return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+        final int type = getResultType(ResultTypes.argTypes(argsCopy));
+        if (ColumnType.isArray(type)) {
+            return new SliceDoubleArrayFunction(arrayArg, type, argsCopy, argPositionsCopy);
         }
         if (!indexArgsAreConstant) {
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
@@ -190,7 +204,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
             int argType = arg.getType();
-            if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
+            if (!isIndexArg(argType) && argType != ColumnType.INTERVAL_RAW) {
                 throw SqlException.position(argPositions.get(i))
                         .put("invalid type for array access [type=").put(ColumnType.nameOf(argType)).put(']');
             }
@@ -419,11 +433,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
 
-        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
+        public SliceDoubleArrayFunction(Function arrayArg, int type, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+            this.type = type;
         }
 
         @Override
@@ -447,7 +461,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
-                    if (loLong == Numbers.INT_NULL || hiLong == Numbers.INT_NULL) {
+                    if (loLong == Numbers.LONG_NULL || hiLong == Numbers.LONG_NULL) {
                         derivedArray.ofNull();
                         return derivedArray;
                     }

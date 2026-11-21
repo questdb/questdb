@@ -144,7 +144,8 @@ public final class Mig1002 {
                     final BitSet foundColumnSet = new BitSet(columnCount);
                     final ParquetMetaFileReader parquetMetadata = new ParquetMetaFileReader();
                     for (int i = 0, n = txReader.getPartitionCount(); i < n && pendingColumns.size() > 0; i++) {
-                        if (txReader.getPartitionSize(i) < 1) {
+                        // The probes use physical column tops and index ranges from a plain partition.
+                        if (txReader.getPartitionSize(i) < 1 || txReader.isPartitionComposite(i) || txReader.getPartitionHasDelta(i)) {
                             continue;
                         }
                         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);

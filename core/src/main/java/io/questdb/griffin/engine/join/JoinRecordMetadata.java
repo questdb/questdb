@@ -49,7 +49,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
     private static final ColumnTypes keyTypes;
     private static final ColumnTypes valueTypes;
     private final Map map;
-    private int refCount;
 
     public JoinRecordMetadata(CairoConfiguration configuration, int columnCount) {
         this.map = new OrderedMap(
@@ -63,7 +62,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         );
         this.timestampIndex = -1;
         this.columnCount = 0;
-        this.refCount = 1;
     }
 
     // This overload does not propagate parquetEncodingConfig because it is only
@@ -120,19 +118,9 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
         addToMap(columnName, dot, qualify(tableAlias, columnName, m));
     }
 
-    // The column keeps its record position and qualified name, but no name resolves to it.
-    public void addHidden(CharSequence tableAlias, TableColumnMetadata m) {
-        final CharSequence columnName = m.getColumnName();
-        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
-        columnMetadata.add(qualify(tableAlias, protectDottedColumnName(tableAlias, columnName, dot), m));
-        columnCount++;
-    }
-
     @Override
     public void close() {
-        if (--refCount < 1) {
-            map.close();
-        }
+        map.close();
     }
 
     public void copyColumnMetadataFrom(CharSequence alias, RecordMetadata fromMetadata) {
@@ -171,10 +159,6 @@ public class JoinRecordMetadata extends AbstractRecordMetadata implements Closea
             }
         }
         return -1;
-    }
-
-    public void incrementRefCount() {
-        refCount++;
     }
 
     public void setTimestampIndex(int index) {

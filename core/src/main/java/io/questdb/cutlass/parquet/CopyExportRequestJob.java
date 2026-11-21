@@ -256,7 +256,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         } catch (Throwable th) {
             isFiberActive = false;
             try {
-                failLoadedRequest(th.getMessage());
+                failLoadedRequest(Misc.getMessageOrClassName(th));
             } catch (Throwable cleanupFailure) {
                 th = Misc.foldCleanupFailure(th, cleanupFailure);
             }
@@ -364,7 +364,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     failureStatus(circuitBreaker),
                     null,
                     Numbers.INT_NULL,
-                    e.getMessage(),
+                    Misc.getMessageOrClassName(e),
                     -1,
                     localTaskCopy.getTableName(),
                     localTaskCopy.getCopyID()
@@ -455,7 +455,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             try {
                 LOG.error().$("copy export Fiber failed [error=").$(th).I$();
                 if (isRequestLoaded) {
-                    failLoadedRequest(th.getMessage());
+                    failLoadedRequest(Misc.getMessageOrClassName(th));
                 }
             } finally {
                 isFiberActive = false;
@@ -525,7 +525,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
             transferFailure = Misc.foldCleanupFailure(transferFailure, th);
         }
         if (transferFailure != null) {
-            final CharSequence message = transferFailure.getMessage();
+            final CharSequence message = Misc.getMessageOrClassName(transferFailure);
             if (isRequestLoaded) {
                 try {
                     failLoadedRequest(message);

@@ -183,6 +183,23 @@ public class SimpleTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundFloorsToGridAnchoredAtStart() {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long hour = timestampDriver.fromHours(1);
+        final long day = timestampDriver.fromDays(1);
+        final SimpleTimestampSampler sampler = new SimpleTimestampSampler(day, timestampType.getTimestampType());
+        sampler.setStart(hour);
+        Assert.assertEquals(hour, sampler.round(hour));
+        Assert.assertEquals(hour, sampler.round(hour + day - 1));
+        Assert.assertEquals(hour + day, sampler.round(hour + day));
+        Assert.assertEquals(hour - day, sampler.round(0));
+        Assert.assertEquals(hour - day, sampler.round(hour - day));
+        Assert.assertEquals(hour - 2 * day, sampler.round(hour - day - 1));
+        Assert.assertEquals(hour - 2 * day, sampler.round(-day));
+        Assert.assertEquals(hour - 3 * day, sampler.round(-2 * day));
+    }
+
+    @Test
     public void testRoundMatchesFloor() throws NumericException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final String[] src = new String[]{

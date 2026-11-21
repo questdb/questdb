@@ -40,10 +40,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -67,11 +67,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinCondition,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         Map joinKeyMap = null;
         RecordChain slaveChain = null;
         try {
@@ -81,6 +81,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             slaveChain = new RecordChain(
                     slaveFactory.getMetadata(),
                     slaveChainSink,
+                    configuration.getSqlHashJoinLightValuePageSize(),
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
             );
@@ -139,7 +140,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash Join");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -184,6 +185,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final RecordChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private Record masterRecord;
         private long size = -1;
@@ -217,6 +219,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return false;
+            }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -250,7 +255,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 return size;
             }
             buildMapOfSlaveRecords();
-            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
+            return size = isMapEmpty ? 0 : computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
         }
 
         @Override
@@ -269,6 +274,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 

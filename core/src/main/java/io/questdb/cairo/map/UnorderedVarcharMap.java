@@ -556,6 +556,13 @@ public class UnorderedVarcharMap implements Map, Reopenable {
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            long heldBytes = memStart != 0 ? memLimit - memStart : 0;
+            if (batchEmptyValueStart != 0) {
+                heldBytes += valueSize;
+            }
+            Unsafe.chargeHeldMemory(heldBytes, memoryTag, tracker);
+        }
         this.memoryTracker = tracker;
         // Bind the key-byte arena too -- for a high-cardinality GROUP BY <varchar>
         // it holds the dominant allocation. setMemoryTracker() precedes reopen(), so

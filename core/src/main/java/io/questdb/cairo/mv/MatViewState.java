@@ -199,8 +199,6 @@ public class MatViewState implements QuietCloseable {
     // one facet succeeded before another allocation failed.
     private volatile int pendingTaskRetryFlags;
     // Protected by this.latch.
-    private long recordRowCopierMetadataVersion;
-    // Protected by this.latch.
     private RecordToRowCopier recordToRowCopier;
     // Protected by this.latch.
     // Base table txn that corresponds to refreshIntervals.
@@ -427,7 +425,6 @@ public class MatViewState implements QuietCloseable {
     public void returnRecordFactory(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
-            long recordRowCopierMetadataVersion,
             long expiryPolicyVersion
     ) {
         assert latch.get();
@@ -438,7 +435,6 @@ public class MatViewState implements QuietCloseable {
         cursorFactory = factory;
         cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
     }
 
     boolean claimPendingFullRefreshHandoff() {
@@ -695,10 +691,6 @@ public class MatViewState implements QuietCloseable {
 
     String getPendingInvalidationReason(Object marker) {
         return marker instanceof PendingInvalidation pending ? pending.reason : null;
-    }
-
-    public long getRecordRowCopierMetadataVersion() {
-        return recordRowCopierMetadataVersion;
     }
 
     public RecordToRowCopier getRecordToRowCopier() {
@@ -1014,7 +1006,6 @@ public class MatViewState implements QuietCloseable {
     public void rangeRefreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
-            long recordRowCopierMetadataVersion,
             long expiryPolicyVersion,
             long refreshFinishedTimestampUs,
             long refreshTriggeredTimestampUs,
@@ -1031,7 +1022,6 @@ public class MatViewState implements QuietCloseable {
         this.cursorFactory = factory;
         this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastPeriodHi = periodHi;
         telemetryFacade.store(
@@ -1117,7 +1107,6 @@ public class MatViewState implements QuietCloseable {
     public void refreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
-            long recordRowCopierMetadataVersion,
             long expiryPolicyVersion,
             long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
@@ -1136,7 +1125,6 @@ public class MatViewState implements QuietCloseable {
         this.cursorFactory = factory;
         this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;

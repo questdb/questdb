@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.model.ExpressionNode;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.IntStack;
 
 import java.util.ArrayDeque;
@@ -35,19 +35,24 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
 
     private final Deque<ExpressionNode> argStack = new ArrayDeque<>();
     private final IntStack argStackBottomStack = new IntStack();
-    private final Deque<IQueryModel> modelStack = new ArrayDeque<>();
+    private final Deque<QueryModel> modelStack = new ArrayDeque<>();
     // parseExpr() is reentrant; nested parses must not consume outer operands.
     private int argStackBottom;
-    private IQueryModel model;
-    // > 0 while parsing a join ON clause; blocks unsupported ON-clause sub-queries.
-    private int subQueryBlockDepth;
+    private QueryModel model;
+    // > 0 while parsing a join ON clause, which may be a bare value list but not a sub-query.
+    private int joinOnClauseDepth;
+
+    @Override
+    public boolean isValueListAllowed() {
+        return joinOnClauseDepth > 0;
+    }
 
     @Override
     public void onNode(ExpressionNode node) throws SqlException {
 
         if (node.type == ExpressionNode.QUERY && node.queryModel == null) {
             // this is a validation request
-            if (model == null || subQueryBlockDepth > 0) {
+            if (model == null || joinOnClauseDepth > 0) {
                 throw SqlException.$(node.position, "query is not allowed here");
             }
             return;
@@ -80,10 +85,10 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         return argStack.size() > argStackBottom ? argStack.poll() : null;
     }
 
-    void popArgStackBottom() {
+    void popJoinOnClause() {
         argStackBottom = argStackBottomStack.notEmpty() ? argStackBottomStack.pop() : 0;
-        if (subQueryBlockDepth > 0) {
-            subQueryBlockDepth--;
+        if (joinOnClauseDepth > 0) {
+            joinOnClauseDepth--;
         }
     }
 
@@ -93,15 +98,16 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
     }
 
     // Brackets a join ON-clause parse: raises the arg-stack floor so the reentrant parse
-    // cannot poll the enclosing expression's operands, and blocks ON-clause sub-queries
-    // (unsupported) even when an outer model is in scope. Leaves the current model in place.
-    void pushArgStackBottom() {
+    // cannot poll the enclosing expression's operands, allows a bare value list, and blocks
+    // ON-clause sub-queries (unsupported) even when an outer model is in scope. Leaves the
+    // current model in place.
+    void pushJoinOnClause() {
         argStackBottomStack.push(argStackBottom);
         argStackBottom = argStack.size();
-        subQueryBlockDepth++;
+        joinOnClauseDepth++;
     }
 
-    void pushModel(IQueryModel model) {
+    void pushModel(QueryModel model) {
         if (this.model != null) {
             modelStack.push(this.model);
         }
@@ -115,7 +121,7 @@ public final class ExpressionTreeBuilder implements ExpressionParserListener {
         argStackBottom = 0;
         argStackBottomStack.clear();
         modelStack.clear();
-        subQueryBlockDepth = 0;
+        joinOnClauseDepth = 0;
     }
 
     int size() {

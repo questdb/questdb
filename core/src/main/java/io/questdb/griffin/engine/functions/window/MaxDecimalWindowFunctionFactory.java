@@ -98,6 +98,11 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
     private static final String SIGNATURE = NAME + "(Ξ)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -182,6 +187,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL128_TYPES_LV : MAX_DECIMAL128_TYPES);
                     return new Decimal128MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal128MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL128_TYPES);
@@ -338,6 +344,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
                     return new Decimal16MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal16MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
@@ -494,6 +501,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL256_TYPES_LV : MAX_DECIMAL256_TYPES);
                     return new Decimal256MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal256MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL256_TYPES);
@@ -650,6 +658,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
                     return new Decimal32MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal32MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
@@ -806,6 +815,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
                     return new Decimal64MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal64MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);
@@ -962,6 +972,7 @@ public class MaxDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, liveView ? MAX_DECIMAL64_TYPES_LV : MAX_DECIMAL64_TYPES);
                     return new Decimal8MaxMinOverUnboundedPartitionRowsFrameFunction(map, partitionByRecord, partitionBySink, arg, comparator, name, argType, partitionByKeyTypes, liveView, configuration, accumulatorFamily);
                 } else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new Decimal8MaxMinOverCurrentRowFunction(arg, name, argType);
                 } else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {
                     Map map = MapFactory.createUnorderedMap(configuration, partitionByKeyTypes, MAX_DECIMAL64_TYPES);

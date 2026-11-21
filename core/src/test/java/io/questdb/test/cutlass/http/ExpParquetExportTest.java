@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.ActiveConnectionTracker;
 import io.questdb.cutlass.http.client.HttpClient;
@@ -39,6 +40,8 @@ import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
@@ -74,6 +77,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -989,8 +993,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("compression_codec", "gzip");
                     params.put("row_group_size", "500");
 
-                    Thread thread = startCancelThread(engine, sqlExecutionContext);
-                    thread.start();
+                    FutureTask<Void> cancel = startCancelThread(engine, sqlExecutionContext);
                     // With direct export (no temp table), data may start streaming before
                     // the cancel arrives, causing the server to disconnect.
                     try {
@@ -1002,7 +1005,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
                     }
-                    thread.join();
+                    cancel.get();
                 });
     }
 
@@ -1017,8 +1020,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     params.put("row_group_size", "500");
                     params.put("rmode", "nodelay");
 
-                    Thread thread = startCancelThread(engine, sqlExecutionContext);
-                    thread.start();
+                    FutureTask<Void> cancel = startCancelThread(engine, sqlExecutionContext);
                     String expectedError = "cancelled by user";
                     try {
                         testHttpClient.assertGetContains("/exp", expectedError, params);
@@ -1032,7 +1034,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                                 msg.contains("peer disconnect") || msg.contains("malformed chunk")
                         );
                     }
-                    thread.join();
+                    cancel.get();
                 });
     }
 
@@ -1707,6 +1709,52 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     // Verify data correctness
                     assertParquetExportDataCorrectness(engine, sqlExecutionContext, queries, queries.length, 99);
+                });
+    }
+
+    @Test
+    public void testParquetExportPageFrameBackedOverParquetPartitions() throws Exception {
+        getExportTesterPageFrame()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE pq_hybrid (ts TIMESTAMP, x LONG, sym SYMBOL, v VARCHAR, s STRING, b BINARY, arr DOUBLE[], d DOUBLE)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """, sqlExecutionContext);
+                    engine.execute("""
+                            INSERT INTO pq_hybrid
+                            SELECT
+                                timestamp_sequence('2024-01-01', 3_600_000_000L),
+                                x,
+                                rnd_symbol('a', 'b', 'c'),
+                                rnd_varchar(1, 20, 1),
+                                rnd_str(1, 10, 1),
+                                rnd_bin(1, 8, 1),
+                                rnd_double_array(1, 1),
+                                rnd_double(1)
+                            FROM long_sequence(100)
+                            """, sqlExecutionContext);
+                    drainWalQueue(engine);
+                    engine.execute("ALTER TABLE pq_hybrid CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-04'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE pq_hybrid ADD COLUMN y INT", sqlExecutionContext);
+                    engine.execute("INSERT INTO pq_hybrid (ts, x, y) VALUES ('2024-01-05T12:00:00.000000Z', 101, 7)", sqlExecutionContext);
+                    drainWalQueue(engine);
+
+                    final String tableQuery = "SELECT ts, x, x * 2 AS x2, sym, v, s, b, arr, d + 1 AS d1, y, y + 1 AS y1 FROM pq_hybrid";
+                    final String fileQuery = "SELECT x, x2 + 1 AS x3, v, sym, b, arr FROM read_parquet('pq_hybrid.parquet')";
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            TestHttpClient testHttpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        assertExportMode(compiler, sqlExecutionContext, tableQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+                        exportParquet(testHttpClient, sink, tableQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, tableQuery, "pq_hybrid.parquet");
+
+                        assertExportMode(compiler, sqlExecutionContext, fileQuery, ParquetExportMode.PAGE_FRAME_BACKED);
+                        exportParquet(testHttpClient, sink, fileQuery);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, fileQuery, "pq_hybrid_file.parquet");
+                    }
+                    assertParquetExportDataCorrectness(engine, sqlExecutionContext, new String[]{tableQuery, fileQuery}, 6, 50);
                 });
     }
 
@@ -2421,6 +2469,43 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportReportsExceptionWithoutMessage() throws Exception {
+        // a failure that carries no message reports its class rather than "null"
+        final AtomicBoolean isFailing = new AtomicBoolean(true);
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (isFailing.get() && path.toString().contains("zzz.copy.")) {
+                    throw new RuntimeException();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+        getExportTester()
+                .withFilesFacade(ff)
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE unnamed_failure AS (SELECT x FROM long_sequence(3))", sqlExecutionContext);
+                    final String query = "SELECT x, from_base64('QUJD') b FROM unnamed_failure";
+                    final CharSequenceObjHashMap<String> params = new CharSequenceObjHashMap<>();
+                    params.put("query", query);
+                    params.put("fmt", "parquet");
+                    testHttpClient.assertGet(
+                            "/exp",
+                            "{\"query\":\"" + query + "\",\"error\":\"java.lang.RuntimeException\",\"position\":0}",
+                            params,
+                            null,
+                            null
+                    );
+
+                    isFailing.set(false);
+                    try (TestHttpClient httpClient = new TestHttpClient(); var sink = new DirectUtf8Sink(16_384)) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "unnamed_failure.parquet");
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportResumability() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
@@ -2497,6 +2582,28 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
 
                     params.put("statistics_enabled", "false");
                     testHttpClient.assertGetParquet("/exp", 288, params, "SELECT * FROM statistics_test");
+                });
+    }
+
+    @Test
+    public void testParquetExportTempTableForComputedBinary() throws Exception {
+        // a computed BINARY column rides no page frame path, so the export materializes a temp table
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE computed_bin AS (SELECT x, timestamp_sequence(0, 1_000_000L) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    final String query = "SELECT x, from_base64('QUJD') b, ts FROM computed_bin";
+                    try (
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        assertExportMode(compiler, sqlExecutionContext, query, ParquetExportMode.TEMP_TABLE);
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "computed_bin.parquet");
+                    }
                 });
     }
 
@@ -2603,6 +2710,17 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                 });
     }
 
+    private static void assertExportMode(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedExportMode
+    ) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            Assert.assertEquals(query, expectedExportMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+        }
+    }
+
     private static void assertExpExplainRecompilesAfterConcurrentDdl(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -2658,37 +2776,34 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         }
     }
 
-    private static @NotNull Thread startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
-        return new Thread(() -> {
+    private static @NotNull FutureTask<Void> startCancelThread(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
+        FutureTask<Void> task = new FutureTask<>(() -> {
             try {
-                long copyID;
-                do {
-                    copyID = engine.getCopyExportContext().getActiveExportId();
-                } while (copyID == -1);
+                final long[] copyID = new long[1];
+                assertEventually(() -> {
+                    copyID[0] = engine.getCopyExportContext().getActiveExportId();
+                    Assert.assertNotEquals("export did not start", -1, copyID[0]);
+                });
                 Os.sleep(500);
 
                 StringSink sink = new StringSink();
-                Numbers.appendHex(sink, copyID, true);
+                Numbers.appendHex(sink, copyID[0], true);
                 String copyIDStr = sink.toString();
                 sink.clear();
                 sink.put("COPY '").put(copyIDStr).put("' CANCEL;");
-                try {
-                    new QueryAssertion(engine, sqlExecutionContext, () -> {
-                    }, sink.toString())
-                            .noLeakCheck()
-                            .returnsOnce("id\tstatus\n" +
-                                    copyIDStr + "\tcancelled\n");
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
-                // wait cancel finish
-                do {
-                    copyID = engine.getCopyExportContext().getActiveExportId();
-                } while (copyID != -1);
+                new QueryAssertion(engine, sqlExecutionContext, () -> {
+                }, sink.toString())
+                        .noLeakCheck()
+                        .returnsOnce("id\tstatus\n" +
+                                copyIDStr + "\tcancelled\n");
+                assertEventually(() -> Assert.assertEquals("export was not cancelled", -1, engine.getCopyExportContext().getActiveExportId()));
+                return null;
             } finally {
                 Path.clearThreadLocals();
             }
         });
+        new Thread(task).start();
+        return task;
     }
 
     private static HttpClient.ResponseHeaders startExport(

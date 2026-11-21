@@ -61,7 +61,7 @@ public class ExplicitTimestampJoinTest extends AbstractCairoTest {
     public void testCtasOverExplicitTimestampJoinMaster() throws Exception {
         // The hoisted timestamp is qualified as `<masterAlias>.ts`, which matches the join
         // metadata's timestamp column name and trips the entity shortcut in
-        // SqlCodeGenerator.generateSelectChoose. The outer projection is discarded, so CTAS
+        // ProjectionFactoryGenerator. The outer projection is discarded, so CTAS
         // sees the raw JoinRecordMetadata names and rejects them.
         assertMemoryLeak(() -> {
             createTables();

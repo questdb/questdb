@@ -47,6 +47,16 @@ import org.jetbrains.annotations.NotNull;
 public class FirstDecimalGroupByFunctionFactory implements FunctionFactory {
 
     @Override
+    public OrderDependence getOrderDependence() {
+        return OrderDependence.TABLE_ORDER;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "first(Ξ)";
     }

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.cast;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import org.junit.Test;
@@ -1350,25 +1351,25 @@ public class CastTest extends AbstractCairoTest {
     @Test
     public void testCharToNumbersException() throws Exception {
         assertQuery("select 'm'::byte")
-                .fails(0, "inconvertible value: m [CHAR -> BYTE]");
+                .fails(10, "inconvertible value: m [CHAR -> BYTE]");
         assertQuery("select 'm'::short")
-                .fails(0, "inconvertible value: m [CHAR -> SHORT]");
+                .fails(10, "inconvertible value: m [CHAR -> SHORT]");
         assertQuery("select 'm'::int")
-                .fails(0, "inconvertible value: m [CHAR -> INT]");
+                .fails(10, "inconvertible value: m [CHAR -> INT]");
         assertQuery("select 'm'::long")
-                .fails(0, "inconvertible value: m [CHAR -> LONG]");
+                .fails(10, "inconvertible value: m [CHAR -> LONG]");
         assertQuery("select 'm'::float")
-                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+                .fails(10, "inconvertible value: m [CHAR -> DOUBLE]");
         assertQuery("select 'm'::double")
-                .fails(0, "inconvertible value: m [CHAR -> DOUBLE]");
+                .fails(10, "inconvertible value: m [CHAR -> DOUBLE]");
         assertQuery("select 'm'::date - 1")
-                .fails(0, "inconvertible value: m [CHAR -> DATE]");
+                .fails(10, "inconvertible value: m [CHAR -> DATE]");
         assertQuery("select 'm'::timestamp - 1")
-                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP]");
+                .fails(10, "inconvertible value: m [CHAR -> TIMESTAMP]");
         assertQuery("select 'm'::timestamp_ns - 1")
-                .fails(0, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
+                .fails(10, "inconvertible value: m [CHAR -> TIMESTAMP_NS]");
         assertQuery("select 'm'::boolean")
-                .fails(0, "inconvertible value: m [CHAR -> BOOLEAN]");
+                .fails(10, "inconvertible value: m [CHAR -> BOOLEAN]");
     }
 
     @Test
@@ -1380,7 +1381,7 @@ public class CastTest extends AbstractCairoTest {
                 // ::FLOAT is the PostgreSQL spelling of DOUBLE; ::FLOAT4 reaches the FLOAT cast
                 final String castType = "FLOAT".equals(type) ? "FLOAT4" : type;
                 final String error = "inconvertible value: İ [CHAR -> " + type + "]";
-                assertQuery("SELECT 'İ'::" + castType).noLeakCheck().fails(0, error);
+                assertQuery("SELECT 'İ'::" + castType).noLeakCheck().fails(10, error);
                 assertQuery("SELECT c::" + castType + " FROM chars").noLeakCheck().fails(-1, error);
                 execute("CREATE TABLE target_" + type + " (v " + type + ")");
                 assertQuery("INSERT INTO target_" + type + " SELECT c FROM chars")
@@ -3955,6 +3956,83 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLong256ToDoubleAndFloat() throws Exception {
+        // Expected values: java.math.BigInteger#doubleValue() and #floatValue() of the unsigned value. A FLOAT past
+        // the largest float is infinite, which reads as NULL, and x::FLOAT casts to DOUBLE, as in PostgreSQL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (id INT, a LONG256)");
+            execute("""
+                    INSERT INTO tab VALUES
+                        (1, NULL),
+                        (2, '0x00'),
+                        (3, '0x2a'),
+                        (4, '0x7fffffffffffffff'),
+                        (5, '0x8000000000000000'),
+                        (6, '0xffffffffffffffff'),
+                        (7, '0x010000000000000800'),
+                        (8, '0x010000000000000801'),
+                        (9, '0x010000010000000000'),
+                        (10, '0x010000010000000001'),
+                        (11, '0x80000000000004000000000000000000'),
+                        (12, '0x80000000000004000000000000000001'),
+                        (13, '0x0100000000000008000000000000000000'),
+                        (14, '0x0100000000000008000000000000000001'),
+                        (15, '0xffffff7fffffffffffffffffffffffff'),
+                        (16, '0xffffff80000000000000000000000000'),
+                        (17, '0x01000000000000080000000000000000000000000000000000'),
+                        (18, '0x01000000000000080000000000000000000000000000000001'),
+                        (19, '0x0100000000000000000000000000000000000000000000000000000000000007'),
+                        (20, '0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')
+                    """);
+            assertQuery("SELECT id, a::DOUBLE d, CAST(a AS DOUBLE) cd, CAST(a AS FLOAT) f, a::FLOAT pf FROM tab ORDER BY id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\td\tcd\tf\tpf
+                            1\tnull\tnull\tnull\tnull
+                            2\t0.0\t0.0\t0.0\t0.0
+                            3\t42.0\t42.0\t42.0\t42.0
+                            4\t9.223372036854776E18\t9.223372036854776E18\t9.223372E18\t9.223372036854776E18
+                            5\t9.223372036854776E18\t9.223372036854776E18\t9.223372E18\t9.223372036854776E18
+                            6\t1.8446744073709552E19\t1.8446744073709552E19\t1.8446744E19\t1.8446744073709552E19
+                            7\t1.8446744073709552E19\t1.8446744073709552E19\t1.8446744E19\t1.8446744073709552E19
+                            8\t1.8446744073709556E19\t1.8446744073709556E19\t1.8446744E19\t1.8446744073709556E19
+                            9\t1.844674517322118E19\t1.844674517322118E19\t1.8446744E19\t1.844674517322118E19
+                            10\t1.844674517322118E19\t1.844674517322118E19\t1.8446746E19\t1.844674517322118E19
+                            11\t1.7014118346046923E38\t1.7014118346046923E38\t1.7014118E38\t1.7014118346046923E38
+                            12\t1.7014118346046927E38\t1.7014118346046927E38\t1.7014118E38\t1.7014118346046927E38
+                            13\t3.402823669209385E38\t3.402823669209385E38\tnull\t3.402823669209385E38
+                            14\t3.4028236692093854E38\t3.4028236692093854E38\tnull\t3.4028236692093854E38
+                            15\t3.4028235677973366E38\t3.4028235677973366E38\t3.4028235E38\t3.4028235677973366E38
+                            16\t3.4028235677973366E38\t3.4028235677973366E38\tnull\t3.4028235677973366E38
+                            17\t6.277101735386681E57\t6.277101735386681E57\tnull\t6.277101735386681E57
+                            18\t6.277101735386682E57\t6.277101735386682E57\tnull\t6.277101735386682E57
+                            19\t4.523128485832664E74\t4.523128485832664E74\tnull\t4.523128485832664E74
+                            20\t1.157920892373162E77\t1.157920892373162E77\tnull\t1.157920892373162E77
+                            """);
+            assertQuery("SELECT 0x2a::LONG256::DOUBLE d, CAST(0x2a::LONG256 AS FLOAT) f, NULL::LONG256::DOUBLE dn, CAST(NULL::LONG256 AS FLOAT) fn, " +
+                    "'0x8000000000000000'::LONG256::DOUBLE dh, '0x010000000000000801'::LONG256::DOUBLE ds, CAST('0x010000010000000001'::LONG256 AS FLOAT) fs")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf\tdn\tfn\tdh\tds\tfs
+                            42.0\t42.0\tnull\tnull\t9.223372036854776E18\t1.8446744073709556E19\t1.8446746E19
+                            """);
+            bindVariableService.clear();
+            bindVariableService.setLong256(0, 0x801, 1, 0, 0);
+            bindVariableService.setLong256(1, 1L << 40 | 1, 1, 0, 0);
+            bindVariableService.setLong256(2, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+            assertQuery("SELECT $1::DOUBLE d, CAST($2 AS FLOAT) f, $3::DOUBLE dn, CAST($3 AS FLOAT) fn")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            d\tf\tdn\tfn
+                            1.8446744073709556E19\t1.8446746E19\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testLong256ToInt() throws Exception {
         assertQuery("select a from tab")
                 .ddl("create table tab (a int)")
@@ -5214,6 +5292,23 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrToBinary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (s STRING)");
+            assertExceptionNoLeakCheck("SELECT CAST('payload' AS BINARY)", 25, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT s::BINARY FROM tab", 10, "unsupported cast");
+            assertExceptionNoLeakCheck("SELECT 'a'::VARCHAR::BINARY", 21, "unsupported cast");
+            assertQuery("SELECT CAST(NULL::STRING AS BINARY) b")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b
+                            
+                            """);
+        });
+    }
+
+    @Test
     public void testStrToBoolean() throws Exception {
         assertQuery("select boolean from tab")
                 .ddl("create table tab as (" +
@@ -5626,6 +5721,20 @@ public class CastTest extends AbstractCairoTest {
                         1259\tpg_class
                         1259\tpg_class
                         """);
+    }
+
+    @Test
+    public void testStringRegClassNull() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT null::string::regclass s, null::varchar::regclass v, null::symbol::regclass sy, null::char::regclass c,
+                    'pg_class'::regclass k
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        s\tv\tsy\tc\tk
+                        null\tnull\tnull\tnull\t1259
+                        """));
     }
 
     @Test

@@ -38,6 +38,11 @@ public class JsonExtractVarcharFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = JsonExtractSupportingState.EXTRACT_FUNCTION_NAME + "(ØØ)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

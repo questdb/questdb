@@ -34,6 +34,47 @@ import org.junit.Test;
 public class ObjListTest {
 
     @Test
+    public void testClearCostFollowsSlotsInUse() {
+        final ObjList<Object> list = new ObjList<>(1_000_000);
+        final Object value = new Object();
+        final long start = System.nanoTime();
+        for (int i = 0; i < 20_000; i++) {
+            list.add(value);
+            list.clear();
+        }
+        final long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        Assert.assertTrue("clear() must not wipe unused capacity", elapsedMillis < 500);
+    }
+
+    @Test
+    public void testClearReleasesSlotsPastSize() {
+        final Object value = new Object();
+        final ObjList<Object> shrunk = new ObjList<>();
+        for (int i = 0; i < 32; i++) {
+            shrunk.add(value);
+        }
+        shrunk.setPos(4);
+        shrunk.clear();
+        Assert.assertTrue("slots past a shrunk size must be cleared", shrunk.hasOnlyNullsBeyondSizeForTesting());
+        shrunk.setPos(32);
+        for (int i = 0; i < 32; i++) {
+            Assert.assertNull(shrunk.getQuick(i));
+        }
+
+        final ObjList<Object> setPastSize = new ObjList<>();
+        setPastSize.add(value);
+        setPastSize.set(12, value);
+        setPastSize.set(5, 10, value);
+        setPastSize.clear();
+        Assert.assertTrue("slots set past the size must be cleared", setPastSize.hasOnlyNullsBeyondSizeForTesting());
+
+        final ObjList<Object> setAll = new ObjList<>();
+        setAll.setAll(2, value);
+        setAll.clear();
+        Assert.assertTrue("slots setAll() filled past the size must be cleared", setAll.hasOnlyNullsBeyondSizeForTesting());
+    }
+
+    @Test
     public void testContains() {
         Assert.assertTrue(list("a", "b", "c").contains("a"));
         Assert.assertTrue(list("a", "b", "c").contains("b"));
@@ -86,6 +127,43 @@ public class ObjListTest {
 
         Assert.assertEquals(16, list.size());
         Assert.assertTrue("removed backing slots must be cleared", list.hasOnlyNullsBeyondSizeForTesting());
+    }
+
+    @Test
+    public void testZeroCapacityBulkGrowth() {
+        final ObjList<String> inserted = new ObjList<>(0);
+        inserted.insert(0, 2, "a");
+        Assert.assertEquals(list("a", "a"), inserted);
+
+        final ObjList<String> copied = new ObjList<>(0);
+        copied.addAll(inserted);
+        copied.extendAndSet(3, "b");
+        Assert.assertEquals(list("a", "a", null, "b"), copied);
+
+        final ObjList<String> positioned = new ObjList<>(0);
+        positioned.setPos(2);
+        positioned.setQuick(1, "c");
+        Assert.assertEquals(list(null, "c"), positioned);
+    }
+
+    @Test
+    public void testZeroCapacityGrowthAndReuse() {
+        final ObjList<String> first = new ObjList<>(0);
+        final ObjList<String> second = new ObjList<>(0);
+        first.clear();
+        Assert.assertNull(first.getLast());
+        for (int i = 0; i < 64; i++) {
+            first.add(Integer.toString(i));
+        }
+        second.add("other");
+        Assert.assertEquals(64, first.size());
+        for (int i = 0; i < first.size(); i++) {
+            Assert.assertEquals(Integer.toString(i), first.getQuick(i));
+        }
+        first.clear();
+        first.add("reused");
+        Assert.assertEquals(list("reused"), first);
+        Assert.assertEquals(list("other"), second);
     }
 
     private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {

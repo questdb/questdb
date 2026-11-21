@@ -287,8 +287,9 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleInterpolateRandomAccessConsistency() throws Exception {
+        // the second union branch starts at the first observation, so no row precedes the bucket grid
         assertQuery("select b, max(a), k from " +
-                " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
+                " (x where b = 'PEHN' union all x where b = 'VTJW' and k >= '1970-01-03T00:18' ) timestamp(k)" +
                 "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
                 .ddl("create table x as " +
                         "(" +

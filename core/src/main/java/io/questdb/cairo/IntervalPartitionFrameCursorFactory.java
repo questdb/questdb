@@ -25,7 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursor;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,7 +36,6 @@ import io.questdb.std.Misc;
 public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameCursorFactory {
     private final int baseOrder;
     private final RuntimeIntrinsicIntervalModel intervalModel;
-    private final int timestampIndex;
     private IntervalBwdPartitionFrameCursor bwdCursor;
     private IntervalFwdPartitionFrameCursor fwdCursor;
 
@@ -44,15 +43,13 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
             TableToken tableToken,
             long metadataVersion,
             RuntimeIntrinsicIntervalModel intervalModel,
-            int timestampIndex,
-            RecordMetadata metadata,
+            TableDescriptor table,
             int baseOrder,
             String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
-        super(tableToken, metadataVersion, metadata, viewName, viewPosition, updateQuery);
-        this.timestampIndex = timestampIndex;
+        super(tableToken, metadataVersion, table, viewName, viewPosition, updateQuery);
         this.intervalModel = intervalModel;
         this.baseOrder = baseOrder;
     }
@@ -70,7 +67,8 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         authorizeSelect(executionContext, columnIndexes);
         final TableReader reader = getReader(executionContext);
         try {
-            reader.setActiveColumns(columnIndexes);
+            final int timestampIndex = getTableDescriptor().getTimestampIndex();
+            reader.setActiveColumns(columnIndexes, timestampIndex);
             if (order == ORDER_ASC || ((order == ORDER_ANY || order < 0) && baseOrder != ORDER_DESC)) {
                 if (fwdCursor == null) {
                     fwdCursor = new IntervalFwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
@@ -98,13 +96,6 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
     @Override
     public boolean isNonDeterministic() {
         return intervalModel.isNonDeterministic();
-    }
-
-    // Compose the weaker within-execution property separately so execution-scoped bounds can
-    // remain stable even when they are non-deterministic across executions.
-    @Override
-    public boolean isStableWithinExecution() {
-        return intervalModel.isStableWithinExecution();
     }
 
     @Override

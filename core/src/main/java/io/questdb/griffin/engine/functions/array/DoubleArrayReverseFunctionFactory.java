@@ -47,6 +47,11 @@ public class DoubleArrayReverseFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_reverse";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
     }
@@ -104,8 +109,8 @@ public class DoubleArrayReverseFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(array);
+            UnaryFunction.super.close();
         }
 
         @Override

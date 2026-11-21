@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -46,6 +47,11 @@ public class CastBooleanToSymbolFunctionFactory implements FunctionFactory {
     // below answers the same way; the two have to agree, because a caller resolving keys off the
     // view compares them against what the function itself returns.
     private static final ObjList<CharSequence> SYMBOLS = new ObjList<>();
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
 
     @Override
     public String getSignature() {

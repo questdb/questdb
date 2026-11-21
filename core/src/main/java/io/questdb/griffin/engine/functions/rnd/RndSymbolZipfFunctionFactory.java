@@ -47,6 +47,11 @@ import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
 
 public class RndSymbolZipfFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
+
+    @Override
     public String getSignature() {
         return "rnd_symbol_zipf(V)";
     }

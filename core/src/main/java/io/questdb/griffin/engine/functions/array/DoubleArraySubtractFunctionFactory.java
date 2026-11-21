@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.WeakDimsArrayFunction;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -45,6 +46,11 @@ import io.questdb.std.Transient;
 
 public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
     private static final String OPERATOR_NAME = "-";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.doubleArrayBroadcast(argTypes.getQuick(0), argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {
@@ -87,21 +93,17 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
             this.rightArg = rightArg;
             this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
-            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
-            if (dimsLeft > 0 && dimsRight > 0) {
-                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+            this.type = ResultTypes.doubleArrayBroadcast(leftArg.getType(), rightArg.getType());
+            if (!ColumnType.isArrayWithWeakDims(type)) {
                 arrayOut.setType(type);
-            } else {
-                this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
             }
             this.position = position;
         }
 
         @Override
         public void close() {
-            BinaryFunction.super.close();
             Misc.free(arrayOut);
+            BinaryFunction.super.close();
         }
 
         @Override
@@ -167,13 +169,17 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
-            // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
-            arrayOut.setType(type);
-
-            validateAssignedType();
+            // so that the number of dimensions is only available at init() time;
+            // a NULL bind var keeps weak dimensionality
+            final int dims = Math.max(
+                    ColumnType.decodeWeakArrayDimensionality(leftArg.getType()),
+                    ColumnType.decodeWeakArrayDimensionality(rightArg.getType())
+            );
+            if (dims > 0) {
+                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, dims);
+                arrayOut.setType(type);
+                validateAssignedType();
+            }
         }
 
         @Override

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
@@ -149,6 +150,35 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
                             TestUtils.assertFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
                             assertQueryBreaches(factory, sqlExecutionContext);
                         }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSharedSymbolKeyBreachReleasesKeyChecks() throws Exception {
+        // Two master SYMBOL columns keyed against one slave column give the join a key check over symbols, which is
+        // not thread-safe, so every worker owns a clone of it. A tiny limit breaches during the reduce on every drain;
+        // assertMemoryLeak proves that the owner and every worker clone are freed.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        createSharedKeyTables(engine, sqlExecutionContext, 100, 1_000);
+                        final String single = "SELECT t.sym, array_agg(p.price) FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.sym = p.sym AND t.sym2 = p.sym) RANGE FROM -2s TO 2s STEP 1s AS h";
+                        final String multi = "SELECT t.sym, array_agg(p.price), array_agg(q.price) FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.sym = p.sym AND t.sym2 = p.sym) "
+                                + "HORIZON JOIN prices q ON (t.sym2 = q.sym AND t.sym = q.sym) RANGE FROM -2s TO 2s STEP 1s AS h";
+                        final String projection = "SELECT t.ts, h.offset, p.price FROM trades t "
+                                + "HORIZON JOIN prices p ON (t.sym = p.sym AND t.sym2 = p.sym) LIST (-1s, 0s, 1s) AS h";
+                        assertSharedKeyBreaches(compiler, sqlExecutionContext, single, AsyncHorizonJoinRecordCursorFactory.class);
+                        assertSharedKeyBreaches(compiler, sqlExecutionContext, multi, AsyncMultiHorizonJoinRecordCursorFactory.class);
+                        assertSharedKeyBreaches(compiler, sqlExecutionContext, projection, AsyncHorizonJoinProjectionRecordCursorFactory.class);
                     },
                     configuration,
                     LOG
@@ -960,6 +990,20 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSharedKeyBreaches(
+            SqlCompiler compiler,
+            SqlExecutionContext ctx,
+            String query,
+            Class<?> factoryClass
+    ) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+            TestUtils.assertFactoryInTree(factory, factoryClass);
+            for (int i = 0; i < 3; i++) {
+                assertQueryBreaches(factory, ctx);
+            }
+        }
+    }
+
     private static void createHighCardinalityTables(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx) throws Exception {
         engine.execute(
                 "CREATE TABLE trades (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -1030,6 +1074,33 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         // Prices 0.1s apart so each horizon point finds an ASOF match.
         engine.execute(
                 "INSERT INTO prices SELECT (x * 100_000)::timestamp, (x % " + symbols + ")::symbol, x::double FROM long_sequence(" + rows + ")",
+                ctx
+        );
+    }
+
+    private static void createSharedKeyTables(io.questdb.cairo.CairoEngine engine, SqlExecutionContext ctx, int tradeRows, int priceRows) throws Exception {
+        engine.execute(
+                "CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        // sym2 differs from sym on every third trade, and both are NULL on every seventh.
+        engine.execute(
+                """
+                        INSERT INTO trades SELECT
+                            (x * 1_000_000)::timestamp,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE (x % 8)::symbol END,
+                            CASE WHEN x % 7 = 0 THEN NULL WHEN x % 3 = 0 THEN ((x + 1) % 8)::symbol ELSE (x % 8)::symbol END
+                        FROM long_sequence(""" + tradeRows + ")",
+                ctx
+        );
+        engine.execute(
+                "CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY",
+                ctx
+        );
+        // Prices 0.1s apart, every eleventh with a NULL symbol.
+        engine.execute(
+                "INSERT INTO prices SELECT (x * 100_000)::timestamp, CASE WHEN x % 11 = 0 THEN NULL ELSE (x % 8)::symbol END, x::double "
+                        + "FROM long_sequence(" + priceRows + ")",
                 ctx
         );
     }

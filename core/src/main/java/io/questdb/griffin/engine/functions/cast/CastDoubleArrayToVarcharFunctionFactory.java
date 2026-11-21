@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.NoopArrayWriteState;
@@ -40,6 +41,11 @@ import io.questdb.std.str.Utf8StringSink;
 import org.jetbrains.annotations.Nullable;
 
 public class CastDoubleArrayToVarcharFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.VARCHAR;
+    }
+
     @Override
     public String getSignature() {
         return "cast(D[]ø)";

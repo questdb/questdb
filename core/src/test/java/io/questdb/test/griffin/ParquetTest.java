@@ -492,8 +492,7 @@ public class ParquetTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [count]
+                            SelectedRecord
                                 Async Group By workers: 1
                                   keys: [column]
                                   keyFunctions: [3]

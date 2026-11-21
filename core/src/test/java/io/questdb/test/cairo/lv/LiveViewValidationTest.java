@@ -513,11 +513,11 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     @Test
     public void testExplainCreateLiveViewPlanMatchesTheRealCreate() throws Exception {
         // A plan is only useful if it is the plan the real CREATE compiles. Every
-        // isLiveViewCompile() consumer sits in the code generator - here, WhereClauseParser's
-        // useIndexedSymbolFilters, which a live view must suppress: its refresh reads raw WAL
-        // segments, which carry no symbol index. Arming the flag only around optimiser.optimise()
-        // left it false at codegen, so EXPLAIN printed an "Index forward scan" that the real
-        // CREATE never generates.
+        // isLiveViewCompile() consumer that matters here sits in the code generator:
+        // ScanFactoryGenerator skips indexed-symbol key extraction, which a live view must
+        // suppress because its refresh reads raw WAL segments, which carry no symbol index. With
+        // the flag unarmed at code generation, EXPLAIN would print an "Index forward scan" that
+        // the real CREATE never generates.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String body = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS "
@@ -753,6 +753,16 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             assertLiveViewCreateRejected("SELECT ts, x, now() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "now");
             assertLiveViewCreateRejected("SELECT ts, x, systimestamp() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "systimestamp");
             assertLiveViewCreateRejected("SELECT ts, x, sysdate() AS r, count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base", "sysdate");
+        });
+    }
+
+    @Test
+    public void testRejectNonDeterministicFunctionInTableFunctionArg() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final String frame = "count(*) OVER (PARTITION BY x ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn FROM base CROSS JOIN ";
+            assertLiveViewCreateRejected("SELECT ts, x, generate_series, " + frame + "generate_series(now(), now(), 1)", "now");
+            assertLiveViewCreateRejected("SELECT ts, x, " + frame + "generate_series(now_ns(), now_ns(), 1)", "now_ns");
         });
     }
 

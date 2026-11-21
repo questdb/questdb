@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -36,6 +37,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastCharToSymbolFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
+
     @Override
     public String getSignature() {
         return "cast(Ak)";
@@ -49,7 +55,7 @@ public class CastCharToSymbolFunctionFactory implements FunctionFactory {
             if (value == 0) {
                 return SymbolConstant.NULL;
             }
-            return SymbolConstant.newInstance(Chars.toString(value));
+            return SymbolConstant.fromValue(Chars.toString(value));
         }
         return new Func(arg);
     }

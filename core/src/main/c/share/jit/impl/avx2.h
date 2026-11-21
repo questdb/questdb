@@ -255,6 +255,13 @@ namespace questdb::avx2 {
         return dst;
     }
 
+    // ~lhs & rhs.
+    inline Vec mask_andn(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Vec dst = c.new_ymm();
+        c.vpandn(dst, lhs, rhs);
+        return dst;
+    }
+
     inline Vec mask_or(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Vec dst = c.new_ymm();
         c.vpor(dst, lhs, rhs);
@@ -451,6 +458,65 @@ namespace questdb::avx2 {
             }
             default:
                 return cmp_ge(c, type, rhs, lhs, null_check);
+        }
+    }
+
+    inline Vec cmp_not_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+        switch (type) {
+            case data_type_t::f32: {
+                Vec eq = cmp_eq_float(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmpps(dst, lhs, rhs, CmpImm::kNLT);
+                return mask_or(c, dst, eq);
+            }
+            case data_type_t::f64: {
+                Vec eq = cmp_eq_double(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmppd(dst, lhs, rhs, CmpImm::kNLT);
+                return mask_or(c, dst, eq);
+            }
+            default: {
+                Vec mask = mask_not(c, cmp_lt(c, type, lhs, rhs));
+                if (!is_check_for_null(type, null_check)) {
+                    return mask;
+                }
+                return mask_or(c, mask, nulls_mask(c, type, lhs, rhs));
+            }
+        }
+    }
+
+    inline Vec cmp_not_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+        return cmp_not_lt(c, type, rhs, lhs, null_check);
+    }
+
+    inline Vec cmp_not_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check);
+
+    inline Vec cmp_not_ge(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+        switch (type) {
+            case data_type_t::f32:
+            case data_type_t::f64:
+                return cmp_not_le(c, type, rhs, lhs, null_check);
+            default:
+                return mask_or(c, cmp_lt(c, type, lhs, rhs), xor_nulls_mask(c, type, lhs, rhs));
+        }
+    }
+
+    inline Vec cmp_not_le(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
+        switch (type) {
+            case data_type_t::f32: {
+                Vec eq = cmp_eq_float(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kNLE);
+                return mask_andn(c, eq, dst);
+            }
+            case data_type_t::f64: {
+                Vec eq = cmp_eq_double(c, type, lhs, rhs);
+                Vec dst = c.new_ymm();
+                c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kNLE);
+                return mask_andn(c, eq, dst);
+            }
+            default:
+                return cmp_not_ge(c, type, rhs, lhs, null_check);
         }
     }
 

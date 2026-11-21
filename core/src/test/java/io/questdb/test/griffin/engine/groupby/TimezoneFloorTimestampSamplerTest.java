@@ -128,13 +128,46 @@ public class TimezoneFloorTimestampSamplerTest {
     }
 
     @Test
+    public void testNextTimestampDayBerlinWithOffsetAcrossDst() throws Exception {
+        // OFFSET '02:00' puts the local grid line in the spring-forward gap and in
+        // the fall-back overlap. The walk steps through timestamp_floor_utc's
+        // buckets: Mar 28 starts at 01:00Z (03:00 CEST), and Oct 31 starts at the
+        // first 02:00 (00:00Z, CEST) and lasts 25 hours.
+        final TimestampDriver driver = timestampType.getDriver();
+        final TimezoneFloorTimestampSampler wrap = wrap(driver, driver.getTimestampSampler(1, 'd', 0), "Europe/Berlin", 'd');
+        wrap.setOffset(driver.fromHours(2));
+        final String[] buckets = {
+                "2021-03-26T01:00:00.000000Z",
+                "2021-03-27T01:00:00.000000Z",
+                "2021-03-28T01:00:00.000000Z",
+                "2021-03-29T00:00:00.000000Z",
+                "2021-03-30T00:00:00.000000Z",
+        };
+        final String[] fallBackBuckets = {
+                "2021-10-29T00:00:00.000000Z",
+                "2021-10-30T00:00:00.000000Z",
+                "2021-10-31T00:00:00.000000Z",
+                "2021-11-01T01:00:00.000000Z",
+                "2021-11-02T01:00:00.000000Z",
+        };
+        for (String[] walk : new String[][]{buckets, fallBackBuckets}) {
+            long ts = driver.parseFloorLiteral(walk[0]);
+            Assert.assertEquals(ts, wrap.round(ts));
+            for (int i = 1; i < walk.length; i++) {
+                ts = wrap.nextTimestamp(ts);
+                Assert.assertEquals(walk[i], driver.parseFloorLiteral(walk[i]), ts);
+                Assert.assertEquals(walk[i], ts, wrap.round(ts));
+            }
+        }
+    }
+
+    @Test
     public void testNextTimestampMonthBerlinAcrossDst() throws Exception {
         // Local-month grid: Mar starts in CET (+1h), Apr starts in CEST
         // (+2h) after spring-forward, Oct starts in CEST, Nov starts in
-        // CET after fall-back. The wrap forwards each utcTimestamp + tzOff
-        // to MonthTimestampMicrosSampler, which advances by stepMonths in
-        // local space, then offsetFlooredUtcResult re-derives the UTC
-        // label using the offset at the post-floor local instant.
+        // CET after fall-back. The wrapped MonthTimestampMicrosSampler
+        // advances by stepMonths in local space, and each grid line
+        // converts back with the offset in effect at the line.
         assertWalk('M', 1, "Europe/Berlin",
                 "2023-12-31T23:00:00.000000Z",
                 new String[]{

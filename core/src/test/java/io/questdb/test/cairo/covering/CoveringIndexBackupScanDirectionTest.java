@@ -36,7 +36,7 @@ import org.junit.Test;
  * <p>
  * The two delegates need not agree. The covering scan is row-id ordered, so on its own it is
  * ascending by designated timestamp; the WHERE IN-list backup is a
- * {@code FilterOnValuesRecordCursorFactory}, which under {@code ORDER_BY_INVARIANT} drains one
+ * {@code FilterOnValuesRecordCursorFactory}, which under a key-by-key index order drains one
  * per-key cursor after another and so emits by key, not by row id. Codegen elides an ORDER BY on
  * the designated timestamp from whatever the factory answers here, at compile time, before either
  * delegate is chosen -- so answering FORWARD for the pair would silently return key-grouped rows
@@ -60,14 +60,27 @@ public class CoveringIndexBackupScanDirectionTest extends AbstractCairoTest {
 
     @Test
     public void testBackupOrderingByKeyMakesThePairUnordered() throws Exception {
-        // ORDER BY on the key column, not the timestamp: the IN-list backup takes its sequential
-        // cursor and emits per key. The covering delegate would still be FORWARD, so the pair has
-        // to answer OTHER.
+        // An aggregate without keys: the IN-list backup reads key by key within each page frame
+        // and emits per key. The covering delegate would still be FORWARD, so the pair has to
+        // answer OTHER.
         assertMemoryLeak(() -> {
             createTopTable("t_sd_other");
             assertScanDirection(
-                    "SELECT ts, sym, val FROM t_sd_other WHERE sym IN (null, 'A') ORDER BY sym",
+                    "SELECT max(val) FROM t_sd_other WHERE sym IN (null, 'A')",
                     RecordCursorFactory.SCAN_DIRECTION_OTHER
+            );
+        });
+    }
+
+    @Test
+    public void testBackupOrderingByTableKeepsThePairForward() throws Exception {
+        // ORDER BY on the key column, not the timestamp: the sort re-orders the rows, so the IN-list
+        // backup merges the keys of each page frame in table order, and both delegates are FORWARD.
+        assertMemoryLeak(() -> {
+            createTopTable("t_sd_table");
+            assertScanDirection(
+                    "SELECT ts, sym, val FROM t_sd_table WHERE sym IN (null, 'A') ORDER BY sym",
+                    RecordCursorFactory.SCAN_DIRECTION_FORWARD
             );
         });
     }

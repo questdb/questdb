@@ -198,7 +198,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );
@@ -230,7 +230,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );
@@ -262,7 +262,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );
@@ -293,7 +293,7 @@ public class ArgMaxDoubleDoubleGroupByFunctionFactoryTest extends AbstractCairoT
                         TestUtils.assertSqlCursors(
                                 engine,
                                 sqlExecutionContext,
-                                sql,
+                                ArgMinMaxTestUtils.ARG_MAX_ORACLE,
                                 sql,
                                 LOG
                         );

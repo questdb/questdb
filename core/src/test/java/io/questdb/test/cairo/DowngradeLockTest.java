@@ -493,7 +493,7 @@ public class DowngradeLockTest extends AbstractCairoTest {
             final boolean composite = ColumnType.isCompositeStorageVersion(v);
             final boolean delta = ColumnType.isDeltaStorageVersion(v);
             final boolean locked = ColumnType.isDowngradeLockedStorageVersion(v);
-            if (v == ColumnType.VERSION || v > ColumnType.MIGRATION_VERSION - 1) {
+            if (v == ColumnType.VERSION || v >= ColumnType.COMPOSITE_STORAGE_VERSION) {
                 Assert.assertEquals(v, ColumnType.storageVersion(composite, delta, locked));
             } else {
                 // Migration-step numbers in between carry no marker.

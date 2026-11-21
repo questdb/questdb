@@ -33,12 +33,10 @@ import org.junit.Test;
 
 /**
  * Row-level coverage for the paths where
- * {@link io.questdb.griffin.WhereClauseParser#analyzeMonotonicTimestamp} compiles a scalar
- * sub-query bound and then DECLINES to prune. The speculative compile consumes the sub-query's
- * own model (its WHERE clause is extracted into intrinsics and cleared), so unless the model is
- * restored, the residual filter re-generates the sub-query from a consumed model and silently
- * loses the sub-query's WHERE - the outer query then filters against the wrong bound and drops
- * qualifying rows.
+ * {@code IntervalExtractor#intersectMonotonicRange} compiles a scalar sub-query bound and then
+ * DECLINES to prune. The retained residual filter adopts the declined bound
+ * ({@code parkDeclinedBound}); if it evaluated a sub-query that lost its own WHERE, the outer
+ * query would filter against the wrong bound and drop qualifying rows.
  *
  * <p>Every test pairs the designated-timestamp query (which takes the monotonic-timestamp path)
  * with the same predicate over a NON-designated timestamp column (which does not), so the two
@@ -53,10 +51,9 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
             "(SELECT lo FROM bi WHERE sym = 'X' ORDER BY lo DESC LIMIT 1)";
 
     // A bare designated-timestamp column BETWEEN a sub-query and a non-constant function never
-    // reaches analyzeMonotonicTimestamp: analyzeBetween0() translates the lo bound through
-    // translateBetweenToTimestampModel(), which compiles the sub-query, and only then does the hi
-    // bound (a column expression, neither constant nor runtime-constant) fail the translation. The
-    // BETWEEN node survives into the residual, which must still see the sub-query's own WHERE.
+    // reaches intersectMonotonicRange(): IntervalExtractor.intersectBetween() rejects the hi bound
+    // (a column expression, neither constant nor runtime-constant). The BETWEEN node survives into
+    // the residual, which must still see the sub-query's own WHERE.
     @Test
     public void testDeclinedBareColumnBetweenKeepsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -95,8 +92,8 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
         });
     }
 
-    // resolveScalarBound() compiles the sub-query before it discovers the cursor does not return a
-    // single TIMESTAMP column (BOUND_FAIL). That decline never reaches a result set: the residual
+    // A sub-query that does not return a single TIMESTAMP column is not a scalar bound
+    // (IntervalExtractor.isTimestampCursor()). That decline never reaches a result set: the residual
     // filter cannot compare a TIMESTAMP expression with a non-timestamp scalar sub-query, so the
     // query fails to compile whether or not it took the monotonic-timestamp path.
     @Test
@@ -113,7 +110,8 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
     }
 
     // timestamp_ceil('M', ...) has no arithmetic inverse (month buckets are not epoch-aligned), so
-    // foldInvertProbe() grades the chain NONE and pruning is declined AFTER the bound was compiled.
+    // IntervalExtractor.invert() grades the chain NONE and pruning is declined AFTER the bound was
+    // compiled.
     @Test
     public void testDeclinedInvertProbeKeepsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -153,10 +151,9 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
         });
     }
 
-    // The OR-union path: extractOrTimestampIntervals() walks the disjuncts left to right, compiles
-    // the sub-query bound of the first one, and then bails on the second one (dateadd() over a
-    // column is neither constant nor runtime-constant). The whole OR node stays in the residual,
-    // which must still see the sub-query's own WHERE.
+    // The OR-union path: IntervalExtractor.isTimestampUnion() rejects the second disjunct (dateadd()
+    // over a column is neither constant nor runtime-constant). The whole OR node stays in the
+    // residual, which must still see the sub-query's own WHERE.
     @Test
     public void testDeclinedOrUnionKeepsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -224,14 +221,13 @@ public class ScalarSubqueryDeclinedPruningTest extends AbstractCairoTest {
         });
     }
 
-    // The residual sub-query must still resolve its symbol key through the index rather than
-    // degrading to a full scan of the bound table.
+    // The indexed top-1 sub-query breaks ties on row id, so its bound is stable and prunes the outer scan.
     @Test
     public void testDeclinedStabilityGuardResidualPlanKeepsSubQueryFilter() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             assertQuery(STABILITY_GUARD_QUERY)
-                    .assertsPlanContaining("DeferredSingleSymbolFilterPageFrame", "Index forward scan on: sym");
+                    .assertsPlanContaining("filter: dateadd('h',1,ts)>=scalar_subquery_bound", "Interval forward scan on: t");
         });
     }
 

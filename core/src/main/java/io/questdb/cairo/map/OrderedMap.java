@@ -571,6 +571,13 @@ public class OrderedMap implements Map, Reopenable {
 
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker != memoryTracker) {
+            long heldBytes = heapAddr != 0 ? ((long) keyCapacity << 3) + (heapLimit - heapAddr) : 0;
+            if (batchEmptyValueStart != 0) {
+                heldBytes += valueSize;
+            }
+            Unsafe.chargeHeldMemory(heldBytes, heapMemoryTag, tracker);
+        }
         this.memoryTracker = tracker;
     }
 

@@ -414,16 +414,14 @@ public class ClickBenchTest extends AbstractCairoTest {
                         """
                                 Long Top K lo: 10
                                   keys: [c desc]
-                                    VirtualRecord
-                                      functions: [UserID,m,SearchPhrase,c]
-                                        Async Group By workers: 1
-                                          keys: [UserID,m,SearchPhrase]
-                                          keyFunctions: [minute(EventTime)]
-                                          values: [count(*)]
-                                          filter: null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: hits
+                                    Async Group By workers: 1
+                                      keys: [UserID,m,SearchPhrase]
+                                      keyFunctions: [minute(EventTime)]
+                                      values: [count(*)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: hits
                                 """
                 ),
                 new TestCase(
@@ -551,17 +549,15 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "SELECT * FROM (SELECT REGEXP_REPLACE(Referer, '^https?://(?:www\\.)?([^/]+)/.*$', '$1') AS k, AVG(length_bytes(Referer)) AS l, COUNT(*) AS c, MIN(Referer) FROM hits WHERE Referer IS NOT NULL GROUP BY k) WHERE c > 100000 ORDER BY l DESC LIMIT 25;",
                         "Encode sort light lo: 25\n" +
                                 "  keys: [l desc]\n" +
-                                "    VirtualRecord\n" +
-                                (aliasExpressionsEnabled ? "      functions: [k,l,c,MIN(Referer)]\n" : "      functions: [k,l,c,MIN]\n") +
-                                "        Filter filter: 100000<c\n" +
-                                "            Async JIT Group By workers: 1\n" +
-                                "              keys: [k]\n" +
-                                "              keyFunctions: [regexp_replace(Referer,^https?://(?:www\\.)?([^/]+)/.*$,$1)]\n" +
-                                "              values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
-                                "              filter: Referer is not null\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: hits\n"
+                                "    Filter filter: 100000<c\n" +
+                                "        Async JIT Group By workers: 1\n" +
+                                "          keys: [k]\n" +
+                                "          keyFunctions: [regexp_replace(Referer,^https?://(?:www\\.)?([^/]+)/.*$,$1)]\n" +
+                                "          values: [avg(length_bytes(Referer)),count(*),min(Referer)]\n" +
+                                "          filter: Referer is not null\n" +
+                                "            PageFrame\n" +
+                                "                Row forward scan\n" +
+                                "                Frame forward scan on: hits\n"
                 ),
                 new TestCase(
                         "Q29",
@@ -728,17 +724,15 @@ public class ClickBenchTest extends AbstractCairoTest {
                         """
                                 Encode sort light lo: 1000 hi: 1010
                                   keys: [PageViews desc]
-                                    VirtualRecord
-                                      functions: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst,PageViews]
-                                        Async JIT Group By workers: 1
-                                          keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
-                                          keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
-                                          values: [count(*)]
-                                          filter: (CounterID=62 and IsRefresh=0)
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: hits
-                                                  intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                    Async JIT Group By workers: 1
+                                      keys: [TraficSourceID,SearchEngineID,AdvEngineID,Src,Dst]
+                                      keyFunctions: [case([(SearchEngineID=0 and AdvEngineID=0),Referer,''])]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
                                 """
                 ),
                 new TestCase(

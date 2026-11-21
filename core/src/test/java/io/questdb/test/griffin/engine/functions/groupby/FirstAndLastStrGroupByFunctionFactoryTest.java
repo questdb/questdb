@@ -50,6 +50,30 @@ public class FirstAndLastStrGroupByFunctionFactoryTest extends AbstractCairoTest
     }
 
     @Test
+    public void testFirstLastOfUntypedNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, x INT)");
+            execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('a', 3)");
+            assertQuery("SELECT typeOf(f) tf, typeOf(l) tl, f, l FROM (SELECT first(null) f, last(null) l FROM t)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            tf\ttl\tf\tl
+                            STRING\tSTRING\t\t
+                            """);
+            assertQuery("SELECT k, first(null) f, last(null) l FROM t ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tf\tl
+                            a\t\t
+                            b\t\t
+                            """);
+        });
+    }
+
+    @Test
     public void testFirstNullLastSomething() throws Exception {
         assertQuery("select first(a1) r1, last(a1) r2 from tab")
                 .ddl("create table tab as (select cast(list(null,'else','something') as string) a1 from long_sequence(3))")

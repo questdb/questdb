@@ -62,11 +62,6 @@ public class GeoByteColumn extends GeoByteFunction implements ColumnFunction {
         return rec.getGeoByte(columnIndex);
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
-
     static {
         int bits = ColumnType.GEOBYTE_MAX_BITS - ColumnType.GEOBYTE_MIN_BITS + 1;
         COLUMNS = new GeoByteColumn[STATIC_COLUMN_COUNT * bits];

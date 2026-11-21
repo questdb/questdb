@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -46,6 +47,11 @@ public class DumpMemoryUsageFunctionFactory implements FunctionFactory {
 
     private static final Log LOG = LogFactory.getLog("dump-memory-usage");
     private static final String SIGNATURE = "dump_memory_usage()";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

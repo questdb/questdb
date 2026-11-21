@@ -1446,6 +1446,11 @@ public class MapTest extends AbstractCairoTest {
         public void updateNew(MapValue value, Record record, long rowId) {
             throw new UnsupportedOperationException();
         }
+
+        @Override
+        public void updateRetained(MapValue value, Record record, long rowId) {
+            throw new UnsupportedOperationException();
+        }
     }
 
     private static class TestMapValueMergeFunction implements MapValueMergeFunction {

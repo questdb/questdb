@@ -11,7 +11,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -147,7 +150,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(PREV) ORDER BY v")
                     .noLeakCheck()
                     .returns("""
-                            v\tavg1\tavg11
+                            v\tavg\tavg1
                             2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
                             4.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
@@ -162,8 +165,8 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevBucketWhenLastTimestampAliasedAsTimestamp() throws Exception {
-        // last(ts) AS ts takes the timestamp's name, so generateFill must fill by the recorded
-        // bucket and not by the TIMESTAMP column that merely carries the name ts (#7838).
+        // last(ts) AS ts takes the timestamp's name; the fill must key on the bucket the
+        // FillPlan records, not on the TIMESTAMP column that merely carries the name ts (#7838).
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createBucketAliasTable();
             assertQuery("SELECT last(ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
@@ -181,10 +184,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevBucketWhenTimestampNamedLikeAggregate() throws Exception {
-        // The designated timestamp is named max, so max(v) carries the same token and
-        // rewriteSampleBy puts its bucket on the explicit GROUP BY list. The aggregate
-        // column surfaces as max1 because of the pre-existing alias de-duplication; the
-        // test pins the filled gap row, not that name.
+        // The designated timestamp is named max, so max(v) carries the same token. The
+        // aggregate column surfaces as max1 through alias de-duplication; the test pins
+        // the filled gap row, not that name.
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createTimestampNamedMaxTable();
             assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(PREV)")
@@ -1266,16 +1268,12 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
 
     @Test
     public void testFillPrevKeyedBucketKeyRenamedByAggregateAlias() throws Exception {
-        // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
-        // renames the bucket key to avg1. The column surfaces as avg1 instead of avg: that
-        // naming comes from the pre-existing key rename, not from fill, and this test does
-        // not endorse it.
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createBucketAliasTable();
             assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")
                     .noLeakCheck()
                     .returns("""
-                            k\tv\tavg1
+                            k\tv\tavg
                             a\t2.0\t2024-01-01T00:00:00.000000Z
                             a\t2.0\t2024-01-01T01:00:00.000000Z
                             a\t2.0\t2024-01-01T02:00:00.000000Z
@@ -1471,6 +1469,200 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tParis\t20.0
                             2024-01-01T01:00:00.000000Z\tLondon\t10.0
                             """);
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedPercentileNoPrevYet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, d DOUBLE, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 1.0, 1, '2024-01-01T00:10:00.000000Z'),
+                    ('B', 2.0, 2, '2024-01-01T01:10:00.000000Z'),
+                    ('A', 3.0, 3, '2024-01-01T02:10:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT ts, k, approx_percentile(d, 0.5) pd, approx_percentile(d, 0.5, 3) pp, approx_percentile(l, 0.5, 3) pl
+                    FROM %s SAMPLE BY 1h %s ORDER BY ts, k""";
+            final String expected = """
+                    ts\tk\tpd\tpp\tpl
+                    2024-01-01T00:%1$s:00.000000Z\tA\t1.0\t1.0\t1.0
+                    2024-01-01T00:%1$s:00.000000Z\tB\tnull\tnull\tnull
+                    2024-01-01T01:%1$s:00.000000Z\tA\t1.0\t1.0\t1.0
+                    2024-01-01T01:%1$s:00.000000Z\tB\t2.0\t2.0\t2.0
+                    2024-01-01T02:%1$s:00.000000Z\tA\t3.0\t3.0\t3.0
+                    2024-01-01T02:%1$s:00.000000Z\tB\t2.0\t2.0\t2.0
+                    """;
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "t", "FILL(PREV) ALIGN TO FIRST OBSERVATION"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "10"));
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedPooledStringAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s STRING, vc VARCHAR, sy SYMBOL, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 'A1', 'A1', 'A1', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('B', 'B1', 'B1', 'B1', 2.0, '2024-01-01T01:10:00.000000Z'),
+                    ('B', 'B2', 'B2', 'B2', 3.0, '2024-01-01T02:10:00.000000Z'),
+                    ('A', 'A2', 'A2', 'A2', 4.0, '2024-01-01T03:10:00.000000Z'),
+                    ('A', 'A3', 'A3', 'A3', 5.0, '2024-01-01T03:20:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT ts, k, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, string_distinct_agg(sy, ',') yd, count_distinct(s) cs, count_distinct(vc) cv
+                    FROM %s SAMPLE BY 1h %s ORDER BY ts, k""";
+            final String expected = """
+                    ts\tk\tsa\tva\tsd\tvd\tyd\tcs\tcv
+                    2024-01-01T00:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T00:%1$s:00.000000Z\tB\t\t\t\t\t\tnull\tnull
+                    2024-01-01T01:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T01:%1$s:00.000000Z\tB\tB1\tB1\tB1\tB1\tB1\t1\t1
+                    2024-01-01T02:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T02:%1$s:00.000000Z\tB\tB2\tB2\tB2\tB2\tB2\t1\t1
+                    2024-01-01T03:%1$s:00.000000Z\tA\tA2,A3\tA2,A3\tA2,A3\tA2,A3\tA2,A3\t2\t2
+                    2024-01-01T03:%1$s:00.000000Z\tB\tB2\tB2\tB2\tB2\tB2\t1\t1
+                    """;
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "t", "FILL(PREV) ALIGN TO FIRST OBSERVATION"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "10"));
+            assertQuery("""
+                    SELECT ts, k, string_agg(s, ',') sa, string_distinct_agg(vc, ',') vd, sum(d) sm
+                    FROM (SELECT * FROM t WHERE d > 0) SAMPLE BY 1h FILL(PREV, PREV, NULL) ORDER BY ts, k""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tsa\tvd\tsm
+                            2024-01-01T00:00:00.000000Z\tA\tA1\tA1\t1.0
+                            2024-01-01T00:00:00.000000Z\tB\t\t\tnull
+                            2024-01-01T01:00:00.000000Z\tA\tA1\tA1\tnull
+                            2024-01-01T01:00:00.000000Z\tB\tB1\tB1\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\tA1\tA1\tnull
+                            2024-01-01T02:00:00.000000Z\tB\tB2\tB2\t3.0
+                            2024-01-01T03:00:00.000000Z\tA\tA2,A3\tA2,A3\t9.0
+                            2024-01-01T03:00:00.000000Z\tB\tB2\tB2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedPooledStringAggregatesReuseKeyState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s STRING, vc VARCHAR, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 20 keys, each with a row in every one of 1_000 hourly buckets
+            execute("INSERT INTO t SELECT 'k' || (x % 20), NULL, NULL, NULL, (x * 180_000_000)::TIMESTAMP FROM long_sequence(20_000)");
+            final String sql = """
+                    SELECT ts, k, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, string_distinct_agg(sy, ',') yd, count_distinct(s) cs, count_distinct(vc) cv
+                    FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION""";
+            try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                long minSinkMemGrowth = Long.MAX_VALUE;
+                long minAllocatedBytes = Long.MAX_VALUE;
+                for (int round = 0; round < 2; round++) {
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final long sinkMemBefore = sinkMemUsed();
+                        final long allocatedBefore = scope.getBean().getCurrentThreadAllocatedBytes();
+                        long rowCount = 0;
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                                rowCount++;
+                            }
+                            minSinkMemGrowth = Math.min(minSinkMemGrowth, sinkMemUsed() - sinkMemBefore);
+                        }
+                        minAllocatedBytes = Math.min(minAllocatedBytes, scope.getBean().getCurrentThreadAllocatedBytes() - allocatedBefore);
+                        Assert.assertEquals(20_000, rowCount);
+                    }
+                }
+                Assert.assertTrue("native sink memory grew by " + minSinkMemGrowth + " bytes", minSinkMemGrowth < 1_048_576);
+                Assert.assertTrue("Java heap allocations: " + minAllocatedBytes + " bytes", minAllocatedBytes < 1_048_576);
+            }
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedStringAggregatesCursorMatchesGroupBy() throws Exception {
+        // Key a has no row in the 06:00 bucket, where key c has c5
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"VARCHAR", "STRING"}) {
+                execute("DROP TABLE IF EXISTS n");
+                execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, s " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO n VALUES
+                        ('2024-01-01T02:00:00.000000Z', 'a', 'a1'),
+                        ('2024-01-01T02:10:00.000000Z', 'c', 'c3'),
+                        ('2024-01-01T04:30:00.000000Z', 'a', 'a4'),
+                        ('2024-01-01T06:30:00.000000Z', 'c', 'c5')
+                        """);
+                final String select = "SELECT ts, sym, %s(s, ',') sa, first(s) fs FROM n SAMPLE BY 1h FILL(PREV)";
+                for (String function : new String[]{"string_agg", "string_distinct_agg"}) {
+                    final String groupBy = select.formatted(function) + " ORDER BY ts, sym";
+                    final String cursor = select.formatted(function) + " ALIGN TO FIRST OBSERVATION ORDER BY ts, sym";
+                    assertQuery(cursor)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tsym\tsa\tfs
+                                    2024-01-01T02:00:00.000000Z\ta\ta1\ta1
+                                    2024-01-01T02:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T03:00:00.000000Z\ta\ta1\ta1
+                                    2024-01-01T03:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T04:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T04:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T05:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T05:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T06:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T06:00:00.000000Z\tc\tc5\tc5
+                                    """);
+                    assertSqlCursors(groupBy, cursor);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFillPrevLinearResetsArgumentsEveryBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'), (2.0, '2024-01-01T00:10:00.000000Z'),
+                    (3.0, '2024-01-01T01:00:00.000000Z'), (4.0, '2024-01-01T01:10:00.000000Z'),
+                    (5.0, '2024-01-01T03:00:00.000000Z'), (6.0, '2024-01-01T03:10:00.000000Z'),
+                    (7.0, '2024-01-01T04:00:00.000000Z'), (8.0, '2024-01-01T04:10:00.000000Z')
+                    """);
+            final String sa = "1970-01-01T00:00:00.000000Z,1970-01-01T00:00:00.000001Z";
+            assertQuery("""
+                    SELECT ts, first(timestamp_sequence(0, 1)) f, string_agg(timestamp_sequence(0, 1)::varchar, ',') sa, avg(v) a
+                    FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h FILL(PREV, PREV, LINEAR)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("ts\tf\tsa\ta\n"
+                            + "2024-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t1.5\n"
+                            + "2024-01-01T01:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t3.5\n"
+                            + "2024-01-01T02:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t4.5\n"
+                            + "2024-01-01T03:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t5.5\n"
+                            + "2024-01-01T04:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t7.5\n");
         });
     }
 
@@ -1743,6 +1935,127 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevNonKeyedPooledStringAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s STRING, vc VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'a1', 'a1', '2024-01-01T02:00:00.000000Z'),
+                    ('c', 'c3', 'c3', '2024-01-01T02:10:00.000000Z'),
+                    ('a', 'a4', 'a4', '2024-01-01T04:30:00.000000Z'),
+                    ('c', 'c5', 'c5', '2024-01-01T06:30:00.000000Z')
+                    """);
+            final String select = """
+                    SELECT ts, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, count() c FROM""";
+            final String sampleBy = " SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, 0)";
+            final String groupBy = select + " t WHERE sym = 'a'" + sampleBy;
+            final String cursor = select + " (SELECT * FROM t WHERE sym = 'a')" + sampleBy;
+            final String expected = """
+                    ts\tsa\tva\tsd\tvd\tc
+                    2024-01-01T02:00:00.000000Z\ta1\ta1\ta1\ta1\t1
+                    2024-01-01T03:00:00.000000Z\ta1\ta1\ta1\ta1\t0
+                    2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\t1
+                    """;
+            assertQuery(groupBy)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expected);
+            assertQuery(cursor)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(expected);
+            assertSqlCursors(groupBy, cursor);
+            assertQuery(select + " t SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, 0) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tc
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\t2
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\t0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\t1
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\t0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevNonKeyedPooledStringAggregatesWithLinear() throws Exception {
+        // With a LINEAR column, the cursor aggregates the bucket after a gap while the gap still reads the bucket before it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s STRING, vc VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'a1', 'a1', 10.0, '2024-01-01T02:00:00.000000Z'),
+                    ('c', 'c3', 'c3', 20.0, '2024-01-01T02:10:00.000000Z'),
+                    ('a', 'a4', 'a4', 10.0, '2024-01-01T04:30:00.000000Z'),
+                    ('c', 'c5', 'c5', 50.0, '2024-01-01T06:30:00.000000Z'),
+                    ('e', 'e9', 'e9', 80.0, '2024-01-01T09:10:00.000000Z'),
+                    ('f', 'f10', 'f10', 100.0, '2024-01-01T10:05:00.000000Z'),
+                    ('g', 'g12', 'g12', 120.0, '2024-01-01T12:20:00.000000Z')
+                    """);
+            final String columns = "ts, sa, va, sd, vd, yd, cs, cv, fv";
+            final String select = """
+                    SELECT ts, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd, string_distinct_agg(vc, ',') vd,
+                    string_distinct_agg(sym, ',') yd, count_distinct(s) cs, count_distinct(vc) cv, first(vc) fv, sum(v) sm
+                    FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h""";
+            final String fillLinear = " FILL(PREV, PREV, PREV, PREV, PREV, PREV, PREV, PREV, LINEAR)";
+            assertQuery(select + fillLinear)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tyd\tcs\tcv\tfv\tsm
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t30.0
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t20.0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t10.0
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t30.0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t50.0
+                            2024-01-01T07:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t60.0
+                            2024-01-01T08:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t70.0
+                            2024-01-01T09:00:00.000000Z\te9\te9\te9\te9\te\t1\t1\te9\t80.0
+                            2024-01-01T10:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t100.0
+                            2024-01-01T11:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t110.0
+                            2024-01-01T12:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
+                            """);
+            assertSqlCursors(
+                    "SELECT " + columns + " FROM (" + select + " FILL(PREV))",
+                    "SELECT " + columns + " FROM (" + select + fillLinear + ")"
+            );
+            final String range = " FROM '2024-01-01T01:00:00.000000Z' TO '2024-01-01T14:00:00.000000Z'";
+            assertQuery(select + range + fillLinear)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tyd\tcs\tcv\tfv\tsm
+                            2024-01-01T01:00:00.000000Z\t\t\t\t\t\tnull\tnull\t\tnull
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t30.0
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t20.0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t10.0
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t30.0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t50.0
+                            2024-01-01T07:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t60.0
+                            2024-01-01T08:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t70.0
+                            2024-01-01T09:00:00.000000Z\te9\te9\te9\te9\te\t1\t1\te9\t80.0
+                            2024-01-01T10:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t100.0
+                            2024-01-01T11:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t110.0
+                            2024-01-01T12:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
+                            2024-01-01T13:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevNumericWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
             // Numeric PREV with timezone stays on fast path.
@@ -1765,19 +2078,20 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             assertQuery("SELECT sum(val), ts FROM x SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
                     .noLeakCheck()
                     .assertsPlan("""
-                            Sample By Fill
-                              stride: '1h'
-                              fill: prev
-                                Encode sort light
-                                  keys: [ts]
-                                    Async Group By workers: 1
+                            SelectedRecord
+                                Sample By Fill
+                                  stride: '1h'
+                                  fill: prev
+                                    Encode sort light
                                       keys: [ts]
-                                      keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
-                                      values: [sum(val)]
-                                      filter: null
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts,null,'00:00','Europe/Berlin')]
+                                          values: [sum(val)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                             """);
         });
     }
@@ -1903,7 +2217,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
             // Two distinct keys, with a data gap between 00:00 and 04:00 so
             // the intermediate buckets must carry forward key + a+b via
             // FILL(PREV). The outer expression `a + b` over the inner
-            // SAMPLE BY triggers propagateTopDownColumns0 in SqlOptimiser,
+            // SAMPLE BY triggers ColumnPruning in SqlOptimiser,
             // reordering the inner model's columns. Pre-fix: the bare
             // FILL(PREV) branch called isKeyColumn(factoryIdx, bottomUpCols,
             // timestampIndex) with a factory-indexed `i` against a
@@ -2025,7 +2339,7 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     public void testFillPrevRejectNoArg() throws Exception {
         assertMemoryLeak(() -> {
             // FILL(PREV()) -- zero-argument function call. The PREV grammar
-            // rule in SqlCodeGenerator.generateFill rejects this at codegen
+            // rule in SampleByFactoryGenerator.generateFill rejects this at codegen
             // time with "PREV argument must be a single column name" thrown
             // at the PREV token's position (43 = sql.indexOf("PREV(")). This
             // pins both the exact wording and the token position so a future
@@ -2538,5 +2852,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-03T10:00:00.000000Z\t3.0
                             """);
         });
+    }
+
+    private static long sinkMemUsed() {
+        return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK) + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
     }
 }

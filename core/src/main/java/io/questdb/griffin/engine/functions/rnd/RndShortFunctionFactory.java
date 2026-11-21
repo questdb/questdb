@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -39,6 +40,11 @@ import io.questdb.std.Rnd;
 public class RndShortFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "rnd_short()";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SHORT;
+    }
 
     @Override
     public String getSignature() {

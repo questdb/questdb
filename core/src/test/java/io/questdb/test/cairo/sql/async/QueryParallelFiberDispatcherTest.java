@@ -44,7 +44,6 @@ import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -4520,7 +4519,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 );
                 messageBus.setQueryParallelFiberDispatcher(dispatcher);
                 final AtomicBoolean isQueueRefilled = new AtomicBoolean();
-                final CountVectorAggregateFunction count = new CountVectorAggregateFunction(SqlCodeGenerator.GKK_VANILLA_INT) {
+                final CountVectorAggregateFunction count = new CountVectorAggregateFunction(VectorAggregateFunction.GKK_VANILLA_INT) {
                     @Override
                     public int getColumnIndex() {
                         if (!isQueueRefilled.get()) {

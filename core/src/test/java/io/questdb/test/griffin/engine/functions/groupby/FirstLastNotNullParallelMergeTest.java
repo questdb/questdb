@@ -117,6 +117,8 @@ public class FirstLastNotNullParallelMergeTest extends AbstractCairoTest {
         TYPES.add(new TypeCase("IPv4", "ipv4 '10.0.0.1'", "IPv4"));
         TYPES.add(new TypeCase("Int", "42::int", "INT"));
         TYPES.add(new TypeCase("Long", "42::long", "LONG"));
+        // The low 64 bits hold the LONG null sentinel, so the value reads as null if narrowed to LONG.
+        TYPES.add(new TypeCase("Long256", "0x018000000000000000::long256", "LONG256"));
         TYPES.add(new TypeCase("Str", "'abc'", "STRING"));
         // The CASE unifies a SYMBOL value to STRING, so the cast goes on the CASE, not on the value.
         TYPES.add(new TypeCase("Symbol", "'abc'", "SYMBOL", "symbol", null));

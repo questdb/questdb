@@ -32,6 +32,8 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.CharSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Base for timestamp_floor_utc() and timestamp_floor() with a constant named time zone.
@@ -111,7 +113,7 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         if (CommonUtils.isSubDayUnit(unit)) {
             // Sub-day buckets convert with the standard offset, which never changes, so the
             // bucket is the local bucket [floored, floored + bucketWidth) shifted back to UTC.
-            final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
+            final long tzOff = tzRules.getStandardOffset();
             final long lo = floorFixedWidth(timestamp + tzOff, effectiveOffset) - tzOff;
             cacheBucket(isNearLastMiss, timestamp, lo, lo + bucketWidth, lo);
             return lo;
@@ -120,15 +122,22 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         // Day buckets convert with the offset in effect at the timestamp. That offset stays the
         // same until the next transition, so the lookup runs once per such tz segment.
         if (timestamp < tzSegmentLo || timestamp >= tzSegmentHi) {
+            final long local = CommonUtils.floorUtcToLocal(tzRules, timestamp, unit);
             if (!isNearLastMiss) {
                 // A segment looked up for sparse or unordered timestamps is unlikely to serve
                 // the next row, so floor the timestamp without touching the caches.
                 clearBucket();
-                final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
-                final long floored = floorFixedWidth(timestamp + tzOff, effectiveOffset);
-                return CommonUtils.offsetFlooredUtcResult(floored, tzOff, 0, tzRules, unit);
+                return CommonUtils.floorLocalToUtc(tzRules, floorFixedWidth(local, effectiveOffset), unit);
             }
-            tzSegmentOffset = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
+            final long tzOff = tzRules.getOffset(timestamp);
+            if (local != timestamp + tzOff) {
+                // A fall-back repeats the wall clock until it reads past local again, and the
+                // whole repeat floors to the bucket the reading before the transition is in.
+                final long result = CommonUtils.floorLocalToUtc(tzRules, floorFixedWidth(local, effectiveOffset), unit);
+                cacheBucket(isNearLastMiss, timestamp, timestamp, local + 1 - tzOff, result);
+                return result;
+            }
+            tzSegmentOffset = tzOff;
             tzSegmentLo = timestamp;
             tzSegmentHi = tzRules.getNextDST(timestamp);
         }
@@ -140,9 +149,10 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
             // the bucket starts in the segment, so the same tz offset converts its start to UTC
             result = lo;
         } else {
-            result = CommonUtils.offsetFlooredUtcResult(floored, tzOff, 0, tzRules, unit);
-            if (isNearLastMiss && lo < tzSegmentLo && tzRules.getNextDST(lo) == tzSegmentHi) {
-                // no transition between the bucket start and the segment: extend the segment
+            result = CommonUtils.floorLocalToUtc(tzRules, floored, unit);
+            if (isNearLastMiss && result == lo && tzRules.getNextDST(lo) == tzSegmentHi) {
+                // the bucket starts at its grid line before the segment with no transition in
+                // between: extend the segment
                 tzSegmentLo = lo;
             }
         }
@@ -209,4 +219,11 @@ abstract class TimestampFloorUtcBucketCachingFunction extends TimestampFunction 
         // a single comparison: the sign of the distance is a coin toss for unordered timestamps
         return Math.abs(distance) < nearMissDistance;
     }
+
+    @TestOnly
+    void toCacheState(CharSink<?> sink) {
+        sink.put(cachedLo).put(';').put(cachedHi).put(';').put(cachedResult).put(';').put(lastMissTimestamp).put(';')
+                .put(tzSegmentLo).put(';').put(tzSegmentHi).put(';').put(tzSegmentOffset);
+    }
+
 }

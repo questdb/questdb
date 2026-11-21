@@ -25,11 +25,8 @@
 package io.questdb.std.str;
 
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjectFactory;
 
 public class FlyweightCharSequence extends AbstractCharSequence implements Mutable {
-    public static final ObjectFactory<FlyweightCharSequence> FACTORY = FlyweightCharSequence::new;
-
     private CharSequence delegate;
     private int len = -1;
     private int lo;

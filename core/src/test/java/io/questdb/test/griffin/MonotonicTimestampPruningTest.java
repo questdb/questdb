@@ -326,6 +326,21 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastToLongIn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE timestamp::long IN (1_641_211_200_000_000)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testCastToLongRuntimeDoubleBoundFallsBack() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -774,6 +789,133 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractYearBetween() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp) BETWEEN 2023 AND 2022")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExtractYearComparison() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp) > 5")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2021-06-01T00:00:00.000000Z
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE 2022 < extract(year FROM timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE NOT (extract(year FROM timestamp) < 2023)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE extract(month FROM timestamp) > 5")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Frame forward scan on: y")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2021-06-01T00:00:00.000000Z
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExtractYearEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp) = 2023")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp) = 300_001")
+                    .timestamp("timestamp")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testExtractYearNano() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE yn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY YEAR;");
+            execute("""
+                    INSERT INTO yn VALUES
+                    (1, '2021-12-31T23:59:59.999999999Z'),
+                    (2, '2022-01-01T00:00:00.000000000Z'),
+                    (3, '2023-06-01T00:00:00.000000001Z')
+                    """);
+            assertQuery("SELECT * FROM yn WHERE extract(year FROM timestamp) <= 2022")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: yn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2021-12-31T23:59:59.999999999Z
+                            2.0\t2022-01-01T00:00:00.000000000Z
+                            """);
+            assertQuery("SELECT * FROM yn WHERE extract(year FROM timestamp) < 1676")
+                    .timestamp("timestamp")
+                    .returns("price\ttimestamp\n");
+        });
+    }
+
+    @Test
+    public void testExtractYearOverMonotonicChain() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp_floor('M', timestamp)) >= 2024")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            4.0\t2024-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE extract(year FROM dateadd('M', 7, timestamp)) = 2022")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .returns("""
+                            price\ttimestamp
+                            1.0\t2021-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFloorMicrosecondBoundary() throws Exception {
         assertMemoryLeak(() -> {
             createTrades();
@@ -1086,6 +1228,63 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdentityDateTrunc() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            assertQuery("SELECT * FROM trades WHERE date_trunc('microsecond', timestamp) IN ('2022-01-02T12:00:00.000000Z', '2022-01-04T12:00:00.000000Z')")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM trades WHERE date_trunc('microsecond', timestamp) IN ('2022-01-03T12:00:00.000000Z'::timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM trades WHERE date_trunc('microsecond', timestamp) < (SELECT '2022-01-03'::timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testIdentityDateTruncNano() throws Exception {
+        assertMemoryLeak(() -> {
+            createNanoTrades();
+            assertQuery("SELECT * FROM tn WHERE date_trunc('nanosecond', timestamp) IN ('2022-01-01T12:00:00.000000000Z', '2022-01-03T12:00:00.000000000Z')")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000000Z
+                            200.0\t2022-01-03T12:00:00.000000000Z
+                            """);
+            assertQuery("SELECT * FROM tn WHERE date_trunc('nanosecond', timestamp) IN ('2022-01-04T12:00:00.000000Z'::timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            250.0\t2022-01-04T12:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testNanoColumnRuntimeMicroBound() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -1224,6 +1423,56 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                     .returns("""
                             price\ttimestamp
                             200.0\t2022-01-03T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNoopCastNanoRuntimeBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createNanoTrades();
+            bindVariableService.clear();
+            bindVariableService.setTimestampWithType(0, ColumnType.TIMESTAMP_MICRO, 1_641_168_000_000_000L); // 2022-01-03T00:00:00Z
+            assertQuery("SELECT * FROM tn WHERE timestamp::timestamp_ns >= $1")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000000Z
+                            250.0\t2022-01-04T12:00:00.000000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testNoopCastSubqueryBound() throws Exception {
+        assertMemoryLeak(() -> {
+            createTrades();
+            createNanoTrades();
+            assertQuery("SELECT * FROM trades WHERE timestamp::timestamp < (SELECT '2022-01-03'::timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            100.0\t2022-01-01T12:00:00.000000Z
+                            150.0\t2022-01-02T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM trades WHERE cast(timestamp AS timestamp) = (SELECT max(timestamp) FROM trades)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: trades")
+                    .returns("""
+                            price\ttimestamp
+                            250.0\t2022-01-04T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM tn WHERE timestamp::timestamp_ns >= (SELECT '2022-01-03'::timestamp)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: tn")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            200.0\t2022-01-03T12:00:00.000000000Z
+                            250.0\t2022-01-04T12:00:00.000000000Z
                             """);
         });
     }
@@ -1819,6 +2068,29 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testYearIn() throws Exception {
+        assertMemoryLeak(() -> {
+            createYears();
+            assertQuery("SELECT * FROM y WHERE year(timestamp) IN (2023)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            3.0\t2023-06-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM y WHERE extract(year FROM timestamp) IN (2022)")
+                    .timestamp("timestamp")
+                    .withPlanContaining("Interval forward scan on: y")
+                    .withPlanNotContaining("filter:")
+                    .returns("""
+                            price\ttimestamp
+                            2.0\t2022-06-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testYearRuntimeBoundOutOfRange() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(1_641_168_000_000_000L); // 2022-01-03T00:00:00Z
@@ -1918,6 +2190,17 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
         }
         execute(insert.toString());
         return data;
+    }
+
+    private static void createNanoTrades() throws Exception {
+        execute("CREATE TABLE tn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
+        execute("""
+                INSERT INTO tn VALUES
+                (100, '2022-01-01T12:00:00.000000000Z'),
+                (150, '2022-01-02T12:00:00.000000000Z'),
+                (200, '2022-01-03T12:00:00.000000000Z'),
+                (250, '2022-01-04T12:00:00.000000000Z')
+                """);
     }
 
     private static void createTrades() throws Exception {

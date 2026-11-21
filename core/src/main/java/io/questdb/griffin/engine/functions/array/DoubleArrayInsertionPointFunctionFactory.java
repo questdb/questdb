@@ -43,6 +43,11 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
     private static final String FUNCTION_NAME = "insertion_point";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]DT)";
     }
@@ -110,7 +115,7 @@ public class DoubleArrayInsertionPointFunctionFactory implements FunctionFactory
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             TernaryFunction.super.init(symbolTableSource, executionContext);
-            if (ColumnType.decodeArrayDimensionality(arrayArg.getType()) != 1) {
+            if (ColumnType.decodeWeakArrayDimensionality(arrayArg.getType()) > 1) {
                 throw SqlException.position(arrayArgPos).put("array is not one-dimensional");
             }
         }

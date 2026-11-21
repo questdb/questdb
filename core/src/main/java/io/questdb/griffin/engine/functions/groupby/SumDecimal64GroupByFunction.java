@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
@@ -49,7 +50,7 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
     private int valueIndex;
 
     public SumDecimal64GroupByFunction(@NotNull Function arg, int position) {
-        super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(arg.getType())));
+        super(ResultTypes.decimalSum(arg.getType()));
         this.arg = arg;
         this.position = position;
         this.decimal128A.setScale(0);

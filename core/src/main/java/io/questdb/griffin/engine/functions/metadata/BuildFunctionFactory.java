@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.metadata;
 
 import io.questdb.BuildInformation;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -37,6 +38,11 @@ import java.util.concurrent.atomic.AtomicReference;
 
 public class BuildFunctionFactory implements FunctionFactory {
     private final AtomicReference<StrConstant> functionRef = new AtomicReference<>();
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

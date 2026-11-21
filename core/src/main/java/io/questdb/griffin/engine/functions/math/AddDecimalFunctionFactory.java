@@ -29,15 +29,20 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class AddDecimalFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalAddition(argTypes.getQuick(0), argTypes.getQuick(1));
+    }
 
     @Override
     public String getSignature() {
@@ -71,16 +76,7 @@ public class AddDecimalFunctionFactory implements FunctionFactory {
         );
         args.setQuick(1, right);
 
-        final int leftType = left.getType();
-        final int rightType = right.getType();
-        final int leftScale = ColumnType.getDecimalScale(leftType);
-        final int rightScale = ColumnType.getDecimalScale(rightType);
-        final int scale = Math.max(leftScale, rightScale);
-        final int precision = Math.min(
-                Math.max(ColumnType.getDecimalPrecision(leftType) - leftScale, ColumnType.getDecimalPrecision(rightType) - rightScale) + scale + 1,
-                Decimals.MAX_PRECISION
-        );
-        final int type = ColumnType.getDecimalType(precision, scale);
+        final int type = ResultTypes.decimalAddition(left.getType(), right.getType());
 
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->

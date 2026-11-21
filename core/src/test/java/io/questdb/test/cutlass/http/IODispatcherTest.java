@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.DefaultHttpClientConfiguration;
 import io.questdb.DefaultServerConfiguration;
 import io.questdb.Metrics;
 import io.questdb.ServerConfiguration;
@@ -63,10 +64,13 @@ import io.questdb.cutlass.http.HttpRequestProcessorSelector;
 import io.questdb.cutlass.http.HttpServer;
 import io.questdb.cutlass.http.RescheduleContext;
 import io.questdb.cutlass.http.client.HttpClient;
+import io.questdb.cutlass.http.client.HttpClientException;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.cutlass.http.processors.JsonQueryProcessor;
 import io.questdb.cutlass.http.processors.StaticContentProcessorFactory;
 import io.questdb.cutlass.http.processors.TextImportProcessor;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.cutlass.json.JsonLexer;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlCompiler;
@@ -124,6 +128,7 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.datetime.nanotime.StationaryNanosClock;
 import io.questdb.std.str.AbstractCharSequence;
+import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -183,6 +188,7 @@ public class IODispatcherTest extends AbstractTest {
     private static final Log LOG = LogFactory.getLog(IODispatcherTest.class);
     private static final String QUERY_TIMEOUT_SELECT = "select i, avg(l), max(l) from t group by i order by i asc limit 3";
     private static final String QUERY_TIMEOUT_TABLE_DDL = "create table t as (select cast(x%10 as int) as i, x as l from long_sequence(100))";
+    private static final int SMALL_SEND_BUFFER_SIZE = 1024;
     private static final String VALID_IMPORT_RESPONSE = """
             HTTP/1.1 200 OK\r
             Server: questDB/1.0\r
@@ -5586,6 +5592,119 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryImplicitCastExceptionAfterHeaderClosesConnectionOnExport() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((engine, _) -> {
+            createCastOverflowTable(engine, 100);
+            final HttpClient client = testHttpClient.getHttpClient();
+            for (String sql : new String[]{
+                    "SELECT t::timestamp_ns v FROM x",
+                    "SELECT d::timestamp_ns v FROM x",
+                    "SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'",
+                    "SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'"
+            }) {
+                final HttpClient.Request request = client.newRequest("localhost", 9001);
+                request.GET().url("/exp").query("query", sql);
+                try (HttpClient.ResponseHeaders response = request.send()) {
+                    response.await();
+                    response.getResponse().copyTextTo(new StringSink());
+                    Assert.fail("expected the server to close the connection: " + sql);
+                } catch (HttpClientException e) {
+                    TestUtils.assertContains(e.getMessage(), "peer disconnect");
+                } finally {
+                    client.disconnect();
+                }
+            }
+            testHttpClient.assertGet("/exp", "\"count\"\r\n101\r\n", "SELECT count() FROM x");
+        });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionAfterHeaderReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((engine, _) -> {
+            createCastOverflowTable(engine, 100);
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < 100; i++) {
+                rows.put("[\"2024-01-01T00:00:00.000000000Z\"],");
+            }
+            rows.put("[]");
+            final HttpClient client = testHttpClient.getHttpClient();
+            try {
+                // the cast fails on the last row, after earlier rows went out in full chunks
+                assertExecResponse(
+                        client,
+                        "SELECT t::timestamp_ns v FROM x",
+                        "{\"query\":\"SELECT t::timestamp_ns v FROM x\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[" + rows
+                                + "],\"count\":101,\"error\":\"inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT d::timestamp_ns v FROM x",
+                        "{\"query\":\"SELECT d::timestamp_ns v FROM x\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[" + rows
+                                + "],\"count\":101,\"error\":\"inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                // the cast fails on the first row, right after the response header went out
+                assertExecResponse(
+                        client,
+                        "SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'",
+                        "{\"query\":\"SELECT t::timestamp_ns v FROM x WHERE t > '2200-01-01'\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[[]],"
+                                + "\"count\":1,\"error\":\"inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'",
+                        "{\"query\":\"SELECT d::timestamp_ns v FROM x WHERE d > '2200-01-01'\",\"columns\":[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}],\"timestamp\":-1,\"dataset\":[[]],"
+                                + "\"count\":1,\"error\":\"inconvertible value: 10413792000000 [DATE -> TIMESTAMP_NS]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT count() FROM x",
+                        "{\"query\":\"SELECT count() FROM x\",\"columns\":[{\"name\":\"count\",\"type\":\"LONG\"}],\"timestamp\":-1,\"dataset\":[[101]],\"count\":1}"
+                );
+            } finally {
+                client.disconnect();
+            }
+        });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionInFilterAfterResumedRecordReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((_, _) -> {
+            final StringSink rows = new StringSink();
+            for (int i = 1; i < 129; i++) {
+                rows.put('[').put(i).put("],");
+            }
+            // long_sequence() filters serially, so the cast fails in hasNext() for x = 130
+            assertExecErrorAcrossChunkBoundary(
+                    "SELECT x FROM long_sequence(150) WHERE (CASE WHEN x = 130 THEN '2300-01-01' ELSE '2024-01-01' END)::TIMESTAMP::TIMESTAMP_NS > 0",
+                    "[{\"name\":\"x\",\"type\":\"LONG\"}]",
+                    rows.toString(),
+                    "[129]",
+                    129,
+                    "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]"
+            );
+        });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionInResumedRecordReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((engine, _) -> {
+            createCastOverflowTable(engine, 10);
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < 10; i++) {
+                rows.put("[\"2024-01-01T00:00:00.000Z\",\"2024-01-01T00:00:00.000000000Z\"],");
+            }
+            assertExecErrorAcrossChunkBoundary(
+                    "SELECT d, t::timestamp_ns v FROM x",
+                    "[{\"name\":\"d\",\"type\":\"DATE\"},{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}]",
+                    rows.toString(),
+                    "[\"2300-01-01T00:00:00.000Z\"]",
+                    11,
+                    "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]"
+            );
+        });
+    }
+
+    @Test
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -5603,6 +5722,49 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testQueryImplicitCastExceptionWithErrorLargerThanSendBufferReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((_, _) -> {
+            final String sql = "SELECT x, sqrt(CASE WHEN x = 20 THEN rpad('a', 1100, 'b') ELSE '4' END) v FROM long_sequence(30)";
+            final StringSink rows = new StringSink();
+            for (int i = 1; i < 20; i++) {
+                rows.put('[').put(i).put(",2.0],");
+            }
+            try (HttpClient client = newNonReconnectingHttpClient()) {
+                assertExecResponse(
+                        client,
+                        sql,
+                        "{\"query\":\"" + sql + "\",\"columns\":[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"v\",\"type\":\"DOUBLE\"}],\"timestamp\":-1,\"dataset\":[" + rows
+                                + "[20]],\"count\":20,\"error\":\"response buffer is too small for the column value [columnName=v, columnIndex=1]\", \"errorPos\":0}"
+                );
+                assertExecResponse(
+                        client,
+                        "SELECT 1 x",
+                        "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testQueryImplicitCastExceptionWithErrorTrailerOverflowingBufferReportsErrorInJson() throws Exception {
+        getSimpleTester().withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE)).run((engine, _) -> {
+            createCastOverflowTable(engine, 20);
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < 20; i++) {
+                rows.put("[\"2024-01-01T00:00:00.000000000Z\"],");
+            }
+            assertExecErrorAcrossChunkBoundary(
+                    "SELECT t::timestamp_ns v FROM x",
+                    "[{\"name\":\"v\",\"type\":\"TIMESTAMP_NS\"}]",
+                    rows.toString(),
+                    "[]",
+                    21,
+                    "inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]"
+            );
+        });
+    }
+
+    @Test
     public void testQueryReturnsEncodedNonPrintableCharacters() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(1).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder()).withTelemetry(false).run((_, _) -> new SendAndReceiveRequestBuilder().executeWithStandardHeaders("GET /query?query=selecT%20%27NH%1C%27%3B%20 HTTP/1.1\r\n", """
                 81\r
@@ -5610,6 +5772,36 @@ public class IODispatcherTest extends AbstractTest {
                 00\r
                 \r
                 """));
+    }
+
+    @Test
+    public void testQueryRuntimeExceptionAfterPartialSendReportsErrorInJson() throws Exception {
+        // partial socket sends park the request, so the failing row resumes in resumeSend()
+        getSimpleTester()
+                .withForceSendFragmentationChunkSize(128)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withSendBufferSize(SMALL_SEND_BUFFER_SIZE))
+                .run((_, _) -> {
+                    final StringSink rows = new StringSink();
+                    for (int i = 1; i < 70; i++) {
+                        rows.put('[').put(i).put(",true],");
+                    }
+                    assertExecErrorAcrossChunkBoundary(
+                            "SELECT x, CASE WHEN x = 70 THEN npe() ELSE true END b FROM long_sequence(80)",
+                            "[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"b\",\"type\":\"BOOLEAN\"}]",
+                            rows.toString(),
+                            "[70]",
+                            70,
+                            "java.lang.NullPointerException"
+                    );
+                    assertExecErrorAcrossChunkBoundary(
+                            "SELECT x, CASE WHEN x = 70 THEN large_error_message(5) ELSE true END b FROM long_sequence(80)",
+                            "[{\"name\":\"x\",\"type\":\"LONG\"},{\"name\":\"b\",\"type\":\"BOOLEAN\"}]",
+                            rows.toString(),
+                            "[70]",
+                            70,
+                            "eeeee"
+                    );
+                });
     }
 
     @Test
@@ -7313,7 +7505,19 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTriggerNPE() throws Exception {
         getSimpleTester().run((engine, _) -> {
-            testHttpClient.assertGet("{" + "\"query\":\"select npe()\"," + "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"Internal server error\", " + "\"errorPos\":0" + "}", "select npe()");
+            testHttpClient.assertGet("{" + "\"query\":\"select npe()\"," + "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"java.lang.NullPointerException\", " + "\"errorPos\":0" + "}", "select npe()");
+            Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
+        });
+    }
+
+    @Test
+    public void testTriggerNPEBeforeFirstRow() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT * FROM long_sequence(1) WHERE npe()\",\"error\":\"java.lang.NullPointerException\",\"position\":0}",
+                    "SELECT * FROM long_sequence(1) WHERE npe()"
+            );
             Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }
@@ -7818,6 +8022,53 @@ public class IODispatcherTest extends AbstractTest {
         }
     }
 
+    // Pads the query text so that the first response chunk ends on every byte of the last row and of the
+    // error trailer. The client does not reconnect, so every request checks the server kept the connection.
+    private static void assertExecErrorAcrossChunkBoundary(
+            String sql,
+            String columns,
+            String rowsBeforeLast,
+            String lastRow,
+            long count,
+            String error
+    ) throws JsonException {
+        final String head = "\",\"columns\":" + columns + ",\"timestamp\":-1,\"dataset\":[" + rowsBeforeLast;
+        final String tail = lastRow + "],\"count\":" + count + ",\"error\":\"" + error + "\", \"errorPos\":0}";
+        final int maxPad = SMALL_SEND_BUFFER_SIZE - "{\"query\":\"".length() - sql.length() - head.length();
+        Assert.assertTrue(maxPad >= tail.length());
+        try (HttpClient client = newNonReconnectingHttpClient()) {
+            for (int pad = maxPad; pad > -1; pad--) {
+                final String paddedSql = sql + " ".repeat(pad);
+                assertExecResponse(client, paddedSql, "{\"query\":\"" + paddedSql + head + tail);
+            }
+            assertExecResponse(
+                    client,
+                    "SELECT 1 x",
+                    "{\"query\":\"SELECT 1 x\",\"columns\":[{\"name\":\"x\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}"
+            );
+        }
+    }
+
+    private static void assertExecResponse(HttpClient client, String sql, String expectedBody) throws JsonException {
+        final HttpClient.Request request = client.newRequest("localhost", 9001);
+        request.GET().url("/exec").query("query", sql);
+        try (HttpClient.ResponseHeaders response = request.send()) {
+            HttpUtils.awaitStatusCode(response, "200");
+            HttpUtils.assertChunkedBody(response, expectedBody);
+        }
+        try (JsonLexer lexer = new JsonLexer(0, 0); DirectUtf8Sink body = new DirectUtf8Sink(expectedBody.length())) {
+            body.put(expectedBody);
+            lexer.parse(body.ptr(), body.ptr() + body.size(), (_, _, _) -> {
+            });
+            lexer.parseLast();
+        }
+    }
+
+    private static void createCastOverflowTable(CairoEngine engine, int validRowCount) throws SqlException {
+        engine.execute("CREATE TABLE x AS (SELECT '2024-01-01'::TIMESTAMP t, '2024-01-01'::DATE d FROM long_sequence(" + validRowCount + "))");
+        engine.execute("INSERT INTO x VALUES ('2300-01-01', '2300-01-01')");
+    }
+
     private static HttpServer createHttpServer(ServerConfiguration serverConfiguration, CairoEngine cairoEngine, WorkerPool workerPool) {
         return Services.INSTANCE.createHttpServer(serverConfiguration, cairoEngine, workerPool, workerPool.getWorkerCount());
     }
@@ -7839,6 +8090,15 @@ public class IODispatcherTest extends AbstractTest {
             }
             writer.commit();
         }
+    }
+
+    private static HttpClient newNonReconnectingHttpClient() {
+        return HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration() {
+            @Override
+            public boolean fixBrokenConnection() {
+                return false;
+            }
+        });
     }
 
     private static String rangeRequest(String range, String ifRange) {

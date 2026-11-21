@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
@@ -49,6 +50,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SYMBOL;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Sk)";
     }
@@ -57,7 +63,7 @@ public class CastStrToSymbolFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            return SymbolConstant.newInstance(arg.getStrA(null));
+            return SymbolConstant.fromValue(arg.getStrA(null));
         }
         return new Func(arg);
     }

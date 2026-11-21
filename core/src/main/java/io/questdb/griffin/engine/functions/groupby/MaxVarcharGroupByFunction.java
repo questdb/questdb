@@ -61,7 +61,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
             mapValue.putLong(valueIndex, 0);
         } else {
             sinkA.of(0).put(val);
-            mapValue.putLong(valueIndex, sinkA.ptr());
+            mapValue.putLong(valueIndex, sinkA.headerPtr());
         }
     }
 
@@ -73,7 +73,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
             final long ptr = mapValue.getLong(valueIndex);
             if (ptr == 0) {
                 sinkA.of(0).put(val);
-                mapValue.putLong(valueIndex, sinkA.ptr());
+                mapValue.putLong(valueIndex, sinkA.headerPtr());
                 return;
             }
 
@@ -81,7 +81,7 @@ public final class MaxVarcharGroupByFunction extends VarcharFunction implements 
             if (Utf8s.compare(sinkA, val) < 0) {
                 sinkA.clear();
                 sinkA.put(val);
-                mapValue.putLong(valueIndex, sinkA.ptr());
+                mapValue.putLong(valueIndex, sinkA.headerPtr());
             }
         }
     }

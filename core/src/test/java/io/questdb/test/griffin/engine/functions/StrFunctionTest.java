@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
@@ -33,6 +34,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -539,5 +542,44 @@ public class StrFunctionTest {
         Utf8Sequence value = function.getVarcharB(null);
         Assert.assertNotNull(value);
         TestUtils.assertEquals("a", value.toString());
+    }
+
+    @Test
+    public void testVarcharViewsEncodeIndependently() {
+        final String[] values = {"Ä€ë", "a\uD83D\uDE00b", "", null};
+        final int[] index = new int[2];
+        final StrFunction strings = new StrFunction() {
+            @Override
+            public CharSequence getStrA(Record rec) {
+                return values[index[0]];
+            }
+
+            @Override
+            public CharSequence getStrB(Record rec) {
+                return values[index[1]];
+            }
+        };
+        for (int a = 0; a < values.length; a++) {
+            for (int b = 0; b < values.length; b++) {
+                index[0] = a;
+                index[1] = b;
+                final Utf8Sequence viewA = strings.getVarcharA(null);
+                final Utf8Sequence viewB = strings.getVarcharB(null);
+                assertUtf8(values[a], viewA);
+                assertUtf8(values[b], viewB);
+                Assert.assertEquals(values[a] == null ? TableUtils.NULL_LEN : new Utf8String(values[a]).size(), strings.getVarcharSize(null));
+                if (viewB != null) {
+                    assertUtf8(values[b], viewB);
+                }
+            }
+        }
+    }
+
+    private static void assertUtf8(String expected, Utf8Sequence actual) {
+        if (expected == null) {
+            Assert.assertNull(actual);
+        } else {
+            Assert.assertTrue(Utf8s.equals(new Utf8String(expected), actual));
+        }
     }
 }

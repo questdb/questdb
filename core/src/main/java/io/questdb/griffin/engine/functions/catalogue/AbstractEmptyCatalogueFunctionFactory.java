@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 /**
@@ -70,6 +71,7 @@ public abstract class AbstractEmptyCatalogueFunctionFactory implements FunctionF
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
+        Misc.freeObjList(args);
         return new CursorFunction(new EmptyTableRecordCursorFactory(metadata)) {
             @Override
             public boolean isRuntimeConstant() {

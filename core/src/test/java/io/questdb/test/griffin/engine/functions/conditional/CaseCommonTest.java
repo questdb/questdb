@@ -28,6 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.std.IntList;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -38,8 +45,8 @@ import java.util.*;
 public class CaseCommonTest extends BaseFunctionFactoryTest {
     private static final short MAX_COLUMN_TYPE_ID = ColumnType.VARCHAR;
     private static final short MIN_COLUMN_TYPE_ID = ColumnType.BOOLEAN;
-    private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private static final int NO_COMMON_TYPE = -1;
+    private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private FunctionParser functionParser;
 
     @Before
@@ -52,35 +59,38 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCastToCommonTypeOfBranchSequence() throws Exception {
-        // CASE, SWITCH and coalesce fold the branch types left to right and then cast every
-        // branch to the final type. The final type can be one that no pair with a given branch
-        // type produces (SYMBOL, STRING, IPv4 -> IPv4), so this walks every type the fold can
-        // reach once a branch of a given type took part, not only the pairwise common type.
-        // Each branch must be cast to that type or be readable as it, else the query must fail
-        // to compile.
+        // CASE, SWITCH and coalesce fold the branch types and then cast every branch to the
+        // final type. The final type can be one that no pair with a given branch type produces
+        // (SYMBOL, STRING, IPv4 -> IPv4), so this walks every type the fold can reach once a
+        // branch of a given type took part, not only the pairwise common type. Each branch that
+        // converts to that type must be cast to it or be readable as it; the others fail the
+        // query.
         assertMemoryLeak(() -> {
             SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1);
             final List<Integer> types = getFoldTypes();
             final List<String> rejected = new ArrayList<>();
             for (int branchType : types) {
                 for (int commonType : getReachableCommonTypes(branchType, types)) {
-                    final String pair = ColumnType.nameOf(branchType) + " -> " + ColumnType.nameOf(commonType);
-                    final Function branch = getRndFunction(branchType);
-                    branch.init(null, context);
-                    final Function castFunction;
-                    try {
-                        castFunction = CaseCommon.getCastToCommonTypeFunction(branch, 0, commonType, configuration, null);
-                    } catch (SqlException e) {
-                        Assert.assertEquals("[0] inconvertible types: " + pair + " [from=" + ColumnType.nameOf(branchType)
-                                + ", to=" + ColumnType.nameOf(commonType) + ']', e.getMessage());
-                        rejected.add(pair);
+                    if (!CaseCommon.isConvertible(branchType, commonType)) {
+                        rejected.add(ColumnType.nameOf(branchType) + " -> " + ColumnType.nameOf(commonType));
                         continue;
                     }
-                    assertReadsAs(castFunction, commonType);
+                    final Function branch = getRndFunction(branchType);
+                    branch.init(null, context);
+                    assertReadsAs(CaseCommon.getCastFunction(branch, 0, commonType, configuration, null), commonType);
                 }
             }
             Assert.assertEquals("[CHAR -> UUID, CHAR -> IPv4, SYMBOL -> UUID, SYMBOL -> IPv4]", rejected.toString());
         });
+    }
+
+    @Test
+    public void testCastToTimestamp() throws Exception {
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            assertCastToTimestamp(new CharConstant('1'), timestampType, 1);
+            assertCastToTimestamp(new ByteConstant((byte) 2), timestampType, 2);
+            assertCastToTimestamp(new ShortConstant((short) 3), timestampType, 3);
+        }
     }
 
     @Test
@@ -167,8 +177,8 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testCommonTypeIsSymmetric() {
-        // CASE, SWITCH and coalesce fold their branch types left to right, so the common
-        // type of a pair must not depend on which branch comes first
+        // CASE, SWITCH and coalesce fold their value types in order, so the common type of a pair must not
+        // depend on which value comes first
         final List<Integer> types = getFoldTypes();
         for (int l : types) {
             for (int r : types) {
@@ -180,6 +190,32 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
             }
         }
         Assert.assertEquals(ColumnType.STRING, getCommonTypeOrNone(ColumnType.CHAR, ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testResultTypeMatchesInstantiation() {
+        // CHAR and STRING fold into STRING and STRING into IPv4, but CHAR does not convert to IPv4
+        final CoalesceFunctionFactory coalesce = new CoalesceFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.CHAR, ColumnType.STRING, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.STRING, ColumnType.CHAR, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.IPv4, coalesce.getResultType(types(ColumnType.STRING, ColumnType.IPv4)));
+
+        final CaseFunctionFactory caseFactory = new CaseFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, caseFactory.getResultType(
+                types(ColumnType.BOOLEAN, ColumnType.CHAR, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, caseFactory.getResultType(types(ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)));
+
+        final SwitchFunctionFactory switchFactory = new SwitchFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.INT, ColumnType.IPv4, ColumnType.CHAR)
+        ));
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.UNDEFINED)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.IPv4)
+        ));
     }
 
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
@@ -199,6 +235,12 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         for (short t : to) {
             ignored.add(t);
         }
+    }
+
+    private static void assertCastToTimestamp(Function value, int timestampType, long expected) throws SqlException {
+        final Function cast = CaseCommon.getCastFunction(value, 0, timestampType, configuration, null);
+        Assert.assertEquals(timestampType, cast.getType());
+        Assert.assertEquals(expected, cast.getTimestamp(null));
     }
 
     private static Map<Short, Set<Short>> buildIgnoredTypeMap() {
@@ -635,6 +677,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     private static boolean isIgnoredType(short lType, short rType) {
         return IGNORED_TYPE.get(lType).contains(rType);
+    }
+
+    private static IntList types(int... types) {
+        final IntList list = new IntList();
+        for (int type : types) {
+            list.add(type);
+        }
+        return list;
     }
 
     private Function getRndFunction(int type) throws SqlException {

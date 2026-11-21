@@ -50,6 +50,50 @@ public class EqDateFunctionFactoryTest extends AbstractFunctionFactoryTest {
         callBySignature("<>(MM)", t1, t2).andAssert(true);
     }
 
+    @Test
+    public void testNullComparedWithDate() throws Exception {
+        // NULL = x holds exactly when x is NULL and != negates it, whichever side the untyped NULL stands on
+        assertMemoryLeak(() -> {
+            final String ops = "null != %1$s a, %1$s != null b, null <> %1$s c, %1$s <> null d,"
+                    + " null = %1$s e, %1$s = null f, typeOf(null != %1$s) t";
+            final String header = "a\tb\tc\td\te\tf\tt\n";
+            final String value = "true\ttrue\ttrue\ttrue\tfalse\tfalse\tBOOLEAN\n";
+            final String nullValue = "false\tfalse\tfalse\tfalse\ttrue\ttrue\tBOOLEAN\n";
+            execute("CREATE TABLE x (d DATE)");
+            execute("INSERT INTO x VALUES ('2020-01-01'), (null)");
+            assertQuery("SELECT " + String.format(ops, "d") + " FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(header + value + nullValue);
+            assertQuery("x WHERE null != d")
+                    .noLeakCheck()
+                    .returns("d\n2020-01-01T00:00:00.000Z\n");
+            assertQuery("x WHERE NOT (null <> d)")
+                    .noLeakCheck()
+                    .returns("d\n\n");
+            assertQuery("SELECT " + String.format(ops, "'2020-01-01'::DATE"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(header + value);
+            assertQuery("SELECT " + String.format(ops, "null::DATE"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(header + nullValue);
+            bindVariableService.clear();
+            bindVariableService.setDate(0, MillisTimestampDriver.floor("2020-01-01"));
+            assertQuery("SELECT " + String.format(ops, "$1"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(header + value);
+            bindVariableService.clear();
+            bindVariableService.setDate(0);
+            assertQuery("SELECT " + String.format(ops, "$1"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(header + nullValue);
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new EqDateFunctionFactory();

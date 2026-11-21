@@ -1081,6 +1081,32 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testParallelGroupByPercentileFromSubquery() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE t AS (SELECT x lx, x::DOUBLE dx, (x % 4)::INT s FROM long_sequence(4_000))", sqlExecutionContext);
+                engine.execute("CREATE TABLE t2 (k INT, y INT)", sqlExecutionContext);
+                engine.execute("INSERT INTO t2 VALUES (1, 300), (2, 100)", sqlExecutionContext);
+                assertQuery("SELECT s, percentile_disc(dx, ARRAY[CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 0.9 ELSE 0.1 END, 0.5]) p FROM t GROUP BY s ORDER BY s")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4", "Frame forward scan on: t2 [state-shared],0.9,0.1")
+                        .returns("""
+                                s\tp
+                                0\t[3600.0,2000.0]
+                                1\t[3597.0,1997.0]
+                                2\t[3598.0,1998.0]
+                                3\t[3599.0,1999.0]
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testParallelGroupByNullPercentiles() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {

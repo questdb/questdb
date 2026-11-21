@@ -118,7 +118,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }
@@ -129,7 +129,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }
@@ -140,7 +140,7 @@ public class ArgMaxVarcharLongGroupByFunctionFactoryTest extends AbstractCairoTe
         try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "SELECT sym, arg_max(value, key) FROM tab GROUP BY sym ORDER BY sym";
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, ArgMinMaxTestUtils.ARG_MAX_ORACLE, sql, LOG);
             }, configuration, LOG);
         }
     }

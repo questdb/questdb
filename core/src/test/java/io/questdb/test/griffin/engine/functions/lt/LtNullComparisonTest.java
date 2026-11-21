@@ -29,13 +29,11 @@ import org.junit.Test;
 
 /**
  * Regression test for the query fuzzer's literal-vs-bind divergence on
- * {@code NOT (... > null)} predicates. The SqlOptimiser rewrites
- * {@code NOT (X > Y)} to {@code X <= Y} when it appears in a WHERE clause.
- * The {@code <=} factory is built from the {@code <} factory by wrapping
- * with {@code NegatingFunctionFactory}, which used to flip the
- * short-circuit {@code BooleanConstant.FALSE} returned for null operands
- * to TRUE -- causing the bind-variable form to admit every row while the
- * literal form was correctly filtered.
+ * {@code NOT (... > null)} predicates. The {@code <=} factory is built from
+ * the {@code <} factory by wrapping with {@code NegatingFunctionFactory},
+ * which used to flip the short-circuit {@code BooleanConstant.FALSE} returned
+ * for null operands to TRUE, so the literal and bind-variable forms of a
+ * comparison with NULL disagreed.
  */
 public class LtNullComparisonTest extends AbstractCairoTest {
 
@@ -44,13 +42,16 @@ public class LtNullComparisonTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL, c4 SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES ('a', 'X', 0), ('b', null, 1)");
-            String expected = "sym\tc4\tts\n" +
-                    "b\t\t1970-01-01T00:00:00.000001Z\n";
-            // Literal form: 'BGZT' folds at compile time, optimiseBooleanNot
-            // rewrites NOT(X > null) into X <= null which evaluates to FALSE.
+            String expected = """
+                    sym\tc4\tts
+                    a\tX\t1970-01-01T00:00:00.000000Z
+                    b\t\t1970-01-01T00:00:00.000001Z
+                    """;
+            // Literal form: 'BGZT' folds at compile time; X > null is FALSE, so NOT(X > null) is TRUE.
             assertQuery("SELECT * FROM t WHERE (upper(c4) IS NULL OR NOT (upper(upper('BGZT')) > null)) ORDER BY ts ASC")
                     .noLeakCheck()
                     .timestamp("ts")
+                    .expectSize()
                     .returns(expected);
             // Bind variant: same predicate must match the literal pivot.
             bindVariableService.clear();
