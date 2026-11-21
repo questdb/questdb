@@ -88,6 +88,7 @@ public class PartitionGeometry implements Closeable, Mutable {
      * Longs of {@link #pieces} no resolved directory points at any more.
      */
     private int pieceHoles;
+    private PartitionGeometryFile probeFile;
     /**
      * Slot count {@link #resolved} has to reach before {@link #evictRetiredDirectories} walks it again.
      */
@@ -106,6 +107,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     public void close() {
         discard();
         geometryFile = Misc.free(geometryFile);
+        probeFile = Misc.free(probeFile);
     }
 
     /**
@@ -712,7 +714,9 @@ public class PartitionGeometry implements Closeable, Mutable {
      * The lowest generation at or above {@code from} that no {@code _geometry.<generation>} file in {@code
      * partitionDir} occupies, or {@code -1} when every generation up to {@link
      * TxReader#PARTITION_GEOMETRY_MAX_GENERATION} is taken. A generation whose file still holds a record may be one a
-     * pinned reader resolves records out of, so it is not a generation a new chain may open on.
+     * pinned reader resolves records out of, so it is not a generation a new chain may open on - unless a transaction
+     * that never committed wrote that record. A commit that fails after its publish leaves such a file, and nothing
+     * else reclaims it; its writer txn is above the committed one, so no {@code _txn} names it.
      * <p>
      * A file shorter than one complete record does NOT occupy its generation. Such a file is what an {@link
      * PartitionGeometryFile#append} that failed its write leaves behind - it creates the file before writing it - and
@@ -736,10 +740,11 @@ public class PartitionGeometry implements Closeable, Mutable {
         try {
             for (int generation = from; generation <= TxReader.PARTITION_GEOMETRY_MAX_GENERATION; generation++) {
                 // -1 when there is no file at all, which is the ordinary case.
-                if (ff.length(PartitionGeometryFile.geometryFileName(partitionDir, generation)) < PartitionGeometryFile.recordSize(1)) {
+                final long length = ff.length(PartitionGeometryFile.geometryFileName(partitionDir, generation));
+                partitionDir.trimTo(dirLen);
+                if (length < PartitionGeometryFile.recordSize(1) || isOpenedByUncommittedTxn(partitionDir, generation)) {
                     return generation;
                 }
-                partitionDir.trimTo(dirLen);
             }
             return -1;
         } finally {
@@ -812,6 +817,18 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(at + RES_PARTITION_TS, partitionTimestamp);
         resolved.setQuick(at + RES_NAME_TXN, nameTxn);
         return at;
+    }
+
+    private boolean isOpenedByUncommittedTxn(Path partitionDir, int generation) {
+        if (probeFile == null) {
+            probeFile = new PartitionGeometryFile(memoryTag);
+        }
+        try {
+            probeFile.read(ff, partitionDir, generation, 0);
+        } catch (CairoException e) {
+            return false;
+        }
+        return probeFile.getWriterTxn() > txReader.getTxn();
     }
 
     private long pieceLong(int res, int ordinal, int field) {

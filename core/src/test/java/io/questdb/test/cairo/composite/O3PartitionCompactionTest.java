@@ -806,13 +806,17 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertTrue("the retried carve did not record the front as composite", isComposite("x", "2024-01-01"));
             final long ref = committedGeometryRefOfDay("x", "2024-01-01");
             Assert.assertEquals(
-                    "the retried chain did not skip the generation the failed carve wrote",
-                    retiredGeneration + 2,
+                    "the retried carve did not reuse the generation the failed carve wrote",
+                    retiredGeneration + 1,
                     TxReader.geometryGeneration(ref)
             );
             Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
 
-            assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 2);
+            assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 1);
+            Assert.assertFalse(
+                    "the carves left a geometry file past the live generation",
+                    hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration + 2)
+            );
             insertIntoFront();
             assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
                     .noRandomAccess()
