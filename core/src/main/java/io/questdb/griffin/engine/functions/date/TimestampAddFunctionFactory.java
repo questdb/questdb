@@ -104,6 +104,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {
+        private final long fixedDelta;
         private final char period;
         private final TimestampDriver.TimestampAddMethod periodAddFunction;
         private final int stride;
@@ -115,6 +116,10 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             this.periodAddFunction = periodAddFunction;
             this.stride = stride;
             this.timestampFunc = timestampFunc;
+            // NULL when the span of stride fixed units does not fit a long; unused for calendar units
+            this.fixedDelta = TimestampAddUtils.isCalendarUnit(period)
+                    ? 0
+                    : TimestampAddUtils.getFixedDelta(periodAddFunction.add(0, 1), periodAddFunction.add(0, stride), stride);
         }
 
         @Override
@@ -128,7 +133,10 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return periodAddFunction.add(timestamp, stride);
+            if (TimestampAddUtils.isCalendarUnit(period)) {
+                return TimestampAddUtils.addCalendarOrNull(timestampDriver, period, timestamp, stride, periodAddFunction.add(timestamp, stride));
+            }
+            return TimestampAddUtils.addFixedOrNull(timestamp, fixedDelta);
         }
 
         @Override
@@ -169,8 +177,12 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
                 return SUPERSET;
             }
             if (CommonUtils.isFixedDurationUnit(period)) {
-                // a fixed unit adds the same constant to every timestamp
-                return MonotonicTimestampFunction.invertConstantShift(io, periodAddFunction.add(0, stride), shiftInputCeiling(getType()));
+                // a fixed unit adds the same constant to every timestamp; a span that does not fit a long
+                // leaves no usable constant
+                if (fixedDelta == Numbers.LONG_NULL) {
+                    return NONE;
+                }
+                return MonotonicTimestampFunction.invertConstantShift(io, fixedDelta, shiftInputCeiling(getType()));
             }
             return NONE;
         }
@@ -216,7 +228,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL || stride == Numbers.INT_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return periodAddFunc.add(timestamp, stride);
+            return TimestampAddUtils.addOrNull(timestampDriver, periodAddFunc, period, timestamp, stride);
         }
 
         @Override
@@ -272,7 +284,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
             if (timestamp == Numbers.LONG_NULL) {
                 return Numbers.LONG_NULL;
             }
-            return timestampDriver.add(timestamp, period, stride);
+            return TimestampAddUtils.addOrNull(timestampDriver, period, timestamp, stride);
         }
 
         @Override
