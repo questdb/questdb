@@ -1875,6 +1875,36 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewAlterAddColumnIfNotExistsOfExistingColumnDoesNotWait() throws Exception {
+        // ADD COLUMN IF NOT EXISTS of a column the view has changes nothing, so it checks no SQL and does not wait for
+        // the definition event of an earlier ALTER ... AS: it neither refuses while the apply of the view's WAL is
+        // suspended short of the event, nor waits for the event once RESUME WAL lifts the suspension.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long viewSeqTxn = viewSeqTxn();
+            Assert.assertEquals(viewSeqTxn, viewState().getPendingDefinitionSeqTxn());
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            armNoWaitGuard();
+            try {
+                execute(ALTER_PREFIX + "ADD COLUMN IF NOT EXISTS price DOUBLE");
+                execute(ALTER_PREFIX + "RESUME WAL");
+                execute(ALTER_PREFIX + "ADD COLUMN IF NOT EXISTS price DOUBLE");
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            // neither statement wrote to the view's WAL, whose apply has not reached the definition event
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn() < viewSeqTxn);
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            assertViewColumns("price_1h", "ts", "sym", "price");
+            assertViewStatus("valid", "");
+        });
+    }
+
+    @Test
     public void testViewAlterAfterDefinitionApplyFailureRefusedUntilSkipped() throws Exception {
         // A definition event that fails to apply suspends the view's WAL, and a view ALTER refuses until RESUME WAL FROM
         // TXN skips the event. RESUME WAL FROM TXN leaves the view's applied seqTxn to the WAL apply, so the next view
