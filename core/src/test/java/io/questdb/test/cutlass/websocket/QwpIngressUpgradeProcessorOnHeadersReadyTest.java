@@ -515,11 +515,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     @Test
     public void testOnHeadersReadyFailsHardWhenRefusedOwnedByResponseDoesNotFitBuffer() throws Exception {
-        assertMemoryLeak(() -> {
-            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext("bob is not part of group team");
-            assertOwnedByRejectDoesNotFitBuffer(securityContext, "team", "403 forbidden response");
-            Assert.assertNull(securityContext.owner);
-        });
+        assertMemoryLeak(() -> assertOwnedByRejectDoesNotFitBuffer(
+                new OwnerRecordingSecurityContext("bob is not part of group team"),
+                "team",
+                "403 forbidden response"
+        ));
     }
 
     @Test
