@@ -587,4 +587,188 @@ public class FilterPushdownIntoUnionTest extends AbstractSqlParserTest {
                 modelOf("t2").col("ts2", ColumnType.TIMESTAMP).col("val2", ColumnType.INT)
         );
     }
+
+    @Test
+    public void testTimestampFilterOverUnionAllWithLatestOnBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    CREATE TABLE y (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T01:00:00', 'k1', 1),
+                        ('2024-01-01T03:00:00', 'k1', 2),
+                        ('2024-01-01T04:00:00', 'k2', 3);
+                    """);
+            execute("""
+                    INSERT INTO y VALUES
+                        ('2024-01-01T02:00:00', 'k3', 4),
+                        ('2024-01-01T05:00:00', 'k4', 5);
+                    """);
+
+            assertQuery("""
+                    SELECT k
+                    FROM (
+                        SELECT ts, k, a FROM y
+                        UNION ALL
+                        SELECT ts, k, a FROM x LATEST ON ts PARTITION BY k
+                    )
+                    WHERE ts > '2024-01-01T02:30:00.000000Z';
+                    """).noRandomAccess().returns("""
+                    k
+                    k4
+                    k1
+                    k2
+                    """);
+        });
+    }
+
+    @Test
+    public void testTimestampFilterOverUnionAllWithLatestOnFirstBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    CREATE TABLE y (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T01:00:00', 'k1', 1),
+                        ('2024-01-01T03:00:00', 'k1', 2),
+                        ('2024-01-01T04:00:00', 'k2', 3);
+                    """);
+            execute("""
+                    INSERT INTO y VALUES
+                        ('2024-01-01T02:00:00', 'k3', 4),
+                        ('2024-01-01T05:00:00', 'k4', 5);
+                    """);
+
+            assertQuery("""
+                    SELECT k
+                    FROM (
+                        SELECT ts, k, a FROM x LATEST ON ts PARTITION BY k
+                        UNION ALL
+                        SELECT ts, k, a FROM y
+                    )
+                    WHERE ts > '2024-01-01T02:30:00.000000Z';
+                    """).noRandomAccess().returns("""
+                    k
+                    k1
+                    k2
+                    k4
+                    """);
+        });
+    }
+
+    @Test
+    public void testTimestampFilterOverUnionAllWithLatestOnBranchAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    CREATE TABLE y (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T01:00:00', 'k1', 1),
+                        ('2024-01-01T03:00:00', 'k1', 2),
+                        ('2024-01-01T04:00:00', 'k2', 3);
+                    """);
+            execute("""
+                    INSERT INTO y VALUES
+                        ('2024-01-01T02:00:00', 'k3', 4),
+                        ('2024-01-01T05:00:00', 'k4', 5);
+                    """);
+
+            assertQuery("""
+                    SELECT count()
+                    FROM (
+                        SELECT ts, a FROM x LATEST ON ts PARTITION BY k
+                        UNION ALL
+                        SELECT ts, a FROM y
+                    )
+                    WHERE ts >= '2024-01-01T02:30:00.000000Z';
+                    """).noRandomAccess().expectSize().returns("""
+                    count
+                    3
+                    """);
+        });
+    }
+
+    @Test
+    public void testTimestampFilterOverUnionAllWithLatestOnBranchSelectAll() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    CREATE TABLE y (
+                        ts TIMESTAMP,
+                        k SYMBOL,
+                        a INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY;
+                    """);
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T01:00:00', 'k1', 1),
+                        ('2024-01-01T03:00:00', 'k1', 2),
+                        ('2024-01-01T04:00:00', 'k2', 3);
+                    """);
+            execute("""
+                    INSERT INTO y VALUES
+                        ('2024-01-01T02:00:00', 'k3', 4),
+                        ('2024-01-01T05:00:00', 'k4', 5);
+                    """);
+
+            assertQuery("""
+                    SELECT *
+                    FROM (
+                        SELECT ts, k, a FROM y
+                        UNION ALL
+                        SELECT ts, k, a FROM x LATEST ON ts PARTITION BY k
+                    )
+                    WHERE ts > '2024-01-01T02:30:00.000000Z';
+                    """)
+                    .noRandomAccess()
+                    .returns("""
+                    ts\tk\ta
+                    2024-01-01T05:00:00.000000Z\tk4\t5
+                    2024-01-01T03:00:00.000000Z\tk1\t2
+                    2024-01-01T04:00:00.000000Z\tk2\t3
+                    """);
+        });
+    }
 }
