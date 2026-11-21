@@ -267,6 +267,29 @@ public class SimpleLockTest {
     }
 
     @Test
+    public void testTryLockFailsWhileWaiterQueued() throws Exception {
+        final SimpleWaitingLock lock = new SimpleWaitingLock();
+        final AtomicBoolean acquired = new AtomicBoolean();
+        Assert.assertTrue(lock.tryLock());
+        final Thread waiter = new Thread(() -> {
+            if (lock.tryLock(30, TimeUnit.SECONDS)) {
+                acquired.set(true);
+            }
+        }, "waiter");
+        waiter.start();
+        TestUtils.assertEventually(() -> Assert.assertSame(lock.getWaitBlocker(), LockSupport.getBlocker(waiter)), 5);
+
+        // hand-off: once released, a barging tryLock() must not jump ahead of the queued waiter
+        lock.unlock();
+        Assert.assertFalse(lock.tryLock());
+        waiter.join();
+        Assert.assertTrue(acquired.get());
+        Assert.assertTrue(lock.isLocked());
+        lock.unlock();
+        Assert.assertFalse(lock.isLocked());
+    }
+
+    @Test
     public void testTryLockWhileInterrupted() throws Exception {
         final SimpleWaitingLock lock = new SimpleWaitingLock();
         final long timeoutMillis = 500;
