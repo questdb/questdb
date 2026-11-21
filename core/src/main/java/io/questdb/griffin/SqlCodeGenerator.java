@@ -12572,6 +12572,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ));
                 } else { // column
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
+                    if (columnIndex < 0) {
+                        throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
+                    }
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
 
                     Function function = functionParser.parseFunction(
@@ -12732,6 +12735,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (!qc.isWindowExpression()) {
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
+                    if (columnIndex < 0) {
+                        throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
+                    }
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                     chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
