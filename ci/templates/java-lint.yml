@@ -1,6 +1,10 @@
 steps:
   - bash: python3 find_unterminated_logs.py core/src --exclude=LogParanoiaTest.java
     displayName: "Check for unterminated log statements"
+  # ci/skills/render.py generates the PR skills and review agents in .claude/,
+  # .codex/ and .pi/; this fails when one was edited by hand or not re-rendered.
+  - bash: python3 ci/skills/render.py --check
+    displayName: "Check generated agent skills"
   - bash: |
       set -eux
       if [ -x /opt/intellij/idea/bin/idea.sh ]; then
