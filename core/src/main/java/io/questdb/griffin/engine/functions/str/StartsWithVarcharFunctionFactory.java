@@ -118,7 +118,8 @@ public class StartsWithVarcharFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             Utf8Sequence varchar = value.getVarcharA(rec);
-            Utf8Sequence prefix = startsWith.getVarcharA(rec);
+            // Slot B. Both sides on slot A compare a non-cached symbol with itself.
+            Utf8Sequence prefix = startsWith.getVarcharB(rec);
             if (varchar == null || prefix == null) {
                 return false;
             }
