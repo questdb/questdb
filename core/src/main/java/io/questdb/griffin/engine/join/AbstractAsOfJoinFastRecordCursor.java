@@ -411,10 +411,9 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                         return;
                     }
                     lookaheadTimestamp = slaveTimestamp;
-                    if (slaveTimestamp == masterTimestamp) {
-                        // We've found the row, so there is no point in checking the next partition.
-                        return;
-                    }
+                    // Even when slaveTimestamp equals masterTimestamp, we cannot stop here:
+                    // the run of rows with that timestamp may continue into the next frame, and
+                    // the last row less than or equal to the master timestamp could live there.
                 }
             }
             if (!openSlaveFrame(masterTimestamp)) {
