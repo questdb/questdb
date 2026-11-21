@@ -6240,6 +6240,54 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationColumnTypeMemoEndsWithTypeQueryThatThrows() throws Exception {
+        // A type query that throws ends the memo of getSetOperationColumnType() as one that returns does. The test
+        // takes long_sequence(1) away from the constant operand of the top level of nestedComputedUnion(5) over ti,
+        // so getVirtualColumnType() fails its assertion on that operand after the type query has typed the first
+        // operand, which stored the 16 pairs of the 4 levels below and grew the maps. The next type query, on
+        // nestedComputedUnion(5) over td, reads the same pooled models and columns: a memo that outlived the failed
+        // type query would give it the INT types of ti, and a type query that stayed open would keep its pairs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (a INT, b INT, c INT, e INT, k INT)");
+            execute("CREATE TABLE td (a DOUBLE, b DOUBLE, c DOUBLE, e DOUBLE, k DOUBLE)");
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                final IQueryModel brokenModel = setOperationHead(
+                        compiler.generateExecutionModel(nestedComputedUnion(5, "ti", false), sqlExecutionContext)
+                );
+                final int brokenColumnIndex = columnIndex(brokenModel, "a");
+                brokenModel.getUnionModel().setNestedModel(null);
+                long calls = compiler.getSetOperationColumnTypeCalls();
+                long parses = compiler.getVirtualColumnTypeCalls();
+                final AssertionError error = assertThrows(
+                        AssertionError.class,
+                        () -> compiler.getSetOperationColumnType(brokenModel, brokenColumnIndex)
+                );
+                assertEquals("getVirtualColumnType", error.getStackTrace()[0].getMethodName());
+                // the calls and parses of a whole type query on nestedComputedUnion(5): its last parse failed
+                assertEquals(53, compiler.getSetOperationColumnTypeCalls() - calls);
+                assertEquals(34, compiler.getVirtualColumnTypeCalls() - parses);
+                assertEquals(16, compiler.getSetOperationColumnTypesCapacity());
+                assertEquals(16, compiler.getSetOperationColumnTypeModelsCapacity());
+
+                final String query = nestedComputedUnion(5, "td", false);
+                final IQueryModel model = setOperationHead(compiler.generateExecutionModel(query, sqlExecutionContext));
+                assertSame(brokenModel, model);
+                calls = compiler.getSetOperationColumnTypeCalls();
+                parses = compiler.getVirtualColumnTypeCalls();
+                final int type = compiler.getSetOperationColumnType(model, columnIndex(model, "a"));
+                assertEquals(53, compiler.getSetOperationColumnTypeCalls() - calls);
+                assertEquals(34, compiler.getVirtualColumnTypeCalls() - parses);
+                assertEquals(16, compiler.getSetOperationColumnTypesCapacity());
+                assertEquals(16, compiler.getSetOperationColumnTypeModelsCapacity());
+                try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                    assertEquals(ColumnType.DOUBLE, factory.getMetadata().getColumnType("a"));
+                }
+                assertEquals(ColumnType.DOUBLE, type);
+            }
+        });
+    }
+
+    @Test
     public void testSetOperationColumnTypeMemoKeysTheSetOperation() throws Exception {
         // A column object can be a column of two set operations that one type query reads: wrappers delegate their
         // columns, and rewrites share column objects between the layers that they build. The test makes x of the
