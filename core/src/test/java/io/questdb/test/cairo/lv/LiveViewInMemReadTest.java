@@ -48,6 +48,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
+import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -877,6 +879,34 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testProjectedHorizonJoinSlaveSeesUnflushedLead() throws Exception {
+        // Horizon joins build the same shared time-frame state through a separate async consumer.
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // Offsets 0, 1, and 2 select x=3,4,5; the last two exist only in the lead.
+            final long projectedLeadRows = countProjectedLeadRows("SELECT ts, x, x AS x0 FROM lv", false);
+            final String query = "SELECT h.offset / 1_000_000 AS sec_offs, sum(l.x) AS agg, sum(l.x0) AS agg0 " +
+                    "FROM probe t HORIZON JOIN (SELECT ts, x, x AS x0 FROM lv) l " +
+                    "RANGE FROM 0s TO 2s STEP 1s AS h ORDER BY sec_offs";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("Async Horizon Join", "SelectedRecord");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sec_offs\tagg\tagg0
+                            0\t3\t3
+                            1\t4\t4
+                            2\t5\t5
+                            """);
+            Assert.assertEquals("the retained projection must walk both lead rows", 2, projectedLeadRows);
+        });
+    }
+
+    @Test
     public void testWindowJoinSlaveOverAnEvictedOverlapSeesEveryRowOnce() throws Exception {
         // The arm above proves the lead arrives; this one proves the OVERLAP does not arrive
         // twice, which the other fixture cannot ask. buildEvictedOverlapPlusLead is the only
@@ -971,6 +1001,94 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     ts\tagg
                     2026-05-12T00:00:03.000000Z\t15
                     """, sink.toString());
+        });
+    }
+
+    @Test
+    public void testProjectedWindowJoinSlaveSeesUnflushedLead() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // The 10-second window spans all three disk values and both lead values.
+            final long projectedLeadRows = countProjectedLeadRows(
+                    "SELECT ts, x, x AS x0 FROM lv"
+            );
+            final String query = "SELECT p.ts, sum(l.x) AS agg, sum(l.x0) AS agg0 FROM probe p " +
+                    "WINDOW JOIN (SELECT ts, x, x AS x0 FROM lv) l " +
+                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Window ", "SelectedRecord");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tagg\tagg0
+                            2026-05-12T00:00:03.000000Z\t15\t15
+                            """);
+            Assert.assertEquals("the retained projection must walk both lead rows", 2, projectedLeadRows);
+        });
+    }
+
+    @Test
+    public void testProjectedWindowJoinSlaveIntervalFilterSeesUnflushedLead() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            // The interval removes x=1 but keeps both lead values, so each sum is 14.
+            final String slaveProjection = "SELECT ts, x, x AS x0 FROM lv WHERE ts >= '2026-05-12T00:00:02.000000Z'";
+            final long projectedLeadRows = countProjectedLeadRows(slaveProjection);
+            final String query = "SELECT p.ts, sum(l.x) AS agg, sum(l.x0) AS agg0 FROM probe p " +
+                    "WINDOW JOIN (" + slaveProjection + ") l " +
+                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Window ", "SelectedRecord");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tagg\tagg0
+                            2026-05-12T00:00:03.000000Z\t14\t14
+                            """);
+            Assert.assertEquals("the interval-filtered projection must walk both lead rows", 2, projectedLeadRows);
+        });
+    }
+
+    @Test
+    public void testWindowJoinSlaveWithEmptyWindowSeesUnflushedLead() throws Exception {
+        assertMemoryLeak(() -> {
+            buildFlushedPlusLead();
+            execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
+            drainWalQueue();
+
+            final String query = "SELECT p.ts, sum(l.x) AS agg, sum(l.empty_sum) AS empty_sum FROM probe p " +
+                    "WINDOW JOIN (SELECT v.ts, v.x, sum(q.id) AS empty_sum FROM lv v " +
+                    "WINDOW JOIN probe q ON (0 = 1) RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING) l " +
+                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
+                    "EXCLUDE PREVAILING ORDER BY p.ts";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Window ", "ExtraNullColumnRecord");
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tagg\tempty_sum
+                            2026-05-12T00:00:03.000000Z\t15\tnull
+                            """);
         });
     }
 
@@ -5934,6 +6052,27 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
         }
         Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
         return (LiveViewRecordCursorFactory) f;
+    }
+
+    private static long countProjectedLeadRows(CharSequence projectionSql) throws Exception {
+        try (RecordCursorFactory factory = select(projectionSql)) {
+            RecordCursorFactory f = factory;
+            while (!(f instanceof SelectedRecordCursorFactory)) {
+                f = f.getBaseFactory();
+            }
+            try (PageFrameCursor projectedCursor = f.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                final TablePageFrameCursor tableCursor = (TablePageFrameCursor) projectedCursor;
+                long leadRows = 0;
+                if (tableCursor.hasLeadFrames()) {
+                    tableCursor.toLeadFrames();
+                    PageFrame frame;
+                    while ((frame = projectedCursor.next()) != null) {
+                        leadRows += frame.getPartitionHi() - frame.getPartitionLo();
+                    }
+                }
+                return leadRows;
+            }
+        }
     }
 
     // One inner-cursor open, over either read path: getCursor or getPageFrameCursor. Both
