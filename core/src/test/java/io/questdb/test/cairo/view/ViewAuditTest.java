@@ -321,8 +321,8 @@ public class ViewAuditTest extends AbstractCairoTest {
             markViewAudited("v");
             // Defining a second view over an audited one is a read of it: rows leave the audited
             // view either way, and the statement that copies them out is the one that has to say
-            // so. The column-type probe CREATE VIEW runs over its own body is a different thing
-            // and is suppressed separately - see isMetadataProbe.
+            // so. CREATE VIEW itself opens no cursor of its body, see
+            // testViewStatementsOpenNoCursorOfTheirSelect().
             assertRecordsOneAuditOf("v", "CREATE VIEW v2 AS (SELECT s FROM v)");
         });
     }

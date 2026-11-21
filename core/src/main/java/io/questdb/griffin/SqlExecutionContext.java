@@ -393,10 +393,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * Returns true while a statement opens a cursor only to check a SELECT, not to hand anyone its
-     * rows: {@code CREATE VIEW} derives the view's column types from it, and
-     * {@code CREATE MATERIALIZED VIEW} and {@code ALTER VIEW} validate their SELECT with it. No
-     * principal is reading data through such a cursor, so view auditing skips it: an audit row for
-     * it would assert an access to rows that nobody asked for.
+     * rows: {@code CREATE MATERIALIZED VIEW} validates its SELECT with it, and a row-expiry policy of a
+     * materialized view is checked against the view with it. {@code CREATE VIEW} and {@code ALTER VIEW}
+     * open no cursor of their SELECT. No principal is reading data through such a cursor, so view
+     * auditing skips it: an audit row for it would assert an access to rows that nobody asked for.
      */
     default boolean isMetadataProbe() {
         return false;

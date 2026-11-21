@@ -60,8 +60,8 @@ import static org.junit.Assert.fail;
  * every reader of a view over it. The view statements open no cursor of their SELECT, so the
  * check runs at each read of the view rather than when the view is recorded.</li>
  * </ul>
- * The default {@link AllowAllSecurityContext} grants everything, so both contracts are exercised
- * with narrow deny-one-permission contexts.
+ * The default {@link AllowAllSecurityContext} grants everything, so each contract is exercised
+ * with a narrow deny-one-permission context.
  */
 public class ViewAuthorizationTest extends AbstractViewTest {
 
