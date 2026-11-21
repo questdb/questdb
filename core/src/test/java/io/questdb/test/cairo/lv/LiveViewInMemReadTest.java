@@ -48,6 +48,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.IntList;
@@ -1066,29 +1067,25 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testWindowJoinSlaveWithEmptyWindowSeesUnflushedLead() throws Exception {
+    public void testEmptyWindowProjectionSeesUnflushedLead() throws Exception {
         assertMemoryLeak(() -> {
             buildFlushedPlusLead();
             execute("CREATE TABLE probe (ts TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO probe VALUES ('2026-05-12T00:00:03.000000Z', 1)");
             drainWalQueue();
 
-            final String query = "SELECT p.ts, sum(l.x) AS agg, sum(l.empty_sum) AS empty_sum FROM probe p " +
-                    "WINDOW JOIN (SELECT v.ts, v.x, sum(q.id) AS empty_sum FROM lv v " +
-                    "WINDOW JOIN probe q ON (0 = 1) RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING) l " +
-                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING " +
-                    "EXCLUDE PREVAILING ORDER BY p.ts";
-            assertQuery(query)
-                    .noLeakCheck()
-                    .assertsPlanContaining("Async Window ", "ExtraNullColumnRecord");
-            assertQuery(query)
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tagg\tempty_sum
-                            2026-05-12T00:00:03.000000Z\t15\tnull
-                            """);
+            final String query = "SELECT v.ts, v.x, sum(q.id) AS empty_sum FROM lv v " +
+                    "WINDOW JOIN probe q ON (0 = 1) " +
+                    "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("ExtraNullColumnRecord");
+            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tx\tempty_sum
+                    2026-05-12T00:00:01.000000Z\t1\tnull
+                    2026-05-12T00:00:02.000000Z\t2\tnull
+                    2026-05-12T00:00:03.000000Z\t3\tnull
+                    2026-05-12T00:00:04.000000Z\t4\tnull
+                    2026-05-12T00:00:05.000000Z\t5\tnull
+                    """);
+            Assert.assertEquals(2, countProjectedLeadRows(query));
         });
     }
 
@@ -6057,7 +6054,7 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
     private static long countProjectedLeadRows(CharSequence projectionSql) throws Exception {
         try (RecordCursorFactory factory = select(projectionSql)) {
             RecordCursorFactory f = factory;
-            while (!(f instanceof SelectedRecordCursorFactory)) {
+            while (!(f instanceof SelectedRecordCursorFactory) && !(f instanceof ExtraNullColumnCursorFactory)) {
                 f = f.getBaseFactory();
             }
             try (PageFrameCursor projectedCursor = f.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
