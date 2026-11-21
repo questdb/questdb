@@ -136,6 +136,16 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testCheckpointRestoreKeepsEmptyPostingColumnOfReadOnlyPartition() throws Exception {
+        assertCheckpointRestoreKeepsEmptyPostingColumnOfReadOnlyPartition(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreKeepsEmptyPostingColumnOfReadOnlyPartitionOfWalTable() throws Exception {
+        assertCheckpointRestoreKeepsEmptyPostingColumnOfReadOnlyPartition(true);
+    }
+
+    @Test
     public void testCheckpointRestoreKeepsReadOnlyPartition() throws Exception {
         assertCheckpointRestoreKeepsReadOnlyPartition(false);
     }
@@ -1416,6 +1426,72 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
                 Os.pause();
             }
         }
+    }
+
+    // q is added while the partition is active, so the partition keeps its posting files with no rows to index. The
+    // restore removes the index files of such a column, but must leave a read-only partition as it is.
+    private void assertCheckpointRestoreKeepsEmptyPostingColumnOfReadOnlyPartition(boolean isWal) throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "00000000-0000-0000-0000-000000000000");
+            execute("CREATE TABLE " + tableName + " (l LONG, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO " + tableName + " VALUES (1, 'a', '2022-10-17T01:00'), (2, 'b', '2022-10-17T02:00')");
+            execute("ALTER TABLE " + tableName + " ADD COLUMN q SYMBOL INDEX TYPE POSTING");
+            execute("INSERT INTO " + tableName + " VALUES (3, 'a', '2022-10-18T01:00', 'k')");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            copyToDifferentLocationAndMakeAttachableViaSoftLink(tableToken, readOnlyPartitionName, "COLD");
+            final File coldPartition = new File(other.toString());
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '" + readOnlyPartitionName + "'");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final String[] postingFiles = coldPartition.list((_, name) -> name.startsWith("q.p"));
+            Assert.assertNotNull(postingFiles);
+            Arrays.sort(postingFiles);
+            Assert.assertEquals("setup: q must have a key and a value file", 2, postingFiles.length);
+            final byte[][] postingFileBytes = new byte[postingFiles.length][];
+            for (int i = 0; i < postingFiles.length; i++) {
+                postingFileBytes[i] = java.nio.file.Files.readAllBytes(new File(coldPartition, postingFiles[i]).toPath());
+            }
+
+            execute("CHECKPOINT CREATE");
+            try {
+                engine.clear();
+                setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "123e4567-e89b-12d3-a456-426614174004");
+                engine.checkpointRecover();
+                drainWalQueue();
+
+                final String[] restoredPostingFiles = coldPartition.list((_, name) -> name.startsWith("q.p"));
+                Assert.assertNotNull(restoredPostingFiles);
+                Arrays.sort(restoredPostingFiles);
+                Assert.assertArrayEquals(postingFiles, restoredPostingFiles);
+                for (int i = 0; i < postingFiles.length; i++) {
+                    Assert.assertArrayEquals(postingFileBytes[i], java.nio.file.Files.readAllBytes(new File(coldPartition, postingFiles[i]).toPath()));
+                }
+                assertQuery("SELECT l, ts FROM " + tableName + " WHERE q = 'k'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                l\tts
+                                3\t2022-10-18T01:00:00.000000Z
+                                """);
+                assertQuery("SELECT l, ts FROM " + tableName + " WHERE q IS NULL")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                l\tts
+                                1\t2022-10-17T01:00:00.000000Z
+                                2\t2022-10-17T02:00:00.000000Z
+                                """);
+            } finally {
+                engine.checkpointRelease();
+            }
+        });
     }
 
     // DROP COLUMN purges no read-only partition, so the posting chain of a dropped column stays in one for good. The

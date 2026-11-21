@@ -906,7 +906,9 @@ public class TableSnapshotRestore implements QuietCloseable {
      * their value files. A fast-lag commit can tag a post-checkpoint seal with the checkpoint txn itself,
      * so the walk alone does not guarantee a checkpointed head. Rebuild the index from restored column
      * data when the retained head names a missing or short value file, when the .pk is shorter than its
-     * chain region, and when the .pk of a column with rows in the partition is missing.
+     * chain region, and when the .pk of a column with rows in the partition is missing. Remove the index
+     * files of a column with no rows in the partition instead of reading them. Leave read-only partitions as
+     * they are.
      */
     private void dropUncommittedPostingIndexEntries(
             String tablePathStr,
@@ -926,6 +928,10 @@ public class TableSnapshotRestore implements QuietCloseable {
         try {
             int i;
             while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
+                // Nothing writes a read-only partition, and its soft link can lead to storage the restore must not write
+                if (txWriter.isPartitionReadOnly(i)) {
+                    continue;
+                }
                 final long partitionTimestamp;
                 final long partitionNameTxn;
                 if (isPartitioned) {
@@ -953,6 +959,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                     }
                     final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
                     final String columnName = tableMetadata.getColumnName(colIdx);
+                    // A column with no rows in the partition has nothing to index, and TableWriter, readers and
+                    // O3 all accept it without index files. The copy can still hold some: a .pk that the first
+                    // write after the checkpoint was creating and has no header yet, or one with entries newer
+                    // than the checkpoint. Remove them, and the marker of an interrupted rebuild with them.
+                    if (hasNoRows(columnTop, tablePathStr, partitionBy, timestampType, isPartitioned, i)) {
+                        removePostingIndexFilesOfEmptyColumn(path, partitionPathLen, columnName, columnNameTxn, tableTxn);
+                        continue;
+                    }
                     // An earlier restore stopped inside this rebuild. The partial index may open cleanly and
                     // miss rows, so rebuild it again; the marker check comes first as the .pk may be gone.
                     if (ff.exists(rebuildMarkerFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
@@ -966,12 +980,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     }
                     final int action;
                     if (!ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
-                        // A column with no rows in the partition may have no .pk, as TableWriter allows.
-                        // One with rows must have it: the copy lost it.
-                        final long partitionRowCount = isPartitioned ? txWriter.getPartitionSize(i) : txWriter.getTransientRowCount();
-                        if (columnTop >= partitionRowCount) {
-                            continue;
-                        }
+                        // The column has rows in the partition, so it must have a .pk: the copy lost it
                         LOG.info().$("rebuilding restored posting index with missing key file [path=").$(path.trimTo(partitionPathLen))
                                 .$(", column=").$safe(columnName)
                                 .$(", txn=").$(tableTxn)
@@ -1088,15 +1097,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             }
             return;
         }
-        long partitionRowCount = isPartitioned
-                ? txWriter.getPartitionSize(partitionIndex)
-                : txWriter.getTransientRowCount();
-        if (isPartitioned && txWriter.isPartitionComposite(partitionIndex)) {
-            try (PartitionGeometry geometry = new PartitionGeometry().of(ff, txWriter, tablePathStr,
-                    timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)) {
-                partitionRowCount = Math.max(partitionRowCount, geometry.getE(partitionIndex));
-            }
-        }
+        final long partitionRowCount = getPartitionFileRowCount(tablePathStr, partitionBy, timestampType, isPartitioned, partitionIndex);
         rebuildBitmapIndexForNativePartitionColumn(
                 path,
                 tablePathStr,
@@ -1218,11 +1219,80 @@ public class TableSnapshotRestore implements QuietCloseable {
                 && columnVersionReader.getColumnNameTxn(partitionTimestamp, tableMetadata.getWriterIndex(columnIndex)) == columnNameTxn;
     }
 
+    /**
+     * Rows the partition's column files reach: the live row count, or for a COMPOSITE partition its whole file
+     * extent, which can reach past the live rows.
+     */
+    private long getPartitionFileRowCount(
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionIndex
+    ) {
+        if (!isPartitioned) {
+            return txWriter.getTransientRowCount();
+        }
+        final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+        if (!txWriter.isPartitionComposite(partitionIndex)) {
+            return partitionRowCount;
+        }
+        try (PartitionGeometry geometry = new PartitionGeometry().of(ff, txWriter, tablePathStr,
+                timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)) {
+            return Math.max(partitionRowCount, geometry.getE(partitionIndex));
+        }
+    }
+
+    private boolean hasNoRows(
+            long columnTop,
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionIndex
+    ) {
+        final long liveRowCount = isPartitioned ? txWriter.getPartitionSize(partitionIndex) : txWriter.getTransientRowCount();
+        // Resolve the composite file extent only when the live rows alone say the column has none
+        return columnTop >= liveRowCount
+                && columnTop >= getPartitionFileRowCount(tablePathStr, partitionBy, timestampType, isPartitioned, partitionIndex);
+    }
+
     private boolean isPostingIndexedSymbol(int colIdx) {
         // Deleted columns may still carry the indexed flag
         return tableMetadata.isColumnIndexed(colIdx)
                 && ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
                 && IndexType.isPosting(tableMetadata.getColumnIndexType(colIdx));
+    }
+
+    /**
+     * Removes every index file of a POSTING column that has no rows in the partition, and the marker of an
+     * interrupted rebuild. The .pk goes after the value and sidecar files, so a removal that fails leaves the
+     * .pk for the repeated restore to find. {@code path} points at the partition directory.
+     */
+    private void removePostingIndexFilesOfEmptyColumn(
+            Path path,
+            int partitionPathLen,
+            CharSequence columnName,
+            long columnNameTxn,
+            long tableTxn
+    ) {
+        final boolean hasKeyFile = ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        if (PostingIndexUtils.removeAllSealedFiles(ff, path, partitionPathLen, columnName, columnNameTxn)) {
+            final int errno = ff.errno();
+            throw CairoException.critical(errno)
+                    .put("could not remove posting index files of a column with no rows [path=").put(path.trimTo(partitionPathLen))
+                    .put(", column=").put(columnName)
+                    .put(']');
+        }
+        removeFile(ff, PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        removeFile(ff, rebuildMarkerFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn));
+        path.trimTo(partitionPathLen);
+        if (hasKeyFile) {
+            LOG.info().$("removed posting index of a column with no rows in restored partition [path=").$(path)
+                    .$(", column=").$safe(columnName)
+                    .$(", txn=").$(tableTxn)
+                    .I$();
+        }
     }
 
     /**
