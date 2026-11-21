@@ -31,7 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.client.Sender;
-import io.questdb.client.cutlass.http.client.WebSocketUpgradeException;
+import io.questdb.client.cutlass.qwp.client.QwpAuthFailedException;
 import io.questdb.std.Chars;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -98,10 +98,10 @@ public class QwpOwnedByE2ETest extends AbstractQwpWebSocketTest {
         runInContext(port -> {
             try (Sender ignored = Sender.fromConfig("ws::addr=localhost:" + port + ";owned_by=" + OWNER + ";")) {
                 Assert.fail("expected the upgrade to fail");
-            } catch (WebSocketUpgradeException e) {
-                Assert.assertEquals(400, e.getStatusCode());
-                TestUtils.assertContains(e.getMessage(), "WebSocket upgrade failed: HTTP/1.1 400 Bad Request [reason=owned_by refused: "
-                        + "the owner of auto-created tables and columns can only be set in QuestDB Enterprise]");
+            } catch (QwpAuthFailedException e) {
+                Assert.assertEquals(403, e.getStatusCode());
+                Assert.assertEquals("owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise",
+                        e.getReason());
             }
         });
     }

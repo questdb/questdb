@@ -524,8 +524,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     @Test
     public void testOnHeadersReadyFailsHardWhenUnsupportedOwnedByResponseDoesNotFitBuffer() throws Exception {
-        // without access control the owner cannot be set: a 400, which does not fit either
-        assertMemoryLeak(() -> assertOwnedByRejectDoesNotFitBuffer(AllowAllSecurityContext.INSTANCE, "team", "400 bad request response"));
+        // without access control the owner cannot be set: a 403, which does not fit either
+        assertMemoryLeak(() -> assertOwnedByRejectDoesNotFitBuffer(AllowAllSecurityContext.INSTANCE, "team", "403 forbidden response"));
     }
 
     @Test
@@ -697,11 +697,13 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
-    public void testOnHeadersReadyUnsupportedOwnedByAnswers400() throws Exception {
-        // OSS has no access control, so the default SecurityContext refuses an owner: a bad request, not a 403.
+    public void testOnHeadersReadyUnsupportedOwnedByAnswers403() throws Exception {
+        // OSS has no access control, so the default SecurityContext refuses an owner. Like any refused owner, a 403:
+        // the refusal holds on every node, and a client that walks several endpoints must not take it, as it would a
+        // 400, for a node that is still failing over.
         assertMemoryLeak(() -> {
             String response = ownedByHandshake(AllowAllSecurityContext.INSTANCE, "team", null, false);
-            assertTextReject(response, "400 Bad Request",
+            assertTextReject(response, "403 Forbidden",
                     "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
         });
     }
@@ -1038,15 +1040,21 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                 MockHttpRequestHeader header = new MockHttpRequestHeader();
                 TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
         ) {
+            // A non-writable node refuses the upgrade before it looks at the owner: a replica refuses any owner,
+            // and the client must get the 421 that sends it on to the next endpoint, not that refusal.
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            context.securityContext = securityContext;
             header.setHeader("Upgrade", "websocket");
             header.setHeader("Connection", "Upgrade");
             header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
             header.setHeader("Sec-WebSocket-Version", "13");
+            header.setHeader("X-QWP-Owned-By", "team");
 
             processor.onHeadersReady(context);
 
             Assert.assertFalse("rejected handshake must not switch protocol", context.isSwitchProtocolCalled());
             Assert.assertNull("rejected handshake must not allocate processor state", lv.get(context));
+            Assert.assertNull("the role must be refused before the owner is named", securityContext.owner);
             Assert.assertEquals("onHeadersReady must defer the reject send to onRequestComplete",
                     0, context.getMockRawSocket().sentSize);
 

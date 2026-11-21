@@ -1198,6 +1198,17 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         }
     }
 
+    // Stages a 403 Forbidden upgrade rejection with reason as its body. Allocates, which only a rejected upgrade
+    // pays for.
+    private static void stageForbiddenReject(HttpConnectionContext context, long bufferAddr, int bufferSize, String reason) {
+        final byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
+        final int requiredSize = textResponseSize(FORBIDDEN_PREFIX, reasonBytes.length);
+        if (requiredSize > bufferSize) {
+            throw responseDoesNotFitSendBuffer(context.getFd(), "403 forbidden response", bufferSize, requiredSize);
+        }
+        stageReject(context, writeTextResponse(bufferAddr, FORBIDDEN_PREFIX, reasonBytes));
+    }
+
     private static void stageReject(HttpConnectionContext context, int bytesWritten) {
         RejectFlushTracker tracker = REJECT_FLUSH.get(context);
         if (tracker == null) {
@@ -1205,18 +1216,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             REJECT_FLUSH.set(context, tracker);
         }
         tracker.pendingBytes = bytesWritten;
-    }
-
-    // Stages a 403 Forbidden, or else a 400 Bad Request, upgrade rejection with reason as its body. Allocates,
-    // which only a rejected upgrade pays for.
-    private static void stageTextReject(HttpConnectionContext context, long bufferAddr, int bufferSize, boolean isForbidden, String reason) {
-        final byte[] prefix = isForbidden ? FORBIDDEN_PREFIX : BAD_REQUEST_PREFIX;
-        final byte[] reasonBytes = reason.getBytes(StandardCharsets.UTF_8);
-        final int requiredSize = textResponseSize(prefix, reasonBytes.length);
-        if (requiredSize > bufferSize) {
-            throw responseDoesNotFitSendBuffer(context.getFd(), isForbidden ? "403 forbidden response" : "400 bad request response", bufferSize, requiredSize);
-        }
-        stageReject(context, writeTextResponse(bufferAddr, prefix, reasonBytes));
     }
 
     private static int textResponseSize(byte[] prefix, int reasonByteCount) {
@@ -2527,8 +2526,10 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
      * Names the owner of the tables and columns this connection auto-creates, when the upgrade request
      * asks for one, see {@link QwpIngressHttpProcessor#decodeOwnedBy} and
      * {@link SecurityContext#setAutoCreateOwner}. Checking the owner now lets a client that may not name it
-     * fail at connect instead of at the first table it creates: a malformed name answers 400 Bad Request, a
-     * refused one 403 Forbidden, and a server that cannot set an owner at all 400 Bad Request.
+     * fail at connect instead of at the first table it creates: a malformed name answers 400 Bad Request, and
+     * a refused one 403 Forbidden, also when this server cannot set an owner at all. A refusal holds on every
+     * node a client may walk to, and a client walking several endpoints takes a 403, unlike a 400, for an
+     * answer that holds across the cluster, not for a node still failing over.
      *
      * @return false when the upgrade was rejected, with the reject response staged; otherwise
      * {@link #ownedByEchoSink} holds the {@code X-QWP-Owned-By} echo, empty when the request named no owner
@@ -2555,7 +2556,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     .$(", owner=").$safe(ownedBySink)
                     .$(", error=").$safe(e.getFlyweightMessage())
                     .I$();
-            stageTextReject(context, bufferAddr, bufferSize, e.isAuthorizationError(), "owned_by refused: " + e.getFlyweightMessage());
+            stageForbiddenReject(context, bufferAddr, bufferSize, "owned_by refused: " + e.getFlyweightMessage());
             return false;
         }
         QwpIngressHttpProcessor.encodeOwnedBy(ownedByUtf8Sink, ownedByEchoSink);

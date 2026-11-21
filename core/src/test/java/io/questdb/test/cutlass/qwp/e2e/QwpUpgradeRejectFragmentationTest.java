@@ -144,7 +144,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
         runWithFragmentedSend(port -> assertFullRejectDelivered(
                 port,
                 ownedByUpgradeRequest(port, "/write/v4", "team%zz"),
-                textReject("Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
+                textReject("400 Bad Request", "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
         ));
     }
 
@@ -164,10 +164,10 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void test400OwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
+    public void test403OwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
         // Without access control an owner cannot be honored, so the upgrade fails instead of the
         // first table the client auto-creates, and the server says why.
-        final byte[] expected = textReject("owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
+        final byte[] expected = textReject("403 Forbidden", "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
         runWithFragmentedSend(port -> {
             assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4", "caf%C3%A9"), expected);
             // the browser carrier, a URL parameter
@@ -385,8 +385,8 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
                 + "\r\n";
     }
 
-    private static byte[] textReject(String reason) {
-        return ("HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain\r\nContent-Length: "
+    private static byte[] textReject(String status, String reason) {
+        return ("HTTP/1.1 " + status + "\r\nContent-Type: text/plain\r\nContent-Length: "
                 + reason.length() + "\r\n\r\n" + reason).getBytes(StandardCharsets.US_ASCII);
     }
 
