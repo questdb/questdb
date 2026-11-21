@@ -69,7 +69,9 @@ public interface UnaryFunction extends Function {
         if (other == this) {
             return true;
         }
-        if (other instanceof UnaryFunction that) {
+        if (other instanceof UnaryFunction that
+                && getClass() == that.getClass()
+                && getName().equals(that.getName())) {
             return getArg().isEquivalentTo(that.getArg());
         }
         return false;
