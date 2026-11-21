@@ -433,6 +433,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemoveCandidates = new LongList();
     // indexed columns a FORCE REINDEX rebuilds in a partition
     private final IntList reindexColumnIndexes = new IntList();
+    // (partitionTimestamp, nameTxn, generation, writerTxn)
+    private final LongList openedGeometryGenerations = new LongList();
     // (partition timestamp, replaced name txn) of the partitions a reindex replaced: the stale parquet ones an ADD
     // INDEX reindexed in its transaction, or the ones a FORCE REINDEX committed
     private final LongList reindexedPartitions = new LongList();
@@ -543,7 +545,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
-    private boolean isO3PartitionUpdatePending;
     // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
     // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
     // them checks this first.
@@ -5225,6 +5226,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
+                settleOpenedGeometryGenerations();
                 discardWalLag("rollback");
                 recountCompositePartitions();
                 rollbackIndexes();
@@ -8319,6 +8321,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert assertCompositeCountMatchesScan();
         maybeUpgradeStorageVersion();
         txWriter.commit(commitMode, denseSymbolMapWriters);
+        settleOpenedGeometryGenerations();
         maybeDowngradeStorageVersion();
     }
 
@@ -10476,6 +10479,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", err=").$(th)
                     .I$();
         }
+        settleOpenedGeometryGenerations();
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
@@ -14347,7 +14351,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
-        isO3PartitionUpdatePending = false;
         if (partitionsRemoved) {
             o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
 
@@ -14522,6 +14525,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                         long newPrevPartitionSize = attachMinTimestamp;
                         long newSplitPartitionTimestamp = attachMaxTimestamp;
+                        if (isMergeAppendTable()
+                                && !txWriter.isPartitionComposite(i - 1)
+                                && !getGeometry().hasGenerationForNextPublish(i - 1, 1)) {
+                            LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
+                                    .$(", partition=").$ts(prevPartitionTimestamp)
+                                    .I$();
+                            newPrevPartitionSize = 0;
+                            newSplitPartitionTimestamp = prevPartitionTimestamp;
+                        }
 
                         assert newSplitPartitionTimestamp < partitionTimestamp || (newPrevPartitionSize == 0 && newSplitPartitionTimestamp == partitionTimestamp);
 
@@ -15562,7 +15574,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
 
-        isO3PartitionUpdatePending = true;
         try {
             resizePartitionUpdateSink();
 
@@ -17977,14 +17988,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long publishGeometry(PartitionGeometry geometry, int partitionIndex) {
-        assert !isO3PartitionUpdatePending : "writer geometry published while O3 geometry refs are unapplied";
-        return geometry.publish(
+        final long writerTxn = txWriter.getTxn() + 1;
+        final long geometryRef = geometry.publish(
                 partitionIndex,
-                txWriter.getTxn() + 1,
+                writerTxn,
                 getCompositePartitionSeqTxn(),
                 configuration.getMicrosecondClock().getTicks(),
                 getFlushCommitMode()
         );
+        if (TxReader.geometryOffset(geometryRef) == 0) {
+            openedGeometryGenerations.add(
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex),
+                    TxReader.geometryGeneration(geometryRef),
+                    writerTxn
+            );
+        }
+        return geometryRef;
     }
 
     /**
@@ -18032,6 +18052,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 retiredGeometryGenerations.size()
         );
         retiredGeometryGenerations.clear();
+    }
+
+    private void settleOpenedGeometryGenerations() {
+        for (int i = 0, n = openedGeometryGenerations.size(); i < n; i += 4) {
+            if (openedGeometryGenerations.getQuick(i + 3) > txWriter.getTxn()) {
+                setPathForNativePartition(
+                        path.trimTo(pathSize),
+                        timestampType,
+                        partitionBy,
+                        openedGeometryGenerations.getQuick(i),
+                        openedGeometryGenerations.getQuick(i + 1)
+                );
+                ff.removeQuiet(PartitionGeometryFile.geometryFileName(path, (int) openedGeometryGenerations.getQuick(i + 2)));
+                path.trimTo(pathSize);
+            }
+        }
+        openedGeometryGenerations.clear();
     }
 
     private void publishCompactedParquetPartition(

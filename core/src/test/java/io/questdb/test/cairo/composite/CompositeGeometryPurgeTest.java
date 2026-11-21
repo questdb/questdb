@@ -307,22 +307,6 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testARotationReusesAGenerationOnlyAnUncommittedTxnWrote() throws Exception {
-        assertMemoryLeak(() -> {
-            final TableToken tt = buildNearFullGenerationZero();
-            plantGeometryRecordAtGeneration(1);
-            corruptTheChecksumOfGeneration(1);
-            plantUncommittedGeometryRecordAtGeneration(2);
-
-            rotateGeneration();
-
-            Assert.assertEquals("the rotation did not reuse the generation an uncommitted txn wrote", 2, committedGenerationOfDay());
-            Assert.assertTrue("the rotation removed the generation whose record does not verify", geometryFileOfDay(1).exists());
-            assertDayResolvesItsPieces(tt);
-        });
-    }
-
     /**
      * With all sixteen generations holding a record a publish has nowhere to land and fails loudly, naming the
      * partition it failed on - it does NOT silently overwrite one. Emptying a single generation's file is enough for
@@ -1279,41 +1263,6 @@ public class CompositeGeometryPurgeTest extends AbstractCairoTest {
                 "planted generation " + generation + " holds no record",
                 geometryFileOf(partitionTs, generation).length() >= PartitionGeometryFile.recordSize(1)
         );
-    }
-
-    private static void plantUncommittedGeometryRecordAtGeneration(int generation) throws Exception {
-        final TableToken tt = engine.verifyTableName("x");
-        final long committedRef;
-        final long uncommittedTxn;
-        try (TableReader reader = engine.getReader(tt)) {
-            committedRef = reader.getTxFile().getGeometryRef(reader.getTxFile().getPartitionIndex(DAY_03));
-            uncommittedTxn = reader.getTxn() + 1;
-        }
-        final FilesFacade ff = configuration.getFilesFacade();
-        try (
-                Path path = new Path();
-                PartitionGeometryFile committed = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER);
-                PartitionGeometryFile uncommitted = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_WRITER)
-        ) {
-            path.of(configuration.getDbRoot()).concat(tt);
-            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, DAY_03, nameTxnOfDay());
-            committed.read(ff, path, TxReader.geometryGeneration(committedRef), TxReader.geometryOffset(committedRef));
-            uncommitted.beginRecord(uncommittedTxn, committed.getSeqTxn(), committed.getPieceCount());
-            for (int p = 0, n = committed.getPieceCount(); p < n; p++) {
-                uncommitted.addPiece(
-                        committed.getPieceTimestampLo(p),
-                        committed.getPieceTimestampHi(p),
-                        committed.getPieceRowOffset(p),
-                        committed.getPieceRowCount(p),
-                        committed.getPieceWriterTxn(p),
-                        committed.getPieceLastWriteMicros(p)
-                );
-            }
-            uncommitted.setPhysicalRows(committed.getPhysicalRows());
-            uncommitted.setLiveRows(committed.getLiveRows());
-            uncommitted.setLastWriteMicros(committed.getLastWriteMicros());
-            uncommitted.append(ff, path, generation, 0, configuration.getCommitMode());
-        }
     }
 
     /**
