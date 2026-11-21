@@ -1,6 +1,6 @@
 ---
 name: review-prober
-description: Read-only code review agent with a shell, for review-pr's falsifiers, which back their claims with executed probes
+description: Read-only code review agent with a shell, for review-pr's checkers, which try to disprove each concern and back their claims with executed probes
 tools: read, grep, find, ls, bash, write, contact_supervisor
 thinking: max
 systemPromptMode: replace
