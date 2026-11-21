@@ -2149,6 +2149,8 @@ public class ExpressionParser {
                                 }
                                 throw SqlException.$(lastPos, "Unnecessary `from`. Typo?");
                             } else if (SqlKeywords.isOverKeyword(tok)) {
+                                // the lookahead moves the lexer, keep the text of 'over' for the literal
+                                tok = GenericLexer.immutableOf(tok);
                                 final CharSequence nextTok = SqlUtil.fetchNext(lexer);
                                 if (nextTok != null && Chars.equals(nextTok, '(')) {
                                     throw SqlException.$(lastPos, "Nested window functions are not currently supported.");
@@ -2251,8 +2253,13 @@ public class ExpressionParser {
                                 // ignore 'precision' keyword after 'double'
                                 continue;
                             } else if (SqlKeywords.isOverKeyword(tok)) {
+                                final CharSequence overTok = GenericLexer.immutableOf(tok);
                                 final CharSequence nextTok = SqlUtil.fetchNext(lexer);
-                                if (nextTok != null && Chars.equals(nextTok, '(')) {
+                                if (nextTok == null) {
+                                    // 'over' ends the input and the lexer has no last token to return,
+                                    // hand 'over' back for the caller to report
+                                    lexer.unparse(overTok, lastPos, lastPos + overTok.length());
+                                } else if (Chars.equals(nextTok, '(')) {
                                     throw SqlException.$(lastPos, "Nested window functions' context are not currently supported.");
                                 }
                                 lexer.unparseLast();
