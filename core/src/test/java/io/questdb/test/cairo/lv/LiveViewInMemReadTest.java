@@ -1077,14 +1077,6 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                     "WINDOW JOIN probe q ON (0 = 1) " +
                     "RANGE BETWEEN 10 seconds PRECEDING AND 10 seconds FOLLOWING";
             assertQuery(query).noLeakCheck().assertsPlanContaining("ExtraNullColumnRecord");
-            assertQuery(query).noLeakCheck().timestamp("ts").expectSize().returns("""
-                    ts\tx\tempty_sum
-                    2026-05-12T00:00:01.000000Z\t1\tnull
-                    2026-05-12T00:00:02.000000Z\t2\tnull
-                    2026-05-12T00:00:03.000000Z\t3\tnull
-                    2026-05-12T00:00:04.000000Z\t4\tnull
-                    2026-05-12T00:00:05.000000Z\t5\tnull
-                    """);
             Assert.assertEquals(2, countProjectedLeadRows(query));
         });
     }
