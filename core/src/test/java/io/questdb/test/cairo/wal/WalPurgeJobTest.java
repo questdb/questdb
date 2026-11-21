@@ -64,6 +64,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.META_FILE_NAME;
@@ -360,6 +361,91 @@ public class WalPurgeJobTest extends AbstractCairoTest {
             removePendingFile(tableToken);
             drainPurgeJob();
             assertExistence(false, tableToken);
+        });
+    }
+
+    @Test
+    public void testExternalConsumerFloorHoldsSegmentsAndSequencerParts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            final String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken tableToken = engine.verifyTableName(tableName);
+
+            // 25 transactions on wal 1: txns 1 to 8 on segment 0, 9 to 16 on segment 1, 17 to 25 on segment 2, which
+            // stays the writer's current segment; sequencer parts of 10 txns: part 0 (1 to 10), part 1 (11 to 20),
+            // part 2 (21 to 25)
+            final AtomicLong floor = new AtomicLong(Long.MAX_VALUE);
+            final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000; // ms to us
+            setCurrentMicros(interval + 1);
+            try (
+                    WalWriter writer = engine.getWalWriter(tableToken);
+                    WalPurgeJob job = new WalPurgeJob(engine) {
+                        @Override
+                        protected long getExternalConsumerFloor(TableToken token) {
+                            return floor.get();
+                        }
+                    }
+            ) {
+                long ts = MicrosTimestampDriver.floor("2026-01-01");
+                for (int txn = 1; txn <= 25; txn++) {
+                    if (txn == 9 || txn == 17) {
+                        writer.rollSegment();
+                    }
+                    final TableWriter.Row row = writer.newRow(ts);
+                    row.putLong(0, txn);
+                    row.append();
+                    writer.commit();
+                    ts += 1_000_000L;
+                }
+                Assert.assertEquals(2, writer.getSegmentId());
+                drainWalQueue();
+
+                // a negative value (the LONG_NULL idiom) holds everything too, and never reaches the sequencer
+                floor.set(Long.MIN_VALUE);
+                sweep(job, interval);
+                assertSegmentExistence(true, tableToken, 1, 0);
+                assertSegmentExistence(true, tableToken, 1, 1);
+                assertSegmentExistence(true, tableToken, 1, 2);
+                assertSeqPartExistence(true, tableToken, 0);
+                assertSeqPartExistence(true, tableToken, 1);
+                assertSeqPartExistence(true, tableToken, 2);
+
+                // a floor of 0 holds every segment and every part
+                floor.set(0);
+                sweep(job, interval);
+                assertSegmentExistence(true, tableToken, 1, 0);
+                assertSegmentExistence(true, tableToken, 1, 1);
+                assertSegmentExistence(true, tableToken, 1, 2);
+                assertSeqPartExistence(true, tableToken, 0);
+                assertSeqPartExistence(true, tableToken, 1);
+                assertSeqPartExistence(true, tableToken, 2);
+
+                // txn 12 purgeable: segment 0 (txns 1 to 8) and part 0 (txns 1 to 10) go; segment 1 (txns 9 to 16)
+                // and part 1 (txns 11 to 20) carry transactions above 12 and stay
+                floor.set(12);
+                sweep(job, interval);
+                assertSegmentExistence(false, tableToken, 1, 0);
+                assertSegmentExistence(true, tableToken, 1, 1);
+                assertSegmentExistence(true, tableToken, 1, 2);
+                assertSeqPartExistence(false, tableToken, 0);
+                assertSeqPartExistence(true, tableToken, 1);
+                assertSeqPartExistence(true, tableToken, 2);
+
+                // a floor above the applied transaction has no effect: the sweep purges what stock purges, and the
+                // writer's current segment and part stay
+                floor.set(100);
+                sweep(job, interval);
+                assertSegmentExistence(false, tableToken, 1, 1);
+                assertSegmentExistence(true, tableToken, 1, 2);
+                assertSeqPartExistence(false, tableToken, 1);
+                assertSeqPartExistence(true, tableToken, 2);
+            }
+
+            engine.releaseAllWalWriters();
+            drainPurgeJob();
+            assertWalExistence(false, tableToken, 1);
         });
     }
 
@@ -2363,6 +2449,11 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     private static TableToken newTestTableToken() {
         return new TableToken("test", "test~1", null, 42, true, false, false);
+    }
+
+    private static void sweep(WalPurgeJob job, long interval) {
+        setCurrentMicros(currentMicros + 2 * interval);
+        job.drain(0);
     }
 
     private void assertExistence(boolean exists, TableToken tableToken) {
