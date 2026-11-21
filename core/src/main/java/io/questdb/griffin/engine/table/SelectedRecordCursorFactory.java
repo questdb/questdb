@@ -742,12 +742,22 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
             return tableBaseCursor.hasIntervalFilter();
         }
 
+        @Override
+        public boolean hasLeadFrames() {
+            return tableBaseCursor.hasLeadFrames();
+        }
+
         // This wrapper is initialized via wrap(TablePageFrameCursor), not via of(PartitionFrameCursor, ...).
         // The base factory's getPageFrameCursor() handles partition-level initialization internally,
         // then we wrap the already-initialized result.
         @Override
         public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void toLeadFrames() {
+            tableBaseCursor.toLeadFrames();
         }
 
         @Override
