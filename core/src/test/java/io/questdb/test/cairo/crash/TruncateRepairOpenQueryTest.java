@@ -57,10 +57,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * A non-WAL TRUNCATE stops after it armed its {@code _todo_} entry, and a query opens the table before the first
- * writer open completes the TRUNCATE. TRUNCATE itself runs only while no query reads the table, but the repair runs
- * in whichever writer open comes first: the query must keep reading the rows it opened, through the repair, the
- * rows written after it and the writer close, and their files must go only once the query is done with them.
+ * A non-WAL TRUNCATE of an earlier build stopped after it armed its {@code _todo_} entry, and a query opens the table
+ * before the first writer open completes the TRUNCATE. TRUNCATE itself runs only while no query reads the table, but the
+ * repair runs in whichever writer open comes first: the query must keep reading the rows it opened, through the
+ * repair, the rows written after it and the writer close, and their files must go only once the query is done with
+ * them. TRUNCATE no longer arms the entry, see {@link TruncateRepairTest}, so the tests arm it as that build left it.
  */
 public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
     private static final String COMMITTED_ROWS = """
@@ -131,7 +132,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
                          null, null, null, null, null, null, null, null, null, null, null, null, null, null)""");
             execute("ALTER TABLE t_types DROP COLUMN gone");
             final String committedRows = printQuery("SELECT * FROM t_types");
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
             assertOpenQueryKeepsRows(
                     "SELECT * FROM t_types",
                     committedRows,
@@ -152,9 +153,10 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
-    public void testFailedTruncateKeepsRowsOfOpenQuery() throws Exception {
-        // TRUNCATE stops on an I/O error after it armed _todo_, and the pool closes its writer. A query opens the old
-        // rows before the next writer open completes the TRUNCATE, with no restart in between.
+    public void testFailedTruncateLeavesNothingToRepair() throws Exception {
+        // TRUNCATE stops on an I/O error once it has published the empty _txn, and the pool closes its writer. It armed
+        // no _todo_ entry: a query opened before the next writer open reads the empty table, that open completes
+        // nothing, and the columns keep their file versions.
         final FailingTruncateFacade ff = new FailingTruncateFacade();
         assertMemoryLeak(ff, () -> {
             final String table = "t_failed";
@@ -173,16 +175,28 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
                 execute("TRUNCATE TABLE " + table + " KEEP SYMBOL MAPS");
                 Assert.fail("TRUNCATE must fail");
             } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Data has been persisted, but we could not perform housekeeping");
                 TestUtils.assertContains(e.getFlyweightMessage(), "Cannot truncate fd=");
             } finally {
                 ff.isFailArmed = false;
             }
             Assert.assertTrue("the failure was not injected", ff.isFired);
-            Assert.assertEquals("the failed TRUNCATE published _txn", txnBefore, readTxn(table));
+            Assert.assertEquals("the failed TRUNCATE published _txn", txnBefore + 1, readTxn(table));
 
-            assertOpenQueryKeepsRows("SELECT * FROM " + table, COMMITTED_ROWS, String.format(INSERT_AFTER_REPAIR, table));
+            try (RecordCursorFactory factory = select("SELECT * FROM " + table)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                    execute(String.format(INSERT_AFTER_REPAIR, table));
+                    Assert.assertFalse(cursor.hasNext());
+                    cursor.toTop();
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
             assertRowsAfterRepair(table);
-            assertOldVersionPurged(table, txnBefore, "v", true);
+            // KEEP SYMBOL MAPS kept the three values of each symbol column
+            assertSymbolCounts(table, 4);
+            assertColumnFileExists(table, "v", -1, true);
+            assertColumnFileExists(table, "v", txnBefore, false);
         });
     }
 
@@ -191,8 +205,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         runWithCrashFacade(() -> {
             final String table = "t_keep";
             createTable(table);
-            // KEEP SYMBOL MAPS leaves the symbol maps alone: every kill point of the TRUNCATE comes after _todo_
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
             assertOpenQueryKeepsRows("SELECT * FROM " + table, COMMITTED_ROWS, String.format(INSERT_AFTER_REPAIR, table));
             assertRowsAfterRepair(table);
             assertSymbolCounts(table, 4);
@@ -213,7 +226,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
                     INSERT INTO t_large
                     SELECT x, 'v' || x, 's' || (x % 10), timestamp_sequence('2024-01-01', 1_000_000)
                     FROM long_sequence(""" + ROWS_OF_LARGE_TABLE + ")");
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
 
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 try (RecordCursorFactory factory = select("SELECT * FROM t_large")) {
@@ -258,7 +271,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         runWithCrashFacade(() -> {
             final String table = "t_no_query";
             createTable(table);
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
             assertColumnFileExists(table, "s", -1, true);
             try (TableWriter writer = getWriter(table)) {
                 Assert.assertEquals(0, writer.size());
@@ -309,8 +322,8 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
 
     @Test
     public void testPlainTruncateKeepsRowsOfOpenQuery() throws Exception {
-        // TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, and a query cannot open
-        // a SYMBOL column of its interrupted state. A table without one takes the same repair.
+        // The earlier build's TRUNCATE without KEEP SYMBOL MAPS emptied the symbol maps before it armed _todo_, and a
+        // query cannot open a SYMBOL column of its interrupted state. A table without one takes the same repair.
         runWithCrashFacade(() -> {
             final String table = "t_plain";
             execute("CREATE TABLE t_plain (v VARCHAR, str STRING, x LONG, arr DOUBLE[])");
@@ -318,8 +331,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
             execute("ALTER TABLE t_plain ADD COLUMN y INT");
             execute("INSERT INTO t_plain VALUES ('v3', 's3', 3, ARRAY[3.0], 30)");
             execute("UPDATE t_plain SET x = x + 100");
-            // no symbol map to empty: every kill point of the TRUNCATE comes after _todo_
-            final long txnBefore = interruptTruncate(table, 1, false);
+            final long txnBefore = interruptTruncate(table, false);
             assertOpenQueryKeepsRows(
                     "SELECT * FROM t_plain",
                     """
@@ -352,18 +364,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
             final String table = "t_concurrent";
             execute("CREATE TABLE t_concurrent (x LONG, v VARCHAR)");
             execute("INSERT INTO t_concurrent VALUES (1, 'v1'), (2, 'v2'), (3, 'v3')");
-            engine.releaseAllReaders();
-            final long txnBefore = readTxn(table);
-            ff.isFailArmed = true;
-            try {
-                execute("TRUNCATE TABLE t_concurrent");
-                Assert.fail("TRUNCATE must fail");
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "Cannot truncate fd=");
-            } finally {
-                ff.isFailArmed = false;
-            }
-            Assert.assertEquals(txnBefore, readTxn(table));
+            final long txnBefore = interruptTruncate(table, false);
 
             ff.isBlockArmed = true;
             final AtomicReference<Throwable> insertError = new AtomicReference<>();
@@ -414,7 +415,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         runWithCrashFacade(() -> {
             final String table = "t_stuck";
             createTable(table);
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
             final FilesFacade ff = engine.getConfiguration().getFilesFacade();
             try (Path path = partitionPath(table)) {
                 // a directory that holds a file, in place of the new data file of v: remove() refuses it
@@ -455,7 +456,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         runWithCrashFacade(() -> {
             final String table = "t_stale";
             createTable(table);
-            final long txnBefore = interruptTruncate(table, 1, true);
+            final long txnBefore = interruptTruncate(table, true);
             final long spColumnNameTxn;
             try (TableReader reader = getReader(table)) {
                 spColumnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(0, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("sp")));
@@ -526,6 +527,16 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         }
     }
 
+    /**
+     * Arms the _todo_ entry of a TRUNCATE of the table that an earlier build interrupted before it published _txn, and
+     * lets the engine go of the table, as on a restart. Returns the _txn txn the entry is stamped with.
+     */
+    private static long interruptTruncate(String table, boolean isKeepSymbolMaps) {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        return LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, isKeepSymbolMaps);
+    }
+
     private static Path partitionPath(String table) {
         return new Path().of(root).concat(engine.verifyTableName(table)).concat(TableUtils.DEFAULT_PARTITION_NAME);
     }
@@ -548,10 +559,6 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         purgeJob.run();
         setCurrentMicros(currentMicros + 1_000);
         purgeJob.run();
-    }
-
-    private static String tableDir(String table) {
-        return root + Files.SEPARATOR + engine.verifyTableName(table).getDirName();
     }
 
     private void assertOldIndexPurged(String table, long txnBefore, String column) {
@@ -639,26 +646,6 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         execute("UPDATE " + table + " SET x = x + 100");
     }
 
-    /**
-     * Kills TRUNCATE of the table at kill point {@code point}, after it armed _todo_ and before it published _txn,
-     * and restarts. Returns the _txn txn before TRUNCATE.
-     */
-    private long interruptTruncate(String table, int point, boolean isKeepSymbolMaps) throws Exception {
-        engine.releaseAllReaders();
-        final long txnBefore = readTxn(table);
-        crashFf.armKillAt(crashFf.killPointCount() + point, tableDir(table));
-        execute(truncateSql(table, isKeepSymbolMaps));
-        Assert.assertTrue(crashFf.isKillImageTaken());
-        // process restart: the engine lets go of the table, and its files go back to the kill image
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        crashFf.crash(tableDir(table));
-        // a fresh process starts with an empty scoreboard, whose max txn may be past the restored _txn
-        engine.getTxnScoreboardPool().remove(engine.verifyTableName(table));
-        Assert.assertEquals("the kill must stop TRUNCATE before it publishes _txn", txnBefore, readTxn(table));
-        return txnBefore;
-    }
-
     private String printQuery(String query) throws Exception {
         try (RecordCursorFactory factory = select(query)) {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -668,15 +655,10 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
         return printSink.toString();
     }
 
-    private String truncateSql(String table, boolean isKeepSymbolMaps) {
-        return "TRUNCATE TABLE " + table + (isKeepSymbolMaps ? " KEEP SYMBOL MAPS" : "");
-    }
-
     /**
-     * {@link FailingTruncateFacade} that also stops, once armed, the thread that removes the old data file of x, until
-     * the test lets it go.
+     * Stops, once armed, the thread that removes the old data file of x, until the test lets it go.
      */
-    private static class BlockingPurgeFacade extends FailingTruncateFacade {
+    private static class BlockingPurgeFacade extends TestFilesFacadeImpl {
         final CountDownLatch purgeReached = new CountDownLatch(1);
         final CountDownLatch purgeReleased = new CountDownLatch(1);
         volatile boolean isBlockArmed;
@@ -700,7 +682,7 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
 
     /**
      * Fails truncate() of the data file of column x while armed: TRUNCATE of a non-partitioned table fails after it
-     * armed _todo_.
+     * published the empty _txn.
      */
     private static class FailingTruncateFacade extends TestFilesFacadeImpl {
         volatile boolean isFailArmed;

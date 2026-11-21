@@ -259,8 +259,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
-    // Zero symbol counts, for a _txn record published before the symbol map writers open, see repairTruncate().
-    // Never modified.
+    // Zero symbol counts, for a _txn record published before the symbol maps are emptied (see truncate0()) or before
+    // the symbol map writers open (see repairTruncate()). Never modified.
     private static final ObjList<SymbolCountProvider> NO_SYMBOL_COUNTS = new ObjList<>();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
@@ -821,7 +821,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             // The truncate repair needs the metadata and _cv. It runs before the symbol map writers open, which then
-            // open with the symbol counts it publishes.
+            // open with the symbol counts it publishes. TRUNCATE arms no _todo_ entry any more: the repair completes
+            // an entry that a TRUNCATE of an earlier build armed, see repairTruncate().
             switch (todo) {
                 case TODO_TRUNCATE:
                     repairTruncate(false);
@@ -5598,8 +5599,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Truncates table including symbol tables. When the operation is unsuccessful, it throws and leaves this writer
-     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
-     * re-opens, any partial truncate will be retried.
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. A failure before
+     * the empty {@code _txn} is published leaves the table as it was; a failure after it leaves the table empty and
+     * throws a housekeeping {@link CairoException}, see {@link #truncate0(boolean)}.
      */
     @Override
     public final void truncate() {
@@ -5608,8 +5610,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Truncates table, but keeps symbol tables. When the operation is unsuccessful, it throws and leaves this writer
-     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. When the table
-     * re-opens, any partial truncate will be retried.
+     * distressed: the writer must be closed, and the pool closes it instead of handing it out again. A failure before
+     * the empty {@code _txn} is published leaves the table as it was; a failure after it leaves the table empty and
+     * throws a housekeeping {@link CairoException}, see {@link #truncate0(boolean)}.
      */
     @Override
     public final void truncateSoft() {
@@ -19147,16 +19150,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Completes a TRUNCATE that stopped after it armed its {@code _todo_} entry and before it published the empty
-     * {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column tops. The
-     * constructor calls it before it opens the columns and the symbol map writers.
+     * Completes a TRUNCATE of an earlier build that stopped after it armed its {@code _todo_} entry and before it
+     * published the empty {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column
+     * tops. Without KEEP SYMBOL MAPS, that TRUNCATE emptied the symbol maps before it armed the entry, and of a
+     * non-partitioned table it may have cut column files before it stopped. TRUNCATE no longer arms the entry: it
+     * publishes the empty {@code _txn} before it empties anything. The constructor calls the repair before it opens
+     * the columns and the symbol map writers.
      * <p>
-     * TRUNCATE runs while {@link CairoEngine#lockReaders(TableToken)} keeps queries out of the table. The repair runs
-     * in whichever writer open comes first, and a query that opened the table after the TRUNCATE stopped still reads
-     * the old rows, so the rows written after the repair must not land in the files that query maps. A partitioned
-     * table leaves its old partitions to the partition purge and writes new rows to new partition versions. A
-     * non-partitioned table has a single partition directory, so its columns move to new file versions, see
-     * {@link #moveColumnsToNewVersionForTruncateRepair()}.
+     * The repair runs in whichever writer open comes first, without {@link CairoEngine#lockReaders(TableToken)}, and a
+     * query that opened the table after the TRUNCATE stopped still reads the old rows, so the rows written after the
+     * repair must not land in the files that query maps. A partitioned table leaves its old partitions to the
+     * partition purge and writes new rows to new partition versions. A non-partitioned table has a single partition
+     * directory, so its columns move to new file versions, see {@link #moveColumnsToNewVersionForTruncateRepair()}.
      */
     private void repairTruncate(boolean isKeepSymbolMaps) {
         LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
@@ -22103,11 +22108,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             truncate0(keepSymbolTables);
         } catch (Throwable th) {
-            // A failed truncate0() may have emptied symbol tables and columns, scheduled the removal of every
-            // partition and committed _cv, none of which inTransaction() sees. The pool would hand this writer out
-            // again without a rollback, and its next commit would publish the half-done truncate. The pool closes a
-            // distressed writer instead: the close drops the scheduled removals and rolls back a _cv version that
-            // _txn does not name.
+            // A truncate0() that fails before it publishes the empty _txn may have scheduled the removal of every
+            // partition and committed _cv, and one that fails after it may have half emptied the symbol maps and the
+            // column files, none of which inTransaction() sees. The pool would hand this writer out again without a
+            // rollback. The pool closes a distressed writer instead: the close drops the scheduled removals and rolls
+            // back a _cv version that _txn does not name, and the next open positions the files from _txn.
             distressed = true;
             // A non-WAL TRUNCATE reports to the statement: a failed data sync stops the engine here
             engine.handleDataSyncFailure(th);
@@ -22122,13 +22127,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // inside the mapping.
         txWriter.mapTruncatedRecordArea();
 
+        // TRUNCATE empties no file that the published _txn names before txWriter.truncate() publishes the empty
+        // record. One that stops before it, on an I/O error or a process kill, leaves the table as it was, and a query
+        // reads it whole: there is nothing for a later writer open to complete, so TRUNCATE arms no _todo_ entry.
+        // Once _txn names no rows, and no symbols unless TRUNCATE keeps the symbol maps, emptyTruncatedFiles() empties
+        // the symbol maps and the column files of a non-partitioned table in place. TRUNCATE TABLE holds
+        // CairoEngine.lockReaders(), which keeps queries and checkpoints out until it returns, and a query that opens
+        // after it reads none of the old bytes.
         boolean hasNonEmptySymbolTables = false;
         if (!keepSymbolTables) {
-            // we do this before size check so that "old" corrupt symbol tables are brought back in line
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
-                MapWriter symbolMapWriter = denseSymbolMapWriters.getQuick(i);
-                hasNonEmptySymbolTables |= symbolMapWriter.getSymbolCount() > 0;
-                symbolMapWriter.truncate();
+                hasNonEmptySymbolTables |= denseSymbolMapWriters.getQuick(i).getSymbolCount() > 0;
             }
         }
 
@@ -22136,26 +22145,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (hasNonEmptySymbolTables) {
                 txWriter.resetTimestamp();
                 columnVersionWriter.truncate();
-                txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+                txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
                 resetCompositePartitionTracking();
             }
+            // also when the counts are zero, so that "old" corrupt symbol tables are brought back in line
+            emptyTruncatedFiles(!keepSymbolTables, false);
             return;
         }
-
-        // The writer open acts on a _todo_ entry only when its txn is the live _txn txn (see openTodoMem()). Stamped
-        // with the txn this truncate starts from, the entry makes the next open complete a truncate that stopped
-        // before it published the empty _txn, and the open ignores it once that _txn, or a later one, is published.
-        todoMem.putLong(0, txWriter.txn); // write txn, reader will first read txn at offset 24 and then at offset 0
-        Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
-        todoMem.putLong(8, configuration.getDatabaseIdLo()); // write out our instance hashes
-        todoMem.putLong(16, configuration.getDatabaseIdHi());
-        Unsafe.storeFence();
-        todoMem.putLong(24, txWriter.txn);
-        todoMem.putLong(32, 1);
-        // The repair keeps the symbol maps only when this truncate keeps them: otherwise it has emptied them above
-        todoMem.putLong(40, keepSymbolTables ? TODO_TRUNCATE_KEEP_SYMBOL_MAPS : TODO_TRUNCATE);
-        // ensure file is closed with correct length
-        todoMem.jumpTo(48);
 
         if (partitionBy != PartitionBy.NONE) {
             freeColumns(false);
@@ -22163,16 +22159,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Schedule removal of all partitions
             scheduleRemoveAllPartitions();
             rowAction = ROW_ACTION_OPEN_PARTITION;
-        } else {
-            // truncate columns, we cannot remove them
-            truncateColumns();
         }
 
         txWriter.resetTimestamp();
         columnVersionWriter.truncate();
-        txWriter.truncate(columnVersionWriter.getVersion(), denseSymbolMapWriters);
+        txWriter.truncate(columnVersionWriter.getVersion(), keepSymbolTables ? denseSymbolMapWriters : NO_SYMBOL_COUNTS);
         resetCompositePartitionTracking();
-        clearTodoLog();
         this.minSplitPartitionTimestamp = Long.MAX_VALUE;
         processPartitionRemoveCandidates();
 
@@ -22180,6 +22172,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+        // a partitioned table drops its partitions, a non-partitioned one empties its column files
+        emptyTruncatedFiles(!keepSymbolTables, partitionBy == PartitionBy.NONE);
+    }
+
+    /**
+     * Empties the symbol maps and the column files of a non-partitioned table in place, once the published
+     * {@code _txn} names nothing they hold, see {@link #truncate0(boolean)}. A failure leaves the table empty and this
+     * writer distressed, with a housekeeping exception: the files may be half emptied, and the next open positions
+     * them from {@code _txn}.
+     */
+    private void emptyTruncatedFiles(boolean isSymbolMaps, boolean isColumns) {
+        try {
+            if (isSymbolMaps) {
+                for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                    denseSymbolMapWriters.getQuick(i).truncate();
+                }
+            }
+            if (isColumns) {
+                truncateColumns();
+            }
+        } catch (Throwable th) {
+            handleHousekeepingException(th);
         }
     }
 

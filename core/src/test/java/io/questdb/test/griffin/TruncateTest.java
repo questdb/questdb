@@ -644,6 +644,42 @@ public class TruncateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateEmptyTableAfterKeepSymbolMaps() throws Exception {
+        // TRUNCATE ... KEEP SYMBOL MAPS leaves an empty table with its symbols. TRUNCATE ... KEEP SYMBOL MAPS of that
+        // table changes nothing, and TRUNCATE of it empties the symbol maps.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL, v LONG)");
+            execute("INSERT INTO x VALUES ('a', 1), ('b', 2), ('c', 3)");
+            execute("TRUNCATE TABLE x KEEP SYMBOL MAPS");
+            assertSymbolCount("x", 3);
+
+            execute("TRUNCATE TABLE x KEEP SYMBOL MAPS");
+            assertSymbolCount("x", 3);
+
+            execute("TRUNCATE TABLE x");
+            assertSymbolCount("x", 0);
+            assertQuery("SELECT sym, v FROM x")
+                    .expectSize()
+                    .returns("sym\tv\n");
+
+            execute("INSERT INTO x VALUES ('d', 4), ('a', 5)");
+            assertSymbolCount("x", 2);
+            assertQuery("SELECT sym, v FROM x")
+                    .expectSize()
+                    .returns("""
+                            sym\tv
+                            d\t4
+                            a\t5
+                            """);
+            assertQuery("SELECT v FROM x WHERE sym = 'a'")
+                    .returns("""
+                            v
+                            5
+                            """);
+        });
+    }
+
+    @Test
     public void testTruncateEmptyTableResetsSymbolCounts() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -976,6 +1012,13 @@ public class TruncateTest extends AbstractCairoTest {
                             2022-02-24T00:00:00.000000Z\t1
                             """);
         });
+    }
+
+    // the number of symbols in the symbol map of the first column of the table
+    private static void assertSymbolCount(String table, int expected) {
+        try (TableReader reader = getReader(table)) {
+            Assert.assertEquals(expected, reader.getSymbolMapReader(0).getSymbolCount());
+        }
     }
 
     private void createX() throws SqlException {
