@@ -128,6 +128,14 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // the keyed natives sum into a 128-bit accumulator, which takes the two LONG columns; the sum in a
+        // double is exact up to 2^53
+        putLong128(Rosti.getInitialValueSlot(pRosti, valueOffset), sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 2), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         // although the final values are double, avg() calculates sum and count for longs
         // double is derived at the very end. The initial values need to be set
@@ -153,5 +161,25 @@ public class AvgLongVectorAggregateFunction extends DoubleFunction implements Ve
     @Override
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntAvgLongLongWrapUp(pRosti, valueOffset, sum.sum(), count.sum());
+    }
+
+    // Writes an integral double as the keyed natives' 128-bit two's complement accumulator: the low 64 bits
+    // first, then the high 64 bits.
+    private static void putLong128(long address, double value) {
+        final long lo;
+        final long hi;
+        if (value >= -0x1p63 && value < 0x1p63) {
+            lo = (long) value;
+            hi = lo < 0 ? -1 : 0;
+        } else {
+            // |value| >= 2^63, so value is a multiple of 2^11, and so is l, which is in [0, 2^64): both
+            // l and l - 2^64 are exact
+            final double h = Math.floor(value / 0x1p64);
+            final double l = value - h * 0x1p64;
+            lo = l < 0x1p63 ? (long) l : (long) (l - 0x1p64);
+            hi = (long) h;
+        }
+        Unsafe.putLong(address, lo);
+        Unsafe.putLong(address + Long.BYTES, hi);
     }
 }

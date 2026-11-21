@@ -335,6 +335,21 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(128 * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMaxSize());
         Assert.assertEquals(0.4, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0.000001);
         Assert.assertEquals(0.125, configuration.getCairoConfiguration().getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0.000001);
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // A probe frame's rows: the smaller of the page frame maximum, 1,000,000, and the join's own,
+        // 100,000.
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        // The query worker count, and with it the dispatch limit and the queue capacity, depends on
+        // the host's CPUs: min(dispatch limit, queue capacity) probe frames of 100,000 rows at 48
+        // bytes.
+        Assert.assertEquals(
+                Math.min(
+                        configuration.getCairoConfiguration().getSqlParallelFilterDispatchLimit(),
+                        configuration.getCairoConfiguration().getPageFrameReduceQueueCapacity()
+                ) * 4_800_000L,
+                configuration.getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize()
+        );
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelReadParquetEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParquetRowGroupPruningEnabled());
         Assert.assertEquals(256L * Numbers.SIZE_1MB, configuration.getCairoConfiguration().getSqlParquetCacheMemorySize());
@@ -2574,6 +2589,227 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testParallelHashJoinEnabledPropertyAndEnvironment() throws Exception {
+        Properties properties = new Properties();
+        // On by default with shared query workers, as the other parallel SQL switches are.
+        properties.setProperty("shared.query.worker.count", "4");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // Off by default without them.
+        properties.setProperty("shared.query.worker.count", "0");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // The property wins over the default either way.
+        properties.setProperty("cairo.sql.parallel.hash.join.enabled", "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        properties.setProperty("shared.query.worker.count", "4");
+        properties.setProperty("cairo.sql.parallel.hash.join.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        // The environment wins over the property.
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED", "true");
+        Assert.assertTrue(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        properties.remove("cairo.sql.parallel.hash.join.enabled");
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED", "false");
+        Assert.assertFalse(newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().isSqlParallelHashJoinEnabled());
+    }
+
+    @Test
+    public void testParallelHashJoinAloneKeepsSharedQueryPool() throws Exception {
+        // Every other parallel SQL kind is off. The parallel hash join runs on the shared query pool,
+        // and a context with no query workers turns it off, so the pool must start for it.
+        final Properties properties = parallelSqlKindsOff();
+        properties.setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED.getPropertyPath(), "true");
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelHashJoinEnabled());
+        Assert.assertEquals(4, configuration.getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+    }
+
+    @Test
+    public void testSharedQueryPoolFollowsParallelSqlKinds() throws Exception {
+        // With every parallel SQL kind off, the server starts no query worker.
+        Properties properties = parallelSqlKindsOff();
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+        // Any one kind on its own keeps the 4 configured workers. The parallel hash join has a test
+        // of its own, testParallelHashJoinAloneKeepsSharedQueryPool.
+        for (PropertyKey kind : new PropertyKey[]{
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED,
+        }) {
+            properties = parallelSqlKindsOff();
+            properties.setProperty(kind.getPropertyPath(), "true");
+            Assert.assertEquals(kind.getPropertyPath(), 4, newPropServerConfiguration(properties).getSharedWorkerPoolQueryConfiguration().getWorkerCount());
+        }
+    }
+
+    @Test
+    public void testParallelHashJoinPageFrameMaxRows() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // The value stands whatever cairo.sql.page.frame.max.rows, which the join's frames also
+        // respect.
+        properties.setProperty("cairo.sql.page.frame.max.rows", "4096");
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "1");
+        Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        // The largest page frame the server accepts, 2^24 rows.
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "16777216");
+        Assert.assertEquals(16_777_216, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS", "250_000");
+        Assert.assertEquals(250_000, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().getSqlParallelHashJoinPageFrameMaxRows());
+
+        properties.clear();
+        for (String value : new String[]{"0", "-1", "-2147483648", "16777217", "2147483647"}) {
+            properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", value);
+            assertConfigurationError(properties, "cairo.sql.parallel.hash.join.page.frame.max.rows must be between 1 and 16777216");
+        }
+        for (String value : new String[]{"2147483648", "lots", ""}) {
+            properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", value);
+            assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.page.frame.max.rows, value=" + value + "]");
+        }
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_PAGE_FRAME_MAX_ROWS", "0");
+        try {
+            newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("cairo.sql.parallel.hash.join.page.frame.max.rows must be between 1 and 16777216", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testParallelHashJoinTaskOutputMaxRows() throws Exception {
+        Properties properties = new Properties();
+        // The default is a probe frame's rows: the smaller of cairo.sql.page.frame.max.rows and
+        // cairo.sql.parallel.hash.join.page.frame.max.rows, 1,000,000 and 100,000 by default.
+        Assert.assertEquals(100_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "250000");
+        Assert.assertEquals(250_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "2000000");
+        Assert.assertEquals(1_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.remove("cairo.sql.parallel.hash.join.page.frame.max.rows");
+        properties.setProperty("cairo.sql.page.frame.max.rows", "4096");
+        Assert.assertEquals(4096, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "1");
+        Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "2147483647");
+        Assert.assertEquals(Integer.MAX_VALUE, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS", "250_000");
+        Assert.assertEquals(250_000, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().getSqlParallelHashJoinTaskOutputMaxRows());
+
+        properties.clear();
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "0");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=0]");
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "-1");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=-1]");
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "-2147483648");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=-2147483648]");
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "2147483648");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=2147483648]");
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "lots");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=lots]");
+        properties.setProperty("cairo.sql.parallel.hash.join.task.output.max.rows", "");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=]");
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS", "0");
+        try {
+            newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("invalid configuration value [key=cairo.sql.parallel.hash.join.task.output.max.rows, value=0]", e.getMessage());
+        }
+    }
+
+    @Test
+    public void testParallelHashJoinTupleRingMaxSize() throws Exception {
+        Properties properties = new Properties();
+        // 32 query workers: dispatch limit min(32, 32) = 32, queue capacity min(4 * 32, 256) = 128,
+        // so 32 probe frames of 100,000 rows, the smaller of cairo.sql.page.frame.max.rows and
+        // cairo.sql.parallel.hash.join.page.frame.max.rows, at 48 bytes per row, the tuples of a
+        // five-join stack.
+        properties.setProperty("shared.query.worker.count", "32");
+        Assert.assertEquals(153_600_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // 4 query workers: dispatch limit 4, queue capacity 16.
+        properties.setProperty("shared.query.worker.count", "4");
+        Assert.assertEquals(19_200_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // A dispatch limit above the queue capacity: the queue's 16 frames bound the ring.
+        properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "100");
+        Assert.assertEquals(76_800_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // A queue capacity below the dispatch limit of 4.
+        properties.remove("cairo.sql.parallel.filter.dispatch.limit");
+        properties.setProperty("cairo.page.frame.reduce.queue.capacity", "2");
+        Assert.assertEquals(9_600_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // Larger probe frames: 2 frames of 250,000 rows, and, past the page frame maximum, of its
+        // 1,000,000 rows.
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "250000");
+        Assert.assertEquals(24_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "2000000");
+        Assert.assertEquals(96_000_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // Smaller page frames: 2 frames of 1,000 rows.
+        properties.setProperty("cairo.sql.page.frame.max.rows", "1000");
+        Assert.assertEquals(96_000, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // The largest page frames the server accepts, 2^24 rows, with the largest dispatch limit and
+        // a queue capacity of 2^30, do not overflow.
+        properties.setProperty("cairo.sql.page.frame.max.rows", "16777216");
+        properties.setProperty("cairo.sql.parallel.hash.join.page.frame.max.rows", "16777216");
+        properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "2147483647");
+        properties.setProperty("cairo.page.frame.reduce.queue.capacity", "1073741824");
+        Assert.assertEquals(
+                864_691_128_455_135_232L,
+                newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize()
+        );
+        properties.clear();
+        // No query workers: the dispatch limit is 0, and the join still dispatches one frame.
+        properties.setProperty("shared.query.worker.count", "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        // A negative dispatch limit does not make the default negative, which would fail the start.
+        properties.setProperty("shared.query.worker.count", "4");
+        properties.setProperty("cairo.sql.parallel.filter.dispatch.limit", "-1");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+
+        properties.clear();
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "64M");
+        Assert.assertEquals(64 * Numbers.SIZE_1MB, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "1");
+        Assert.assertEquals(1, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "9223372036854775807");
+        Assert.assertEquals(Long.MAX_VALUE, newPropServerConfiguration(properties).getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+        Map<String, String> env = new HashMap<>();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE", "2G");
+        Assert.assertEquals(2 * Numbers.SIZE_1GB, newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration().getSqlParallelHashJoinTupleRingMaxSize());
+
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "-1");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=-1]");
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "-9223372036854775807");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=-9223372036854775807]");
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "big");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=big]");
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "64X");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=64X]");
+        properties.setProperty("cairo.sql.parallel.hash.join.tuple.ring.max.size", "");
+        assertConfigurationError(properties, "invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=]");
+        properties.clear();
+        env.put("QDB_CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE", "-5");
+        try {
+            newPropServerConfiguration(root, properties, env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals("invalid configuration value [key=cairo.sql.parallel.hash.join.tuple.ring.max.size, value=-5]", e.getMessage());
+        }
+    }
+
+    @Test
     public void testParallelHashJoinGroupByPropertyAndEnvironment() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.parallel.hash.join.groupby.enabled", "false");
@@ -3563,6 +3799,24 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(configuration.getPoolName(), 64, configuration.getFiberMountBudget());
     }
 
+    // 4 shared query workers and every parallel SQL kind off.
+    private static Properties parallelSqlKindsOff() {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_COUNT.getPropertyPath(), "4");
+        for (PropertyKey kind : new PropertyKey[]{
+                PropertyKey.CAIRO_SQL_PARALLEL_FILTER_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_READ_PARQUET_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_TOP_K_ENABLED,
+                PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_JOIN_ENABLED,
+        }) {
+            properties.setProperty(kind.getPropertyPath(), "false");
+        }
+        return properties;
+    }
+
     private static WorkerPoolConfiguration workerPoolConfiguration(int workerCount) {
         return new WorkerPoolConfiguration() {
             @Override
@@ -3648,6 +3902,15 @@ public class PropServerConfigurationTest {
             Assert.fail("Should fail for " + value);
         } catch (ServerConfigurationException e) {
             TestUtils.assertContains(e.getMessage(), "cairo.sql.copy.work.root can't point to root, data, conf or snapshot dirs");
+        }
+    }
+
+    private void assertConfigurationError(Properties properties, String expectedMessage) throws Exception {
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertEquals(expectedMessage, e.getMessage());
         }
     }
 
@@ -3880,6 +4143,9 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelTopKEnabled());
         Assert.assertFalse(configuration.isSqlParallelWindowJoinEnabled());
         Assert.assertFalse(configuration.isSqlParallelGroupByEnabled());
+        Assert.assertFalse(configuration.isSqlParallelHashJoinEnabled());
+        Assert.assertEquals(5_000, configuration.getSqlParallelHashJoinTaskOutputMaxRows());
+        Assert.assertEquals(64 * Numbers.SIZE_1MB, configuration.getSqlParallelHashJoinTupleRingMaxSize());
         Assert.assertFalse(configuration.isSqlParallelReadParquetEnabled());
         Assert.assertEquals(128L * Numbers.SIZE_1MB, configuration.getSqlParquetCacheMemorySize());
         Assert.assertFalse(configuration.isSqlOrderBySortEnabled());

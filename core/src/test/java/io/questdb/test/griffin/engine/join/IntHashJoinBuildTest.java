@@ -64,6 +64,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -71,6 +72,10 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.LongPredicate;
+
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class IntHashJoinBuildTest extends AbstractCairoTest {
     private static final SqlExecutionCircuitBreaker NOOP = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
@@ -1072,6 +1077,62 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                     }
                     Assert.assertFalse(probe.hasNext());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testFrameBuildsChainKeysAsLongChainInScanOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String sql : FrameBuilds.SCAN_ORDER_TABLES) {
+                execute(sql);
+            }
+            sqlExecutionContext.changePageFrameSizes(FrameBuilds.SCAN_ORDER_FRAME_ROWS, FrameBuilds.SCAN_ORDER_FRAME_ROWS);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                 RecordCursorFactory probeFactory = select("p");
+                 RecordCursor probeCursor = probeFactory.getCursor(sqlExecutionContext)) {
+                final StaticSymbolTable probeDictionary = (StaticSymbolTable) probeCursor.getSymbolTable(0);
+                // A forward scan, and a backward one, which hands its frames over from the last and
+                // meets each frame's rows from the last: the owner appends each frame's rows, or the
+                // rows the filter keeps, in the scan's order.
+                for (String sql : new String[]{"t", "t ORDER BY ts DESC"}) {
+                    try (RecordCursorFactory factory = select(sql);
+                         HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, indexes(1), factory.getMetadata());
+                         IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                        final int order = FrameBuilds.scanOrder(factory);
+                        Assert.assertEquals(sql.endsWith("DESC") ? ORDER_DESC : ORDER_ASC, order);
+                        for (LongPredicate keepValue : new LongPredicate[]{null, v -> v % 3 != 1}) {
+                            final String label = sql + (keepValue != null ? ", filtered" : "");
+                            // The serial hash join's chains over the same scan, by INT key and by symbol text.
+                            final Map<Integer, List<Long>> intChains = FrameBuilds.longChains(factory,
+                                    record -> record.getInt(0), 1, keepValue, sqlExecutionContext);
+                            final Map<String, List<Long>> symbolChains = FrameBuilds.longChains(factory,
+                                    record -> Objects.toString(record.getSymA(2), null), 1, keepValue, sqlExecutionContext);
+                            // The filter drops every row of keys 1 and 4.
+                            Assert.assertEquals(label, keepValue != null ? 5 : 7, intChains.size());
+                            Assert.assertEquals(label, 6, symbolChains.size());
+
+                            frames.open(factory, order, sqlExecutionContext);
+                            frames.loadFrames();
+                            Assert.assertTrue(label, frames.getFrameCount() > 20);
+                            Assert.assertTrue(label, frames.hasDecodedFrames());
+                            final LongPredicate keep = keepValue != null ? FrameBuilds.keepByValue(configuration, frames, 1, keepValue) : null;
+                            FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntSerial(configuration, build, frames, 0, keep, order, tracker, NOOP);
+                            FrameBuilds.assertIntChains(frozen, intChains, -1, 9);
+                            build.close();
+
+                            // A SYMBOL key keeps the build's own symbol keys, which the probe translates into.
+                            frozen = FrameBuilds.buildIntSerial(configuration, build, frames, 2, keep, order, tracker, NOOP);
+                            FrameBuilds.assertTranslatedSymbolChains(frozen, symbolChains, probeDictionary,
+                                    (StaticSymbolTable) frames.getSymbolTableSource().getSymbolTable(2), tracker);
+                            build.close();
+                            frames.clear();
+                            Assert.assertEquals(label, 0, tracker.getUsed());
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
             }
         });
     }

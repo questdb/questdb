@@ -182,8 +182,9 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 AsyncHashJoinGroupByAtom atom = frameSequence.getAtom();
                 // The build runs here, on first demand for a result, rather than when the cursor
-                // opens. It completes on this thread before the first probe task is published,
-                // which is what publishes the frozen build and the slots' probes to the reducers.
+                // opens. It and the SYMBOL key translation complete on this thread before the first
+                // probe task is published, which is what publishes the frozen build, the slots'
+                // probes and the translation to the reducers.
                 // A failure closes the cursor below, and with it the build.
                 atom.build(circuitBreaker);
                 if (atom.isProbeNeeded()) {
@@ -192,6 +193,8 @@ final class AsyncHashJoinGroupByRecordCursor implements RecordCursor {
                     for (int i = 0, n = frameSequence.getFrameCount(); i < n; i++) {
                         probeRows += frameSequence.getFrameRowCount(i);
                     }
+                    // The reducers read every frame row, whose keys the translation is opened for.
+                    atom.bindSymbolKeyTranslation(probeRows, circuitBreaker);
                     atom.maybeCopyPayload(probeRows, circuitBreaker);
                     atom.getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
                     frameSequence.dispatchAndAwait();

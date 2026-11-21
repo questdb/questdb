@@ -38,9 +38,12 @@ import io.questdb.std.ObjList;
  * {@code bindSql} carries the same query rewritten with {@code :bN::TYPE}
  * placeholders, {@code bindNames} holds the placeholder names and
  * {@code bindValues} holds the matching {@code setStr} values, both in
- * emission order. {@code hasBind()} returns false when bindSql is null
- * (most queries) or no bindable constant rolled the per-constant coin
- * flip.
+ * emission order. {@code bindLimitValue} is the value of the positional
+ * {@code $1} that the bind form's LIMIT and SELECT list share, which the
+ * runner leaves undefined at compile and binds after it, or null. {@code
+ * hasBind()} returns false when bindSql is null (most queries) or the bind
+ * form binds nothing: no bindable constant rolled the per-constant coin flip
+ * and the LIMIT reads no {@code $1}.
  * <p>
  * {@code shape} names the generator the query came from. The clause generators leave it
  * {@link QueryShape#SIMPLE}; {@link QueryGenerator} stamps the real shape on the way out, so the
@@ -56,27 +59,28 @@ public record GeneratedQuery(
         String bindSql,
         ObjList<String> bindNames,
         ObjList<String> bindValues,
+        String bindLimitValue,
         QueryShape shape,
         String referenceSql
 ) {
 
     public GeneratedQuery(String sql, boolean deterministic) {
-        this(sql, deterministic, null, null, null, QueryShape.SIMPLE, null);
+        this(sql, deterministic, null, null, null, null, QueryShape.SIMPLE, null);
     }
 
     public boolean hasBind() {
-        return bindSql != null && bindValues != null && bindValues.size() > 0;
+        return bindSql != null && ((bindValues != null && bindValues.size() > 0) || bindLimitValue != null);
     }
 
-    public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
-        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape, this.referenceSql);
+    public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues, String bindLimitValue) {
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, bindLimitValue, this.shape, this.referenceSql);
     }
 
     public GeneratedQuery withReference(String referenceSql) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.shape, referenceSql);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.bindLimitValue, this.shape, referenceSql);
     }
 
     public GeneratedQuery withShape(QueryShape shape) {
-        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape, this.referenceSql);
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, this.bindLimitValue, shape, this.referenceSql);
     }
 }

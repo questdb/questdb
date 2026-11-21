@@ -24,15 +24,19 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -44,7 +48,12 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
@@ -116,6 +125,8 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
                     ORDER BY p.g
                     """
     };
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String STAGE = HashJoinBuildStage.class.getName();
     private static final int WORKER_COUNT = 4;
 
     @Override
@@ -155,6 +166,16 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
         assertWorkerFilters(null, OUTER_QUERIES, true);
     }
 
+    @Test
+    public void testSmallInterpretedBuildFilterRunsOnSeveralThreadsWithFiberWorkers() throws Exception {
+        assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testSmallInterpretedBuildFilterRunsOnSeveralThreadsWithLegacyWorkers() throws Exception {
+        assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode.LEGACY);
+    }
+
     // Each slot must filter through a function of its own: the owner's and every worker's are
     // distinct objects, none of them thread safe.
     private static void assertDistinctCopies(String label, Function owner, ObjList<Function> copies) {
@@ -173,20 +194,24 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
         }
     }
 
-    // The atom exposes neither the filter context of the build scan nor the ON filter copies.
-    private static void assertWorkerFilterCopies(String label, AsyncHashJoinGroupByAtom atom, boolean isOuter) throws Exception {
-        final AsyncFilterContext buildFilterContext = (AsyncFilterContext) field(atom, "buildFilterContext");
+    // The atom's build stage holds the filter context of the build scan and the ON filter copies.
+    private static void assertWorkerFilterCopies(String label, AsyncHashJoinGroupByAtom atom, boolean isOuter) {
+        final HashJoinBuildStage stage = atom.getBuildingStage();
+        final AsyncFilterContext buildFilterContext = stage.getBuildFilterContext();
         final ObjList<Function> scanCopies = new ObjList<>();
         for (int i = 0; i < WORKER_COUNT; i++) {
             scanCopies.add(buildFilterContext.getFilter(i));
         }
         assertDistinctCopies(label, buildFilterContext.getFilter(-1), scanCopies);
         if (isOuter) {
-            @SuppressWarnings("unchecked") final ObjList<Function> onCopies = (ObjList<Function>) field(atom, "workerBuildOnFilters");
-            assertDistinctCopies(label, (Function) field(atom, "buildOnFilter"), onCopies);
+            assertDistinctCopies(label, stage.getBuildOnFilter(), stage.getWorkerBuildOnFilters());
         } else {
-            Assert.assertNull(label, field(atom, "buildOnFilter"));
+            Assert.assertNull(label, stage.getBuildOnFilter());
         }
+    }
+
+    private static boolean isOnStack(String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(STAGE) && frame.getMethodName().equals(methodName)));
     }
 
     // p holds 6_000 rows, b 2_400 over two days. One in three of b's names contains an x, and half of
@@ -219,10 +244,68 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
                 """, context);
     }
 
-    private static Object field(Object target, String name) throws Exception {
-        final Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target);
+    // b's 2_400 rows, over two days, are far fewer than the configured 300_000, and its filter, which
+    // the JIT does not compile, runs in the frame tasks of the build's first round, one per day. The
+    // filter holds the first thread that runs it inside a frame task until a second thread does too,
+    // which only two frame tasks that run at once let pass.
+    private void assertSmallInterpretedBuildFilterRunsOnSeveralThreads(WorkerPoolMode mode) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 300_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 32_768);
+        assertMemoryLeak(() -> TestUtils.execute(new TestWorkerPool(WORKER_COUNT, mode), (db, compiler, ignored) -> {
+            createTables(db, ignored);
+            try (SqlExecutionContextImpl context = context(db, WORKER_COUNT)) {
+                final String sql = "SELECT p.g, count() n, sum(b.w) w FROM p JOIN (SELECT * FROM b WHERE test_latched_counter()) b ON p.id = b.id ORDER BY p.g";
+                TestLatchedCounterFunctionFactory.reset(null);
+                final String expected = ordinary(db, sql, context);
+                final AtomicBoolean isArmed = new AtomicBoolean();
+                final AtomicBoolean isTimedOut = new AtomicBoolean();
+                final Set<Thread> filterThreads = ConcurrentHashMap.newKeySet();
+                final AtomicReference<CountDownLatch> bothStarted = new AtomicReference<>();
+                // The function takes the callback when it compiles.
+                TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                    @Override
+                    public boolean onGet(Record rec, int count) {
+                        if (isArmed.get() && isOnStack("partitionFrame") && filterThreads.add(Thread.currentThread())) {
+                            final CountDownLatch latch = bothStarted.get();
+                            latch.countDown();
+                            try {
+                                if (!latch.await(10, TimeUnit.SECONDS)) {
+                                    isTimedOut.set(true);
+                                }
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                throw new AssertionError(e);
+                            }
+                        }
+                        return true;
+                    }
+                });
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final String label = sql + '\n' + plan(factory, context);
+                    Assert.assertTrue(label, label.contains("buildFilter: test_latched_counter()"));
+                    final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                    for (int run = 0; run < 2; run++) {
+                        filterThreads.clear();
+                        bothStarted.set(new CountDownLatch(2));
+                        isArmed.set(true);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            final StringSink sink = new StringSink();
+                            CursorPrinter.println(cursor, factory.getMetadata(), sink, true, true);
+                            Assert.assertEquals(label, expected, sink.toString());
+                            Assert.assertTrue(label, atom.isBuiltInRounds());
+                            Assert.assertEquals(label, 2, atom.getBuildFrameCount());
+                        } finally {
+                            isArmed.set(false);
+                        }
+                        Assert.assertFalse("the two frame tasks did not run at once", isTimedOut.get());
+                        Assert.assertEquals(2, filterThreads.size());
+                        Assert.assertEquals(0, atom.getPerWorkerLocks().getAcquiredSlotCount());
+                    }
+                } finally {
+                    TestLatchedCounterFunctionFactory.reset(null);
+                }
+            }
+        }, configuration, LOG));
     }
 
     private void assertWorkerFilters(@Nullable WorkerPoolMode mode, String[] queries, boolean isOuter) throws Exception {

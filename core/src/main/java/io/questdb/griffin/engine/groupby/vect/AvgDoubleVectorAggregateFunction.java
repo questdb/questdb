@@ -129,6 +129,12 @@ public class AvgDoubleVectorAggregateFunction extends DoubleFunction implements 
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, valueOffset), sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putDouble(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);

@@ -29,51 +29,29 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
-import io.questdb.std.Unsafe;
-
-import java.io.IOException;
-import java.io.InputStream;
 
 /**
  * Aggregates one joined row into its group, on behalf of the fused reducers.
  * <p>
- * The key sink and the aggregate updater are classes that each query generates for itself. A
- * shared method that calls them collects one type profile for every query the JVM has run, so C2
- * compiles it for the queries that came first: with two receivers it inlines both and may run out
- * of its inlining budget before the current query's aggregates, and with more it calls both per
- * row through the interface. Either way, the whole JVM stays in that state until the older
- * queries' classes unload. {@link #newInstance()} therefore defines a hidden class of its own from
- * {@link HashJoinGroupByRowUpdaterTemplate}'s bytecode for every fused factory, so that each
- * factory's copy profiles only that factory's classes.
+ * The key sink and the aggregate updater are classes that each query generates for itself, so a
+ * shared copy of this step would profile every query's classes; see {@link HiddenClassCopies}.
+ * {@link #newInstance()} therefore hands every fused factory a hidden copy of
+ * {@link HashJoinGroupByRowUpdaterTemplate} of its own, so that each factory's copy profiles only
+ * that factory's classes.
  */
 abstract class HashJoinGroupByRowUpdater {
-    private static final byte[] TEMPLATE_BYTECODE = readTemplateBytecode();
+    private static final HiddenClassCopies<HashJoinGroupByRowUpdater> COPIES = new HiddenClassCopies<>(
+            HashJoinGroupByRowUpdater.class,
+            HashJoinGroupByRowUpdaterTemplate.class,
+            HashJoinGroupByRowUpdaterTemplate::new
+    );
 
     /**
      * Returns a row updater whose class no other factory shares, or the shared template when the
      * JVM cannot define hidden classes.
      */
     static HashJoinGroupByRowUpdater newInstance() {
-        if (TEMPLATE_BYTECODE != null) {
-            final Class<?> clazz = Unsafe.defineAnonymousClass(HashJoinGroupByRowUpdaterTemplate.class, TEMPLATE_BYTECODE);
-            if (clazz != null) {
-                try {
-                    return (HashJoinGroupByRowUpdater) clazz.getDeclaredConstructor().newInstance();
-                } catch (ReflectiveOperationException ignore) {
-                    // fall back to the shared template
-                }
-            }
-        }
-        return new HashJoinGroupByRowUpdaterTemplate();
-    }
-
-    private static byte[] readTemplateBytecode() {
-        try (InputStream in = HashJoinGroupByRowUpdaterTemplate.class.getResourceAsStream(
-                HashJoinGroupByRowUpdaterTemplate.class.getSimpleName() + ".class")) {
-            return in != null ? in.readAllBytes() : null;
-        } catch (IOException e) {
-            return null;
-        }
+        return COPIES.newInstance();
     }
 
     abstract void update(

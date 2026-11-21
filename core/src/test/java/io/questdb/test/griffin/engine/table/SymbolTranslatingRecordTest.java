@@ -307,6 +307,9 @@ public class SymbolTranslatingRecordTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinsReleaseCachesOnCursorClose() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         assertMemoryLeak(() -> {
             createTables(engine, sqlExecutionContext);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

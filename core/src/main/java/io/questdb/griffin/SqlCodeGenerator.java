@@ -290,6 +290,8 @@ import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinSpec;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
@@ -309,6 +311,8 @@ import io.questdb.griffin.engine.table.FilterOnSubQueryRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilterOnValuesRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinInput;
+import io.questdb.griffin.engine.table.HashJoinStageSpec;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecord;
@@ -403,6 +407,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -519,6 +524,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer = new CompiledFilterIRSerializer();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    // The inputs whose rows a LIMIT over their owner bounds, and their owners, paired by index: the
+    // master of an ASOF or LT join, which reads one row of it per row it returns, and each branch of
+    // a UNION ALL, which returns every row it reads; see collectRowBoundedJoins(). They hold the
+    // factories of the compilation under way, and the outermost generate() clears them as it
+    // returns or fails, once it marked the joins whose rows are the query's own.
+    private final ObjList<RecordCursorFactory> limitBoundedInputOwners = new ObjList<>();
+    private final ObjList<RecordCursorFactory> limitBoundedInputs = new ObjList<>();
     // this list is used to generate record sinks
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
@@ -767,6 +779,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
+        clearLimitBoundedInputs();
         generationState.clear();
     }
 
@@ -775,6 +788,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         generationState.setPreparationHook(null);
         generationState.clear();
         sharedFactoryCache.clear();
+        clearLimitBoundedInputs();
         Throwable failure = null;
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             try {
@@ -949,13 +963,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public RecordCursorFactory generate(@Transient IQueryModel model, @Transient SqlExecutionContext executionContext) throws SqlException {
         final boolean isOutermost = whereClauseParserDepth == 0;
         try {
-            return generateAttempt(model, executionContext);
+            final RecordCursorFactory factory = generateAttempt(model, executionContext);
+            if (isOutermost) {
+                markClientRowSource(factory);
+            }
+            return factory;
         } finally {
             if (isOutermost) {
                 // The cache borrows factories from the returned tree. A retry can reuse model
                 // identities, so neither borrowed factories nor snapshots may survive an attempt.
                 generationState.clear();
                 sharedFactoryCache.clear();
+                clearLimitBoundedInputs();
             }
         }
     }
@@ -983,6 +1002,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             if (parserIndex == 0) {
                 sharedFactoryCache.clear();
+                clearLimitBoundedInputs();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
@@ -1072,6 +1092,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     public ListColumnFilter getIndexColumnFilter() {
         return listColumnFilterA;
+    }
+
+    /**
+     * The inputs that the compilation under way recorded for its LIMITs, and the rows that the
+     * client reads first, to follow, see {@code collectRowBoundedJoins()}; none once the outermost
+     * compilation returned or failed.
+     */
+    @TestOnly
+    public int getLimitBoundedInputCountForTesting() {
+        return limitBoundedInputs.size();
     }
 
     public RecordComparatorCompiler getRecordComparatorCompiler() {
@@ -1255,6 +1285,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    // An input mapping that names each of a factory's columns by its own index.
+    private static IntList identityColumns(int columnCount) {
+        final IntList columns = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columns.add(i);
+        }
+        return columns;
     }
 
     /**
@@ -1852,6 +1891,55 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    /**
+     * Peels pure projections above a filter, so that the frame boundary check sees the filter. A
+     * hash join that reads its inputs' page frames reads those of the factory this returns.
+     */
+    private static RecordCursorFactory frameInput(RecordCursorFactory factory) {
+        RecordCursorFactory input = factory;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            input = selected.getBaseFactory();
+        }
+        return input;
+    }
+
+    /**
+     * Maps {@code columns}, which holds a value per column of {@code factory}, onto the columns of
+     * the factory {@link #frameInput(RecordCursorFactory)} returns: each column of that factory
+     * takes the value of the {@code factory} column that reads it, the last one when several do,
+     * and a column that no {@code factory} column reads takes -1. The fused GROUP BY maps its
+     * inputs' base-table indexes this way.
+     */
+    private static IntList frameInputColumns(RecordCursorFactory factory, IntList columns) {
+        RecordCursorFactory input = factory;
+        IntList result = columns;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            RecordCursorFactory base = selected.getBaseFactory();
+            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
+            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
+            IntList crossIndex = selected.getColumnCrossIndex();
+            for (int i = 0; i < crossIndex.size(); i++) {
+                baseColumns.setQuick(crossIndex.getQuick(i), result.getQuick(i));
+            }
+            result = baseColumns;
+            input = base;
+        }
+        return result;
+    }
+
+    // The LIMIT that the optimiser advised the model, when it has no upper bound, else null.
+    @Nullable
+    private static ExpressionNode getLimitAdviceLoOnly(IQueryModel model) {
+        // A LATEST ON on this model sits above the filter (generateLatestBy consumes the filter's
+        // full output, then generateLimit applies the limit), so the filter must scan every row.
+        // Pushing the limit advice into it would feed LATEST ON only the first N rows and return
+        // the earliest row per key instead of the latest.
+        if (model.getLatestBy().size() > 0) {
+            return null;
+        }
+        return model.getLimitAdviceHi() == null ? model.getLimitAdviceLo() : null;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -1920,6 +2008,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<ExpressionNode> fillValues = curr.getFillValues();
         for (int i = 0, n = fillValues.size(); i < n; i++) {
             if (!isNoneKeyword(fillValues.getQuick(i).token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the expression, whose column names name the build scan's columns, reads a column
+     * outside {@link HashJoinGroupByCandidate#isSupportedValueType(int)}: a STRING, VARCHAR, BINARY or
+     * ARRAY column.
+     */
+    private static boolean hasParallelHashJoinVarSizeColumn(ExpressionNode node, RecordMetadata buildMetadata) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            return !HashJoinGroupByCandidate.isSupportedValueType(buildMetadata.getColumnType(SqlUtil.getColumnIndexQuiet(buildMetadata, node.token)));
+        }
+        if (hasParallelHashJoinVarSizeColumn(node.lhs, buildMetadata) || hasParallelHashJoinVarSizeColumn(node.rhs, buildMetadata)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasParallelHashJoinVarSizeColumn(node.args.getQuick(i), buildMetadata)) {
                 return true;
             }
         }
@@ -2039,6 +2150,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    /**
+     * True when the factory's record cursor reports a size of -1 in every execution: a table scan
+     * narrowed to timestamp intervals, possibly under projections, whose interval frame cursor does
+     * not count its rows up front. The serial hash join reads that size to decide whether it swaps
+     * its inputs, so a join over such an input never swaps.
+     */
+    private static boolean isIntervalTableScan(RecordCursorFactory factory) {
+        final PageFrameRecordCursorFactory tableScan = parallelHashJoinTableScan(factory);
+        return tableScan != null && tableScan.isIntervalScan();
+    }
+
+    /**
+     * True when the serial hash join of the query's first join may swap its inputs at execution,
+     * which it does when both report a positive size and the left one is the smaller, unless a parent
+     * fixed its order: an INNER join whose left input offers random access, over inputs that a
+     * parallel hash join reads unfiltered, neither of them a table scan of timestamp intervals. A
+     * filter's cursor and an interval scan's report no size, so a join over either never swaps.
+     */
+    private static boolean isParallelHashJoinSwapPossible(RecordCursorFactory master, RecordCursorFactory slave, int joinType) {
+        return joinType == IQueryModel.JOIN_INNER
+                && master.recordCursorSupportsRandomAccess()
+                && frameInput(master).supportsPageFrameCursor()
+                && frameInput(slave).supportsPageFrameCursor()
+                && !isIntervalTableScan(master)
+                && !isIntervalTableScan(slave);
+    }
+
+    /**
+     * True for an input that a parallel hash join reads frame by frame: a page frame scan that does
+     * not read through a covering index, or a stealable, parallel-safe filter over one whose value
+     * cannot change within an execution, either possibly under projections. The join reads a filtered
+     * input's frames in the order its base scans them and keeps the rows the filter passes, so the
+     * filter must yield its rows in that order too: one that may read them through an index route
+     * instead reports a scan direction of its own, and keeps the ordinary plan.
+     */
+    private static boolean isParallelHashJoinInput(RecordCursorFactory factory) {
+        final RecordCursorFactory input = frameInput(factory);
+        if (!HashJoinGroupByCandidate.isSupportedFramedInput(input)) {
+            return false;
+        }
+        return input.supportsPageFrameCursor() || input.getScanDirection() == input.getBaseFactory().getScanDirection();
+    }
+
+    /**
+     * True for a filter that a parallel hash join can run on its workers, for each pair of a probe
+     * row and a match, in place of the ordinary plan, which runs it once per joined row as the
+     * consumer reads them: a LEFT join's ON residual, or a post-join filter. The filter must support
+     * parallel execution, through worker copies when it is not thread safe, and its value for a row
+     * must not change within an execution, since the workers run it ahead of the consumer and in
+     * another order.
+     */
+    private static boolean isParallelHashJoinFilter(Function filter) {
+        return filter.supportsParallelism() && filter.isStableWithinExecution();
+    }
+
+    /**
+     * True when a parallel hash join input's page frame scan reads Parquet frames as the query
+     * compiles: {@code read_parquet()}, or a scan of a table with Parquet partitions, whichever of
+     * them its intervals select. An execution reads the table as it stands then, which may differ.
+     */
+    private static boolean isParquetFrameScan(RecordCursorFactory frameScan, SqlExecutionContext executionContext) {
+        if (frameScan.mayHaveParquetPartitions(executionContext)) {
+            return true;
+        }
+        final TableToken tableToken = frameScan.getTableToken();
+        if (tableToken == null) {
+            return false;
+        }
+        try (TableReader reader = executionContext.getReader(tableToken)) {
+            return reader.hasParquetPartitions();
+        }
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -2059,6 +2243,206 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * Reconciles a parallel hash join's equality keys for one orientation of its inputs, or returns
+     * null when they keep the ordinary plan, as {@link HashJoinGroupByKeys#add} decides per key. The
+     * keys address the columns of the inputs' frame scans, which the probe and build records read; a
+     * projection keeps its base's column types, so a key keeps the type it compiled with. The build
+     * keeps its rows' own SYMBOL keys, which the probe's translate into, so the build's dictionary
+     * must hold each text once; see {@link HashJoinGroupByCandidate#isSupportedTranslatedSymbolBuild}.
+     *
+     * @param probeKeyColumns the key columns of the probe input, in key order
+     * @param buildKeyColumns the key columns of the build input, in key order
+     */
+    private static @Nullable HashJoinGroupByKeys newParallelHashJoinKeys(
+            RecordCursorFactory probe,
+            ListColumnFilter probeKeyColumns,
+            RecordCursorFactory build,
+            ListColumnFilter buildKeyColumns
+    ) {
+        return newParallelHashJoinKeys(probe.getMetadata(), parallelHashJoinFrameColumns(probe), probeKeyColumns, build, buildKeyColumns);
+    }
+
+    /**
+     * Reconciles a parallel hash join's equality keys as
+     * {@link #newParallelHashJoinKeys(RecordCursorFactory, ListColumnFilter, RecordCursorFactory, ListColumnFilter)}
+     * does, for a probe whose frame columns hold the leading columns of the probe side's metadata
+     * alone: a parallel hash join's left input, which holds the leading columns of every later join's
+     * master. A key that reads any other column of the master, the column of an earlier join's build,
+     * keeps the ordinary plan.
+     *
+     * @param probeMetadata     the probe side as compiled, whose column types the keys take
+     * @param probeFrameColumns for each of the probe side's leading columns, the frame column that
+     *                          holds it
+     */
+    private static @Nullable HashJoinGroupByKeys newParallelHashJoinKeys(
+            RecordMetadata probeMetadata,
+            IntList probeFrameColumns,
+            ListColumnFilter probeKeyColumns,
+            RecordCursorFactory build,
+            ListColumnFilter buildKeyColumns
+    ) {
+        final RecordMetadata buildMetadata = build.getMetadata();
+        final IntList buildFrameColumns = parallelHashJoinFrameColumns(build);
+        final HashJoinGroupByKeys keys = new HashJoinGroupByKeys();
+        for (int k = 0, n = probeKeyColumns.getColumnCount(); k < n; k++) {
+            final int probeColumn = probeKeyColumns.getColumnIndexFactored(k);
+            if (probeColumn >= probeFrameColumns.size()) {
+                return null;
+            }
+            final int buildColumn = buildKeyColumns.getColumnIndexFactored(k);
+            if (!keys.add(probeFrameColumns.getQuick(probeColumn), probeMetadata.getColumnType(probeColumn),
+                    buildFrameColumns.getQuick(buildColumn), buildMetadata.getColumnType(buildColumn))) {
+                return null;
+            }
+        }
+        if (keys.hasTranslatedSymbol() && !HashJoinGroupByCandidate.isSupportedTranslatedSymbolBuild(build)) {
+            return null;
+        }
+        return keys;
+    }
+
+    /**
+     * Reconciles the keys of a later join of a stack whose first join may swap its inputs as an
+     * execution that swaps them reads them: the probe side reads the left input's columns from the
+     * first stage's payload, which holds them in the order the left input as compiled lists them,
+     * the order in which they lead the master's columns. The keys therefore address the master's
+     * columns themselves, where the keys of the query's orientation address the frame columns that
+     * hold them; see {@link #newParallelHashJoinKeys(RecordMetadata, IntList, ListColumnFilter, RecordCursorFactory, ListColumnFilter)}.
+     * A join swaps only an unfiltered left input, see {@link #isParallelHashJoinSwapPossible}, whose
+     * frames hold its columns as compiled, since a projection over a scan projects its frames too,
+     * so the two address the same columns; the operator does not rely on it.
+     * <p>
+     * They never fail where those keys did not: the build side is the same, each probe column has the
+     * same type, and two keys that read one master column read one frame column too, so the keys
+     * conflict here only where those did.
+     *
+     * @param stack           the master, a stack whose first join may swap its inputs
+     * @param probeKeyColumns the key columns of the master, in key order
+     * @param buildKeyColumns the key columns of the build input, in key order
+     */
+    private static HashJoinGroupByKeys newParallelHashJoinStackSwapKeys(
+            AsyncHashJoinRecordCursorFactory stack,
+            ListColumnFilter probeKeyColumns,
+            RecordCursorFactory build,
+            ListColumnFilter buildKeyColumns
+    ) {
+        final int leftColumnCount = stack.getSpec().getLeftInput().getColumnMap().size();
+        final HashJoinGroupByKeys keys = newParallelHashJoinKeys(stack.getMetadata(), identityColumns(leftColumnCount),
+                probeKeyColumns, build, buildKeyColumns);
+        assert keys != null : "the keys over the first stage's payload reconcile as those over the probe scan";
+        return keys;
+    }
+
+    /**
+     * For each column of a parallel hash join input, the column of its page frame scan that holds
+     * it: the scan is the input itself, or the base of the filter under its projections, which hold
+     * the scan's columns in another order, some of them twice and some not at all; see
+     * {@link #parallelHashJoinFrameScan(RecordCursorFactory)}. A filter holds its base's columns.
+     */
+    private static IntList parallelHashJoinFrameColumns(RecordCursorFactory factory) {
+        final IntList columns = identityColumns(factory.getMetadata().getColumnCount());
+        RecordCursorFactory input = factory;
+        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
+            final IntList crossIndex = selected.getColumnCrossIndex();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                columns.setQuick(i, crossIndex.getQuick(columns.getQuick(i)));
+            }
+            input = selected.getBaseFactory();
+        }
+        return columns;
+    }
+
+    /**
+     * The page frame scan that a parallel hash join reads for an input that
+     * {@link #isParallelHashJoinInput(RecordCursorFactory)} accepts: the input itself when it scans
+     * page frames, or else the base of the filter under its projections, whose filter the join
+     * steals.
+     */
+    private static RecordCursorFactory parallelHashJoinFrameScan(RecordCursorFactory factory) {
+        final RecordCursorFactory input = frameInput(factory);
+        return input.supportsPageFrameCursor() ? input : input.getBaseFactory();
+    }
+
+    /**
+     * The table scan under the factory's projections, or null for any other input: a parallel hash
+     * join reproduces the size that such a scan's record cursor reports from its page frame cursor,
+     * see {@link HashJoinInput#getSerialSize}, and no other input's. The class must match exactly:
+     * subclasses, such as the deferred single-symbol filter, and the other kinds of page frame
+     * inputs, live views, {@code read_parquet()} and runtime-constant gates among them, answer
+     * {@code size()} from cursors of their own.
+     */
+    private static @Nullable PageFrameRecordCursorFactory parallelHashJoinTableScan(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (current instanceof SelectedRecordCursorFactory selected) {
+            current = selected.getBaseFactory();
+        }
+        if (current.getClass() != PageFrameRecordCursorFactory.class) {
+            return null;
+        }
+        final PageFrameRecordCursorFactory tableScan = (PageFrameRecordCursorFactory) current;
+        // A scan that the join can read frame by frame reads every row of its frames: only a scan that
+        // reads the rows of an index reports no size, and such a scan exposes no page frames.
+        assert !tableScan.supportsPageFrameCursor() || tableScan.isEntityScan();
+        return tableScan;
+    }
+
+    /**
+     * Renames, in place, each column of a copy of a part of a LEFT join's ON residual after the
+     * column of the slave's build scan that holds it, so that the copy compiles against the scan's
+     * columns, and returns true; returns false, leaving the copy in no defined state, when the part
+     * reads a column that is not the slave's. A column resolves against the join's metadata as
+     * FunctionParser resolves it.
+     *
+     * @param slaveOffset  the join metadata's index of the slave's first column
+     * @param buildColumns for each column of the slave as compiled, the build scan's column
+     */
+    private static boolean remapParallelHashJoinBuildColumns(
+            ExpressionNode node,
+            RecordMetadata joinMetadata,
+            int slaveOffset,
+            IntList buildColumns,
+            RecordMetadata buildMetadata
+    ) {
+        if (node == null) {
+            return true;
+        }
+        // The parser rejects a sub-query in an ON clause, and a residual with a window function does
+        // not run on the workers.
+        assert node.queryModel == null && node.windowExpression == null;
+        if (node.type == LITERAL) {
+            final int index = SqlUtil.getColumnIndexQuiet(joinMetadata, node.token);
+            if (index < slaveOffset) {
+                return false;
+            }
+            node.token = buildMetadata.getColumnName(buildColumns.getQuick(index - slaveOffset));
+            return true;
+        }
+        if (!remapParallelHashJoinBuildColumns(node.lhs, joinMetadata, slaveOffset, buildColumns, buildMetadata)
+                || !remapParallelHashJoinBuildColumns(node.rhs, joinMetadata, slaveOffset, buildColumns, buildMetadata)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!remapParallelHashJoinBuildColumns(node.args.getQuick(i), joinMetadata, slaveOffset, buildColumns, buildMetadata)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The join's keys as the serial hash join's EXPLAIN prints its join context, which the parallel
+    // hash join keeps as text: the context is a pooled model object that a later compile reuses.
+    private static String toConditionText(JoinContext joinContext) {
+        final StringSink sink = Misc.getThreadLocalSink();
+        for (int i = 0, n = joinContext.aNodes.size(); i < n; i++) {
+            if (i > 0) {
+                sink.putAscii(" and ");
+            }
+            sink.put(joinContext.aNodes.getQuick(i)).putAscii('=').put(joinContext.bNodes.getQuick(i));
+        }
+        return sink.toString();
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -2355,6 +2739,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    // Records an input whose owner reads at most one row of it per row the owner returns, so that a
+    // LIMIT over the owner, or the rows that the client reads first, bounds the input's rows; see
+    // collectRowBoundedJoins().
+    private void addLimitBoundedInput(RecordCursorFactory owner, RecordCursorFactory input) {
+        limitBoundedInputOwners.add(owner);
+        limitBoundedInputs.add(input);
+    }
+
     private void backupWhereClause(ExpressionNode node) {
         processNodeQueryModels(node, backupWhereClauseRef);
     }
@@ -2640,6 +3032,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    private void clearLimitBoundedInputs() {
+        limitBoundedInputOwners.clear();
+        limitBoundedInputs.clear();
+    }
+
     @Nullable
     private Function compileFilter(
             IntrinsicModel intrinsicModel,
@@ -2833,6 +3230,183 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return new WorkerFunctionLists(perWorkerGroupByFunctions, perWorkerKeyFunctions);
+    }
+
+    /**
+     * The parallel hash joins whose rows bound the rows of the given factory: the joins that a walk
+     * from the factory reaches through factories that read at most one row of their input per row
+     * they return, so that the factory's first n rows need at most the first n rows of each. Null
+     * when the walk reaches none. Projections, the SYMBOL casts over a union and runtime-constant
+     * filters read their base's rows one for one, or none; the master of an ASOF or LT join and the
+     * branches of a UNION ALL are inputs that their owners read so, see
+     * {@link #addLimitBoundedInput}. Any other factory, such as a sort, a filter, a GROUP BY or a
+     * LIMIT, may read more rows of its input than it returns, and ends the walk, as a parallel hash
+     * join does. A LIMIT over the factory and the rows that the client reads first reach the same
+     * joins, see {@link #handOverLimit} and {@link #markClientRowSource}.
+     */
+    private @Nullable ObjList<AsyncHashJoinRecordCursorFactory> collectRowBoundedJoins(RecordCursorFactory factory) {
+        // The walk keeps the inputs it has yet to visit, the branches of a UNION ALL, in a list.
+        ObjList<AsyncHashJoinRecordCursorFactory> joins = null;
+        ObjList<RecordCursorFactory> pendingInputs = null;
+        RecordCursorFactory current = factory;
+        while (current != null) {
+            if (current instanceof SelectedRecordCursorFactory
+                    || current instanceof VirtualRecordCursorFactory
+                    || current instanceof UnionSymbolCastRecordCursorFactory
+                    || current instanceof RuntimeConstGateRecordCursorFactory) {
+                current = current.getBaseFactory();
+                continue;
+            }
+            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+                if (joins == null) {
+                    joins = new ObjList<>();
+                }
+                joins.add(join);
+            } else {
+                for (int i = 0, n = limitBoundedInputOwners.size(); i < n; i++) {
+                    if (limitBoundedInputOwners.getQuick(i) == current) {
+                        if (pendingInputs == null) {
+                            pendingInputs = new ObjList<>();
+                        }
+                        pendingInputs.add(limitBoundedInputs.getQuick(i));
+                    }
+                }
+            }
+            current = pendingInputs != null && pendingInputs.size() > 0 ? pendingInputs.popLast() : null;
+        }
+        return joins;
+    }
+
+    /**
+     * The columns that a filter of a parallel hash join reads, by their index in the metadata the
+     * filter compiled against, which a probe task decodes first in a Parquet frame: a filter that the
+     * join steals from an input, which reads its base's columns, or a LEFT join's ON residual or a
+     * post-join filter, which reads the joined row's. Null without a filter.
+     *
+     * @param filterExpr the expression the filter compiled from, which every filter the join takes
+     *                   has
+     */
+    private @Nullable IntHashSet collectParallelHashJoinFilterColumns(
+            @Nullable Function filter,
+            @Nullable ExpressionNode filterExpr,
+            RecordMetadata metadata
+    ) {
+        if (filter == null) {
+            return null;
+        }
+        assert filterExpr != null;
+        final IntHashSet columns = new IntHashSet();
+        collectColumnIndexes(sqlNodeStack, metadata, filterExpr, columns);
+        return columns;
+    }
+
+    /**
+     * Compiles the leading conjuncts of a LEFT join's ON residual that read the slave's columns alone,
+     * which a parallel hash join may run over its build's rows instead of over the pairs, and the rest
+     * of the residual, which the pairs then run, each with its workers' copies; see
+     * {@link HashJoinStageSpec.BuildOnFilter}. Returns null when the residual leads with no such
+     * conjunct.
+     * <p>
+     * The residual's AND chain lists its conjuncts in the order the compiled residual runs them. The
+     * leading conjuncts are those before the first that reads a column of another input, or whose
+     * cost this cannot tell. They compile against the build scan's columns, which the slave's
+     * projections map the slave's columns onto, from copies whose column names name those columns.
+     * A conjunct that can cost far more on a build row than the hash insert it spares, by the fused
+     * GROUP BY's rule, see {@link HashJoinGroupByCandidate#isExpensiveBuildOnFilter}, sizes the
+     * pushdown: an execution then runs the conjuncts over the build's rows only for a build table no
+     * larger than the probe table. The rest of the residual compiles against the joined rows'
+     * metadata, as the residual did.
+     * <p>
+     * Takes nothing from the inputs, so it runs before any input gives up its filter, and frees what
+     * it compiled when it fails.
+     *
+     * @param residual     the ON residual's expression, which the caller compiled against the join's
+     *                     metadata
+     * @param joinMetadata the joined rows' metadata, whose last columns are the slave's
+     * @param slave        the join's slave as compiled, an input that
+     *                     {@link #isParallelHashJoinInput(RecordCursorFactory)} accepts
+     */
+    private @Nullable HashJoinStageSpec.BuildOnFilter compileParallelHashJoinBuildOnFilter(
+            ExpressionNode residual,
+            RecordMetadata joinMetadata,
+            RecordCursorFactory slave,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final RecordMetadata buildMetadata = parallelHashJoinFrameScan(slave).getMetadata();
+        final IntList buildColumns = parallelHashJoinFrameColumns(slave);
+        final int slaveOffset = joinMetadata.getColumnCount() - slave.getMetadata().getColumnCount();
+        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+        collectAndConjuncts(residual, conjuncts);
+        final int conjunctCount = conjuncts.size();
+        int pushedCount = 0;
+        boolean isSized = false;
+        for (; pushedCount < conjunctCount; pushedCount++) {
+            final ExpressionNode copy = deepClone(expressionNodePool, conjuncts.getQuick(pushedCount));
+            if (!remapParallelHashJoinBuildColumns(copy, joinMetadata, slaveOffset, buildColumns, buildMetadata)) {
+                break;
+            }
+            try {
+                // The check parses parts of the copy, which nothing else parses.
+                isSized |= HashJoinGroupByCandidate.isExpensiveBuildOnFilter(copy, hasParallelHashJoinVarSizeColumn(copy, buildMetadata),
+                        functionParser, buildMetadata, executionContext);
+            } catch (SqlException e) {
+                // A part of the conjunct that does not compile alone leaves its cost unknown, so the
+                // conjunct runs over the pairs.
+                break;
+            }
+        }
+        if (pushedCount == 0) {
+            return null;
+        }
+        // The copies that compile name the build scan's columns as the checked ones do.
+        final ExpressionNode pushed = newParallelHashJoinConjunction(conjuncts, 0, pushedCount);
+        final boolean isRemapped = remapParallelHashJoinBuildColumns(pushed, joinMetadata, slaveOffset, buildColumns, buildMetadata);
+        assert isRemapped;
+        final Function filter = compileBooleanFilter(pushed, buildMetadata, executionContext);
+        if (filter.isConstant()) {
+            // Leading conjuncts that are TRUE constants drop no row. A FALSE one would have made the
+            // whole residual FALSE, which replaces the slave with an empty table before this.
+            Misc.free(filter);
+            return null;
+        }
+        // The conjuncts are parts of a residual that runs on the workers, so they can too.
+        assert isParallelHashJoinFilter(filter);
+        final HashJoinStageSpec.BuildOnFilter buildOnFilter = new HashJoinStageSpec.BuildOnFilter(filter, isSized);
+        try {
+            buildOnFilter.ofWorkerFilters(compileWorkerFiltersConditionally(executionContext, filter, workerCount, pushed, buildMetadata));
+            if (pushedCount < conjunctCount) {
+                final ExpressionNode remainder = newParallelHashJoinConjunction(conjuncts, pushedCount, conjunctCount);
+                final Function remainderFilter = compileJoinFilter(remainder, joinMetadata, executionContext);
+                buildOnFilter.ofRemainder(remainderFilter);
+                assert isParallelHashJoinFilter(remainderFilter);
+                buildOnFilter.ofWorkerRemainders(compileWorkerFiltersConditionally(executionContext, remainderFilter, workerCount,
+                        remainder, joinMetadata));
+            }
+            return buildOnFilter;
+        } catch (Throwable th) {
+            Misc.free(buildOnFilter, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Compiles the workers' copies of the filter that a parallel hash join steals from an input that
+     * {@link #isParallelHashJoinInput(RecordCursorFactory)} accepts, from the filter's expression and
+     * against the columns of its base, or returns null when the input has no filter or its filter is
+     * thread safe. Takes nothing from the input, so it runs before any input gives up its filter.
+     */
+    private @Nullable ObjList<Function> compileParallelHashJoinWorkerFilters(
+            RecordCursorFactory factory,
+            int workerCount,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final RecordCursorFactory input = frameInput(factory);
+        if (input.supportsPageFrameCursor()) {
+            return null;
+        }
+        return compileWorkerFiltersConditionally(executionContext, input.getFilter(), workerCount, input.getStealFilterExpr(),
+                input.getBaseFactory().getMetadata());
     }
 
     private @Nullable ObjList<Function> compilePreparedSymbolPatternWorkerFilters(
@@ -5888,8 +6462,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             probe = generateQuery(candidate.getProbeModel(), executionContext, false);
             // Peel pure projections above a filter before checking its frame boundary.
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
-            final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
-            final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
+            final IntList probeColumns = frameInputColumns(probe, candidate.getInputColumns(probe.getMetadata(), false));
+            final RecordCursorFactory probeInput = frameInput(probe);
             if (!HashJoinGroupByCandidate.isSupportedFramedInput(probeInput)) {
                 return null;
             }
@@ -5898,8 +6472,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // The build walks page frames too: it keeps row ids, and probes read payload columns at
             // those rows of the same frames.
-            final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
-            final RecordCursorFactory buildInput = hashJoinGroupByFrameInput(build);
+            final IntList buildColumns = frameInputColumns(build, candidate.getInputColumns(build.getMetadata(), true));
+            final RecordCursorFactory buildInput = frameInput(build);
             if (!HashJoinGroupByCandidate.isSupportedFramedInput(buildInput)) {
                 return null;
             }
@@ -6020,39 +6594,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             failure = Misc.freeBestEffort(failure, build);
             CairoException.rethrowCleanupFailure(failure);
         }
-    }
-
-    /**
-     * The fused hash join reads an input's page frames: this maps the input's compiled columns onto
-     * the columns of the factory {@link #hashJoinGroupByFrameInput(RecordCursorFactory)} returns.
-     * Model output indexes become base-table indexes, and pure projections above a filter peel off.
-     */
-    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean isBuildInput) {
-        RecordCursorFactory input = factory;
-        IntList columns = candidate.getInputColumns(factory.getMetadata(), isBuildInput);
-        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
-            RecordCursorFactory base = selected.getBaseFactory();
-            IntList baseColumns = new IntList(base.getMetadata().getColumnCount());
-            baseColumns.setAll(base.getMetadata().getColumnCount(), -1);
-            IntList crossIndex = selected.getColumnCrossIndex();
-            for (int i = 0; i < crossIndex.size(); i++) {
-                baseColumns.setQuick(crossIndex.getQuick(i), columns.getQuick(i));
-            }
-            columns = baseColumns;
-            input = base;
-        }
-        return columns;
-    }
-
-    /**
-     * Peels pure projections above a filter, so that the frame boundary check sees the filter.
-     */
-    private static RecordCursorFactory hashJoinGroupByFrameInput(RecordCursorFactory factory) {
-        RecordCursorFactory input = factory;
-        while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
-            input = selected.getBaseFactory();
-        }
-        return input;
     }
 
     /**
@@ -7196,6 +7737,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 ObjList<Function> perWorkerWindowHiFuncs = null;
                 ObjList<GroupByFunction> groupByFunctions = null;
                 boolean closeSlaveOnFailure = true;
+                // True once this join compiled to a parallel hash join, which may absorb its
+                // post-join filter.
+                boolean isParallelHashJoinPlanned = false;
                 try {
                     // Skip synthetic horizon offset model - it's handled as part of HORIZON JOIN
                     if (isHorizonOffsetModel(slaveModel)) {
@@ -7386,12 +7930,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
+                                final RecordCursorFactory temporalJoinMaster = master;
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);
                                 masterAlias = null;
                                 // from now on, master owns slave, so we don't have to close it
                                 closeSlaveOnFailure = false;
+                                // Every ASOF and LT join reads one row of the master that it takes
+                                // per row it returns.
+                                addLimitBoundedInput(master, temporalJoinMaster);
                                 break;
                             case IQueryModel.JOIN_SPLICE:
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
@@ -8211,14 +8759,102 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateOuterJoinExpressions(slaveModel, "INNER");
                                 }
 
-                                master = createHashJoin(
-                                        joinMetadata,
+                                HashJoinGroupByKeys parallelHashJoinKeys = getParallelHashJoinKeys(
+                                        model,
                                         master,
                                         slaveToFree,
                                         joinType,
                                         joinFilter,
-                                        slaveModel.getJoinContext()
+                                        executionContext
                                 );
+                                HashJoinGroupByKeys parallelHashJoinSwapKeys = null;
+                                if (parallelHashJoinKeys != null && isParallelHashJoinSwapPossible(master, slaveToFree, joinType)) {
+                                    // The join may swap its inputs at execution, as the ordinary plan
+                                    // would, and hash the master, whose keys the slave's then probe.
+                                    // The keys reconcile alike in both orientations, and both inputs
+                                    // are table scans, whose dictionaries hold each text once. Only
+                                    // a slave column that two SYMBOL keys translate fails here and
+                                    // not above: one probe column translates once. The optimiser
+                                    // turns a second equality on a column into a filter, but it
+                                    // matches the names as written, so ON l.a = r.s AND l.b = r.S
+                                    // keeps both keys. A compile cannot tell whether an execution
+                                    // swaps, so such a join keeps the ordinary plan.
+                                    parallelHashJoinSwapKeys = newParallelHashJoinKeys(slaveToFree, listColumnFilterA, master, listColumnFilterB);
+                                    if (parallelHashJoinSwapKeys == null) {
+                                        parallelHashJoinKeys = null;
+                                    }
+                                } else if (parallelHashJoinKeys != null
+                                        && master instanceof AsyncHashJoinRecordCursorFactory stack
+                                        && stack.getSpec().isSwapCandidate()) {
+                                    // A later join of a stack whose first join may swap its inputs
+                                    // reads the left input's columns, which an execution that swaps
+                                    // them reads from the first stage's payload: the left input's
+                                    // columns as compiled, which lead the master's columns.
+                                    parallelHashJoinSwapKeys = newParallelHashJoinStackSwapKeys(stack, listColumnFilterB, slaveToFree, listColumnFilterA);
+                                }
+                                if (parallelHashJoinKeys != null && isParallelHashJoinParquetVarSizeRead(
+                                        master,
+                                        slaveToFree,
+                                        slaveModel,
+                                        joinMetadata,
+                                        parallelHashJoinSwapKeys != null,
+                                        executionContext
+                                )) {
+                                    // The probe tasks would read a var-size payload of a Parquet
+                                    // build through a share of the decode cache, which it outgrows.
+                                    parallelHashJoinKeys = null;
+                                }
+                                if (parallelHashJoinKeys != null) {
+                                    // The parallel hash join steals the inputs' filters, which cannot
+                                    // be undone, so it owns both inputs and the ON residual from here
+                                    // on and frees them on failure, while the join's metadata stays
+                                    // with this frame until the factory adopts it.
+                                    final RecordCursorFactory masterToTransfer = master;
+                                    final RecordCursorFactory slaveToTransfer = slaveToFree;
+                                    final Function joinFilterToTransfer = joinFilter;
+                                    master = null;
+                                    slaveToFree = null;
+                                    joinFilter = null;
+                                    closeSlaveOnFailure = false;
+                                    if (masterToTransfer instanceof AsyncHashJoinRecordCursorFactory join) {
+                                        // A star join's later join becomes a stage of the parallel
+                                        // hash join that its master is.
+                                        master = stackParallelHashJoin(
+                                                join,
+                                                slaveToTransfer,
+                                                slaveModel,
+                                                joinMetadata,
+                                                joinType,
+                                                joinFilterToTransfer,
+                                                parallelHashJoinKeys,
+                                                parallelHashJoinSwapKeys,
+                                                executionContext
+                                        );
+                                    } else {
+                                        master = generateParallelHashJoin(
+                                                masterToTransfer,
+                                                masterAlias,
+                                                slaveToTransfer,
+                                                slaveModel,
+                                                joinMetadata,
+                                                joinType,
+                                                joinFilterToTransfer,
+                                                parallelHashJoinKeys,
+                                                parallelHashJoinSwapKeys,
+                                                executionContext
+                                        );
+                                    }
+                                    isParallelHashJoinPlanned = true;
+                                } else {
+                                    master = createHashJoin(
+                                            joinMetadata,
+                                            master,
+                                            slaveToFree,
+                                            joinType,
+                                            joinFilter,
+                                            slaveModel.getJoinContext()
+                                    );
+                                }
                                 masterAlias = null;
                                 break;
                         }
@@ -8273,6 +8909,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
+                        } else if (isParallelHashJoinPlanned && isParallelHashJoinFilter(filter)) {
+                            // The parallel hash join runs the filter on its workers, for each pair,
+                            // with worker copies that compile before the join gives up anything.
+                            postFilterPerWorkerFilters = compileWorkerFiltersConditionally(
+                                    executionContext,
+                                    filter,
+                                    executionContext.getSharedQueryWorkerCount(),
+                                    filterExpr,
+                                    postJoinFilterMetadata
+                            );
+                            master = absorbParallelHashJoinPostFilter(
+                                    (AsyncHashJoinRecordCursorFactory) master,
+                                    filter,
+                                    postFilterPerWorkerFilters,
+                                    collectParallelHashJoinFilterColumns(filter, filterExpr, postJoinFilterMetadata),
+                                    executionContext
+                            );
+                            postFilterPerWorkerFilters = null;
                         } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, postJoinFilterMetadata, filterExpr, filterUsedColumnIndexes);
@@ -8901,6 +9555,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
+            // The parse above typed the LIMIT's bind variables, after the SELECT lists of this model
+            // and of the models below it, so the parses of the joins that take the LIMIT type none.
+            handOverLimit(factory, model, executionContext);
             final Function adoptedLoFunc = loFunc;
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
@@ -9992,6 +10649,167 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // ownership before throwing; Misc.free is null-safe.
             Misc.free(recordCursorFactory);
             throw e;
+        }
+    }
+
+    /**
+     * Rebuilds a parallel hash join with a post-join filter in its last stage, which then runs on the
+     * workers, for each pair, rather than in a filter over the join. The join gives up its spec,
+     * frees what its executions use, and a new join takes the spec over. The caller compiled the
+     * filter, and its worker copies, against the join's metadata.
+     * <p>
+     * On success the new join owns the filter and its worker copies, and the old join holds nothing.
+     * On failure the method frees the spec and the caller keeps the filter, its worker copies and the
+     * old join, which holds nothing either, to free them.
+     */
+    private RecordCursorFactory absorbParallelHashJoinPostFilter(
+            AsyncHashJoinRecordCursorFactory join,
+            Function filter,
+            @Nullable ObjList<Function> workerFilters,
+            @Nullable IntHashSet filterColumns,
+            SqlExecutionContext executionContext
+    ) {
+        final AsyncHashJoinSpec spec = join.stealSpec();
+        final HashJoinStageSpec stage = spec.getStage(spec.getStageCount() - 1);
+        try {
+            join.halfClose();
+            stage.ofPostFilter(filter, workerFilters, filterColumns);
+            // The constructor leaves the spec here when it fails, and takes it once it returns.
+            return new AsyncHashJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    spec,
+                    reduceTaskFactory,
+                    executionContext.getSharedQueryWorkerCount()
+            );
+        } catch (Throwable th) {
+            // The caller frees the filter and its worker copies, so the stage lets go of them first.
+            stage.ofPostFilter(null, null);
+            Misc.free(spec, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Plans the hash join of the first join of a query as a parallel hash join, whose eligibility
+     * {@link #getParallelHashJoinKeys} checked. The join's inputs compiled already, in the ordinary
+     * order, so their bind variables carry the types that the ordinary plan infers. An input with a
+     * filter gives it up to the join, see {@link #newParallelHashJoinInput}: the join runs it over
+     * the input's frames, on the workers, with the worker copies that this compiles first, before
+     * either input gives up anything.
+     * <p>
+     * A LEFT join's ON residual runs on the workers too, for each pair, against the joined rows'
+     * metadata, with worker copies of its own. Its leading conjuncts that read the slave alone may
+     * filter the build's rows instead; see {@link #compileParallelHashJoinBuildOnFilter}.
+     * <p>
+     * An INNER join that may swap its inputs at execution, as its ordinary plan would, compiles its
+     * keys in the swapped orientation too, from the swap keys, so that an execution can hash the
+     * master and probe it with the slave's frames.
+     * <p>
+     * The method owns both inputs and the ON residual on entry, and frees them on failure; the
+     * join's metadata stays with the caller until the factory adopts it.
+     *
+     * @param swapKeys the keys with the slave as the probe and the master as the build, for a join
+     *                 that may swap its inputs; null for one that never swaps
+     */
+    private RecordCursorFactory generateParallelHashJoin(
+            RecordCursorFactory master,
+            CharSequence masterAlias,
+            RecordCursorFactory slave,
+            IQueryModel slaveModel,
+            JoinRecordMetadata joinMetadata,
+            int joinType,
+            @Nullable Function onFilter,
+            HashJoinGroupByKeys keys,
+            @Nullable HashJoinGroupByKeys swapKeys,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert onFilter == null || joinType == IQueryModel.JOIN_LEFT_OUTER;
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        RecordCursorFactory masterOwned = master;
+        RecordCursorFactory slaveOwned = slave;
+        Function onFilterOwned = onFilter;
+        ObjList<Function> masterWorkerFilters = null;
+        ObjList<Function> slaveWorkerFilters = null;
+        ObjList<Function> workerOnFilters = null;
+        HashJoinStageSpec.BuildOnFilter buildOnFilter = null;
+        HashJoinInput leftInput = null;
+        HashJoinInput buildInput = null;
+        HashJoinStageSpec stage = null;
+        try {
+            // Parents ask the join about its order as the serial join asks its master, as compiled,
+            // before a steal leaves only its frame scan.
+            final boolean isLeftOrderByAdviceFollowed = master.followedOrderByAdvice();
+            final int leftScanDirection = master.getScanDirection();
+            // The keys address the frame scans' columns, which the probe and build records read.
+            final RecordMetadata masterFrameMetadata = parallelHashJoinFrameScan(master).getMetadata();
+            final RecordMetadata slaveFrameMetadata = parallelHashJoinFrameScan(slave).getMetadata();
+            final HashJoinKeyLayout keyLayout = new HashJoinKeyLayout(configuration, asm, keys, masterAlias, masterFrameMetadata,
+                    identityColumns(masterFrameMetadata.getColumnCount()), slaveModel.getName(), slaveFrameMetadata,
+                    identityColumns(slaveFrameMetadata.getColumnCount()));
+            // A page frame scan's SYMBOL columns are table columns, whose symbol tables are static, and
+            // read_parquet() reads a SYMBOL column as VARCHAR, so every SYMBOL key can translate.
+            assert keyLayout.hasStaticSymbolTables();
+            // Swapped, the slave's frames probe a build of the master.
+            final HashJoinKeyLayout swapKeyLayout = swapKeys != null
+                    ? new HashJoinKeyLayout(configuration, asm, swapKeys, slaveModel.getName(), slaveFrameMetadata,
+                    identityColumns(slaveFrameMetadata.getColumnCount()), masterAlias, masterFrameMetadata,
+                    identityColumns(masterFrameMetadata.getColumnCount()))
+                    : null;
+            assert swapKeyLayout == null || swapKeyLayout.hasStaticSymbolTables();
+            final String condition = toConditionText(slaveModel.getJoinContext());
+            masterWorkerFilters = compileParallelHashJoinWorkerFilters(master, workerCount, executionContext);
+            slaveWorkerFilters = compileParallelHashJoinWorkerFilters(slave, workerCount, executionContext);
+            workerOnFilters = compileWorkerFiltersConditionally(executionContext, onFilter, workerCount,
+                    slaveModel.getOuterJoinExpressionClause(), joinMetadata);
+            // The residual's leading conjuncts of the slave alone may run over the build's rows.
+            if (onFilter != null) {
+                buildOnFilter = compileParallelHashJoinBuildOnFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata,
+                        slave, workerCount, executionContext);
+            }
+            // Each input takes its factory and its worker filters on entry, whether it returns or throws.
+            final ObjList<Function> masterWorkerFiltersToTransfer = masterWorkerFilters;
+            masterWorkerFilters = null;
+            masterOwned = null;
+            leftInput = newParallelHashJoinInput(master, masterWorkerFiltersToTransfer, workerCount);
+            final ObjList<Function> slaveWorkerFiltersToTransfer = slaveWorkerFilters;
+            slaveWorkerFilters = null;
+            slaveOwned = null;
+            buildInput = newParallelHashJoinInput(slave, slaveWorkerFiltersToTransfer, workerCount);
+            // The stage takes the ON residual and its worker copies on entry.
+            final ObjList<Function> workerOnFiltersToTransfer = workerOnFilters;
+            workerOnFilters = null;
+            onFilterOwned = null;
+            stage = new HashJoinStageSpec(buildInput, keyLayout, swapKeyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
+                    joinMetadata, onFilter, workerOnFiltersToTransfer);
+            stage.setOnFilterColumns(collectParallelHashJoinFilterColumns(onFilter, slaveModel.getOuterJoinExpressionClause(), joinMetadata));
+            if (buildOnFilter != null) {
+                stage.ofBuildOnFilter(buildOnFilter);
+                buildOnFilter = null;
+            }
+            final AsyncHashJoinSpec spec = new AsyncHashJoinSpec(leftInput, stage, joinMetadata, isLeftOrderByAdviceFollowed, leftScanDirection);
+            // The constructor leaves the spec here when it fails, and takes it once it returns.
+            return new AsyncHashJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    spec,
+                    reduceTaskFactory,
+                    workerCount
+            );
+        } catch (Throwable th) {
+            Misc.freeObjList(masterWorkerFilters, th);
+            Misc.freeObjList(slaveWorkerFilters, th);
+            Misc.freeObjList(workerOnFilters, th);
+            Misc.free(buildOnFilter, th);
+            Misc.free(onFilterOwned, th);
+            Misc.free(masterOwned, th);
+            Misc.free(slaveOwned, th);
+            Misc.free(leftInput, th);
+            // The stage owns the build input once it exists. The metadata stays with the caller.
+            Misc.free(stage != null ? stage : buildInput, th);
+            throw th;
         }
     }
 
@@ -14372,6 +15190,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 castFunctionsA,
                 castFunctionsB
         );
+        // The union returns every row it reads, from the first branch until it runs out, then from
+        // the second.
+        addLimitBoundedInput(unionFactory, factoryA);
+        addLimitBoundedInput(unionFactory, factoryB);
 
         if (model.getUnionModel().getUnionModel() != null) {
             return generateSetFactory(model.getUnionModel(), unionFactory, executionContext, symbolUnionColumns);
@@ -14769,22 +15591,78 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Nullable
     private Function getLimitLoFunctionOnly(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        // A LATEST ON on this model sits above the filter (generateLatestBy consumes the filter's
-        // full output, then generateLimit applies the limit), so the filter must scan every row.
-        // Pushing the limit advice into it would feed LATEST ON only the first N rows and return
-        // the earliest row per key instead of the latest.
-        if (model.getLatestBy().size() > 0) {
-            return null;
-        }
-        if (model.getLimitAdviceLo() != null && model.getLimitAdviceHi() == null) {
-            return toLimitFunction(executionContext, model.getLimitAdviceLo(), LongConstant.ZERO);
-        }
-        return null;
+        final ExpressionNode limitAdvice = getLimitAdviceLoOnly(model);
+        return limitAdvice != null ? toLimitFunction(executionContext, limitAdvice, LongConstant.ZERO) : null;
     }
 
     @NotNull
     private Function getLoFunction(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return toLimitFunction(executionContext, model.getLimitLo(), LongConstant.ZERO);
+    }
+
+    /**
+     * Returns the keys of a parallel hash join, or null to keep the ordinary plan, which
+     * {@code createHashJoin()} then compiles from the same state. Both inputs must be page frame
+     * scans or stealable filters over one, possibly under projections, see
+     * {@link #isParallelHashJoinInput(RecordCursorFactory)}, and the join an INNER or LEFT OUTER equi
+     * join whose keys reconcile as the ordinary plan reconciles them. A later join whose master is a
+     * parallel hash join becomes a stage of that join instead, when its keys read the columns of the
+     * join's left input alone, a star join, and the join runs fewer than
+     * {@link AsyncHashJoinSpec#MAX_STAGE_COUNT} stages; the keys then address the left input's frame
+     * columns, which the probe record reads for every stage. A later join never swaps its inputs,
+     * since its master, a join, offers no random access, but when the master's first join may swap
+     * its own inputs, the caller also compiles the keys that a swapped execution reads from the first
+     * stage's payload; see {@link #newParallelHashJoinStackSwapKeys}. A LEFT join's ON condition
+     * beyond its keys, its residual, runs on the workers for each pair, so it must be one that the
+     * workers can run, see {@link #isParallelHashJoinFilter(Function)}. The keys address the
+     * columns of the inputs' frame scans, which the join's records read; see
+     * {@link #parallelHashJoinFrameColumns(RecordCursorFactory)}. An INNER join whose ordinary plan
+     * may swap its inputs at execution, see {@link #isParallelHashJoinSwapPossible}, swaps them by
+     * the same rule, which needs the sizes that the inputs' record cursors report: a join over an
+     * input whose size the parallel join cannot reproduce, anything but a table scan, keeps the
+     * ordinary plan; see {@link #parallelHashJoinTableScan(RecordCursorFactory)}. The caller then
+     * compiles the keys of the swapped orientation too. Reads the inputs and takes nothing from them.
+     */
+    private @Nullable HashJoinGroupByKeys getParallelHashJoinKeys(
+            IQueryModel model,
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            int joinType,
+            @Nullable Function joinFilter,
+            SqlExecutionContext executionContext
+    ) {
+        if (!executionContext.isParallelHashJoinEnabled()
+                || executionContext.getSharedQueryWorkerCount() < 1
+                || fullFatJoins
+                // UPDATE reads the rows it updates by row id, which the operator does not serve.
+                || model.isUpdate()
+                || (joinType != IQueryModel.JOIN_INNER && joinType != IQueryModel.JOIN_LEFT_OUTER)
+                // A LEFT join's ON residual runs on the workers, for each pair; an INNER join has none.
+                || (joinFilter != null && !isParallelHashJoinFilter(joinFilter))
+                || !isParallelHashJoinInput(slave)
+                // The serial plan for a slave without random access chains duplicates oldest first.
+                || !slave.recordCursorSupportsRandomAccess()) {
+            return null;
+        }
+        if (master instanceof AsyncHashJoinRecordCursorFactory join) {
+            final AsyncHashJoinSpec spec = join.getSpec();
+            if (spec.getStageCount() >= AsyncHashJoinSpec.MAX_STAGE_COUNT) {
+                return null;
+            }
+            // The master's leading columns are its left input's, as compiled, and its probe record
+            // reads them from the left input's frame columns.
+            final HashJoinInput leftInput = spec.getLeftInput();
+            return newParallelHashJoinKeys(master.getMetadata(), leftInput.getColumnMap(), listColumnFilterB, slave, listColumnFilterA);
+        }
+        if (!isParallelHashJoinInput(master)) {
+            return null;
+        }
+        if (isParallelHashJoinSwapPossible(master, slave, joinType)
+                && (parallelHashJoinTableScan(master) == null || parallelHashJoinTableScan(slave) == null)) {
+            return null;
+        }
+        // processJoinContext() left the key columns of the master in B and those of the slave in A.
+        return newParallelHashJoinKeys(master, listColumnFilterB, slave, listColumnFilterA);
     }
 
     private int getSampleBySymbolKeyIndex(IQueryModel model, RecordMetadata metadata) {
@@ -14857,6 +15735,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Hands the model's LIMIT to every parallel hash join whose rows it bounds, see
+     * {@link AsyncHashJoinRecordCursorFactory#ofLimit}: the joins that
+     * {@link #collectRowBoundedJoins} reaches from the LIMIT's base factory. Each join takes a parse
+     * of the LIMIT of its own. The LIMIT only narrows a join's first window, and never changes its
+     * rows.
+     */
+    private void handOverLimit(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        // The walk collects the joins first, since a parse may generate a sub-query.
+        final ObjList<AsyncHashJoinRecordCursorFactory> joins = collectRowBoundedJoins(factory);
+        if (joins != null) {
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                final AsyncHashJoinRecordCursorFactory join = joins.getQuick(i);
+                join.ofLimit(getLoFunction(model, executionContext));
+                // The join owns the lower bound, and frees it with itself should this fail.
+                join.ofLimitHi(getHiFunction(model, executionContext));
+            }
+        }
+    }
+
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {
         // Check if we can simplify ASOF JOIN ON (ts) to ASOF JOIN.
         if (listColumnFilterA.size() == 1 && listColumnFilterB.size() == 1) {
@@ -14881,6 +15779,85 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             out.add(node);
         }
+    }
+
+    /**
+     * True when the probe tasks of the parallel hash join that this join would plan, or join as a
+     * later stage, would read a STRING, VARCHAR, BINARY or ARRAY payload column of a build that reads
+     * Parquet frames as the query compiles, see {@link #isParquetFrameScan}: such a join keeps the
+     * ordinary plan, and a later join wraps the operator as an ordinary join. A probe task reads a
+     * stage's payload through its slot's reader, whose share of the Parquet decode cache such a
+     * payload outgrows, so that its matches decode the build's row groups again and again, and the
+     * payload copy holds fixed-size columns alone. The consumer reads the payload through a reader
+     * with the whole budget, so a join whose consumer alone reads such columns keeps the operator.
+     * <p>
+     * A probe task reads the columns that the join's LEFT ON residual and its post-join WHERE read,
+     * which the model holds before the operator absorbs the WHERE; the WHERE keeps the ordinary plan
+     * even when it would not run on the workers. A column of a build is a payload column: one of the
+     * slave's, or of a stage's of the master. A column of the left input is the probe record's, but
+     * for a join whose first join may swap its inputs: an execution that swaps them hashes the left
+     * input, whose columns its probe tasks then read from the first stage's payload, for the filters
+     * and, in a later join, for the join's keys.
+     *
+     * @param master          the join's master as compiled: an input that the operator may stream,
+     *                        or the operator that the join would join as a stage
+     * @param slave           the join's slave as compiled
+     * @param joinMetadata    the joined rows' metadata, the master's columns followed by the slave's
+     * @param isSwapCandidate true when the operator's first join may swap its inputs: the join's own,
+     *                        or the master's
+     */
+    private boolean isParallelHashJoinParquetVarSizeRead(
+            RecordCursorFactory master,
+            RecordCursorFactory slave,
+            IQueryModel slaveModel,
+            RecordMetadata joinMetadata,
+            boolean isSwapCandidate,
+            SqlExecutionContext executionContext
+    ) {
+        final AsyncHashJoinSpec spec = master instanceof AsyncHashJoinRecordCursorFactory join ? join.getSpec() : null;
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final RecordCursorFactory leftScan = spec != null ? spec.getLeftInput().getFactory() : parallelHashJoinFrameScan(master);
+        if (isSwapCandidate && spec != null) {
+            // processJoinContext() left the master's key columns in B, the left input's.
+            for (int k = 0, n = listColumnFilterB.getColumnCount(); k < n; k++) {
+                if (ColumnType.isVarSize(masterMetadata.getColumnType(listColumnFilterB.getColumnIndexFactored(k)))) {
+                    if (isParquetFrameScan(leftScan, executionContext)) {
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+        final IntHashSet columns = new IntHashSet();
+        final ExpressionNode residual = slaveModel.getOuterJoinExpressionClause();
+        if (residual != null) {
+            collectColumnIndexes(sqlNodeStack, joinMetadata, residual, columns);
+        }
+        final ExpressionNode postJoinWhere = slaveModel.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            collectColumnIndexes(sqlNodeStack, joinMetadata, postJoinWhere, columns);
+        }
+        final int masterColumnCount = masterMetadata.getColumnCount();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final int column = columns.get(i);
+            if (!ColumnType.isVarSize(joinMetadata.getColumnType(column))) {
+                continue;
+            }
+            final boolean isParquetPayload;
+            if (column >= masterColumnCount) {
+                isParquetPayload = isParquetFrameScan(parallelHashJoinFrameScan(slave), executionContext);
+            } else {
+                // A master that is not the operator is the left input.
+                final int source = spec != null ? spec.getColumnSource(column) : 0;
+                isParquetPayload = source == 0
+                        ? isSwapCandidate && isParquetFrameScan(leftScan, executionContext)
+                        : isParquetFrameScan(spec.getStage(source - 1).getBuildInput().getFactory(), executionContext);
+            }
+            if (isParquetPayload) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -15333,6 +16310,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Marks the parallel hash joins whose rows bound the query's first rows, see
+     * {@link AsyncHashJoinRecordCursorFactory#markClientRowSource()}: the joins that
+     * {@link #collectRowBoundedJoins} reaches from the query's factory, as a LIMIT of the query
+     * would reach them. The rows that the client reads first then bound the rows that each join's
+     * first window may need. A join under any other factory, a sort, a GROUP BY, a filter or a LIMIT
+     * among them, may yield more rows than the client reads, and stays unmarked. Runs before the
+     * outermost compilation clears the inputs that the walk follows.
+     *
+     * @param factory the query's factory, as generated for its outermost model
+     */
+    private void markClientRowSource(RecordCursorFactory factory) {
+        final ObjList<AsyncHashJoinRecordCursorFactory> joins = collectRowBoundedJoins(factory);
+        if (joins != null) {
+            for (int i = 0, n = joins.size(); i < n; i++) {
+                joins.getQuick(i).markClientRowSource();
+            }
+        }
+    }
+
+    /**
      * Whether the limit lo function might evaluate to a negative value. A
      * non-constant (e.g. bind-variable) limit has an unknown sign at compile
      * time, so we conservatively treat it as possibly negative.
@@ -15377,6 +16374,80 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 keyTypes.set(distinctCount, keyType);
                 distinctCount++;
             }
+        }
+    }
+
+    /**
+     * The AND of copies of the conjuncts from {@code lo} to {@code hi}, exclusive, in their order, as
+     * the AND chain of the expression they came from runs them: each AND runs its left operand first,
+     * and the chain nests to the left. A lone conjunct is its own copy.
+     */
+    private ExpressionNode newParallelHashJoinConjunction(ObjList<ExpressionNode> conjuncts, int lo, int hi) {
+        assert lo < hi;
+        ExpressionNode conjunction = deepClone(expressionNodePool, conjuncts.getQuick(lo));
+        for (int i = lo + 1; i < hi; i++) {
+            final ExpressionNode conjunct = deepClone(expressionNodePool, conjuncts.getQuick(i));
+            final ExpressionNode and = expressionNodePool.next().of(OPERATION, "and", 0, conjunct.position);
+            and.paramCount = 2;
+            and.lhs = conjunction;
+            and.rhs = conjunct;
+            conjunction = and;
+        }
+        return conjunction;
+    }
+
+    /**
+     * Turns an input that {@link #isParallelHashJoinInput(RecordCursorFactory)} accepts into a
+     * parallel hash join's input, see {@link HashJoinInput}. A filtered input gives its filter up to
+     * the join: the filter factory's halfClose() frees the factory's own execution state and leaves
+     * it the filter, its JIT code and its bind variables, which the input's filter context takes
+     * with the workers' copies of the filter, and the input reads the filter's base, whose columns
+     * the projections above the filter map onto. The filter factory and those projections hold
+     * nothing else, so they go with it. Takes the factory and the worker filters on entry, and frees
+     * what it holds of them on failure.
+     */
+    private HashJoinInput newParallelHashJoinInput(
+            RecordCursorFactory factory,
+            @Nullable ObjList<Function> workerFilters,
+            int workerCount
+    ) {
+        RecordCursorFactory frameScan = factory;
+        ObjList<Function> workerFiltersOwned = workerFilters;
+        AsyncFilterContext filterContext = null;
+        try {
+            final IntList frameColumns = parallelHashJoinFrameColumns(factory);
+            final RecordCursorFactory input = frameInput(factory);
+            if (input.supportsPageFrameCursor()) {
+                assert workerFiltersOwned == null;
+                // An unfiltered input's context serves the memory pools that the join reads its frames
+                // through, the owner's and one per worker.
+                filterContext = new AsyncFilterContext(configuration, null, null, null, null, null, null, workerCount, 0, 0, 0);
+            } else {
+                final RecordCursorFactory base = input.getBaseFactory();
+                final Function filter = input.getFilter();
+                final CompiledFilter compiledFilter = input.getCompiledFilter();
+                final MemoryCARW bindVarMemory = input.getBindVarMemory();
+                final ObjList<Function> bindVarFunctions = input.getBindVarFunctions();
+                // The base's columns that the filter reads, which a probe task decodes first in a
+                // Parquet frame.
+                final IntHashSet filterColumns = collectParallelHashJoinFilterColumns(filter, input.getStealFilterExpr(), base.getMetadata());
+                // A halfClose() that throws steals nothing, and the catch closes the whole input, its
+                // filter included.
+                input.halfClose();
+                frameScan = base;
+                final ObjList<Function> workerFiltersToTransfer = workerFiltersOwned;
+                workerFiltersOwned = null;
+                // The context takes the stolen handles and the worker filters on entry, and frees them
+                // when its constructor fails.
+                filterContext = new AsyncFilterContext(configuration, compiledFilter, bindVarMemory, bindVarFunctions, filter,
+                        filterColumns, workerFiltersToTransfer, workerCount, 0, 0, 0);
+            }
+            return new HashJoinInput(frameScan, frameColumns, filterContext);
+        } catch (Throwable th) {
+            Misc.free(filterContext, th);
+            Misc.freeObjList(workerFiltersOwned, th);
+            Misc.free(frameScan, th);
+            throw th;
         }
     }
 
@@ -15649,6 +16720,136 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 snapshotHashJoinFilters(model.getJoinModels().getQuick(i), models, whereClauses, backups);
             }
             model = model.getNestedModel();
+        }
+    }
+
+    /**
+     * Absorbs a later join of a star query into the parallel hash join that its master is, as a
+     * stage of its own, whose eligibility {@link #getParallelHashJoinKeys} checked: the join's keys
+     * read the master's left input, whose frames the operator's probe streams, and its slave is a
+     * page frame scan or a stealable filter over one, which the stage hashes. Everything that can
+     * fail while the master is still whole runs first: the key layout and the worker copies of the
+     * slave's filter and of a LEFT join's ON residual, and the residual's leading conjuncts of the
+     * slave alone, see {@link #compileParallelHashJoinBuildOnFilter}, compile before the master gives
+     * up its spec, since that cannot be undone. The master then gives up its spec and frees what its
+     * executions use, the slave gives up its filter, the spec takes the stage, and a new join takes
+     * the spec over, with the stages before, their steppers, and the order answers recorded so far.
+     * <p>
+     * A master whose first join may swap its inputs takes the stage's keys as an execution that swaps
+     * them reads them too: from the first stage's payload, whose columns are the left input's as
+     * compiled, the leading columns of the master's metadata, which the spec keeps for the stage's
+     * key sinks.
+     * <p>
+     * The method owns the master, the slave and the ON residual on entry, and frees them on failure;
+     * the join's metadata stays with the caller until the new join adopts it.
+     *
+     * @param swapKeys the keys with the probe side read from the first stage's payload, for a master
+     *                 whose first join may swap its inputs; null for one that never swaps
+     */
+    private RecordCursorFactory stackParallelHashJoin(
+            AsyncHashJoinRecordCursorFactory master,
+            RecordCursorFactory slave,
+            IQueryModel slaveModel,
+            JoinRecordMetadata joinMetadata,
+            int joinType,
+            @Nullable Function onFilter,
+            HashJoinGroupByKeys keys,
+            @Nullable HashJoinGroupByKeys swapKeys,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert onFilter == null || joinType == IQueryModel.JOIN_LEFT_OUTER;
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        RecordCursorFactory slaveOwned = slave;
+        Function onFilterOwned = onFilter;
+        ObjList<Function> slaveWorkerFilters = null;
+        ObjList<Function> workerOnFilters = null;
+        HashJoinStageSpec.BuildOnFilter buildOnFilter = null;
+        AsyncHashJoinSpec spec = null;
+        HashJoinInput buildInput = null;
+        HashJoinStageSpec stage = null;
+        try {
+            // The keys address the frame scans' columns: the left input's, which the probe record
+            // reads for every stage, and the slave's.
+            final RecordMetadata leftFrameMetadata = master.getSpec().getLeftInput().getMetadata();
+            final RecordMetadata slaveFrameMetadata = parallelHashJoinFrameScan(slave).getMetadata();
+            final HashJoinKeyLayout keyLayout = new HashJoinKeyLayout(configuration, asm, keys, null, leftFrameMetadata,
+                    identityColumns(leftFrameMetadata.getColumnCount()), slaveModel.getName(), slaveFrameMetadata,
+                    identityColumns(slaveFrameMetadata.getColumnCount()));
+            // The left input is a page frame scan, whose SYMBOL columns' symbol tables are static, and
+            // so is the slave's.
+            assert keyLayout.hasStaticSymbolTables();
+            // Swapped, the keys read the first stage's payload, which lays the left input's columns
+            // out as they lead the master's metadata.
+            assert (swapKeys != null) == master.getSpec().isSwapCandidate();
+            final RecordMetadata masterMetadata = master.getMetadata();
+            final HashJoinKeyLayout swapKeySourceLayout = swapKeys != null
+                    ? new HashJoinKeyLayout(configuration, asm, swapKeys, null, masterMetadata,
+                    identityColumns(masterMetadata.getColumnCount()), slaveModel.getName(), slaveFrameMetadata,
+                    identityColumns(slaveFrameMetadata.getColumnCount()))
+                    : null;
+            assert swapKeySourceLayout == null || swapKeySourceLayout.hasStaticSymbolTables();
+            final String condition = toConditionText(slaveModel.getJoinContext());
+            slaveWorkerFilters = compileParallelHashJoinWorkerFilters(slave, workerCount, executionContext);
+            workerOnFilters = compileWorkerFiltersConditionally(executionContext, onFilter, workerCount,
+                    slaveModel.getOuterJoinExpressionClause(), joinMetadata);
+            // The residual's leading conjuncts of the slave alone may run over the build's rows.
+            if (onFilter != null) {
+                buildOnFilter = compileParallelHashJoinBuildOnFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata,
+                        slave, workerCount, executionContext);
+            }
+            // The master gives up its spec, and holds nothing once it frees what its executions use.
+            spec = master.stealSpec();
+            master.halfClose();
+            // The input takes the slave and its worker filters on entry, whether it returns or throws.
+            final ObjList<Function> slaveWorkerFiltersToTransfer = slaveWorkerFilters;
+            slaveWorkerFilters = null;
+            slaveOwned = null;
+            buildInput = newParallelHashJoinInput(slave, slaveWorkerFiltersToTransfer, workerCount);
+            // The stage takes the build input, the ON residual and its worker copies on entry.
+            final ObjList<Function> workerOnFiltersToTransfer = workerOnFilters;
+            workerOnFilters = null;
+            onFilterOwned = null;
+            final HashJoinInput buildInputToTransfer = buildInput;
+            buildInput = null;
+            stage = new HashJoinStageSpec(buildInputToTransfer, keyLayout, joinType == IQueryModel.JOIN_LEFT_OUTER, condition,
+                    joinMetadata, onFilter, workerOnFiltersToTransfer, swapKeySourceLayout);
+            stage.setOnFilterColumns(collectParallelHashJoinFilterColumns(onFilter, slaveModel.getOuterJoinExpressionClause(), joinMetadata));
+            if (buildOnFilter != null) {
+                stage.ofBuildOnFilter(buildOnFilter);
+                buildOnFilter = null;
+            }
+            // The spec takes the stage and the join's metadata.
+            spec.addStage(stage, joinMetadata);
+            stage = null;
+            // The constructor leaves the spec here when it fails, and takes it once it returns.
+            return new AsyncHashJoinRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    spec,
+                    reduceTaskFactory,
+                    workerCount
+            );
+        } catch (Throwable th) {
+            Misc.freeObjList(slaveWorkerFilters, th);
+            Misc.freeObjList(workerOnFilters, th);
+            Misc.free(buildOnFilter, th);
+            Misc.free(onFilterOwned, th);
+            Misc.free(slaveOwned, th);
+            // At most one of the two holds the build input.
+            Misc.free(buildInput, th);
+            Misc.free(stage, th);
+            // The spec holds the master's inputs, stages and metadata once the master gave it up, and
+            // the master holds them until then.
+            if (spec != null) {
+                if (spec.getMetadata() == joinMetadata) {
+                    // The spec took the join's metadata, which the caller frees, so it lets go of it.
+                    spec.releaseMetadata();
+                }
+                Misc.free(spec, th);
+            }
+            Misc.free(master, th);
+            throw th;
         }
     }
 

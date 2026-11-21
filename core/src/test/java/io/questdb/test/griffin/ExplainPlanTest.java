@@ -2758,7 +2758,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) " + "where a1+10 < b1 - 10")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a1+10<tabb.b1-10\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b2=a2 and b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: abs(taba.a2+1)=abs(tabb.b2)
+                                          postJoinFilter: taba.a1+10<tabb.b1-10
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    Filter filter: taba.a1+10<tabb.b1-10\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -2776,7 +2795,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and abs(a2+1) = abs(b2) where a2=b2")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a2=tabb.b2\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: abs(taba.a2+1)=abs(tabb.b2)
+                                          postJoinFilter: taba.a2=tabb.b2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    Filter filter: taba.a2=tabb.b2\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -4217,16 +4255,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (b.i<a.i and a.s1=b.s2)
-                                    Hash Join Light
-                                      condition: b.i=a.i
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: a
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: b
+                                    Build
+                                      joinType: inner
+                                      condition: b.i=a.i
+                                      inputSwap: when the left input is smaller
+                                      postJoinFilter: (b.i<a.i and a.s1=b.s2)
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
                             """);
         });
     }
@@ -4277,7 +4319,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from a " + joinType + " join b on i")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: b\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        Build
+                                          joinType: left outer
+                                          condition: b.i=a.i
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: b\n");
             }
         });
     }
@@ -4294,12 +4353,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
                 // A RIGHT join preserves b, so the predicate filters b before the join. LEFT and FULL
-                // NULL-extend b, so it stays a filter above the join.
+                // NULL-extend b, so it stays a filter above the join: the parallel hash join runs it
+                // as the LEFT join's post-join filter.
                 assertQuery("select * from a " + joinType + " join b on i where b.i is not null")
                         .noLeakCheck()
-                        .assertsPlan("RIGHT".equals(joinType)
-                                ? "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: i!=null\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n"
-                                : "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        Build
+                                          joinType: left outer
+                                          condition: b.i=a.i
+                                          buildPayload: copied when the probe is large enough
+                                          postJoinFilter: b.i!=null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                                """
+                                : "RIGHT".equals(joinType)
+                                  ? "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b.i=a.i\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: a\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: i!=null\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n"
+                                  : "SelectedRecord\n" + "    Filter filter: b.i!=null\n" + "        " + factoryType + "\n" + "          condition: b.i=a.i\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: a\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: b\n");
             }
         });
     }
@@ -4452,7 +4530,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Hash\n            Async Filter workers: 1\n              filter: id=:id::int+1")
+                    .withPlanContaining("buildFilter: id=:id::int+1\n            PageFrame\n                Row forward scan\n                Frame forward scan on: int_b")
                     .returns("k\tav\tbv\n");
 
             execute("INSERT INTO int_a VALUES (1, 10), (2, 20)");
@@ -5588,17 +5666,20 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
                 .assertsPlan("""
                         SelectedRecord
-                            Filter filter: b.bkey='x'
-                                Hash Left Outer Join Light
-                                  condition: b.bkey=a.akey
-                                  symbolKeyJoin: true
+                            Async Hash Join workers: 1
+                              stages: 1
+                                Probe
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: ta
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tb
+                                Build
+                                  joinType: left outer
+                                  condition: b.bkey=a.akey
+                                  symbolKeyJoin: true
+                                  postJoinFilter: b.bkey='x'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tb
                         """);
     }
 
@@ -6059,29 +6140,103 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
-                // The three-input queries below keep the ordinary plan; the two parent-model
-                // ones are two-input joins that the fused hash join GROUP BY takes, except for the
-                // RIGHT join's predicate on T2, its preserved side.
+                // The three-input queries below keep the ordinary join to T3, whose key reads T2, over
+                // the first join, which the parallel hash join runs for a LEFT join; the two
+                // parent-model ones are two-input joins that the fused hash join GROUP BY takes,
+                // except for the RIGHT join's predicate on T2, its preserved side.
                 boolean isFused = i < 2;
                 boolean isSwapped = "RIGHT".equals(joinType);
                 boolean isT2Fused = isFused && !isSwapped;
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
-                        .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
-                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                Count
+                                    Hash Join Light
+                                      condition: T3.created=T2.created
+                                        Async JIT Hash Join workers: 1
+                                          stages: 1
+                                          filter: value=1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                            Build
+                                              joinType: left outer
+                                              condition: T2.created=T1.created
+                                              buildPayload: copied when the probe is large enough
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                """
+                                : isLeftNulled
+                                  ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                  : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 // A RIGHT join preserves T2, so the predicate narrows T2's scan to an interval.
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T2.created=1")
                         .noLeakCheck()
-                        .assertsPlan(isSwapped
-                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Interval forward scan on: tab\n" + "                      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000001Z\")]\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
-                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                Count
+                                    Hash Join Light
+                                      condition: T3.created=T2.created
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                            Build
+                                              joinType: left outer
+                                              condition: T2.created=T1.created
+                                              buildPayload: copied when the probe is large enough
+                                              postJoinFilter: 1=T2.created
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                                """
+                                : isSwapped
+                                  ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Interval forward scan on: tab\n" + "                      intervals: [(\"1970-01-01T00:00:00.000001Z\",\"1970-01-01T00:00:00.000001Z\")]\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                  : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: 1=T2.created\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T3.value=1")
                         .noLeakCheck()
-                        .assertsPlan("Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                Count
+                                    Hash Join Light
+                                      condition: T3.created=T2.created
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                            Build
+                                              joinType: left outer
+                                              condition: T2.created=T1.created
+                                              buildPayload: copied when the probe is large enough
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                        Hash
+                                            Async JIT Filter workers: 1
+                                              filter: value=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tab
+                                """
+                                : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n");
 
                 // where clause in parent model
                 assertQuery("SELECT count(1) " + "FROM ( " + "SELECT * " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created ) e " + "WHERE not value1<>value1")
@@ -7142,7 +7297,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a=b")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b=a\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b=a
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b=a\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7160,7 +7332,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b2=a2 and b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7178,7 +7367,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and (a2=b2+10 or a2=2*b2)")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2=tabb.b2+10 or taba.a2=2*tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7200,7 +7407,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1 and a1=5 " + "join tabc on a1=c1")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Hash Join Light\n" + "      condition: c1=a1\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: taba.a1=5\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 2
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: taba.a1=5
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                        Build
+                                          joinType: inner
+                                          condition: c1=a1
+                                          buildPayload: copied when the probe is large enough
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabc
+                                """
+                                : "SelectedRecord\n" + "    Hash Join Light\n" + "      condition: c1=a1\n" + "        " + factoryType + "\n" + "          condition: b1=a1\n" + "          filter: taba.a1=5\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabc\n");
             }
         });
     }
@@ -7218,7 +7450,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2)")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b2=a2 and b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: abs(taba.a2+1)=abs(tabb.b2)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7236,7 +7486,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and a2+5 = b2+10")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: taba.a2+5=tabb.b2+10\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b2=a2 and b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: taba.a2+5=tabb.b2+10
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b2=a2 and b1=a1\n" + "      filter: taba.a2+5=tabb.b2+10\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7305,7 +7573,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2!=a2")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2!=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: taba.a2!=taba.a2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2!=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7323,7 +7609,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=a2")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: taba.a2=taba.a2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: taba.a2=taba.a2\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7341,7 +7645,24 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2 ~ 'a.*' and b2 ~ '.*z'")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b1=a1
+                                          onFilter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    " + factoryType + "\n" + "      condition: b1=a1\n" + "      filter: (taba.a2 ~ a.* and tabb.b2 ~ .*z)\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: taba\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7359,7 +7680,26 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String factoryType = joinFactoryTypes[i];
                 assertQuery("select * from taba " + joinType + " join tabb on a1=b1  and a2=b2 and abs(a2+1) = abs(b2) where a1=b1")
                         .noLeakCheck()
-                        .assertsPlan("SelectedRecord\n" + "    Filter filter: taba.a1=tabb.b1\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
+                        .assertsPlan("LEFT".equals(joinType)
+                                ? """
+                                SelectedRecord
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: taba
+                                        Build
+                                          joinType: left outer
+                                          condition: b2=a2 and b1=a1
+                                          buildPayload: copied when the probe is large enough
+                                          onFilter: abs(taba.a2+1)=abs(tabb.b2)
+                                          postJoinFilter: taba.a1=tabb.b1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tabb
+                                """
+                                : "SelectedRecord\n" + "    Filter filter: taba.a1=tabb.b1\n" + "        " + factoryType + "\n" + "          condition: b2=a2 and b1=a1\n" + "          filter: abs(taba.a2+1)=abs(tabb.b2)\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n");
             }
         });
     }
@@ -7382,12 +7722,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Count
                                 Filter filter: T1.event<T2.event
                                     Cross Join
-                                        Hash Join Light
-                                          condition: T3.created=T2.created
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: test
-                                            Hash
+                                        Async Hash Join workers: 1
+                                          stages: 1
+                                            Probe
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: test
+                                            Build
+                                              joinType: inner
+                                              condition: T3.created=T2.created
+                                              inputSwap: when the left input is smaller
+                                              buildPayload: copied when the probe is large enough
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: test
@@ -14044,7 +14389,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()
-                .assertsPlan("SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n");
+                .assertsPlan(isLight
+                        ? """
+                        SelectedRecord
+                            AsOf Join%s
+                              condition: c1=b1
+                                Async Hash Join workers: 1
+                                  stages: 1
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: taba
+                                    Build
+                                      joinType: left outer
+                                      condition: b1=a1
+                                      buildPayload: copied when the probe is large enough
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tabb
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tabc
+                        """.formatted(asofJoinType)
+                        : "SelectedRecord\n" + "    AsOf Join" + asofJoinType + "\n" + "      condition: c1=b1\n" + "        Hash Left Outer Join" + (isLight ? " Light" : "") + "\n" + "          condition: b1=a1\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: taba\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tabb\n" + "        PageFrame\n" + "            Row forward scan\n" + "            Frame forward scan on: tabc\n");
         assertQuery("select * " + "from taba " + "asof join tabb on a1=b1 " + "right join tabc on b1=c1")
                 .withCompiler(compiler)
                 .noLeakCheck()

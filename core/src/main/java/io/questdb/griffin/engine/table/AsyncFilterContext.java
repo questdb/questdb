@@ -42,6 +42,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,7 +52,7 @@ import java.io.Closeable;
  * Shared filter and memory-pool infrastructure used by {@link AsyncGroupByAtom},
  * {@link AsyncGroupByNotKeyedAtom}, and {@link AsyncTopKAtom}.
  */
-public class AsyncFilterContext implements Closeable {
+public class AsyncFilterContext implements Closeable, Mutable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -156,6 +157,7 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
+    @Override
     public void clear() {
         Misc.free(ownerMemoryPool);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);

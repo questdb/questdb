@@ -104,19 +104,21 @@ public class ServerMainWorkStealingTest extends AbstractBootstrapTest {
                     assertPlan(statement, joinQuery, """
                             QUERY PLAN[VARCHAR]
                             SelectedRecord
-                                Hash Join Light
-                                  condition: s.k=t.k
-                                    Async JIT Filter workers: 1
-                                      filter: null=vt
+                                Async JIT Hash Join workers: 1
+                                  stages: 1
+                                  filter: null=vt
+                                    Probe
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
-                                    Hash
-                                        Async JIT Filter workers: 1
-                                          filter: ct=u
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: s
+                                    Build
+                                      joinType: inner
+                                      condition: s.k=t.k
+                                      buildPayload: copied when the probe is large enough
+                                      buildJitFilter: ct=u
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: s
                             """);
                     assertPlan(statement, unionAllQuery, """
                             QUERY PLAN[VARCHAR]

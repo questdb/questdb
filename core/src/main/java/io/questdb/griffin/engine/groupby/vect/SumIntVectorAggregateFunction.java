@@ -108,6 +108,12 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset), 0);
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, this.valueOffset + 1), 0);
@@ -115,7 +121,9 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
 
     @Override
     public boolean merge(long pRostiA, long pRostiB) {
-        return Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
+        // the keyed natives sum INT values into a LONG: keyedIntSumIntMerge() would read only its low
+        // 32 bits
+        return Rosti.keyedIntSumLongMerge(pRostiA, pRostiB, valueOffset);
     }
 
     @Override

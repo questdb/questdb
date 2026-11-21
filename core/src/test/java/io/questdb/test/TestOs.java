@@ -119,7 +119,10 @@ public class TestOs {
                 }
 
                 try (InputStream is = Files.newInputStream(rustLibPath)) {
-                    Os.loadLib(rustLibPath.toString(), is);
+                    // Os.loadLib() names its temporary copy after the part of the name before the
+                    // first '.', so it takes the file name: a full path splits at a '.' of a parent
+                    // directory, such as ~/.local, and the copy fails.
+                    Os.loadLib(rustLibName, is);
                 } catch (IOException e) {
                     throw new RuntimeException(e);
                 }

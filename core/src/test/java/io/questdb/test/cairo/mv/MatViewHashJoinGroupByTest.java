@@ -102,6 +102,17 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
         });
     }
 
+    // The view joins its base table to a dimension of three day partitions through a LIKE, which the
+    // JIT does not compile, so the fused GROUP BY builds the dimension's few rows in rounds, on the
+    // workers, in every refresh.
+    @Test
+    public void testLeftJoinSmallFilteredDimensionRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = leftJoinSmallFilteredDimension(false);
+            Assert.assertEquals(expected, leftJoinSmallFilteredDimension(true));
+        });
+    }
+
     // Both dictionaries gain symbols between refreshes, which the cached factory must translate
     // without a recompile, and base rows without a dimension match keep NULL payloads.
     @Test
@@ -194,6 +205,27 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
                 }
             }
             return ORDINARY;
+        } finally {
+            state.unlock();
+        }
+    }
+
+    // Takes the factory that the last refresh cached in the view state, which must run the fused GROUP
+    // BY, and returns the rounds of tasks that its build stage dispatched over its executions. The next
+    // refresh compiles the view again.
+    private static long cachedBuildRoundCount() {
+        final TableToken token = engine.verifyTableName("mv");
+        final MatViewState state = engine.getMatViewStateStore().getViewState(token);
+        Assert.assertNotNull(state);
+        Assert.assertTrue(state.tryLock());
+        try (RecordCursorFactory factory = state.acquireRecordFactory()) {
+            Assert.assertNotNull(factory);
+            for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+                if (f instanceof AsyncHashJoinGroupByRecordCursorFactory fused) {
+                    return fused.getAtom().getBuildingStage().getRoundCount();
+                }
+            }
+            throw new AssertionError("the cached factory runs no fused GROUP BY");
         } finally {
             state.unlock();
         }
@@ -366,6 +398,47 @@ public class MatViewHashJoinGroupByTest extends AbstractCairoTest {
                 2024-01-01T04:00:00.000000Z\t\t8.0\t1\t0\tnull
                 """);
         Assert.assertEquals(isFused ? FUSED : ORDINARY, cachedFactory());
+        dropTables();
+        return snapshot.toString();
+    }
+
+    private String leftJoinSmallFilteredDimension(boolean isFused) throws Exception {
+        setFused(isFused);
+        final StringBuilder snapshot = new StringBuilder();
+        execute("CREATE TABLE trades (plant_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE plants (plant_id INT, country SYMBOL, kwp DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO plants VALUES (1, 'ES', 5, '2023-01-01'), (2, 'IT', 7, '2023-01-02'), (3, 'EE', null, '2023-01-03'), (4, 'FR', 9, '2023-01-03')");
+        execute("""
+                CREATE MATERIALIZED VIEW mv WITH BASE trades AS
+                SELECT t.ts, p.country, sum(t.qty) total, count() n, avg(p.kwp) avg_kwp
+                FROM trades t LEFT JOIN (SELECT * FROM plants WHERE country::STRING LIKE 'E%') p ON t.plant_id = p.plant_id
+                SAMPLE BY 1h
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 10, '2024-01-01T00:10'), (2, 20, '2024-01-01T00:20'), (3, 30, '2024-01-01T01:10'),
+                (4, 40, '2024-01-01T02:10'), (null, 50, '2024-01-01T02:20')
+                """);
+        snapshot(snapshot);
+        // A late row lands in the first bucket.
+        execute("INSERT INTO trades VALUES (1, 15, '2024-01-01T00:40'), (3, 25, '2024-01-01T03:15')");
+        snapshot(snapshot);
+        // The LIKE keeps ES and EE: the trades of plants 2 and 4 and the one without a plant find no row.
+        assertView("""
+                ts\tcountry\ttotal\tn\tavg_kwp
+                2024-01-01T00:00:00.000000Z\t\t20.0\t1\tnull
+                2024-01-01T00:00:00.000000Z\tES\t25.0\t2\t5.0
+                2024-01-01T01:00:00.000000Z\tEE\t30.0\t1\tnull
+                2024-01-01T02:00:00.000000Z\t\t90.0\t2\tnull
+                2024-01-01T03:00:00.000000Z\tEE\t25.0\t1\tnull
+                """);
+        // The fused factory's build ran in rounds; taking the factory makes the next refresh compile
+        // the view again.
+        if (isFused) {
+            Assert.assertTrue(cachedBuildRoundCount() > 0);
+        } else {
+            Assert.assertEquals(ORDINARY, cachedFactory());
+        }
         dropTables();
         return snapshot.toString();
     }

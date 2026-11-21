@@ -28,6 +28,7 @@ import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.std.DirectIntIntPagedMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.QuietCloseable;
@@ -43,7 +44,7 @@ import org.jetbrains.annotations.TestOnly;
  * probe key the frame never reads costs nothing. A probe that reads many distinct keys against a
  * small build dictionary would then look up far more texts than the build holds, so in that case
  * the cache opens filled from the build side instead; see
- * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, MemoryTracker, SqlExecutionCircuitBreaker)}.
+ * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
  * <p>
  * The cache is a dense, tracked native array indexed by probe symbol key and sized by the probe
  * dictionary. Every worker shares one cache, because an entry is a function of the two
@@ -54,8 +55,23 @@ import org.jetbrains.annotations.TestOnly;
  * cache's contents visible to it. Any failure in {@link #of} releases the cache; {@link #close}
  * releases it and leaves the instance reusable.
  * <p>
+ * Opening the shared cache costs work and memory that grow with the probe dictionary, whatever
+ * the probe reads, so it opens only for a probe that reads enough rows per probe key: for the fused
+ * GROUP BY, at least one row per 256 probe keys, and for the parallel hash join, whose serial plan
+ * opens no such cache, at least one row per 16 probe keys when the cache fills from the build, and
+ * one per probe key when it opens unresolved; see
+ * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}.
+ * For a probe of fewer rows, the translator allocates nothing, and each {@link View} translates
+ * through a lazy cache of its own instead, as the ordinary join's SymbolTranslatingRecord does:
+ * it opens on the view's first miss, keeps each probe key it resolves, and stops allocating once
+ * it holds {@code cairo.sql.join.symbol.translation.cache.capacity} entries. A view's cache is
+ * the view's slot's alone, which one thread uses at a time, and charges the translator's tracker.
+ * A caller that opened the translation for the first rows of a probe, which may read on, widens it
+ * to the rows it then reads, see {@link #widen(long, SqlExecutionCircuitBreaker)}, which opens the
+ * shared cache once those rows reach it.
+ * <p>
  * The dictionaries are not shared. Each worker translates through its own {@link View}, which
- * holds that worker's pair of symbol tables and reads the shared cache.
+ * holds that worker's pair of symbol tables and reads the shared cache, or its own.
  */
 public final class SymbolKeyTranslator implements QuietCloseable {
     // Clearing checks the breaker once per MiB, as the build's buffers do.
@@ -78,14 +94,47 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     // Fills from the build only when that takes at most an eighth of the lookups that resolving
     // every probe key would.
     private static final int FILL_FROM_BUILD_MIN_PROBE_RATIO = 8;
+    // The parallel hash join's shared cache, once filled from the build, opens only for a probe that
+    // reads at least one row per this many probe keys. Its serial plan opens no cache, and the
+    // views' caches cost about 25 ns per distinct probe key on each of four workers, so a filled
+    // cache, which costs about 1.6 ns per probe key when its pages are fresh, as glibc maps them for
+    // a large array, and 0.15 ns when warm, as jemalloc reuses them, pays off from about one row per
+    // 14 probe keys on fresh pages and per 128 on warm ones. Measured with
+    // ParallelHashJoinBenchmark's SYMBOL_10M_PREFIX_D1K over 10M probe keys; at this bound the join
+    // takes at most about 2.1x the serial plan's time under either allocator.
+    private static final int JOIN_FILLED_CACHE_MAX_KEYS_PER_PROBE_ROW = 16;
+    // The parallel hash join's shared cache, opened unresolved, makes the views' lookups itself, so it
+    // spares the views only their repeats of a key across slots, and costs no less than their caches
+    // until the probe reads about one row per two probe keys, under either allocator; it opens for at
+    // least one row per probe key. Measured with ParallelHashJoinBenchmark's SYMBOL_10M_PREFIX_D50K.
+    private static final int JOIN_UNRESOLVED_CACHE_MAX_KEYS_PER_PROBE_ROW = 1;
+    // The fused GROUP BY's shared cache opens only for a probe that reads at least one row per this
+    // many probe keys. Before the bound, it opened for every probe, so below it the views only spare
+    // the cache's clear, and at it the views' lookups would cost about what the clear does on warm
+    // pages.
+    private static final int SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW = 256;
     // Translated keys are nonnegative, VALUE_IS_NULL or VALUE_NOT_FOUND, never -1.
     private static final int UNRESOLVED = -1;
+    // The dictionaries of a translation that left the views to their own caches, which widen() opens
+    // the shared cache over; null otherwise.
+    @Nullable
+    private StaticSymbolTable buildKeyTable;
     private long cacheAddress;
     private int cacheKeyCount;
     private long cacheSize;
     private boolean isFilledFromBuild;
+    // How the translation that left the views to their own caches was opened, which widen() opens
+    // the shared cache by; false otherwise.
+    private boolean isParallelHashJoin;
+    private boolean isProbeDictionaryEligible;
+    // True when the probe reads too few rows for the shared cache, so each view caches on its own.
+    private boolean isSlotCached;
     @Nullable
     private MemoryTracker memoryTracker;
+    @Nullable
+    private StaticSymbolTable probeKeyTable;
+    // The entries past which a view's own cache stops allocating.
+    private int slotCacheCapacity;
 
     /**
      * Returns true when the cache may fill from the build through this probe dictionary, which
@@ -119,7 +168,13 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         cacheSize = 0;
         cacheKeyCount = 0;
         isFilledFromBuild = false;
+        isSlotCached = false;
+        slotCacheCapacity = 0;
         memoryTracker = null;
+        probeKeyTable = null;
+        buildKeyTable = null;
+        isProbeDictionaryEligible = false;
+        isParallelHashJoin = false;
     }
 
     public long getSizeInBytes() {
@@ -133,6 +188,15 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     @TestOnly
     public boolean isFilledFromBuild() {
         return isFilledFromBuild;
+    }
+
+    /**
+     * True when the open translator left the probe to the views' own caches and opened no shared
+     * cache; false once it is closed.
+     */
+    @TestOnly
+    public boolean isSlotCached() {
+        return isSlotCached;
     }
 
     /**
@@ -160,26 +224,59 @@ public final class SymbolKeyTranslator implements QuietCloseable {
     }
 
     /**
-     * Allocates the cache for the probe dictionary's current key count, which the owner's probe
-     * table reports. When the caller found the probe dictionary eligible, see
-     * {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at most 32,768
-     * keys and the probe dictionary at least eight times as many, the cache opens filled from the
-     * build: every entry reads VALUE_NOT_FOUND, then each build key looks its text up in the probe
-     * dictionary and writes itself at the probe key it finds. An eligible probe dictionary holds
-     * each text once, and keyOf() and valueOf() match texts exactly, so each entry then holds the
-     * build key that resolving its probe key lazily would have returned. Otherwise the cache opens
-     * unresolved, as {@link #of(int, MemoryTracker, SqlExecutionCircuitBreaker)} opens it.
+     * Opens the translation for a probe of {@code probeRowCount} rows over the probe dictionary's
+     * current key count, which the owner's probe table reports.
+     * <p>
+     * The shared cache opens filled from the build when the caller found the probe dictionary
+     * eligible, see {@link #isEligibleProbeDictionary(SymbolTable)}, the build dictionary holds at
+     * most 32,768 keys and the probe dictionary at least eight times as many: every entry reads
+     * VALUE_NOT_FOUND, then each build key looks its text up in the probe dictionary and writes
+     * itself at the probe key it finds. An eligible probe dictionary holds each text once, and
+     * keyOf() and valueOf() match texts exactly, so each entry then holds the build key that
+     * resolving its probe key lazily would have returned. Otherwise it opens unresolved, as
+     * {@link #of(int, MemoryTracker, SqlExecutionCircuitBreaker)} opens it.
+     * <p>
+     * It opens only for a probe of at least one row per so many probe keys: for the parallel hash
+     * join 16 when it would fill from the build and 1 when it would open unresolved, for the fused
+     * GROUP BY 256. A probe of fewer rows leaves the translation to the views' own caches, each of
+     * which stops allocating at {@code slotCacheCapacity} entries: the translator then allocates
+     * nothing, looks no text up and checks no breaker.
+     *
+     * @param probeRowCount      the most probe rows whose keys the execution may translate first, or
+     *                           {@code Long.MAX_VALUE} when the caller cannot tell
+     * @param isParallelHashJoin true for the parallel hash join, whose serial plan opens no cache,
+     *                           false for the fused GROUP BY, which opened the shared cache for any
+     *                           probe before the views' caches existed
+     * @param slotCacheCapacity  the entries past which a view's own cache stops allocating
      */
     public void of(
             StaticSymbolTable probeKeyTable,
             StaticSymbolTable buildKeyTable,
             boolean isProbeDictionaryEligible,
+            long probeRowCount,
+            boolean isParallelHashJoin,
+            int slotCacheCapacity,
             @Nullable MemoryTracker memoryTracker,
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final int probeKeyCount = probeKeyTable.getSymbolCount();
         final int buildKeyCount = buildKeyTable.getSymbolCount();
-        if (!isProbeDictionaryEligible || !isFillableFromBuild(probeKeyCount, buildKeyCount)) {
+        final boolean isFilled = isProbeDictionaryEligible && isFillableFromBuild(probeKeyCount, buildKeyCount);
+        final int maxKeysPerProbeRow = !isParallelHashJoin
+                ? SHARED_CACHE_MAX_KEYS_PER_PROBE_ROW
+                : isFilled ? JOIN_FILLED_CACHE_MAX_KEYS_PER_PROBE_ROW : JOIN_UNRESOLVED_CACHE_MAX_KEYS_PER_PROBE_ROW;
+        if (!isSharedCacheInProbeReach(probeKeyCount, probeRowCount, maxKeysPerProbeRow)) {
+            close();
+            this.memoryTracker = memoryTracker;
+            this.slotCacheCapacity = slotCacheCapacity;
+            this.probeKeyTable = probeKeyTable;
+            this.buildKeyTable = buildKeyTable;
+            this.isProbeDictionaryEligible = isProbeDictionaryEligible;
+            this.isParallelHashJoin = isParallelHashJoin;
+            isSlotCached = true;
+            return;
+        }
+        if (!isFilled) {
             of(probeKeyCount, memoryTracker, circuitBreaker);
             return;
         }
@@ -226,36 +323,108 @@ public final class SymbolKeyTranslator implements QuietCloseable {
         }
     }
 
+    /**
+     * Reopens a translation that left the views to their own caches for a probe of more rows,
+     * {@code probeRowCount}, over the same dictionaries, by the rule of
+     * {@link #of(StaticSymbolTable, StaticSymbolTable, boolean, long, boolean, int, MemoryTracker, SqlExecutionCircuitBreaker)}:
+     * the shared cache opens, filled from the build or unresolved, once the rows reach it, and the
+     * translation stays as it is otherwise. Returns true when the shared cache opened, after which
+     * the caller points every view at it, see {@link View#rebind(SymbolKeyTranslator)}, and false
+     * when the translation already shares a cache, or still leaves the views to their own. The
+     * caller widens only while no view translates. On failure the translator closes, as {@code of()}
+     * does, and the views keep translating through their own caches.
+     */
+    public boolean widen(long probeRowCount, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (!isSlotCached) {
+            return false;
+        }
+        assert probeKeyTable != null && buildKeyTable != null;
+        // of() closes the translator first, which clears what it reopens from.
+        of(
+                probeKeyTable,
+                buildKeyTable,
+                isProbeDictionaryEligible,
+                probeRowCount,
+                isParallelHashJoin,
+                slotCacheCapacity,
+                memoryTracker,
+                circuitBreaker
+        );
+        return !isSlotCached;
+    }
+
     private static boolean isFillableFromBuild(int probeKeyCount, int buildKeyCount) {
         return buildKeyCount <= FILL_FROM_BUILD_MAX_KEY_COUNT
                 && (long) buildKeyCount * FILL_FROM_BUILD_MIN_PROBE_RATIO <= probeKeyCount;
     }
 
+    // True when the probe reads at least ceil(probeKeyCount / maxKeysPerProbeRow) rows, which a
+    // dictionary without keys always does. The key count is an int, so the long sum cannot overflow.
+    private static boolean isSharedCacheInProbeReach(int probeKeyCount, long probeRowCount, int maxKeysPerProbeRow) {
+        return probeRowCount >= ((long) probeKeyCount + maxKeysPerProbeRow - 1) / maxKeysPerProbeRow;
+    }
+
     /**
-     * One worker's translation path: its own two symbol tables over the shared cache. A view is
-     * valid while the cache stays open and both tables stay open, which is one execution; the
-     * object itself survives {@link #close()} and rebinds for the next execution.
+     * One worker's translation path: its own two symbol tables over the shared cache, or over a
+     * cache of its own when the translator opened none. A view is valid while the translator stays
+     * open and both tables stay open, which is one execution; the object itself survives
+     * {@link #close()} and rebinds for the next execution.
      */
     public static final class View implements QuietCloseable {
+        // The view's own cache starts as the ordinary join's SymbolTranslatingRecord's do: a page
+        // table of 32 slots and a hash map of 16 entries, 256 bytes each.
+        private static final int SLOT_CACHE_INITIAL_HASH_CAPACITY = 16;
+        private static final int SLOT_CACHE_INITIAL_PAGE_TABLE_CAPACITY = 32;
+        private static final double SLOT_CACHE_LOAD_FACTOR = 0.5;
+        // Closed, and holding no memory, until the first miss of a view without a shared cache. A
+        // probe key is never VALUE_IS_NULL there, which translate() answers first.
+        private final DirectIntIntPagedMap slotCache = new DirectIntIntPagedMap(
+                SLOT_CACHE_INITIAL_PAGE_TABLE_CAPACITY,
+                SLOT_CACHE_INITIAL_HASH_CAPACITY,
+                SLOT_CACHE_LOAD_FACTOR,
+                SymbolTable.VALUE_IS_NULL,
+                UNRESOLVED,
+                MemoryTag.NATIVE_JOIN_MAP
+        );
         private StaticSymbolTable buildKeyTable;
         private long cacheAddress;
         private int cacheKeyCount;
+        private boolean isSlotCached;
         private SymbolTable probeKeyTable;
+        private int slotCacheCapacity;
 
         /**
          * Both tables are borrowed views of this execution's sources; the caller keeps them alive.
+         * The view's own cache starts empty, under the translator's tracker: a key that a previous
+         * binding cached may stand for another text in these tables.
          */
         public void of(SymbolKeyTranslator translator, SymbolTable probeKeyTable, StaticSymbolTable buildKeyTable) {
             this.cacheAddress = translator.cacheAddress;
             this.cacheKeyCount = translator.cacheKeyCount;
+            this.isSlotCached = translator.isSlotCached;
+            this.slotCacheCapacity = translator.slotCacheCapacity;
             this.probeKeyTable = probeKeyTable;
             this.buildKeyTable = buildKeyTable;
+            slotCache.close();
+            slotCache.setMemoryTracker(translator.memoryTracker);
+        }
+
+        /**
+         * Points the view at the shared cache that the translator's
+         * {@link SymbolKeyTranslator#widen(long, SqlExecutionCircuitBreaker)} opened, over the view's
+         * own tables, and releases the view's own cache, which the shared one supersedes.
+         */
+        public void rebind(SymbolKeyTranslator translator) {
+            assert !translator.isSlotCached;
+            of(translator, probeKeyTable, buildKeyTable);
         }
 
         @Override
         public void close() {
+            slotCache.close();
             cacheAddress = 0;
             cacheKeyCount = 0;
+            isSlotCached = false;
             probeKeyTable = null;
             buildKeyTable = null;
         }
@@ -269,9 +438,7 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 return SymbolTable.VALUE_IS_NULL;
             }
             if (probeKey < 0 || probeKey >= cacheKeyCount) {
-                // The probe dictionary grew past the cache. Resolve the key like
-                // SymbolTranslatingRecord does for the ordinary join, without caching.
-                return buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                return translateOutsideCache(probeKey);
             }
             final long address = cacheAddress + (long) probeKey * Integer.BYTES;
             int buildKey = Unsafe.getInt(address);
@@ -280,6 +447,28 @@ public final class SymbolKeyTranslator implements QuietCloseable {
                 Unsafe.putInt(address, buildKey);
             }
             return buildKey;
+        }
+
+        // A key outside the shared cache: any key of a view without one, which goes through the view's
+        // own cache as SymbolTranslatingRecord's keys do, and, past the cap, stays only where its page
+        // exists; or a key past the dictionary that the shared cache covers, which a concurrent writer
+        // added, or a negative one, which resolves without caching.
+        private int translateOutsideCache(int probeKey) {
+            if (isSlotCached && probeKey > -1) {
+                final int cachedBuildKey = slotCache.get(probeKey);
+                if (cachedBuildKey != UNRESOLVED) {
+                    return cachedBuildKey;
+                }
+                final int buildKey = buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
+                if (slotCache.size() < slotCacheCapacity) {
+                    slotCache.reopen();
+                    slotCache.put(probeKey, buildKey);
+                } else {
+                    slotCache.putIfPageExists(probeKey, buildKey);
+                }
+                return buildKey;
+            }
+            return buildKeyTable.keyOf(probeKeyTable.valueOf(probeKey));
         }
     }
 }

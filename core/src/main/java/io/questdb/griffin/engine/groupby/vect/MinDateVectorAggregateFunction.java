@@ -117,6 +117,12 @@ public class MinDateVectorAggregateFunction extends DateFunction implements Vect
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // LONG_NULL when no frame had a value
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), accumulator.longValue());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }

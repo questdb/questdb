@@ -2962,15 +2962,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "          keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                                 "          values: [avg(radiation),avg(energy_power)]\n" +
                                 "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                factDimJoinPlan(joinType, 16));
 
                 // With no aliases in GROUP BY clause - 1
                 final String query2 = "SELECT\n" +
@@ -3002,15 +2994,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "          keys: [category,timestamp_floor]\n" +
                                 "          values: [avg(radiation),avg(energy_power)]\n" +
                                 "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                factDimJoinPlan(joinType, 16));
 
                 // With no aliases in GROUP BY clause - 2
                 final String query3 = "SELECT\n" +
@@ -3042,15 +3026,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "          keys: [category,timestamp_floor]\n" +
                                 "          values: [avg(radiation),avg(energy_power)]\n" +
                                 "            SelectedRecord\n" +
-                                "                Hash " + joinType + " Outer Join Light\n" +
-                                "                  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: fact_table\n" +
-                                "                    Hash\n" +
-                                "                        PageFrame\n" +
-                                "                            Row forward scan\n" +
-                                "                            Frame forward scan on: dim_apTemperature\n");
+                                factDimJoinPlan(joinType, 16));
 
                 // Without GROUP BY clause
                 final String query4 = "SELECT\n" +
@@ -3077,15 +3053,7 @@ public class GroupByTest extends AbstractCairoTest {
                                 "      keys: [dim_ap_temperature__category,fact_table__date_time_day]\n" +
                                 "      values: [avg(radiation),avg(energy_power)]\n" +
                                 "        SelectedRecord\n" +
-                                "            Hash " + joinType + " Outer Join Light\n" +
-                                "              condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n" +
-                                "                PageFrame\n" +
-                                "                    Row forward scan\n" +
-                                "                    Frame forward scan on: fact_table\n" +
-                                "                Hash\n" +
-                                "                    PageFrame\n" +
-                                "                        Row forward scan\n" +
-                                "                        Frame forward scan on: dim_apTemperature\n");
+                                factDimJoinPlan(joinType, 12));
             }
         });
     }
@@ -4929,6 +4897,35 @@ public class GroupByTest extends AbstractCairoTest {
                         5\t15.0
                         6\t15.0
                         """);
+    }
+
+    // The join node of testGroupByWithLeftJoin's plans, indented by the given number of spaces. The
+    // parallel hash join runs the LEFT join; the RIGHT and FULL joins keep the serial plan.
+    private static String factDimJoinPlan(String joinType, int indent) {
+        return ("Left".equals(joinType)
+                ? """
+                Async Hash Join workers: 1
+                  stages: 1
+                    Probe
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: fact_table
+                    Build
+                      joinType: left outer
+                      condition: dim_ap_temperature.id=fact_table.id_aparent_temperature
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: dim_apTemperature
+                """
+                : "Hash " + joinType + " Outer Join Light\n"
+                  + "  condition: dim_ap_temperature.id=fact_table.id_aparent_temperature\n"
+                  + "    PageFrame\n"
+                  + "        Row forward scan\n"
+                  + "        Frame forward scan on: fact_table\n"
+                  + "    Hash\n"
+                  + "        PageFrame\n"
+                  + "            Row forward scan\n"
+                  + "            Frame forward scan on: dim_apTemperature\n").indent(indent);
     }
 
     private void assertError(String query, String errorMessage) throws Exception {

@@ -68,6 +68,7 @@ class WalApplySqlExecutionContext extends SqlExecutionContextImpl {
         if (!engine.getConfiguration().isWalApplyParallelSqlEnabled()) {
             setParallelFilterEnabled(false);
             setParallelGroupByEnabled(false);
+            setParallelHashJoinEnabled(false);
             setParallelTopKEnabled(false);
             setParallelWindowJoinEnabled(false);
             setParallelReadParquetEnabled(false);

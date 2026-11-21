@@ -421,6 +421,14 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
                 && getMetadata().isColumnIndexed(columnIndex);
     }
 
+    /**
+     * True when the scan's record cursor yields every row of its frames, in frame order, rather than
+     * the rows an index picks: only such a cursor reports its frames' row count as its size.
+     */
+    public boolean isEntityScan() {
+        return rowCursorFactory.isEntity();
+    }
+
     public boolean isIntervalScan() {
         return partitionFrameCursorFactory.isIntervalScan();
     }

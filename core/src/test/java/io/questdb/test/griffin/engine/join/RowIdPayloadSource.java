@@ -120,6 +120,12 @@ final class RowIdPayloadSource implements HashJoinPayloadSource {
             return tables.getQuick(col);
         }
 
+        // A row's locator is its id, which every payload column reads.
+        @Override
+        public long locator() {
+            return rowId;
+        }
+
         @Override
         public SymbolTable newSymbolTable(int col) {
             assert symbols != null;
@@ -130,6 +136,12 @@ final class RowIdPayloadSource implements HashJoinPayloadSource {
         public void position(long rowIdAddress, long ordinal) {
             Assert.assertTrue("reader positioned while closed", isOpen);
             this.rowId = Unsafe.getLong(rowIdAddress);
+        }
+
+        @Override
+        public void positionLocator(long locator) {
+            Assert.assertTrue("reader positioned while closed", isOpen);
+            this.rowId = locator;
         }
 
         @Override

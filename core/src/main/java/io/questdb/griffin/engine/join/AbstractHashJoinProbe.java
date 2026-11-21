@@ -63,10 +63,33 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     @Nullable
     private HashJoinPayloadSource payloadSource;
     private long probeGeneration;
+    // The bytes of the snapshot's rows, which ofChain() asserts a chain head against.
+    private long rowsBytes;
     private long rowsCount;
 
     AbstractHashJoinProbe(HashJoinRowHeap rowHeap) {
         this.rowHeap = rowHeap;
+    }
+
+    /**
+     * The link that the next {@link #next()} follows: the {@link #next} field itself, so a worker
+     * that defers a key's chain pays nothing to take its head.
+     */
+    @Override
+    public final long chainHead() {
+        assert isCurrent() && !rowHeap.hasChainLengths();
+        return next;
+    }
+
+    /**
+     * Reads the length off the build's chain length index, see
+     * {@link HashJoinRowHeap#indexChainLengths}, which an unindexed heap has no block for: a read
+     * there would fault the JVM, so the read asserts the index along with the snapshot.
+     */
+    @Override
+    public final long chainLength(long link) {
+        assert isCurrent() && rowHeap.hasChainLengthIndex();
+        return link != 0 ? rowHeap.getChainLength(link) : 0;
     }
 
     @Override
@@ -121,6 +144,19 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         return handleBase + offset;
     }
 
+    /**
+     * Sets the {@link #next} field to the link: a link is a row's byte offset plus eight, and any
+     * probe of the snapshot reads the same rows at the same offsets.
+     */
+    @Override
+    public final void ofChain(long head) {
+        assert isCurrent() && !rowHeap.hasChainLengths();
+        // A worker sets a chain per probe row, so the check divides by nothing: a row's size is a
+        // power of two.
+        assert head == 0 || (head >= 8 && ((head - 8) & (rowHeap.getRowSize() - 1)) == 0 && head - 8 < rowsBytes);
+        next = head;
+    }
+
     @Override
     public final void recordAt(long handle) {
         assert isCurrent();
@@ -166,6 +202,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         this.handleBase = handleBase;
         this.heapAddress = rowsAddress;
         this.rowsCount = rowsCount;
+        assert Integer.bitCount(rowHeap.getRowSize()) == 1;
+        this.rowsBytes = rowsCount * rowHeap.getRowSize();
         this.probeGeneration = generation;
         next = 0;
         if (payload != null) {

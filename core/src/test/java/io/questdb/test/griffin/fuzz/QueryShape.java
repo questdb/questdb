@@ -34,6 +34,7 @@ package io.questdb.test.griffin.fuzz;
  * rate, which needs to know which generator produced the query.
  */
 public enum QueryShape {
+    EQUI_JOIN,
     GROUP_BY,
     GROUPING_SETS,
     HASH_JOIN_GROUP_BY,

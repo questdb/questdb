@@ -251,7 +251,19 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                     state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
                                 }
                             } else {
-                                state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                                // A CSV export without a row count reads the cursor's first rows
+                                // alone, up to its limit and one more; the cursor may then prepare
+                                // no more rows than those first. See
+                                // SqlExecutionContext.getFirstReadRows().
+                                final long firstReadRows = state.getFirstReadRows();
+                                if (firstReadRows != Long.MAX_VALUE) {
+                                    sqlExecutionContext.setFirstReadRows(firstReadRows);
+                                }
+                                try {
+                                    state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
+                                } finally {
+                                    sqlExecutionContext.setFirstReadRows(Long.MAX_VALUE);
+                                }
                             }
                             runQuery = false;
                         } catch (TableReferenceOutOfDateException e) {

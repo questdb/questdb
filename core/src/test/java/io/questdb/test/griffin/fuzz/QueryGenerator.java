@@ -26,6 +26,7 @@ package io.questdb.test.griffin.fuzz;
 
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.griffin.fuzz.clauses.EquiJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.GroupingSetsClause;
 import io.questdb.test.griffin.fuzz.clauses.HashJoinGroupByClause;
@@ -63,7 +64,11 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * disabling it gives the band back to GROUP BY without an extra rnd draw. When
  * grouping sets fuzzing is enabled ({@code groupingSetsEnabled}, on by default),
  * ROLLUP, CUBE and GROUPING SETS queries take the band [60, 65) of the GROUP BY
- * range in the same way.
+ * range in the same way. When row-producing equi-join fuzzing is enabled
+ * ({@code equiJoinEnabled}, on by default), INNER and LEFT joins on the shared key
+ * columns, alone or as stars of several joins over the run's tables, take the band
+ * [70, 75) of the SIMPLE range, the shape the parallel hash join runs; disabling it
+ * gives the band back to SIMPLE without an extra rnd draw.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -93,6 +98,7 @@ public final class QueryGenerator {
             boolean windowJoinEnabled,
             boolean hashJoinEnabled,
             boolean groupingSetsEnabled,
+            boolean equiJoinEnabled,
             FuzzConfig config
     ) {
         int pick = rnd.nextInt(100);
@@ -130,6 +136,17 @@ public final class QueryGenerator {
         if (hashJoinEnabled && pick >= 65 && pick < 70 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
             return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn, config).withShape(QueryShape.HASH_JOIN_GROUP_BY);
+        }
+
+        // Row-producing equi-join: the band [70, 75) of the SIMPLE range, checked before
+        // pickSource() so that, with the knob off or a single table, the query falls through to
+        // the shapes below exactly as it did before the band existed. The join reads real tables,
+        // which the parallel hash join takes as page frame scans, so the parallel join axis in
+        // QueryRunner has an operator to compare with the ordinary plan. Later joins of a star read
+        // any of the tables.
+        if (equiJoinEnabled && pick >= 70 && pick < 75 && tables.size() >= 2) {
+            FuzzTable other = pickOtherTable(rnd, tables, t);
+            return EquiJoinClause.generate(rnd, t, other, tables, ctx, injectFaultFn).withShape(QueryShape.EQUI_JOIN);
         }
 
         FuzzSource source = pickSource(rnd, t);

@@ -495,6 +495,9 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinLightOpenFailureReleasesAllocations() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         // Inflate the slave LongChain page above the limit so HashJoinLight's of() allocates
         // the join-key map (region 1) and then breaches on the slave chain reopen (region 2),
         // orphaning the map unless the failed open frees the cursor under the still-bound
@@ -652,6 +655,9 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashOuterJoinLightFailsOnLargeInput() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(40_000))");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(40_000))");
@@ -664,6 +670,9 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashOuterJoinLightOpenFailureReleasesAllocations() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         // Inflate the slave LongChain page above the limit so HashOuterJoinLight's of() breaches
         // on the slave chain reopen with isOpen already set. A small input keeps the join-key map
         // under the limit; reusing one factory across opens catches the isOpen desync.
@@ -681,6 +690,9 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashOuterJoinLightRepeatedCursorRunsReleaseAllocations() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         // The leak loop cycles both the join-key map and the LongChain slave
         // chain; the assertMemoryLeak around it is the load-bearing check that
         // the new LongChain tracker binding keeps malloc/free symmetric.
@@ -707,6 +719,9 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashOuterJoinLightSucceedsOnSmallInput() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x::SYMBOL k FROM long_sequence(20))");
             execute("CREATE TABLE s AS (SELECT x::SYMBOL k, x AS v FROM long_sequence(20))");

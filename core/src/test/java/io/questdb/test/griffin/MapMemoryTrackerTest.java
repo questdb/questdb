@@ -257,6 +257,9 @@ public class MapMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testHashJoinSucceedsOnSmallBuildSide() throws Exception {
+        // The test targets the serial join, which the parallel hash join would replace. setUp()
+        // copies the configuration's flag into the context, and the next setUp() restores it.
+        sqlExecutionContext.setParallelHashJoinEnabled(false);
         // Hash join with a small build fits the per-query limit and returns
         // the expected matches.
         assertMemoryLeak(() -> {

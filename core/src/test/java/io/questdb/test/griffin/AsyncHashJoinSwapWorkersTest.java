@@ -1,0 +1,196 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.griffin;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Before;
+import org.junit.Test;
+
+import java.util.concurrent.CountDownLatch;
+
+import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
+
+/**
+ * The runtime input swap of the parallel hash join on shared query workers that run on threads and
+ * on fibers: the left input, the smaller, builds on the owner and in rounds of the join's build
+ * sequence, and the right input's frames join on the workers. Every query compares with the ordinary
+ * plan, in order. {@link SlotGatedWorkStealingStrategy} holds the owner off until a worker took a
+ * slot of the build rounds' atom and of the probe's, so that the checks that every slot is back after
+ * a query, a failed one included, count slots that workers really took.
+ */
+public class AsyncHashJoinSwapWorkersTest extends AbstractCairoTest {
+    private static final Log LOG = LogFactory.getLog(AsyncHashJoinSwapWorkersTest.class);
+    private static final int WORKER_COUNT = 4;
+
+    @Override
+    @Before
+    public void setUp() {
+        factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
+        super.setUp();
+    }
+
+    @Test
+    public void testMemoryLimitsReleaseSlotsOnFiberWorkers() throws Exception {
+        assertMemoryLimitsReleaseSlots(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testMemoryLimitsReleaseSlotsOnThreadWorkers() throws Exception {
+        assertMemoryLimitsReleaseSlots(WorkerPoolMode.LEGACY);
+    }
+
+    @Test
+    public void testSwappedRoundsAndProbesOnFiberWorkers() throws Exception {
+        assertSwappedRoundsAndProbes(WorkerPoolMode.FIBER_HOST);
+    }
+
+    @Test
+    public void testSwappedRoundsAndProbesOnThreadWorkers() throws Exception {
+        assertSwappedRoundsAndProbes(WorkerPoolMode.LEGACY);
+    }
+
+    private static void assertMemoryLimitsReleaseSlots(WorkerPoolMode mode) throws Exception {
+        execute(mode, (db, context) -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 256);
+            final String sql = "SELECT d.k, d.w, t.v FROM d JOIN t ON d.k = t.k";
+            final String expected = ordinary(sql, context);
+            context.setParallelHashJoinEnabled(true);
+            try (RecordCursorFactory factory = db.select(sql, context)) {
+                final AsyncHashJoinRecordCursorFactory join = find(factory);
+                Assert.assertNotNull(join);
+                // Limits from a few bytes up fail the swapped query at every allocation in turn: the
+                // build of the left input on the owner and in its round tasks, the payload copy and
+                // the probe tasks over the right input. Each failure leaves every slot back, and the
+                // first limit that admits the query reads the rows.
+                final int failures = assertMemoryLimitSweep(
+                        expected,
+                        limit -> setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit),
+                        () -> result(factory, context),
+                        null,
+                        () -> {
+                            Assert.assertTrue(join.getAtom().isSwapped());
+                            Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        }
+                );
+                Assert.assertTrue(failures > 0);
+            }
+        });
+    }
+
+    private static void assertSwappedRoundsAndProbes(WorkerPoolMode mode) throws Exception {
+        execute(mode, (db, context) -> {
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 256);
+            for (long minRows : new long[]{0, Long.MAX_VALUE}) {
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, minRows);
+                for (String sql : new String[]{
+                        // d, the left input, is the smaller, so every execution hashes d and streams t.
+                        "SELECT d.k, d.w, d.s, t.v FROM d JOIN t ON d.k = t.k",
+                        "SELECT d.k, d.w, d.s, t.v, t.s FROM d JOIN t ON d.s = t.s",
+                        "SELECT d.k, d.w, t.v FROM d JOIN t ON d.l = t.l AND d.s = t.s",
+                        // A post-join filter over both inputs' columns, which the workers run per pair
+                        // with copies of their own.
+                        "SELECT d.k, d.w, t.v FROM d JOIN t ON d.k = t.k WHERE d.s <> t.s AND d.w % 3 <> t.v % 3",
+                        // The cursor closes with frames in flight, and a negative LIMIT counts the rows
+                        // first, then reads them again.
+                        "SELECT d.k, d.w, t.v FROM d JOIN t ON d.k = t.k LIMIT 7",
+                        "SELECT d.k, d.w, t.v FROM d JOIN t ON d.k = t.k LIMIT -7",
+                }) {
+                    final String expected = ordinary(sql, context);
+                    context.setParallelHashJoinEnabled(true);
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        final AsyncHashJoinRecordCursorFactory join = find(factory);
+                        Assert.assertNotNull(join);
+                        TestUtils.assertContains(plan(factory, context), "inputSwap: when the left input is smaller");
+                        // The owner waits until a worker took a slot of each atom: one that builds in
+                        // rounds runs round tasks on the workers, and every query runs probe tasks there.
+                        final CountDownLatch roundSlot = minRows == 0 ? new CountDownLatch(1) : null;
+                        final CountDownLatch probeSlot = new CountDownLatch(1);
+                        join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(roundSlot);
+                        join.getAtom().getPerWorkerLocks().setTestAcquireLatch(probeSlot);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertTrue(join.getAtom().isSwapped());
+                            final HashJoinBuildStage stage = join.getAtom().getStage(0);
+                            Assert.assertEquals(minRows == 0, stage.isBuiltInRounds());
+                            Assert.assertEquals(3_000, stage.getFrozenBuild().getRowCount());
+                        }
+                        Assert.assertEquals(expected, result(factory, context));
+                        if (roundSlot != null) {
+                            Assert.assertEquals(0, roundSlot.getCount());
+                        }
+                        Assert.assertEquals(0, probeSlot.getCount());
+                        Assert.assertEquals(0, join.getBuildRoundAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        Assert.assertEquals(0, join.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        join.getBuildRoundAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                        join.getAtom().getPerWorkerLocks().setTestAcquireLatch(null);
+                    }
+                }
+            }
+        });
+    }
+
+    private static void execute(WorkerPoolMode mode, WorkersCode code) throws Exception {
+        assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, null, configuration, LOG, (db, context) -> {
+            db.execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            (x % 500)::INT k,
+                            x v,
+                            (x % 300)::LONG l,
+                            ('s' || (x % 400))::SYMBOL s,
+                            timestamp_sequence('2024-01-01', 10_000_000) ts
+                        FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            db.execute("""
+                    CREATE TABLE d AS (
+                        SELECT
+                            x w,
+                            ('s' || (x % 350))::SYMBOL s,
+                            (x % 300)::LONG l,
+                            (x % 450)::INT k,
+                            timestamp_sequence('2023-12-01', 60_000_000) dts
+                        FROM long_sequence(3_000)
+                    ) TIMESTAMP(dts) PARTITION BY HOUR
+                    """, context);
+            // The key columns sit at other positions in the two tables.
+            context.changePageFrameSizes(256, 256);
+            code.run(db, context);
+        }));
+    }
+}

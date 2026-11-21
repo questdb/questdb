@@ -12609,12 +12609,16 @@ public class SampleByTest extends AbstractCairoTest {
                               fill: none
                               values: [count(*),sum(c1)]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: r.k=l.k
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                                        Hash
+                                    Async Hash Join workers: 1
+                                      stages: 1
+                                        Probe
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        Build
+                                          joinType: inner
+                                          condition: r.k=l.k
+                                          buildPayload: copied when the probe is large enough
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: b

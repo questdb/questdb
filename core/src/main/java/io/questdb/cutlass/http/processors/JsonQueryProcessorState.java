@@ -310,6 +310,20 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return nanosecondClock.getTicks() - this.executeStartNanos;
     }
 
+    /**
+     * The rows that the response reads from the query's cursor, Long.MAX_VALUE when it may read
+     * them all, as a row count does. A page without a row count reads the rows up to its last one
+     * and one more, which tells it whether more follow; a page that starts past its end reads the
+     * rows it skips, its first row and one more.
+     */
+    public long getFirstReadRows() {
+        if (countRows || stop == Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        final long lastRow = Math.max(stop, skip + 1);
+        return lastRow < Long.MAX_VALUE ? lastRow + 1 : Long.MAX_VALUE;
+    }
+
     public HttpConnectionContext getHttpConnectionContext() {
         return httpConnectionContext;
     }

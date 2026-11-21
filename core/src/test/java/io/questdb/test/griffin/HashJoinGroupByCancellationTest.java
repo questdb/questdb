@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
@@ -38,6 +39,7 @@ import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactor
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.griffin.engine.table.HashJoinBuildStage;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -77,8 +79,10 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
  * take effect fails the case too.
  */
 public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
-    private static final String ATOM = AsyncHashJoinGroupByAtom.class.getName();
     private static final String FACTORY = AsyncHashJoinGroupByRecordCursorFactory.class.getName();
+    // The build's rounds run the reducers of the atom's build stage.
+    private static final StackWalker STACK_WALKER = StackWalker.getInstance();
+    private static final String STAGE = HashJoinBuildStage.class.getName();
     // Each key shape and the prefix of its probe loops: the INT layout, a key staged into the build's
     // map, and the INT layout's translated SYMBOL key.
     private static final String[][] KEYS = {
@@ -153,6 +157,19 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
         assertCancellationInsidePayloadCopyRound(WorkerPoolMode.LEGACY);
     }
 
+    // A build of fewer rows than the configured 300_000 whose filter the JIT does not compile runs the
+    // filter in the frame tasks of its first round, where the filter's test_latched_counter() trips
+    // the breaker.
+    @Test
+    public void testCancellationInsideSmallFilteredBuildRounds() throws Exception {
+        assertCancellationInsideSmallFilteredBuildRounds(null);
+    }
+
+    @Test
+    public void testCancellationInsideSmallFilteredBuildRoundsWithLegacyWorkers() throws Exception {
+        assertCancellationInsideSmallFilteredBuildRounds(WorkerPoolMode.LEGACY);
+    }
+
     @Test
     public void testFailureInsidePartitionedProbe() throws Exception {
         assertFailureInsidePartitionedProbe(null);
@@ -181,6 +198,51 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
     @Test
     public void testFailureInsidePayloadCopyRoundWithLegacyWorkers() throws Exception {
         assertFailureInsidePayloadCopyRound(WorkerPoolMode.LEGACY);
+    }
+
+    // The frame tasks of such a build decode its Parquet frames, whose pages the case corrupts, so the
+    // first round fails, and the factory answers once the pages are back.
+    @Test
+    public void testFailureInsideSmallFilteredParquetBuildRounds() throws Exception {
+        // The case rewrites files that the table's readers map, which Windows does not allow.
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> TestUtils.execute(null, (db, compiler, ignored) -> {
+            try (SqlExecutionContextImpl context = context(db, 4)) {
+                createTables(db, context);
+                db.execute("ALTER TABLE b CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                for (String[] key : KEYS) {
+                    final String sql = "SELECT r.g, sum(b.w) w, sum(r.v) v, count() n FROM r JOIN (SELECT * FROM b WHERE s::STRING LIKE 's1%') b ON "
+                            + key[0] + " ORDER BY r.g";
+                    final String expected = expectedRows(db, sql, context);
+                    try (RecordCursorFactory factory = db.select(sql, context)) {
+                        Assert.assertTrue(plan(factory, context).contains("buildFilter: "));
+                        final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                        final HashJoinBuildStage stage = atom.getBuildingStage();
+                        for (int run = 0; run < 2; run++) {
+                            final long rounds = stage.getRoundCount();
+                            final ObjList<ParquetFile> originals = corruptParquetPages(db, "b");
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                cursor.hasNext();
+                                Assert.fail("expected the build's frame tasks to fail: " + sql);
+                            } catch (CairoException e) {
+                                Assert.assertFalse(sql + ": " + e.getMessage(), e.isCancellation());
+                                Assert.assertFalse(sql + ": " + e.getMessage(), e.isOutOfMemory());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "ParquetPartitionDecoder.decodeRowGroup");
+                            } finally {
+                                restore(originals);
+                            }
+                            // The first round, whose frame tasks failed.
+                            Assert.assertEquals(sql, rounds + 1, stage.getRoundCount());
+                            assertReused(db, context, factory, sql, expected);
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertTrue(sql, atom.isBuiltInRounds());
+                            }
+                        }
+                    }
+                }
+            }
+        }, configuration, LOG));
     }
 
     // With no workers and a work stealing threshold of zero, the owner reduces each frame that does
@@ -315,7 +377,7 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                             Assert.assertTrue(plan(factory, context).contains("Hash Join Group By"));
                             final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                             for (int run = 0; run < 2; run++) {
-                                final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, ATOM, "buildPartition", 1, true);
+                                final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, STAGE, "buildPartition", 1, true);
                                 context.with(breaker);
                                 assertCancelled(factory, context, sql);
                                 Assert.assertTrue(sql, breaker.getChecks() > 0);
@@ -326,6 +388,58 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                                     Assert.assertTrue(sql, atom.getBuildPartitionCount() > 1);
                                 }
                             }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    private void assertCancellationInsideSmallFilteredBuildRounds(@Nullable WorkerPoolMode mode) throws Exception {
+        assertMemoryLeak(() -> {
+            final TestWorkerPool pool = mode == null ? null : new TestWorkerPool(4, mode);
+            TestUtils.execute(pool, (db, compiler, ignored) -> {
+                try (SqlExecutionContextImpl context = context(db, 4)) {
+                    createTables(db, context);
+                    for (String[] key : KEYS) {
+                        // b's 200 rows over two days, a frame each, and a LIKE that keeps s1 and s10 to
+                        // s19, with test_latched_counter(), which the function's callback serves.
+                        final String sql = "SELECT r.g, sum(b.w) w, sum(r.v) v, count() n FROM r JOIN"
+                                + " (SELECT * FROM b WHERE s::STRING LIKE 's1%' AND test_latched_counter()) b ON " + key[0] + " ORDER BY r.g";
+                        TestLatchedCounterFunctionFactory.reset(null);
+                        final String expected = expectedRows(db, sql, context);
+                        final AtomicReference<AtomicBooleanCircuitBreaker> breaker = new AtomicReference<>();
+                        final AtomicInteger cancellations = new AtomicInteger();
+                        // The function takes the callback when it compiles.
+                        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                            @Override
+                            public boolean onGet(Record rec, int count) {
+                                final AtomicBooleanCircuitBreaker armed = breaker.get();
+                                if (armed != null && isOnStack(STAGE, "partitionFrame") && breaker.compareAndSet(armed, null)) {
+                                    cancellations.incrementAndGet();
+                                    armed.cancel();
+                                }
+                                return true;
+                            }
+                        });
+                        try (RecordCursorFactory factory = db.select(sql, context)) {
+                            Assert.assertTrue(plan(factory, context).contains("buildFilter: "));
+                            final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                            for (int run = 0; run < 2; run++) {
+                                final AtomicBooleanCircuitBreaker cancelling = new AtomicBooleanCircuitBreaker(db);
+                                context.with(cancelling);
+                                breaker.set(cancelling);
+                                assertCancelled(factory, context, sql);
+                                Assert.assertEquals(sql, run + 1, cancellations.get());
+                                assertReused(db, context, factory, sql, expected);
+                                try (RecordCursor cursor = factory.getCursor(context)) {
+                                    Assert.assertTrue(cursor.hasNext());
+                                    Assert.assertTrue(sql, atom.isBuiltInRounds());
+                                }
+                            }
+                        } finally {
+                            breaker.set(null);
+                            TestLatchedCounterFunctionFactory.reset(null);
                         }
                     }
                 }
@@ -355,7 +469,7 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
                                 Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is large enough"));
                                 final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
                                 for (int run = 0; run < 2; run++) {
-                                    final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, ATOM, "copyFramePayload", 1, true);
+                                    final MethodCheckCircuitBreaker breaker = new MethodCheckCircuitBreaker(db, STAGE, "copyFramePayload", 1, true);
                                     context.with(breaker);
                                     assertCancelled(factory, context, sql);
                                     Assert.assertTrue(sql, breaker.getChecks() > 0);
@@ -625,6 +739,10 @@ public class HashJoinGroupByCancellationTest extends AbstractCairoTest {
             Assert.assertEquals(sql, 0, tracker.getUsed());
             Assert.assertEquals(sql, 0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
         }
+    }
+
+    private static boolean isOnStack(String className, String methodName) {
+        return STACK_WALKER.walk(frames -> frames.anyMatch(frame -> frame.getClassName().equals(className) && frame.getMethodName().equals(methodName)));
     }
 
     private static String query(String key, boolean isFiltered) {

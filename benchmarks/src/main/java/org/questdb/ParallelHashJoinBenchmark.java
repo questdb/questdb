@@ -1,0 +1,1097 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package org.questdb;
+
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.join.HashJoinPayloadSource;
+import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
+import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolUtils;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
+import org.openjdk.jmh.annotations.Benchmark;
+import org.openjdk.jmh.annotations.BenchmarkMode;
+import org.openjdk.jmh.annotations.Fork;
+import org.openjdk.jmh.annotations.Level;
+import org.openjdk.jmh.annotations.Measurement;
+import org.openjdk.jmh.annotations.Mode;
+import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
+import org.openjdk.jmh.annotations.Scope;
+import org.openjdk.jmh.annotations.Setup;
+import org.openjdk.jmh.annotations.State;
+import org.openjdk.jmh.annotations.TearDown;
+import org.openjdk.jmh.annotations.Warmup;
+import org.openjdk.jmh.runner.Runner;
+import org.openjdk.jmh.runner.RunnerException;
+import org.openjdk.jmh.runner.options.Options;
+import org.openjdk.jmh.runner.options.OptionsBuilder;
+
+import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.lang.management.ThreadMXBean;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
+
+/**
+ * Compares the ordinary plan of INNER and LEFT hash joins ({@code Hash Join Light} and its outer
+ * variants) with the parallel {@code Async Hash Join} operator, over a fact table and dimensions of
+ * a thousand, a hundred thousand and {@code largeDimRows} rows.
+ * <p>
+ * Params:
+ * <ul>
+ *   <li>{@code plan}: {@code ORDINARY} compiles the query with the operator off, {@code OPERATOR}
+ *       with it on. A trial-level routing guard reads the plan and fails the trial when the query
+ *       does not run the plan it is meant to measure.</li>
+ *   <li>{@code shape}: the query, see {@link #sql()}. {@code STAR_*} join the fact table with the
+ *       three dimensions (INNER or LEFT; unfiltered, under a selective probe filter or under a
+ *       post-join filter), {@code SINGLE_*} with one dimension each, {@code WIDE} reads every column
+ *       of the star (consumer bound), {@code LIMIT_*} stop after 100 rows: {@code LIMIT_1K} and
+ *       {@code LIMIT_LARGE} of the join's own query, {@code LIMIT_SUBQUERY}, {@code LIMIT_CTE},
+ *       {@code LIMIT_ORDER_QUALIFIED}, {@code LIMIT_ASOF} and {@code LIMIT_UNION_ALL} of
+ *       {@code SINGLE_LARGE} under a sub-query, a CTE, an {@code ORDER BY f.ts DESC}, as the master
+ *       of an ASOF join and in both branches of a UNION ALL, whose LIMIT reaches the join, and
+ *       {@code LIMIT_WINDOW}, {@code LIMIT_CROSS} and {@code LIMIT_SNOWFLAKE} under a window
+ *       function, a CROSS JOIN and a LEFT join keyed on the dimension, whose LIMIT does not,
+ *       {@code FANOUT_*} join a
+ *       dimension with hot duplicate keys (no predicate, an ON residual, a post-join filter),
+ *       {@code PARQUET_*} and {@code MIXED_PROBE} read Parquet partitions, the Parquet probe also
+ *       under a selective probe filter and under an INNER lookup that most rows miss,
+ *       {@code COUNT_STAR} counts
+ *       the star, {@code STACK4_RESIDUAL} is a worker-bound stack of four LEFT joins with
+ *       residuals, and {@code BUILD_ONLY_RESIDUAL} and {@code BUILD_ONLY_RESIDUAL_REGEX} are LEFT
+ *       joins of the large dimension under a selective ON residual that reads the dimension alone,
+ *       a comparison and a regular expression over a VARCHAR column. {@code FANOUT_50_BUILD_ONLY_RESIDUAL}
+ *       and {@code FANOUT_50_BUILD_ONLY_RESIDUAL_ALL} are LEFT joins of a dimension of a thousand keys
+ *       of 50 rows each under an ON residual that reads the dimension alone, which keeps every row of
+ *       a tenth of the keys, and of every key. {@code SWAP_STACK_*} start
+ *       with a dimension joined with the fact table, which the join swaps to build the dimension,
+ *       and look a second dimension up by a key of the first one, which the workers read from its
+ *       build rows. {@code PARQUET_VAR_BUILD_*} join the first {@code probeRows} rows of the fact
+ *       table, an interval scan, with one, two and four copies of the Parquet large dimension and
+ *       read a VARCHAR column of each, a payload that the join cannot copy, so that its readers
+ *       decode the dimension's row groups, which the consumer reads, and {@code PARQUET_VAR_RESIDUAL}
+ *       reads it for a LEFT join's ON residual, which keeps the ordinary plan with the operator on:
+ *       the probe tasks would read it. {@code SMALL_SINGLE} and {@code SMALL_STAR} join the
+ *       first {@code probeRows} rows of the fact table with the small dimensions: one and two
+ *       joins. {@code COUNT_FANOUT_50} and {@code COUNT_FANOUT_1000} count, through the cursor's
+ *       {@code calculateSize()}, the rows of the fact table joined with a dimension of a thousand keys
+ *       of 50 and of 1,000 rows each, {@code COUNT_TINY_PROBE} those of the fact table's first
+ *       2,500 rows, an interval scan, joined with a dimension of {@code largeDimRows} rows of two
+ *       rows per key, and {@code COUNT_FANOUT_2_LARGE} those of the whole fact table joined with that
+ *       dimension. Each count runs from the top, and, with the suffix {@code _AFTER_PAGE}, after the
+ *       first 1,001 rows, as an HTTP request with {@code count=true} and a page of 1,000 rows does.
+ *       {@code SMALL_BUILD_REGEX} joins the fact table's first 5,000,000 rows with a 250,000-row
+ *       dimension over 25 daily partitions under a regex over its 400 to 600 character VARCHAR, which
+ *       the JIT does not compile, and {@code SMALL_BUILD_LIKE_TINY} its first 10,000 rows with a
+ *       dimension of 500 rows over 50 daily partitions, ten rows each, under a LIKE: builds of fewer
+ *       rows than parallel.min.rows whose filters run interpreted over many frames.
+ *       {@code FANOUT_5_RESIDUAL_ALL} to {@code FANOUT_50_RESIDUAL_ALL} are LEFT joins of the fact
+ *       table's first 3,000,000 rows, an interval scan, with a dimension of a thousand keys of 5, 10,
+ *       20 and 50 rows each under a cheap ON residual over both inputs that every pair passes,
+ *       {@code FANOUT_50_POST_FILTER_ALL} the INNER join of the same rows with the 50-row keys under
+ *       the same condition as a post-join filter, and {@code FANOUT_50_RESIDUAL_SELECTIVE} the LEFT
+ *       join under a residual that about 2% of the pairs pass. {@code FANOUT_MISESTIMATE} joins the
+ *       same rows with a dimension of one row for each of the fact table's thousand keys and
+ *       2,000,000 rows of a key that no fact row has: the builds lead the join to expect about 2,000
+ *       matches per probe row, where each meets one, which cuts the probe's frames to their
+ *       smallest. {@code FANOUT_1000_RESIDUAL_ALL} joins the fact table's first {@code probeRows}
+ *       rows, an interval scan, with a dimension of a thousand keys of 1,000 rows each under the
+ *       same cheap residual. Run them with {@code pageFrameMinRows} and {@code pageFrameMaxRows} at
+ *       the server's defaults, 100,000 and 1,000,000.
+ *       {@code SYMBOL_10M_*} join on a SYMBOL key a table whose SYMBOL column holds 10,000,000 texts,
+ *       one per row over January and February 2024, and 3,000 more rows in the first hour of March,
+ *       with dimensions of 1,000 and 50,000 of its texts: {@code SYMBOL_10M_INTERVAL_D1K} and
+ *       {@code SYMBOL_10M_INTERVAL_D50K} the March hour, {@code SYMBOL_10M_LIMIT_10} the first ten
+ *       rows that match, {@code SYMBOL_10M_LIMIT_1001} the first 1,001, of which the last lies in
+ *       March, past every January and February row, {@code SYMBOL_10M_BOUNDARY_BELOW} and {@code SYMBOL_10M_BOUNDARY_AT} the
+ *       table's first 39,062 and 39,063 rows, one key each, either side of the 256 texts per probe row
+ *       below which the fused GROUP BY translates the key through each worker's own cache rather than
+ *       a cache that the dictionary sizes, and {@code SYMBOL_10M_FULL} every row.
+ *       {@code SYMBOL_10M_PREFIX_D1K} and {@code SYMBOL_10M_PREFIX_D50K} join the table's first
+ *       {@code probeRows} rows, one key each, with either dimension: the join opens the shared cache
+ *       from 625,000 rows, one per 16 texts, with the 1,000 texts, which fill it, and from 10,000,000
+ *       rows, one per text, with the 50,000, which leave it unresolved.
+ *       {@code PAGE_1K} and {@code PAGE_LARGE} read the first 1,001 rows of {@code SINGLE_1K} and
+ *       {@code SINGLE_LARGE}, as an HTTP page of 1,000 rows without a row count does, and
+ *       {@code FETCH_1K} and {@code FETCH_LARGE} read every row of them, as a JDBC client of fetch
+ *       size 1,000 does, through a portal that it resumes. {@code PAGE_SYMBOL_10M} and
+ *       {@code FETCH_SYMBOL_10M} read {@code SYMBOL_10M_FULL}'s join so, whose rows past the
+ *       1,000th lie in March.
+ *       {@code SHORT_*_SYM} and {@code SHORT_*_VARCHAR} read ten rows of the whole fact table joined
+ *       on its SYMBOL column with a dimension of its 64 texts, and on its VARCHAR column with a
+ *       dimension of its thousand texts, one match per fact row, under an operator that the LIMIT
+ *       does not reach: a window function ({@code WINDOW}), a CROSS JOIN ({@code CROSS}), a serial
+ *       LEFT join keyed on the dimension ({@code SNOWFLAKE}), a filter that the join cannot run
+ *       ({@code WHERE}), UNION ({@code UNION}), EXCEPT and INTERSECT with the join of the fact
+ *       table's first rows ({@code EXCEPT}, {@code INTERSECT}), and the slave of an ASOF join of
+ *       the fact table's first ten rows ({@code ASOF_SLAVE}). {@code FULL_SYM} and
+ *       {@code FULL_VARCHAR} read every row of those joins.
+ *       </li>
+ *   <li>{@code workers}: the size of the query worker pool, and the context's worker count.</li>
+ *   <li>{@code factRows}, {@code largeDimRows}: table sizes. The fact table holds a million rows
+ *       per hourly partition.</li>
+ *   <li>{@code factPartitionBy}: the partitioning of the fact table and its Parquet copies,
+ *       {@code HOUR} by default; {@code DAY} keeps the fact table's 10,000,000 rows in one
+ *       partition, whose page frames reach {@code pageFrameMaxRows} at any worker count.</li>
+ *   <li>{@code pageFrameMinRows}: {@code cairo.sql.page.frame.min.rows}; the default of 1,000 is
+ *       the default configuration's, and a server's is 100,000.</li>
+ *   <li>{@code pageFrameMaxRows}: {@code cairo.sql.page.frame.max.rows}. The table scan splits
+ *       each partition into about one frame per worker, of at most this many rows: 250,000-row
+ *       frames up to 4 workers, 125,000 at 8 and 62,500 at 16.</li>
+ *   <li>{@code probeFrameMaxRows}: {@code cairo.sql.parallel.hash.join.page.frame.max.rows}, which
+ *       caps the join's native probe frames below {@code pageFrameMaxRows}, and, as on a server,
+ *       sets the join's task output cap and the default ring budget with it; -1 keeps the
+ *       default.</li>
+ *   <li>{@code ringBudgetFactor}: multiplies the default of
+ *       {@code cairo.sql.parallel.hash.join.tuple.ring.max.size}.</li>
+ *   <li>{@code payloadCopyMaxSize}: {@code cairo.sql.parallel.hash.join.groupby.payload.copy.max.size}
+ *       in bytes, 0 to never copy a payload; -1 keeps the default.</li>
+ *   <li>{@code isFreshCompile}: true compiles the query in every operation, so that each operation
+ *       runs a factory of its own, whose per-factory classes start cold.</li>
+ *   <li>{@code probeRows}: the fact rows that the {@code SMALL_*} and {@code PARQUET_VAR_BUILD_*}
+ *       shapes join, and the fsym rows that the {@code SYMBOL_10M_PREFIX_*} shapes join.</li>
+ *   <li>{@code parquetCacheSize}: {@code cairo.sql.parquet.cache.memory.size} in bytes, the Parquet
+ *       decode cache budget; -1 keeps the default.</li>
+ *   <li>{@code warmUpRows}: the probe rows after which a factory switches from the shared stepper
+ *       template to its stages' hidden copies; -1 keeps the default.</li>
+ *   <li>{@code hasFirstReadHint}: whether the {@code PAGE_*} and {@code FETCH_*} shapes open their
+ *       cursors under the rows that the client reads first, 1,001 and 1,000, as the HTTP and PG
+ *       servers pass them; false opens them as the servers did before they passed them.</li>
+ *   <li>{@code pageRows}: the rows that the {@code PAGE_*} shapes read, and that the
+ *       {@code FETCH_*} shapes' client reads first; -1 keeps 1,001 and 1,000.</li>
+ * </ul>
+ * {@code plan=OPERATOR_TEMPLATE} runs the operator with the shared stepper template in place of a
+ * hidden class per stage, whichever the warm-up picks. The report line names the ring budget and the
+ * bytes of the payload copies, by which the memory rule of the final table nets the peak.
+ * The configuration takes the server defaults that depend on the worker count: the reduce queue
+ * capacity, its shard count and the parallel filter dispatch limit.
+ * <p>
+ * Tables live under {@code questdb.bench.root} (a directory under {@code java.io.tmpdir} by
+ * default), named after their sizes, and every trial with those sizes reuses them; delete the
+ * directory to reclaim the space. After its measurement each trial runs the query once more,
+ * untimed, and prints one {@code HASHJOIN-REPORT} line: rows and a checksum (equal across plans),
+ * wall and CPU time of the consumer and the workers, the peak of the per-query tracked memory, and
+ * the operator's dispatch limit, ring memory, continuation chunks and probe frame count. The
+ * {@code LIMIT_*}, {@code PAGE_*} and {@code SHORT_*} shapes add the median time to the first row
+ * and the worker CPU per execution over 20 executions. With {@code -Dquestdb.bench.printPlan=true}
+ * the set-up prints the query's plan. With {@code -Dquestdb.bench.report=<file>} in the forked JVM's arguments the
+ * line also goes to that file.
+ */
+@State(Scope.Benchmark)
+@BenchmarkMode(Mode.AverageTime)
+@OutputTimeUnit(TimeUnit.MILLISECONDS)
+@Warmup(iterations = 2, time = 2)
+@Measurement(iterations = 5, time = 2)
+@Fork(value = 1, jvmArgsAppend = {
+        "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+        "--sun-misc-unsafe-memory-access=allow",
+        "--enable-native-access=ALL-UNNAMED"
+})
+public class ParallelHashJoinBenchmark {
+    // The rows that a count after a page reads first, as an HTTP request for a page of 1,000 rows
+    // reads one row past it.
+    private static final long COUNT_PAGE_ROWS = 1_001;
+    // The fact rows that the FANOUT_*_ALL, FANOUT_50_* and FANOUT_MISESTIMATE shapes join.
+    private static final long FAN_OUT_PROBE_ROWS = 3_000_000;
+    // The rows that a JDBC client of fetch size 1,000 reads first, those of each Execute.
+    private static final long FETCH_ROWS = 1_000;
+    private static final String DATA_VERSION = "v5";
+    private static final int LIMIT_PROBE_EXECUTIONS = 20;
+    private static final String OPERATOR_NODE = "Hash Join workers:";
+    // The rows that an HTTP page of 1,000 rows without a row count reads: one past the page.
+    private static final long PAGE_ROWS = 1_001;
+    private static final String POOL_NAME = "hashjoinbench";
+    // The SINGLE_LARGE shape's join, which the LIMIT_* shapes over other operators read.
+    private static final String SINGLE_LARGE_JOIN = "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
+    // The SHORT_*_SYM shapes' join: one row of ds, of 64 texts, per fact row.
+    private static final String SHORT_SYM_JOIN = "SELECT f.id, f.v, f.ts, d.w FROM fact f JOIN ds d ON f.sym = d.sym";
+    // The SHORT_*_VARCHAR shapes' join: one row of dn, of a thousand texts, per fact row.
+    private static final String SHORT_VARCHAR_JOIN = "SELECT f.id, f.v, f.ts, d.w FROM fact f JOIN dn d ON f.note = d.note";
+    private static final String STAR_JOINS = " JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k JOIN d3 ON f.k3 = d3.k";
+    private static final String STAR_LEFT_JOINS = " LEFT JOIN d1 ON f.k1 = d1.k LEFT JOIN d2 ON f.k2 = d2.k LEFT JOIN d3 ON f.k3 = d3.k";
+    private static final String STAR_SELECT = "SELECT f.id, f.v, d1.w w1, d2.w w2, d3.w w3 FROM ";
+    // The SYMBOL_10M_* shapes' join over the table of 10,000,000 SYMBOL texts.
+    private static final String SYMBOL_10M_JOIN = "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d1k d ON f.sym = d.sym";
+    // fsym's first timestamp, 2024-01-01T00:00:00Z.
+    private static final long SYMBOL_10M_START_MICROS = 1_704_067_200_000_000L;
+    private static final String[] TABLES = {"ready", "fact", "fact_pq", "fact_mixed", "d1", "d2", "d3", "d3_pq", "dup", "dup2", "dup5", "dup10", "dup20", "dup50", "dup1000", "dhot", "dreg", "dtiny", "fsym", "d1k", "d50k", "ds", "dn"};
+
+    @Param({"HOUR"})
+    public String factPartitionBy;
+
+    @Param({"10000000"})
+    public long factRows;
+
+    @Param({"true"})
+    public boolean hasFirstReadHint;
+
+    @Param({"false"})
+    public boolean isFreshCompile;
+
+    @Param({"5000000"})
+    public long largeDimRows;
+
+    @Param({"250000"})
+    public int pageFrameMaxRows;
+
+    @Param({"1000"})
+    public int pageFrameMinRows;
+
+    @Param({"-1"})
+    public long parquetCacheSize;
+
+    @Param({"-1"})
+    public long payloadCopyMaxSize;
+
+    @Param({"ORDINARY", "OPERATOR"})
+    public String plan;
+
+    @Param({"-1"})
+    public int probeFrameMaxRows;
+
+    // The rows that the client of a PAGE_ or FETCH_ shape reads first, -1 for 1,001 and 1,000.
+    @Param({"-1"})
+    public long pageRows;
+
+    @Param({"50000"})
+    public long probeRows;
+
+    @Param({"1"})
+    public double ringBudgetFactor;
+
+    @Param({"-1"})
+    public long warmUpRows;
+
+    @Param({
+            "STAR_INNER", "STAR_LEFT",
+            "STAR_INNER_PROBE_FILTER", "STAR_LEFT_PROBE_FILTER",
+            "STAR_INNER_POST_FILTER", "STAR_LEFT_POST_FILTER",
+            "SINGLE_1K", "SINGLE_100K", "SINGLE_LARGE",
+            "WIDE",
+            "LIMIT_1K", "LIMIT_LARGE",
+            "LIMIT_SUBQUERY", "LIMIT_CTE", "LIMIT_ORDER_QUALIFIED", "LIMIT_ASOF", "LIMIT_UNION_ALL",
+            "LIMIT_WINDOW", "LIMIT_CROSS", "LIMIT_SNOWFLAKE",
+            "PAGE_1K", "PAGE_LARGE", "FETCH_1K", "FETCH_LARGE",
+            "PAGE_SYMBOL_10M", "FETCH_SYMBOL_10M",
+            "FANOUT_DEFERRED", "FANOUT_RESIDUAL", "FANOUT_POST_FILTER",
+            "PARQUET_PROBE", "PARQUET_PROBE_FILTER", "PARQUET_PROBE_INNER_MISS", "PARQUET_BUILD", "MIXED_PROBE",
+            "COUNT_STAR",
+            "STACK4_RESIDUAL",
+            "BUILD_ONLY_RESIDUAL", "BUILD_ONLY_RESIDUAL_REGEX",
+            "FANOUT_50_BUILD_ONLY_RESIDUAL", "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL",
+            "SWAP_STACK_100K", "SWAP_STACK_LARGE",
+            "PARQUET_VAR_BUILD_1", "PARQUET_VAR_BUILD_2", "PARQUET_VAR_BUILD_4", "PARQUET_VAR_RESIDUAL",
+            "SMALL_SINGLE", "SMALL_STAR",
+            "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE", "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE",
+            "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE", "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE",
+            "SMALL_BUILD_REGEX", "SMALL_BUILD_LIKE_TINY",
+            "FANOUT_5_RESIDUAL_ALL", "FANOUT_10_RESIDUAL_ALL", "FANOUT_20_RESIDUAL_ALL", "FANOUT_50_RESIDUAL_ALL",
+            "FANOUT_50_POST_FILTER_ALL", "FANOUT_50_RESIDUAL_SELECTIVE", "FANOUT_MISESTIMATE",
+            "FANOUT_1000_RESIDUAL_ALL",
+            "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K", "SYMBOL_10M_LIMIT_10", "SYMBOL_10M_LIMIT_1001",
+            "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL",
+            "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K",
+            "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",
+            "SHORT_UNION_SYM", "SHORT_EXCEPT_SYM", "SHORT_INTERSECT_SYM", "SHORT_ASOF_SLAVE_SYM",
+            "SHORT_WINDOW_VARCHAR", "SHORT_CROSS_VARCHAR", "SHORT_SNOWFLAKE_VARCHAR", "SHORT_WHERE_VARCHAR",
+            "SHORT_UNION_VARCHAR", "SHORT_EXCEPT_VARCHAR", "SHORT_INTERSECT_VARCHAR", "SHORT_ASOF_SLAVE_VARCHAR",
+            "FULL_SYM", "FULL_VARCHAR"
+    })
+    public String shape;
+
+    @Param({"2", "4", "8", "16"})
+    public int workers;
+
+    private SqlExecutionContextImpl ctx;
+    private CairoEngine engine;
+    private RecordCursorFactory factory;
+    private String text;
+    private int[] types;
+    private long[] workerThreadIds;
+    private WorkerPool workerPool;
+
+    public static void main(String[] args) throws RunnerException {
+        Options opt = new OptionsBuilder()
+                .include(ParallelHashJoinBenchmark.class.getSimpleName())
+                .build();
+        new Runner(opt).run();
+    }
+
+    @Benchmark
+    public long run() throws SqlException {
+        if (isFreshCompile) {
+            try (
+                    RecordCursorFactory fresh = engine.select(text, ctx);
+                    RecordCursor cursor = openCursor(fresh)
+            ) {
+                return isCountShape() ? count(cursor) : consume(cursor, types, readRows());
+            }
+        }
+        try (RecordCursor cursor = openCursor(factory)) {
+            return isCountShape() ? count(cursor) : consume(cursor, types, readRows());
+        }
+    }
+
+    @Setup(Level.Trial)
+    public void setUp() throws Exception {
+        try {
+            open();
+        } catch (Throwable th) {
+            // JMH runs no tear-down after a failed set-up, and the workers would keep the fork alive.
+            free();
+            throw th;
+        }
+    }
+
+    @TearDown(Level.Trial)
+    public void tearDown() throws Exception {
+        try {
+            if (factory != null) {
+                report();
+            }
+        } finally {
+            free();
+        }
+    }
+
+    private static long consume(RecordCursor cursor, int[] types) {
+        return consume(cursor, types, Long.MAX_VALUE);
+    }
+
+    private static long consume(RecordCursor cursor, int[] types, long maxRows) {
+        final Record record = cursor.getRecord();
+        long checksum = 0;
+        for (long rows = 0; rows < maxRows && cursor.hasNext(); rows++) {
+            checksum = checksum * 31 + consumeRow(record, types);
+        }
+        return checksum;
+    }
+
+    private static long consumeRow(Record record, int[] types) {
+        long checksum = 0;
+        for (int i = 0; i < types.length; i++) {
+            final long value = switch (ColumnType.tagOf(types[i])) {
+                case ColumnType.INT -> record.getInt(i);
+                case ColumnType.LONG -> record.getLong(i);
+                case ColumnType.DOUBLE -> Double.doubleToLongBits(record.getDouble(i));
+                case ColumnType.TIMESTAMP -> record.getTimestamp(i);
+                case ColumnType.SYMBOL -> {
+                    final CharSequence symbol = record.getSymA(i);
+                    yield symbol != null ? symbol.length() : -1;
+                }
+                case ColumnType.VARCHAR -> {
+                    final Utf8Sequence varchar = record.getVarcharA(i);
+                    yield varchar != null ? varchar.size() : -1;
+                }
+                default -> throw new UnsupportedOperationException("column type: " + ColumnType.nameOf(types[i]));
+            };
+            checksum = checksum * 31 + value;
+        }
+        return checksum;
+    }
+
+    private static long cpuNanos(ThreadMXBean threads, long[] ids) {
+        long nanos = 0;
+        for (long id : ids) {
+            nanos += Math.max(0, threads.getThreadCpuTime(id));
+        }
+        return nanos;
+    }
+
+    private static AsyncHashJoinRecordCursorFactory findOperator(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof AsyncHashJoinRecordCursorFactory join) {
+                return join;
+            }
+        }
+        return null;
+    }
+
+    // The timestamp of the fact table's row after its first rows: timestamps step by 3,600 micros.
+    private static String probeBound(long rows) {
+        final StringSink sink = new StringSink();
+        sink.put('\'');
+        MicrosFormatUtils.appendDateTimeUSec(sink, rows * 3_600);
+        sink.put('\'');
+        return sink.toString();
+    }
+
+    // A LEFT join of the fact table's first FAN_OUT_PROBE_ROWS rows with a dimension of duplicate keys,
+    // under an ON residual over both inputs.
+    private static String fanOutResidualSql(String dimension, String residual) {
+        return "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN " + dimension + " x ON f.k1 = x.k AND " + residual
+                + " WHERE f.ts < " + probeBound(FAN_OUT_PROBE_ROWS);
+    }
+
+    private String smallProbeBound() {
+        return probeBound(probeRows);
+    }
+
+    // Ten rows of a SHORT_ shape's join under an operator that the LIMIT does not reach. EXCEPT and
+    // INTERSECT read their right input, a join of the fact table's first rows, whole first.
+    private String shortReadSql() {
+        final boolean isSymbol = shape.endsWith("_SYM");
+        final String from = isSymbol ? " FROM fact f JOIN ds d ON f.sym = d.sym" : " FROM fact f JOIN dn d ON f.note = d.note";
+        final String join = (isSymbol ? SHORT_SYM_JOIN : SHORT_VARCHAR_JOIN);
+        final String operator = shape.substring("SHORT_".length(), shape.lastIndexOf('_'));
+        return switch (operator) {
+            case "WINDOW" -> "SELECT f.id, f.v, d.w, row_number() OVER () rn" + from + " LIMIT 10";
+            case "CROSS" -> "SELECT * FROM (" + join + ") j CROSS JOIN long_sequence(2) c LIMIT 10";
+            case "SNOWFLAKE" -> "SELECT f.id, f.v, d.w, d1.k k1" + from + " LEFT JOIN d1 ON d.w = d1.w LIMIT 10";
+            case "WHERE" -> "SELECT * FROM (" + join + ") WHERE rnd_int(0, 1, 0) >= 0 LIMIT 10";
+            case "UNION" -> "SELECT * FROM (" + join + " UNION " + join + ") LIMIT 10";
+            case "EXCEPT" ->
+                    "SELECT * FROM (" + join + " EXCEPT " + join + " WHERE f.ts < " + probeBound(10) + ") LIMIT 10";
+            case "INTERSECT" ->
+                    "SELECT * FROM (" + join + " INTERSECT " + join + " WHERE f.ts < " + probeBound(1_000) + ") LIMIT 10";
+            case "ASOF_SLAVE" -> "SELECT q.id, j.w FROM (SELECT id, ts FROM fact WHERE ts < " + probeBound(10)
+                    + ") q ASOF JOIN ((" + join + ") TIMESTAMP(ts)) j LIMIT 10";
+            default -> throw new IllegalArgumentException("unknown shape: " + shape);
+        };
+    }
+
+    private static String starSql(String fact, String joins) {
+        return STAR_SELECT + fact + " f" + joins;
+    }
+
+    // The rows of a COUNT_ shape: the rows read first, if any, and the count of the rest that the
+    // cursor's calculateSize() returns.
+    private long count(RecordCursor cursor) {
+        final long pageRows = shape.endsWith("_AFTER_PAGE") ? COUNT_PAGE_ROWS : 0;
+        long rows = 0;
+        while (rows < pageRows && cursor.hasNext()) {
+            rows++;
+        }
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        cursor.calculateSize(ctx.getCircuitBreaker(), counter);
+        return rows + counter.get();
+    }
+
+    private void createDimension(String name, long rows) throws SqlException {
+        engine.execute("CREATE TABLE " + name + " AS (SELECT (x - 1)::INT k, x - 1 kl, ('c' || ((x - 1) % 16))::SYMBOL s, " +
+                "(x * 7 % 1_000) / 1000.0 w, ('name' || x)::VARCHAR name FROM long_sequence(" + rows + "))", ctx);
+    }
+
+    // The dimensions of the SHORT_* and FULL_* shapes, which a data directory of an earlier revision
+    // of the benchmark lacks: ds, the fact table's 64 SYMBOL texts, and dn, its thousand VARCHAR texts.
+    private void createShortReadDimensions() throws SqlException {
+        if (engine.getTableTokenIfExists("ds") == null) {
+            engine.execute("CREATE TABLE ds AS (SELECT ('s' || (x - 1))::SYMBOL sym, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(64))", ctx);
+        }
+        if (engine.getTableTokenIfExists("dn") == null) {
+            engine.execute("CREATE TABLE dn AS (SELECT ('note' || (x - 1))::VARCHAR note, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000))", ctx);
+        }
+    }
+
+    private void createTables(Path root) throws SqlException {
+        createShortReadDimensions();
+        if (engine.getTableTokenIfExists("ready") != null) {
+            return;
+        }
+        System.out.println("creating benchmark tables in " + root);
+        for (String table : TABLES) {
+            engine.execute("DROP TABLE IF EXISTS " + table, ctx);
+        }
+        // A million rows per hourly partition. k3 misses the large dimension for a sixth of the rows.
+        engine.execute("CREATE TABLE fact AS (SELECT x id, (x * 7_919 % 1_000)::INT k1, " +
+                "(x * 2_654_435_761 % 100_000)::INT k2, (x * 2_654_435_761 % " + (largeDimRows * 6 / 5) + ")::INT k3, " +
+                "(x * 31 % 100)::INT sel, (x * 17 % 1_000) / 1000.0 v, ('s' || (x % 64))::SYMBOL sym, " +
+                "('note' || (x % 1_000))::VARCHAR note, timestamp_sequence(0, 3_600) ts " +
+                "FROM long_sequence(" + factRows + ")) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
+        createDimension("d1", 1_000);
+        createDimension("d2", 100_000);
+        createDimension("d3", largeDimRows);
+        // 1,000 keys; keys 0 to 249 are hot, with eight rows each.
+        engine.execute("CREATE TABLE dup AS (" +
+                "SELECT (x - 1)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000) " +
+                "UNION ALL SELECT ((x - 1) % 250)::INT k, (x * 13 % 997) / 997.0 w FROM long_sequence(1_750))", ctx);
+        // Two rows per key over half as many keys as rows, which k3 meets for about two fifths of the
+        // fact rows; and 50 and 1,000 rows of each of k1's thousand keys.
+        engine.execute("CREATE TABLE dup2 AS (SELECT ((x - 1) % " + (largeDimRows / 2) + ")::INT k, (x * 7 % 1_000) / 1000.0 w " +
+                "FROM long_sequence(" + largeDimRows + "))", ctx);
+        engine.execute("CREATE TABLE dup5 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(5_000))", ctx);
+        engine.execute("CREATE TABLE dup10 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(10_000))", ctx);
+        engine.execute("CREATE TABLE dup20 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(20_000))", ctx);
+        engine.execute("CREATE TABLE dup50 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(50_000))", ctx);
+        engine.execute("CREATE TABLE dup1000 AS (SELECT ((x - 1) % 1_000)::INT k, (x * 7 % 1_000) / 1000.0 w FROM long_sequence(1_000_000))", ctx);
+        // One row for each of k1's thousand keys, and 2,000,000 rows of a key that no fact row has.
+        engine.execute("CREATE TABLE dhot AS (SELECT CASE WHEN x <= 1_000 THEN (x - 1)::INT ELSE -1 END k, (x * 7 % 1_000) / 1000.0 w " +
+                "FROM long_sequence(2_001_000))", ctx);
+        // The active partition cannot convert, so each Parquet table gets one more row, in a later
+        // partition, whose keys match no dimension.
+        engine.execute("CREATE TABLE fact_pq AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
+        engine.execute("INSERT INTO fact_pq VALUES (-1, -1, -1, -1, -1, 0.0, 's0', 'note', '2100-01-01')", ctx);
+        engine.execute("ALTER TABLE fact_pq CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01'", ctx);
+        engine.execute("CREATE TABLE fact_mixed AS (SELECT * FROM fact) TIMESTAMP(ts) PARTITION BY " + factPartitionBy, ctx);
+        engine.execute("INSERT INTO fact_mixed VALUES (-1, -1, -1, -1, -1, 0.0, 's0', 'note', '2100-01-01')", ctx);
+        // Every other partition converts.
+        engine.execute("ALTER TABLE fact_mixed CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01' AND hour(ts) % 2 = 0", ctx);
+        // About a million rows per daily partition.
+        engine.execute("CREATE TABLE d3_pq AS (SELECT k, kl, s, w, name, timestamp_sequence(0, 86_400) ts FROM d3) " +
+                "TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("INSERT INTO d3_pq VALUES (-2, -2, 'c0', 0.0, 'name', '2100-01-01')", ctx);
+        engine.execute("ALTER TABLE d3_pq CONVERT PARTITION TO PARQUET WHERE ts < '2100-01-01'", ctx);
+        // Builds of fewer rows than parallel.min.rows, over many daily partitions, with VARCHAR texts
+        // that a regex or a LIKE filters: 250,000 rows of 400 to 600 characters over 25 days, and 500
+        // rows of 8 to 16 characters over 50 days. The seeded generator gives every revision's
+        // tables the same texts.
+        ctx.setRandom(new Rnd(42, 4242));
+        engine.execute("CREATE TABLE dreg AS (SELECT ((x - 1) * 4)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(400, 600, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000) ts FROM long_sequence(250_000)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        engine.execute("CREATE TABLE dtiny AS (SELECT ((x - 1) * 16)::INT k, (x * 7 % 1_000) / 1000.0 w, rnd_str(8, 16, 0)::VARCHAR s, " +
+                "timestamp_sequence(0, 8_640_000_000) ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY", ctx);
+        createSymbolTables(engine, ctx);
+        engine.execute("CREATE TABLE ready (x INT)", ctx);
+    }
+
+    /**
+     * The tables of the SYMBOL_10M_* shapes: fsym, whose SYMBOL column holds 10,000,000 texts, k1 to
+     * k10000000, one per row every half second from 2024-01-01, and 3,000 more rows over the first hour
+     * of 2024-03-01 with k1 to k1000; d1k and d50k, with the texts k1 to k1000 and k1 to k50000.
+     */
+    private static void createSymbolTables(CairoEngine engine, SqlExecutionContextImpl ctx) throws SqlException {
+        engine.execute("CREATE TABLE fsym (sym SYMBOL CAPACITY 16777216 NOCACHE, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || x, x, timestamp_sequence('2024-01-01', 500_000) FROM long_sequence(10_000_000)", ctx);
+        engine.execute("INSERT INTO fsym SELECT 'k' || ((x - 1) % 1_000 + 1), x, timestamp_sequence('2024-03-01', 1_200_000) FROM long_sequence(3_000)", ctx);
+        engine.execute("CREATE TABLE d1k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(1_000))", ctx);
+        engine.execute("CREATE TABLE d50k AS (SELECT ('k' || x)::SYMBOL sym, x v FROM long_sequence(50_000))", ctx);
+    }
+
+    // The timestamp before which fsym holds the given number of rows, quoted.
+    private static String symbol10mPrefixBound(long rows) {
+        final StringSink sink = new StringSink();
+        sink.put('\'');
+        MicrosFormatUtils.appendDateTimeUSec(sink, SYMBOL_10M_START_MICROS + rows * 500_000);
+        sink.put('\'');
+        return sink.toString();
+    }
+
+    /**
+     * The predicate of the SYMBOL_10M_* shapes: the March hour, or fsym's first 39,062 or 39,063 rows,
+     * whose timestamps step by half a second: ceil(10,000,000 / 256) = 39,063.
+     */
+    private static String symbol10mPredicate(String shape) {
+        return switch (shape) {
+            case "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_INTERVAL_D50K" -> " WHERE f.ts IN '2024-03-01T00'";
+            case "SYMBOL_10M_BOUNDARY_BELOW" -> " WHERE f.ts < '2024-01-01T05:25:31.000000Z'";
+            case "SYMBOL_10M_BOUNDARY_AT" -> " WHERE f.ts < '2024-01-01T05:25:31.500000Z'";
+            default -> "";
+        };
+    }
+
+    private long[] findWorkerThreads() {
+        final List<Long> ids = new ArrayList<>();
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            if (thread.getName().startsWith(POOL_NAME + '_')) {
+                ids.add(thread.getId());
+            }
+        }
+        if (ids.size() != workers) {
+            throw new IllegalStateException("found " + ids.size() + " worker threads, expected " + workers);
+        }
+        return ids.stream().mapToLong(Long::longValue).toArray();
+    }
+
+    private void free() {
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+        factory = Misc.free(factory);
+        if (workerPool != null) {
+            workerPool.halt();
+            workerPool = null;
+        }
+        ctx = Misc.free(ctx);
+        engine = Misc.free(engine);
+    }
+
+    // The rows that the client of a PAGE_ or FETCH_ shape reads first, Long.MAX_VALUE for any other
+    // shape and without hasFirstReadHint.
+    private long firstReadRows() {
+        if (!hasFirstReadHint) {
+            return Long.MAX_VALUE;
+        }
+        if (shape.startsWith("PAGE_")) {
+            return pageRows > 0 ? pageRows : PAGE_ROWS;
+        }
+        if (shape.startsWith("FETCH_")) {
+            return pageRows > 0 ? pageRows : FETCH_ROWS;
+        }
+        return Long.MAX_VALUE;
+    }
+
+    // True for a shape that counts the join's rows through the cursor rather than reads them.
+    private boolean isCountShape() {
+        return shape.startsWith("COUNT_") && !"COUNT_STAR".equals(shape);
+    }
+
+    private void open() throws Exception {
+        final Path root = Paths.get(System.getProperty("questdb.bench.root", Paths.get(
+                System.getProperty("java.io.tmpdir"),
+                "questdb-parallel-hash-join-bench-" + DATA_VERSION + "-f" + factRows + "-d" + largeDimRows
+                        + ("HOUR".equals(factPartitionBy) ? "" : "-p" + factPartitionBy)
+        ).toString()));
+        Files.createDirectories(root);
+        final int queueCapacity = Numbers.ceilPow2(Math.min(4 * workers, 256));
+        final CairoConfiguration configuration = new DefaultCairoConfiguration(root.toString()) {
+            @Override
+            public int getPageFrameReduceQueueCapacity() {
+                return queueCapacity;
+            }
+
+            @Override
+            public int getPageFrameReduceShardCount() {
+                return Math.min(workers, 4);
+            }
+
+            @Override
+            public int getSqlPageFrameMaxRows() {
+                return pageFrameMaxRows;
+            }
+
+            @Override
+            public int getSqlPageFrameMinRows() {
+                return pageFrameMinRows;
+            }
+
+            @Override
+            public int getSqlParallelFilterDispatchLimit() {
+                return Math.min(workers, 32);
+            }
+
+            @Override
+            public int getSqlParallelHashJoinPageFrameMaxRows() {
+                return probeFrameMaxRows < 0 ? super.getSqlParallelHashJoinPageFrameMaxRows() : probeFrameMaxRows;
+            }
+
+            @Override
+            public long getSqlParallelHashJoinGroupByPayloadCopyMaxSize() {
+                return payloadCopyMaxSize < 0 ? super.getSqlParallelHashJoinGroupByPayloadCopyMaxSize() : payloadCopyMaxSize;
+            }
+
+            @Override
+            public long getSqlParquetCacheMemorySize() {
+                return parquetCacheSize < 0 ? super.getSqlParquetCacheMemorySize() : parquetCacheSize;
+            }
+
+            @Override
+            public long getSqlParallelHashJoinTupleRingMaxSize() {
+                return (long) (super.getSqlParallelHashJoinTupleRingMaxSize() * ringBudgetFactor);
+            }
+        };
+        engine = new CairoEngine(configuration);
+        workerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            @Override
+            public String getPoolName() {
+                return POOL_NAME;
+            }
+
+            @Override
+            public int getWorkerCount() {
+                return workers;
+            }
+        });
+        WorkerPoolUtils.setupQueryJobs(workerPool, engine);
+        workerPool.start();
+        workerThreadIds = findWorkerThreads();
+
+        ctx = new SqlExecutionContextImpl(engine, workers);
+        ctx.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null, -1, null);
+        createTables(root);
+
+        final boolean isOperator = switch (plan) {
+            case "ORDINARY" -> false;
+            case "OPERATOR", "OPERATOR_TEMPLATE" -> true;
+            default -> throw new IllegalArgumentException("unknown plan: " + plan);
+        };
+        AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(!"OPERATOR_TEMPLATE".equals(plan));
+        AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(warmUpRows < 0 ? AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS : warmUpRows);
+        ctx.setParallelHashJoinEnabled(isOperator);
+        text = sql();
+        factory = engine.select(text, ctx);
+        final TextPlanSink planSink = new TextPlanSink();
+        planSink.of(factory, ctx);
+        final String planText = planSink.getSink().toString();
+        if (Boolean.getBoolean("questdb.bench.printPlan")) {
+            System.out.println("HASHJOIN-PLAN shape=" + shape + '\n' + planText);
+        }
+        // The probe tasks of PARQUET_VAR_RESIDUAL would read a VARCHAR payload of a Parquet build,
+        // which keeps the ordinary plan.
+        if ((isOperator && !"PARQUET_VAR_RESIDUAL".equals(shape)) != planText.contains(OPERATOR_NODE)) {
+            throw new IllegalStateException("routing drift: plan=" + plan + " shape=" + shape + '\n' + planText);
+        }
+        if ((shape.startsWith("SMALL_") || shape.startsWith("PARQUET_VAR_") || shape.startsWith("COUNT_TINY_PROBE")
+                || "FANOUT_1000_RESIDUAL_ALL".equals(shape)
+                || !symbol10mPredicate(shape).isEmpty()) && !planText.contains("Interval forward scan")) {
+            throw new IllegalStateException("the probe is not an interval scan: shape=" + shape + '\n' + planText);
+        }
+        final RecordMetadata metadata = factory.getMetadata();
+        types = new int[metadata.getColumnCount()];
+        for (int i = 0; i < types.length; i++) {
+            types[i] = metadata.getColumnType(i);
+        }
+    }
+
+    // Opens the cursor as the HTTP and PG servers do, under the rows that the client reads first.
+    private RecordCursor openCursor(RecordCursorFactory factory) throws SqlException {
+        ctx.setFirstReadRows(firstReadRows());
+        try {
+            return factory.getCursor(ctx);
+        } finally {
+            ctx.setFirstReadRows(Long.MAX_VALUE);
+        }
+    }
+
+    // The rows that the shape reads: a PAGE_ shape's page, every row otherwise.
+    private long readRows() {
+        return shape.startsWith("PAGE_") ? (pageRows > 0 ? pageRows : PAGE_ROWS) : Long.MAX_VALUE;
+    }
+
+    private void report() throws SqlException, IOException, InterruptedException {
+        final ThreadMXBean threads = ManagementFactory.getThreadMXBean();
+        final StringBuilder line = new StringBuilder();
+        line.append("HASHJOIN-REPORT shape=").append(shape)
+                .append(" plan=").append(plan)
+                .append(" workers=").append(workers)
+                .append(" factRows=").append(factRows)
+                .append(" largeDimRows=").append(largeDimRows)
+                .append(" pageFrameMinRows=").append(pageFrameMinRows)
+                .append(" pageFrameMaxRows=").append(pageFrameMaxRows)
+                .append(" probeFrameMaxRows=").append(engine.getConfiguration().getSqlParallelHashJoinPageFrameMaxRows())
+                .append(" taskOutputMaxRows=").append(engine.getConfiguration().getSqlParallelHashJoinTaskOutputMaxRows())
+                .append(" factPartitionBy=").append(factPartitionBy)
+                .append(" ringBudgetFactor=").append(ringBudgetFactor)
+                .append(" payloadCopyMaxSize=").append(payloadCopyMaxSize)
+                .append(" isFreshCompile=").append(isFreshCompile)
+                .append(" probeRows=").append(probeRows)
+                .append(" parquetCacheSize=").append(parquetCacheSize)
+                .append(" warmUpRows=").append(warmUpRows)
+                .append(" hasFirstReadHint=").append(hasFirstReadHint)
+                .append(" pageRows=").append(pageRows)
+                .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
+
+        final long workerCpu0 = cpuNanos(threads, workerThreadIds);
+        final long consumerCpu0 = threads.getCurrentThreadCpuTime();
+        final long wall0 = System.nanoTime();
+        long rows = 0;
+        long checksum = 0;
+        final long peak;
+        try (RecordCursor cursor = openCursor(factory)) {
+            final MemoryTracker tracker = ctx.getMemoryTracker();
+            if (tracker == null) {
+                throw new IllegalStateException("no per-query memory tracker");
+            }
+            final PeakSampler sampler = new PeakSampler(tracker);
+            sampler.start();
+            try {
+                if (isCountShape()) {
+                    // A count reads no row past the page, so the rows are its result.
+                    rows = count(cursor);
+                    checksum = rows;
+                } else {
+                    final Record record = cursor.getRecord();
+                    final long maxRows = readRows();
+                    while (rows < maxRows && cursor.hasNext()) {
+                        checksum = checksum * 31 + consumeRow(record, types);
+                        rows++;
+                    }
+                }
+            } finally {
+                peak = sampler.finish();
+            }
+            final AsyncHashJoinRecordCursorFactory join = findOperator(factory);
+            if (join != null) {
+                long copyBytes = 0;
+                long outputCacheBytes = 0;
+                final int workerSlot = ctx.getSharedQueryWorkerCount();
+                for (int k = 0, n = join.getSpec().getStageCount(); k < n; k++) {
+                    copyBytes += join.getAtom().getStage(k).getPayloadCopySize();
+                    final HashJoinPayloadSource.Reader output = join.getAtom().getStage(k).getPayloadReader(workerSlot);
+                    if (output != null) {
+                        outputCacheBytes += HashJoinBuildFrames.getReaderCachedBytes(output);
+                    }
+                }
+                line.append(" outputDecodeCacheBytes=").append(outputCacheBytes);
+                line.append(" ringBudget=").append(engine.getConfiguration().getSqlParallelHashJoinTupleRingMaxSize())
+                        .append(" copyBytes=").append(copyBytes)
+                        .append(" dispatchLimit=").append(join.getAtom().getRing().getDispatchLimit())
+                        .append(" ringBytes=").append(join.getAtom().getRing().getAllocatedBytes())
+                        .append(" continuations=").append(join.getAtom().getContinuationCount())
+                        .append(" probeFrames=").append(join.getProbeFrameCount())
+                        .append(" swapped=").append(join.getAtom().isSwapped());
+            }
+        }
+        final long wall = System.nanoTime() - wall0;
+        final long consumerCpu = threads.getCurrentThreadCpuTime() - consumerCpu0;
+        final long workerCpu = cpuNanos(threads, workerThreadIds) - workerCpu0;
+        line.append(" rows=").append(rows)
+                .append(" checksum=").append(checksum)
+                .append(String.format(Locale.ROOT, " wallMs=%.1f consumerCpuMs=%.1f workerCpuMs=%.1f",
+                        wall / 1e6, consumerCpu / 1e6, workerCpu / 1e6))
+                .append(" peakTrackedBytes=").append(peak);
+
+        if (shape.startsWith("LIMIT_") || shape.startsWith("PAGE_") || shape.startsWith("SHORT_")) {
+            final long[] firstRow = new long[LIMIT_PROBE_EXECUTIONS];
+            final long limitWorkerCpu0 = cpuNanos(threads, workerThreadIds);
+            final long limitConsumerCpu0 = threads.getCurrentThreadCpuTime();
+            for (int i = 0; i < LIMIT_PROBE_EXECUTIONS; i++) {
+                final long start = System.nanoTime();
+                try (RecordCursor cursor = openCursor(factory)) {
+                    if (cursor.hasNext()) {
+                        firstRow[i] = System.nanoTime() - start;
+                        consume(cursor, types, readRows() - 1);
+                    }
+                }
+            }
+            final long limitWorkerCpu = cpuNanos(threads, workerThreadIds) - limitWorkerCpu0;
+            final long limitConsumerCpu = threads.getCurrentThreadCpuTime() - limitConsumerCpu0;
+            Arrays.sort(firstRow);
+            line.append(String.format(Locale.ROOT,
+                    " firstRowMsMedian=%.3f limitWorkerCpuMsPerOp=%.3f limitConsumerCpuMsPerOp=%.3f",
+                    firstRow[LIMIT_PROBE_EXECUTIONS / 2] / 1e6,
+                    limitWorkerCpu / 1e6 / LIMIT_PROBE_EXECUTIONS,
+                    limitConsumerCpu / 1e6 / LIMIT_PROBE_EXECUTIONS));
+        }
+
+        final String text = line.toString();
+        System.out.println(text);
+        final String reportFile = System.getProperty("questdb.bench.report");
+        if (reportFile != null) {
+            Files.write(Paths.get(reportFile), (text + '\n').getBytes(StandardCharsets.UTF_8),
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        }
+    }
+
+    private String sql() {
+        return switch (shape) {
+            case "STAR_INNER" -> starSql("fact", STAR_JOINS);
+            case "STAR_LEFT" -> starSql("fact", STAR_LEFT_JOINS);
+            // A JIT-compiled filter on the fact table that keeps 1% of its rows.
+            case "STAR_INNER_PROBE_FILTER" -> starSql("fact", STAR_JOINS) + " WHERE f.sel = 7";
+            case "STAR_LEFT_PROBE_FILTER" -> starSql("fact", STAR_LEFT_JOINS) + " WHERE f.sel = 7";
+            // A filter on the second join's output that keeps about half of its rows.
+            case "STAR_INNER_POST_FILTER" -> starSql("fact", STAR_JOINS) + " WHERE d2.w > f.v";
+            case "STAR_LEFT_POST_FILTER" -> starSql("fact", STAR_LEFT_JOINS) + " WHERE d2.w > f.v";
+            case "SINGLE_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
+            case "SINGLE_100K" -> "SELECT f.id, f.v, d2.w FROM fact f JOIN d2 ON f.k2 = d2.k";
+            case "SINGLE_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
+            case "WIDE" -> "SELECT * FROM fact f" + STAR_JOINS;
+            case "LIMIT_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k LIMIT 100";
+            case "LIMIT_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "LIMIT_SUBQUERY" -> "SELECT * FROM (" + SINGLE_LARGE_JOIN + ") LIMIT 100";
+            case "LIMIT_CTE" -> "WITH j AS (" + SINGLE_LARGE_JOIN + ") SELECT * FROM j LIMIT 100";
+            case "LIMIT_ORDER_QUALIFIED" -> SINGLE_LARGE_JOIN + " ORDER BY f.ts DESC LIMIT 100";
+            case "LIMIT_ASOF" ->
+                    "SELECT f.id, f.v, d3.w, t.w tw FROM fact f JOIN d3 ON f.k3 = d3.k ASOF JOIN dtiny t LIMIT 100";
+            case "LIMIT_UNION_ALL" -> SINGLE_LARGE_JOIN + " UNION ALL " + SINGLE_LARGE_JOIN + " LIMIT 100";
+            case "LIMIT_WINDOW" ->
+                    "SELECT f.id, f.v, d3.w, row_number() OVER () rn FROM fact f JOIN d3 ON f.k3 = d3.k LIMIT 100";
+            case "LIMIT_CROSS" ->
+                    "SELECT j.id, j.v, j.w, c.x FROM (" + SINGLE_LARGE_JOIN + ") j CROSS JOIN long_sequence(2) c LIMIT 100";
+            case "LIMIT_SNOWFLAKE" ->
+                    "SELECT f.id, f.v, d3.w, d1.w w1 FROM fact f JOIN d3 ON f.k3 = d3.k LEFT JOIN d1 ON d3.k = d1.k LIMIT 100";
+            case "PAGE_1K", "FETCH_1K" -> "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k";
+            case "PAGE_LARGE", "FETCH_LARGE" -> "SELECT f.id, f.v, d3.w FROM fact f JOIN d3 ON f.k3 = d3.k";
+            case "PAGE_SYMBOL_10M", "FETCH_SYMBOL_10M" -> SYMBOL_10M_JOIN;
+            // A quarter of the fact rows meet a hot key with eight matches.
+            case "FANOUT_DEFERRED" -> "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k";
+            case "FANOUT_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup x ON f.k1 = x.k AND x.w > f.v * 0.5";
+            case "FANOUT_POST_FILTER" ->
+                    "SELECT f.id, f.v, x.w FROM fact f JOIN dup x ON f.k1 = x.k WHERE x.w > f.v * 0.5";
+            case "PARQUET_PROBE" -> starSql("fact_pq", STAR_JOINS);
+            // The Parquet star under a filter that keeps 1% of the fact rows.
+            case "PARQUET_PROBE_FILTER" -> starSql("fact_pq", STAR_JOINS) + " WHERE f.sel = 7";
+            // An INNER join that 99% of the Parquet fact rows miss, whose output reads more fact
+            // columns than its key.
+            case "PARQUET_PROBE_INNER_MISS" ->
+                    "SELECT f.id, f.v, f.sym, f.note, d1.w FROM fact_pq f JOIN d1 ON f.k2 = d1.k";
+            case "PARQUET_BUILD" -> "SELECT f.id, f.v, d.w FROM fact f JOIN d3_pq d ON f.k3 = d.k";
+            case "MIXED_PROBE" -> starSql("fact_mixed", STAR_JOINS);
+            case "COUNT_STAR" -> "SELECT count(*) FROM fact f" + STAR_JOINS;
+            case "STACK4_RESIDUAL" -> "SELECT f.id, a.w wa, b.w wb, c.w wc, e.w we FROM fact f " +
+                    "LEFT JOIN d1 a ON f.k1 = a.k AND sqrt(a.w) > f.v " +
+                    "LEFT JOIN d2 b ON f.k2 = b.k AND sqrt(b.w) > f.v " +
+                    "LEFT JOIN d3 c ON f.k3 = c.k AND sqrt(c.w) > f.v " +
+                    "LEFT JOIN d1 e ON f.sel = e.k AND sqrt(e.w) > f.v";
+            // ON residuals of the large dimension alone that keep a sixteenth and a tenth of its rows.
+            case "BUILD_ONLY_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.s = 'c3'";
+            case "BUILD_ONLY_RESIDUAL_REGEX" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN d3 x ON f.k3 = x.k AND x.name ~ '7$'";
+            // dup50's w is the same for each key's 50 rows: an ON residual over it keeps every row of a
+            // tenth of the keys, about 5.9 rows per fact row, or of every key, 50 rows per fact row.
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w < 0.1";
+            case "FANOUT_50_BUILD_ONLY_RESIDUAL_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup50 x ON f.k1 = x.k AND x.w >= 0";
+            // The dimension is the smaller input, so the first join builds it and probes the fact
+            // table; the second join's key, a column of the dimension, comes from its build rows.
+            case "SWAP_STACK_100K" ->
+                    "SELECT f.id, d2.w w2, d1.w w1 FROM d2 JOIN fact f ON d2.k = f.k2 JOIN d1 ON d2.kl = d1.kl";
+            case "SWAP_STACK_LARGE" ->
+                    "SELECT f.id, d3.w w3, d1.w w1 FROM d3 JOIN fact f ON d3.k = f.k3 JOIN d1 ON d3.kl = d1.kl";
+            // VARCHAR payloads of a Parquet build, which the join reads where they live.
+            case "PARQUET_VAR_BUILD_1" ->
+                    "SELECT f.id, a.name na FROM fact f JOIN d3_pq a ON f.k3 = a.k WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_BUILD_2" -> "SELECT f.id, a.name na, b.name nb FROM fact f JOIN d3_pq a ON f.k3 = a.k " +
+                    "JOIN d3_pq b ON f.k3 = b.k WHERE f.ts < " + smallProbeBound();
+            case "PARQUET_VAR_BUILD_4" -> "SELECT f.id, a.name na, b.name nb, c.name nc, e.name ne FROM fact f " +
+                    "JOIN d3_pq a ON f.k3 = a.k JOIN d3_pq b ON f.k3 = b.k JOIN d3_pq c ON f.k3 = c.k JOIN d3_pq e ON f.k3 = e.k " +
+                    "WHERE f.ts < " + smallProbeBound();
+            // The probe tasks read the VARCHAR payload for an ON residual over both inputs.
+            case "PARQUET_VAR_RESIDUAL" ->
+                    "SELECT f.id, a.w FROM fact f LEFT JOIN d3_pq a ON f.k3 = a.k AND a.name <> f.note " +
+                            "WHERE f.ts < " + smallProbeBound();
+            // The fact table's first probeRows rows, an interval scan: timestamps step by 3,600 micros.
+            case "SMALL_SINGLE" ->
+                    "SELECT f.id, f.v, d1.w FROM fact f JOIN d1 ON f.k1 = d1.k WHERE f.ts < " + smallProbeBound();
+            case "SMALL_STAR" ->
+                    "SELECT f.id, f.v, d1.w w1, d2.w w2 FROM fact f JOIN d1 ON f.k1 = d1.k JOIN d2 ON f.k2 = d2.k WHERE f.ts < "
+                            + smallProbeBound();
+            // The fact rows meet 50 and 1,000 rows of their key: 500 million and 10 billion rows.
+            case "COUNT_FANOUT_50", "COUNT_FANOUT_50_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k";
+            case "COUNT_FANOUT_1000", "COUNT_FANOUT_1000_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup1000 x ON f.k1 = x.k";
+            // The fact table's first 2,500 rows, an interval scan, over the large dimension of two rows
+            // per key, which the count indexes whole for a few short chains: about 2,000 joined rows,
+            // which a page leaves about a thousand of to count.
+            case "COUNT_TINY_PROBE", "COUNT_TINY_PROBE_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k WHERE f.ts < "
+                            + probeBound(2_500);
+            case "COUNT_FANOUT_2_LARGE", "COUNT_FANOUT_2_LARGE_AFTER_PAGE" ->
+                    "SELECT f.id, x.w FROM fact f JOIN dup2 x ON f.k3 = x.k";
+            // Builds of fewer rows than parallel.min.rows, whose filters run interpreted over many
+            // frames; the filtered input never swaps.
+            case "SMALL_BUILD_REGEX" ->
+                    "SELECT f.id, f.v, d.w FROM fact f JOIN dreg d ON f.k3 = d.k WHERE d.s ~ '[B-C][X-Z][B-C][X-Z]' AND f.ts < "
+                            + probeBound(5_000_000);
+            case "SMALL_BUILD_LIKE_TINY" ->
+                    "SELECT f.id, f.v, d.w FROM fact f JOIN dtiny d ON f.k1 = d.k WHERE d.s LIKE '%B%' AND f.ts < "
+                            + probeBound(10_000);
+            // The fact table's first 3,000,000 rows meet 5 to 50 rows of their key, all of which a cheap
+            // condition over both inputs keeps, or about 2% of them: v and w lie in [0, 0.999].
+            case "FANOUT_5_RESIDUAL_ALL" -> fanOutResidualSql("dup5", "x.w + f.v >= 0");
+            case "FANOUT_10_RESIDUAL_ALL" -> fanOutResidualSql("dup10", "x.w + f.v >= 0");
+            case "FANOUT_20_RESIDUAL_ALL" -> fanOutResidualSql("dup20", "x.w + f.v >= 0");
+            case "FANOUT_50_RESIDUAL_ALL" -> fanOutResidualSql("dup50", "x.w + f.v >= 0");
+            case "FANOUT_50_RESIDUAL_SELECTIVE" -> fanOutResidualSql("dup50", "x.w - f.v > 0.8");
+            // The fact table's first probeRows rows meet 1,000 rows of their key, all of which the
+            // condition keeps.
+            case "FANOUT_1000_RESIDUAL_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f LEFT JOIN dup1000 x ON f.k1 = x.k AND x.w + f.v >= 0 WHERE f.ts < "
+                            + smallProbeBound();
+            case "FANOUT_50_POST_FILTER_ALL" ->
+                    "SELECT f.id, f.v, x.w FROM fact f JOIN dup50 x ON f.k1 = x.k WHERE x.w + f.v >= 0 AND f.ts < "
+                            + probeBound(FAN_OUT_PROBE_ROWS);
+            // Each fact row meets one row of dhot, whose builds lead the join to expect about 2,000.
+            case "FANOUT_MISESTIMATE" ->
+                    "SELECT f.id, f.v, h.w FROM fact f JOIN dhot h ON f.k1 = h.k WHERE h.w + f.v >= 0 AND f.ts < "
+                            + probeBound(FAN_OUT_PROBE_ROWS);
+            // A SYMBOL key over a dictionary of 10,000,000 texts, see createSymbolTables().
+            case "SYMBOL_10M_INTERVAL_D1K", "SYMBOL_10M_BOUNDARY_BELOW", "SYMBOL_10M_BOUNDARY_AT", "SYMBOL_10M_FULL" ->
+                    SYMBOL_10M_JOIN + symbol10mPredicate(shape);
+            case "SYMBOL_10M_INTERVAL_D50K" ->
+                    "SELECT f.ts, f.sym, d.v FROM fsym f JOIN d50k d ON f.sym = d.sym" + symbol10mPredicate(shape);
+            case "SYMBOL_10M_LIMIT_10" -> SYMBOL_10M_JOIN + " LIMIT 10";
+            // The join yields the first 1,000 rows of fsym, then 3,000 rows in its last partition.
+            case "SYMBOL_10M_LIMIT_1001" -> SYMBOL_10M_JOIN + " LIMIT 1001";
+            case "FULL_SYM" -> SHORT_SYM_JOIN;
+            case "FULL_VARCHAR" -> SHORT_VARCHAR_JOIN;
+            case "SHORT_WINDOW_SYM", "SHORT_CROSS_SYM", "SHORT_SNOWFLAKE_SYM", "SHORT_WHERE_SYM",
+                 "SHORT_UNION_SYM", "SHORT_EXCEPT_SYM", "SHORT_INTERSECT_SYM", "SHORT_ASOF_SLAVE_SYM",
+                 "SHORT_WINDOW_VARCHAR", "SHORT_CROSS_VARCHAR", "SHORT_SNOWFLAKE_VARCHAR", "SHORT_WHERE_VARCHAR",
+                 "SHORT_UNION_VARCHAR", "SHORT_EXCEPT_VARCHAR", "SHORT_INTERSECT_VARCHAR", "SHORT_ASOF_SLAVE_VARCHAR" ->
+                    shortReadSql();
+            // fsym's first probeRows rows, whose timestamps step by half a second from 2024-01-01.
+            case "SYMBOL_10M_PREFIX_D1K", "SYMBOL_10M_PREFIX_D50K" -> "SELECT f.ts, f.sym, d.v FROM fsym f JOIN "
+                    + (shape.endsWith("D1K") ? "d1k" : "d50k") + " d ON f.sym = d.sym WHERE f.ts < "
+                    + symbol10mPrefixBound(probeRows);
+            default -> throw new IllegalArgumentException("unknown shape: " + shape);
+        };
+    }
+
+    /**
+     * Polls the per-query tracker while the query runs. The workers allocate between polls, so the
+     * peak is a lower bound of the true one; the memory a query keeps until its cursor closes, its
+     * builds and the tuple ring among it, shows at every poll.
+     */
+    private static final class PeakSampler extends Thread {
+        private final MemoryTracker tracker;
+        private volatile boolean isRunning = true;
+        private volatile long peak;
+
+        private PeakSampler(MemoryTracker tracker) {
+            super("hashjoinbench-peak-sampler");
+            setDaemon(true);
+            this.tracker = tracker;
+        }
+
+        @Override
+        public void run() {
+            long max = 0;
+            while (isRunning) {
+                max = Math.max(max, tracker.getUsed());
+                peak = max;
+                LockSupport.parkNanos(20_000);
+            }
+        }
+
+        private long finish() throws InterruptedException {
+            final long last = tracker.getUsed();
+            isRunning = false;
+            join();
+            return Math.max(peak, last);
+        }
+    }
+}

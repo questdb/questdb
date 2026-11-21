@@ -108,6 +108,12 @@ public class SumShortVectorAggregateFunction extends LongFunction implements Vec
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), sum.sum());
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), count.sum());
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), 0);
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset + 1), 0);

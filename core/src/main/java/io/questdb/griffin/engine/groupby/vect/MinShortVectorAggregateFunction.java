@@ -118,6 +118,13 @@ public class MinShortVectorAggregateFunction extends IntFunction implements Vect
     }
 
     @Override
+    public void initNullKeyRosti(long pRosti) {
+        // the keyed natives keep a SHORT in a LONG, LONG_NULL for no value
+        final long value = accumulator.longValue();
+        Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), value != Numbers.INT_NULL ? value : Numbers.LONG_NULL);
+    }
+
+    @Override
     public void initRosti(long pRosti) {
         Unsafe.putLong(Rosti.getInitialValueSlot(pRosti, valueOffset), Numbers.LONG_NULL);
     }
