@@ -51,6 +51,7 @@ import org.junit.Test;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -410,6 +411,94 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCheckRightAfterAlterAsAcceptsNewSqlType() throws Exception {
+        // ADD COLUMN right after ALTER ... AS checks the cast from the column of the new SQL, which it waits for: a
+        // DOUBLE column takes the DOUBLE that replaces the SYMBOL the old SQL produced, as when the view's WAL applies
+        // between the statements.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price, last(sym) AS tag FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN tag");
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price, avg(price) AS tag FROM base SAMPLE BY 1h)");
+            final AtomicBoolean isWaitSeen = armSeamDrain("price_1h");
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN tag DOUBLE");
+            Assert.assertTrue(isWaitSeen.get());
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('a', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // the refresh recomputes the 01:00 bucket only: avg(4.5, 5.5) = 5.0
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice\ttag
+                    2024-01-01T00:00:00.000000Z\ta\t3.5\tnull
+                    2024-01-01T00:00:00.000000Z\tb\t2.5\tnull
+                    2024-01-01T01:00:00.000000Z\ta\t5.5\t5.0
+                    """);
+            assertMapping("price_1h", "", "");
+            assertViewValid("price_1h");
+        });
+    }
+
+    @Test
+    public void testCastCheckRightAfterAlterAsChecksNewSql() throws Exception {
+        // ADD COLUMN right after ALTER ... AS waits until the view's WAL applies the new SQL, and checks the cast from
+        // the column the new SQL produces, as when the WAL applies between the statements: a CHAR column cannot take
+        // its DOUBLE, and a DOUBLE column can.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView();
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price, last(amount) AS amount, avg(price) AS x FROM base SAMPLE BY 1h)");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            final AtomicBoolean isWaitSeen = armSeamDrain("price_1h");
+            final String addChar = "ALTER MATERIALIZED VIEW price_1h ADD COLUMN x CHAR";
+            try {
+                execute(addChar);
+                Assert.fail("ADD COLUMN must refuse a CHAR column for the DOUBLE of the new SQL");
+            } catch (SqlException e) {
+                TestUtils.assertEquals("inconvertible types: DOUBLE -> CHAR [from=x, to=x]", e.getFlyweightMessage());
+                Assert.assertEquals(addChar.indexOf("x CHAR"), e.getPosition());
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            assertColumns("price_1h", """
+                    column\ttype
+                    ts\tTIMESTAMP
+                    sym\tSYMBOL
+                    price\tDOUBLE
+                    amount\tDOUBLE
+                    """);
+
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN x DOUBLE");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('a', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // the refresh recomputes the 01:00 bucket only: avg(4.5, 5.5) = 5.0
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice\tamount\tx
+                    2024-01-01T00:00:00.000000Z\ta\t3.5\t30.0\tnull
+                    2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0\tnull
+                    2024-01-01T01:00:00.000000Z\ta\t5.5\t50.0\t5.0
+                    """);
+            // FULL computes x for every bucket: avg(1.5, 3.5) = 2.5 for a at 00:00
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice\tamount\tx
+                    2024-01-01T00:00:00.000000Z\ta\t3.5\t30.0\t2.5
+                    2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0\t2.5
+                    2024-01-01T01:00:00.000000Z\ta\t5.5\t50.0\t5.0
+                    """);
+            assertMapping("price_1h", "", "");
+            assertViewValid("price_1h");
+        });
+    }
+
+    @Test
     public void testCastRefusal() throws Exception {
         // When the view's SQL produces the added column's name, refresh writes that column into the new one, so ADD
         // COLUMN refuses a type that has no copier conversion from the SQL's, with the error refresh would give.
@@ -639,6 +728,40 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDropColumnRightAfterAlterAs() throws Exception {
+        // DROP COLUMN right after ALTER ... AS waits until the view's WAL applies the new SQL: the column the new SQL no
+        // longer produces drops, and so does one it still produces, which refresh then ignores, as when the WAL applies
+        // between the statements.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView();
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h)");
+            final AtomicBoolean isWaitSeen = armSeamDrain("price_1h");
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN amount");
+            Assert.assertTrue(isWaitSeen.get());
+            execute("ALTER MATERIALIZED VIEW price_1h DROP COLUMN price");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('a', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertColumns("price_1h", """
+                    column\ttype
+                    ts\tTIMESTAMP
+                    sym\tSYMBOL
+                    """);
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym
+                    2024-01-01T00:00:00.000000Z\ta
+                    2024-01-01T00:00:00.000000Z\tb
+                    2024-01-01T01:00:00.000000Z\ta
+                    """);
+            assertMapping("price_1h", "", "price");
+            assertViewValid("price_1h");
+        });
+    }
+
+    @Test
     public void testDropColumnOfPendingAddColumn() throws Exception {
         // ADD and DROP COLUMN read the view's columns from its sequencer, which holds the changes still in the view's
         // WAL: a column added but not yet applied can be dropped, and cannot be added twice.
@@ -770,6 +893,52 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeneratedNameRefusalLiftedRightAfterNamingAlterAs() throws Exception {
+        // DROP and ADD COLUMN right after the ALTER ... AS that names the columns of a SQL relying on generated names
+        // wait until the view's WAL applies the new SQL, and take the column change, as when the WAL applies between
+        // the statements. Refresh then maps the columns by name.
+        assertMemoryLeak(() -> {
+            createBase();
+            final String namedSql = "SELECT ts, sym, avg(price) AS avg, avg(amount) AS avg1 FROM base SAMPLE BY 1h";
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW older AS (SELECT ts, sym, avg(price), avg(amount) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            executeWithoutExplicitNamesCheck("CREATE MATERIALIZED VIEW older2 AS (SELECT ts, sym, avg(price), avg(amount) FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+
+            execute("ALTER MATERIALIZED VIEW older AS (" + namedSql + ")");
+            AtomicBoolean isWaitSeen = armSeamDrain("older");
+            execute("ALTER MATERIALIZED VIEW older DROP COLUMN avg1");
+            Assert.assertTrue(isWaitSeen.get());
+            execute("ALTER MATERIALIZED VIEW older2 AS (" + namedSql + ")");
+            isWaitSeen = armSeamDrain("older2");
+            execute("ALTER MATERIALIZED VIEW older2 ADD COLUMN extra INT");
+            Assert.assertTrue(isWaitSeen.get());
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('a', 5.5, 50.0, '2024-01-01T01:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(getViewState("older").isRecordCopyPositional());
+            Assert.assertFalse(getViewState("older2").isRecordCopyPositional());
+            // the refresh recomputes the 01:00 bucket only: avg(4.5, 5.5) = 5.0, avg(40.0, 50.0) = 45.0
+            assertQuery("older ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tavg
+                    2024-01-01T00:00:00.000000Z\ta\t2.5
+                    2024-01-01T00:00:00.000000Z\tb\t2.5
+                    2024-01-01T01:00:00.000000Z\ta\t5.0
+                    """);
+            assertQuery("older2 ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tavg\tavg1\textra
+                    2024-01-01T00:00:00.000000Z\ta\t2.5\t20.0\tnull
+                    2024-01-01T00:00:00.000000Z\tb\t2.5\t20.0\tnull
+                    2024-01-01T01:00:00.000000Z\ta\t5.0\t45.0\tnull
+                    """);
+            assertMapping("older", "", "avg1");
+            assertMapping("older2", "extra", "");
+            assertViewValid("older");
+            assertViewValid("older2");
+        });
+    }
+
+    @Test
     public void testMappingColumnsAfterAddColumn() throws Exception {
         // The mapping is unknown until the view's SQL compiles in this process. ADD COLUMN's check maps the SQL's
         // columns to the view's columns and the new one as soon as the statement returns.
@@ -814,6 +983,27 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             // in the order of the SQL's columns
             assertMapping("price_1h", "", "price,amount");
+            assertViewValid("price_1h");
+        });
+    }
+
+    @Test
+    public void testMappingColumnsRightAfterAlterAsAndAddColumn() throws Exception {
+        // ADD COLUMN right after ALTER ... AS maps the columns of the new SQL, which it waits for: the new SQL produces
+        // the added column, so the mapping leaves nothing out before any refresh compiles the new SQL.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView();
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price, last(amount) AS amount, avg(price) AS x FROM base SAMPLE BY 1h)");
+            assertMapping("price_1h", "", "x");
+            final AtomicBoolean isWaitSeen = armSeamDrain("price_1h");
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN x DOUBLE");
+            Assert.assertTrue(isWaitSeen.get());
+            assertMapping("price_1h", "", "");
+            drainWalAndMatViewQueues();
+            assertMapping("price_1h", "", "");
             assertViewValid("price_1h");
         });
     }
@@ -1035,6 +1225,17 @@ public class MatViewColumnDdlTest extends AbstractCairoTest {
                     """);
             assertQuery("SELECT count() FROM base").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
+    }
+
+    // Arms the definition wait seam of the view to apply the WAL of every table, and returns the flag the seam sets when
+    // it runs.
+    private static AtomicBoolean armSeamDrain(String viewName) {
+        final AtomicBoolean isWaitSeen = new AtomicBoolean();
+        getViewState(viewName).setOnDefinitionWaitForTesting(() -> {
+            isWaitSeen.set(true);
+            drainWalQueue();
+        });
+        return isWaitSeen;
     }
 
     private void assertColumns(String viewName, String expected) throws Exception {

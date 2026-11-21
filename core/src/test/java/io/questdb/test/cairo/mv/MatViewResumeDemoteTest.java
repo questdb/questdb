@@ -315,6 +315,66 @@ public class MatViewResumeDemoteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReadOnlyNodeRefusesViewAlterBeforeWaitingForDefinition() throws Exception {
+        // A read-only node refuses a view ADD COLUMN, DROP COLUMN or ALTER ... AS at once while an earlier ALTER ... AS
+        // waits in the view's WAL, which such a node may never apply: the statement does not wait for the definition
+        // event. Back on the primary, ADD COLUMN waits for it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z')");
+            execute("CREATE MATERIALIZED VIEW price_1h AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            final String newSql = "SELECT ts, sym, last(price) AS price, avg(price) AS x FROM base SAMPLE BY 1h";
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + newSql + ")");
+            final TableToken viewToken = engine.verifyTableName("price_1h");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            // a statement that waits fails instead of polling forever under the test's circuit breaker
+            state.setOnDefinitionWaitForTesting(() -> {
+                throw new AssertionError("the statement waited for the pending definition event");
+            });
+            readOnly.set(true);
+            try {
+                for (String sql : new String[]{
+                        "ALTER MATERIALIZED VIEW price_1h ADD COLUMN x DOUBLE",
+                        "ALTER MATERIALIZED VIEW price_1h DROP COLUMN price",
+                        "ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h)"
+                }) {
+                    try {
+                        execute(sql);
+                        Assert.fail("a read-only node must refuse the statement: " + sql);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isAuthorizationError());
+                        Assert.assertTrue(e.isReadOnlyAccessRefusal());
+                        TestUtils.assertEquals(CairoException.READ_ONLY_ACCESS_MESSAGE, e.getFlyweightMessage());
+                    }
+                }
+            } finally {
+                readOnly.set(false);
+                state.setOnDefinitionWaitForTesting(null);
+            }
+            Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            state.setOnDefinitionWaitForTesting(() -> {
+                isWaitSeen.set(true);
+                drainWalQueue();
+            });
+            execute("ALTER MATERIALIZED VIEW price_1h ADD COLUMN x DOUBLE");
+            Assert.assertTrue(isWaitSeen.get());
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(newSql, engine.getDependentViewGraph().getViewDefinition(viewToken).getMatViewSql());
+            assertQuery("SELECT \"column\" FROM table_columns('price_1h')").noLeakCheck().noRandomAccess().returns("""
+                    column
+                    ts
+                    sym
+                    price
+                    x
+                    """);
+        });
+    }
+
+    @Test
     public void testReadOnlyNodeRefusesResume() throws Exception {
         assertMemoryLeak(() -> {
             createInvalidView();

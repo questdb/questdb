@@ -1897,12 +1897,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // SQL names its columns. When the SQL produces a column of the new column's name, refresh writes it into the new
     // column, so its type needs a copier conversion to the new column's, RecordToRowCopierUtils.isCopierConvertible(),
     // as refresh checks it. A SQL that does not compile, say after a base table change, skips that check, so that the
-    // view can take the column its fixed SQL will produce.
+    // view can take the column its fixed SQL will produce. The SQL is the one the statement's WAL entry applies after,
+    // see awaitMatViewDefinition().
     private void alterMatViewAddColumn(
             SqlExecutionContext executionContext,
             int matViewNamePosition,
             TableToken matViewToken,
-            MatViewDefinition viewDefinition,
             TableRecordMetadata viewMetadata
     ) throws SqlException {
         executionContext.getSecurityContext().authorizeAlterTableAddColumn(matViewToken);
@@ -1911,6 +1911,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // IF NOT EXISTS named a column the view has, so the statement changes nothing
             return;
         }
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
         validateMatViewColumnChange(executionContext, matViewNamePosition, viewDefinition, true);
         final CharSequence columnName = alterOperationBuilder.getExtraStrInfo().getQuick(0);
         if (!matViewSqlValidator.isCompiled()) {
@@ -1945,15 +1946,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     // table, its base table, keeping the view's rows. The statement checks the new SQL with the rules of CREATE
     // MATERIALIZED VIEW and against the view (AlterMatViewQueryValidator), under the caller's context, and then writes
     // the definition event to the view's WAL, see MatViewAlter. The new definition takes effect when the event applies.
+    // The base table it compares with is the one of the definition the event applies after, see awaitMatViewDefinition().
     private void alterMatViewAs(
             SqlExecutionContext executionContext,
             CharSequence tok,
             int matViewNamePosition,
             TableToken matViewToken,
-            MatViewDefinition viewDefinition,
             TableRecordMetadata viewMetadata
     ) throws SqlException {
         executionContext.getSecurityContext().authorizeAlterMatView(matViewToken);
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
         final DependentViewGraph dependentViewGraph = engine.getDependentViewGraph();
         String baseTableName = viewDefinition.getBaseTableName();
         int baseTableNamePosition = -1;
@@ -2091,15 +2093,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // ALTER MATERIALIZED VIEW v DROP COLUMN c: ALTER TABLE's DROP COLUMN, one column per statement and not the
-    // designated timestamp, on a view whose SQL names its columns. Refresh then ignores the query column of the name.
+    // designated timestamp, on a view whose SQL names its columns, as the definition the statement's WAL entry applies
+    // after has it, see awaitMatViewDefinition(). Refresh then ignores the query column of the name.
     private void alterMatViewDropColumn(
             SqlExecutionContext executionContext,
             int matViewNamePosition,
             TableToken matViewToken,
-            MatViewDefinition viewDefinition,
             TableRecordMetadata viewMetadata
     ) throws SqlException {
         alterTableDropColumn(executionContext, matViewNamePosition, matViewToken, viewMetadata, true);
+        final MatViewDefinition viewDefinition = awaitMatViewDefinition(executionContext, matViewToken, matViewNamePosition);
         validateMatViewColumnChange(executionContext, matViewNamePosition, viewDefinition, false);
     }
 
@@ -3333,6 +3336,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // Returns the definition that the WAL entry of a view ADD COLUMN, DROP COLUMN or ALTER ... AS applies after, which
+    // the statement checks itself against. An ALTER ... AS that this node ran may still wait in the view's WAL, so the
+    // statement waits until the WAL applies its definition event, see MatViewAlter.awaitPendingDefinitionForAlter(),
+    // and reads the definition then. A read-only node refuses first, as it may never apply the event. A validation-only
+    // compile, which writes nothing, checks the definition the view's WAL applied, as REFRESH does not wait there either.
+    // The caller authorized the statement. A DROP of the view that ran meanwhile removed the definition.
+    private MatViewDefinition awaitMatViewDefinition(
+            SqlExecutionContext executionContext,
+            TableToken matViewToken,
+            int matViewNamePosition
+    ) throws SqlException {
+        if (!executionContext.isValidationOnly()) {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            MatViewAlter.awaitPendingDefinitionForAlter(engine, executionContext, matViewToken, matViewNamePosition);
+        }
+        final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
+        if (viewDefinition == null) {
+            throw SqlException.matViewDoesNotExist(matViewNamePosition, matViewToken.getTableName());
+        }
+        return viewDefinition;
+    }
+
     // Refuses ALTER MATERIALIZED VIEW v DROP COLUMN c when the view's EXPIRE ROWS policy reads c. Every read of the
     // view goes through the policy's rewrite, a keep-filter, a LATEST ON or a window query, which names the policy's
     // columns, so without c no query could read the view until DROP EXPIRE. The check reads the policy that reads of
@@ -3508,6 +3535,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!matViewToken.isMatView()) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected");
         }
+        // ADD COLUMN, DROP COLUMN and ALTER ... AS read the definition again once an ALTER ... AS still in the view's WAL
+        // applied, see awaitMatViewDefinition(); the other forms read only what ALTER ... AS keeps.
         final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
             throw SqlException.$(lexer.lastTokenPosition(), "materialized view does not exist");
@@ -3522,14 +3551,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean isSchemaChange = tok != null && (isAddKeyword(tok) || isDropKeyword(tok) || isAsKeyword(tok) || isWithKeyword(tok));
         try (TableRecordMetadata tableMetadata = isSchemaChange ? executionContext.getMetadataForWrite(matViewToken) : engine.getTableMetadata(matViewToken)) {
             if (tok != null && (isAsKeyword(tok) || isWithKeyword(tok))) {
-                alterMatViewAs(executionContext, tok, matViewNamePosition, matViewToken, viewDefinition, tableMetadata);
+                alterMatViewAs(executionContext, tok, matViewNamePosition, matViewToken, tableMetadata);
                 return;
             }
             if (tok != null && isDropKeyword(tok)) {
                 final int dropPosition = lexer.lastTokenPosition();
                 final CharSequence dropTarget = SqlUtil.fetchNext(lexer);
                 if (dropTarget != null && isColumnKeyword(dropTarget)) {
-                    alterMatViewDropColumn(executionContext, matViewNamePosition, matViewToken, viewDefinition, tableMetadata);
+                    alterMatViewDropColumn(executionContext, matViewNamePosition, matViewToken, tableMetadata);
                     return;
                 }
                 if (dropTarget != null && isPartitionKeyword(dropTarget)) {
@@ -3556,7 +3585,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 return;
             }
             if (isAddKeyword(tok)) {
-                alterMatViewAddColumn(executionContext, matViewNamePosition, matViewToken, viewDefinition, tableMetadata);
+                alterMatViewAddColumn(executionContext, matViewNamePosition, matViewToken, tableMetadata);
             } else if (isRenameKeyword(tok)) {
                 final int renamePosition = lexer.lastTokenPosition();
                 tok = expectToken(lexer, "'column'");

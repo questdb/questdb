@@ -29,6 +29,7 @@ import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlParser;
+import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -44,6 +45,8 @@ import java.sql.Timestamp;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * The materialized view statements of this feature over pg-wire, driven by the PostgreSQL JDBC driver: view ADD and
@@ -77,6 +80,42 @@ public class PGMatViewDdlTest extends BasePGTest {
             execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
             drainWalAndMatViewQueues();
             assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS + "2024-01-05 00:00:00.0,a,10.0\n");
+        });
+    }
+
+    @Test
+    public void testAlterAsExecutedTwiceAcrossPendingDefinition() throws Exception {
+        // ALTER ... AS compiles at each execution, so a prepared one executed right after ALTER ... WITH BASE waits until
+        // the view's WAL applies the base change, and reads the new base table; its second execution waits for its
+        // first one's definition event the same way.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base2 VALUES ('b', 7.0, '2024-01-06T00:10:00.000000Z')");
+            drainWalQueue();
+            execute("ALTER MATERIALIZED VIEW mv WITH BASE base2 AS (SELECT ts, sym, sum(price) AS price FROM base2 SAMPLE BY 1h)");
+            final MatViewState state = engine.getMatViewStateStore().getViewState(engine.verifyTableName("mv"));
+            final String maxSql = "SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h";
+            final AtomicInteger waitCount = new AtomicInteger();
+            try (PreparedStatement alter = connection.prepareStatement("ALTER MATERIALIZED VIEW mv AS (" + maxSql + ")")) {
+                for (int i = 0; i < 2; i++) {
+                    armSeamDrain(state, waitCount);
+                    alter.execute();
+                    Assert.assertEquals(i + 1, waitCount.get());
+                }
+            } finally {
+                state.setOnDefinitionWaitForTesting(null);
+            }
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status, base_table_name, view_sql FROM materialized_views()",
+                    "view_status[VARCHAR],base_table_name[VARCHAR],view_sql[VARCHAR]\ninvalid,base2," + maxSql + '\n');
+            execute("REFRESH MATERIALIZED VIEW mv RESUME SKIP BACKLOG");
+            drainWalAndMatViewQueues();
+            // the bucket takes the maximum price, 9.0, not the sum, 12.0
+            execute("INSERT INTO base2 VALUES ('b', 3.0, '2024-01-07T00:10:00.000000Z'), ('b', 9.0, '2024-01-07T00:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertQueryResult(connection, "SELECT view_status FROM materialized_views()", "view_status[VARCHAR]\nvalid\n");
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS + "2024-01-07 00:00:00.0,b,9.0\n");
         });
     }
 
@@ -570,6 +609,34 @@ public class PGMatViewDdlTest extends BasePGTest {
             execute("INSERT INTO base VALUES ('a', 5.0, '2024-01-05T00:10:00.000000Z')");
             drainWalAndMatViewQueues();
             assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", VIEW_ROWS + "2024-01-05 00:00:00.0,a,5.0\n");
+        });
+    }
+
+    // Arms the definition wait seam of the view to apply the WAL of every table, on a thread of its own, so that the
+    // server's worker keeps no thread-local state of the apply, and to count its runs.
+    private static void armSeamDrain(MatViewState state, AtomicInteger waitCount) {
+        state.setOnDefinitionWaitForTesting(() -> {
+            waitCount.incrementAndGet();
+            final AtomicReference<Throwable> applierError = new AtomicReference<>();
+            final Thread applier = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applierError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            }, "definition-applier");
+            applier.start();
+            try {
+                applier.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(e);
+            }
+            if (applierError.get() != null) {
+                throw new AssertionError(applierError.get());
+            }
         });
     }
 

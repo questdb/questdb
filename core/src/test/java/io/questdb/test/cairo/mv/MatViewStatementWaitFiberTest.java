@@ -65,15 +65,19 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.test.tools.TestUtils.unchecked;
 
 /**
- * RESUME, ALTER ... WITH BASE and REFRESH wait inside the statement on a server whose network pool has one worker,
- * which serves pg-wire, HTTP and QWP. While a statement that runs on a network fiber waits for the view latch that the
- * test holds, it leaves the worker to other connections: a SELECT 1 on a new connection returns before the statement
- * has an outcome. The statement completes once the test frees the latch, and its connection keeps working.
+ * RESUME, ALTER ... WITH BASE, REFRESH and a view ADD COLUMN wait inside the statement on a server whose network pool
+ * has one worker, which serves pg-wire, HTTP and QWP. While a statement that runs on a network fiber waits for the view
+ * latch that the test holds, it leaves the worker to other connections: a SELECT 1 on a new connection returns before
+ * the statement has an outcome. The statement completes once the test frees the latch, and its connection keeps
+ * working. A view ADD COLUMN right after ALTER ... AS waits the same way for the definition event, which a server
+ * without a WAL apply job leaves in the view's WAL until the test applies it.
  * <p>
  * The statement cannot end before the test frees the latch, since its timeout is 120 s; every SELECT 1 waits at most
  * {@link #GUARD_MILLIS}, which a statement that held the worker would make it hit.
  */
 public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
+    // a view ADD COLUMN of the column x that X_SQL produces, which waits for an ALTER ... AS to X_SQL
+    private static final String ADD_X = "ALTER MATERIALIZED VIEW v ADD COLUMN x DOUBLE";
     private static final String BASE2_ROWS = "x,10.0\ny,20.0\n";
     private static final String BASE_ROWS = "a,1.0\nb,2.0\n";
     private static final long GUARD_MILLIS = 30_000;
@@ -81,6 +85,8 @@ public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
     private static final int RESUME_VIEW_NAME_POSITION = "REFRESH MATERIALIZED VIEW ".length();
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
     private static final String VIEW_SQL_BASE2 = "SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h";
+    // a SQL that also produces the column x, the average price of the hour, which the view lacks
+    private static final String X_SQL = "SELECT ts, sym, last(price) AS price, avg(price) AS x FROM base SAMPLE BY 1h";
 
     @Before
     public void setUp() {
@@ -163,6 +169,59 @@ public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
                 }
                 Assert.assertFalse(state.isInvalid());
                 assertViewOnBase2();
+            }
+        });
+    }
+
+    @Test
+    public void testClientDisconnectStopsAddColumnParkedOnPendingDefinition() throws Exception {
+        // A view ADD COLUMN right after ALTER ... AS parks on the single network worker while the definition event
+        // waits in the view's WAL: a SELECT 1 on a new connection returns meanwhile. Once its client disconnects, the
+        // statement stops, returns its compiler and the view's sequencer metadata, and writes nothing. The same ADD
+        // COLUMN succeeds once the test applied the definition event.
+        assertMemoryLeak(() -> {
+            try (ServerMain serverMain = startServer("120s", PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false")) {
+                final CairoEngine engine = serverMain.getEngine();
+                createViewWithPendingDefinition(engine);
+                final MatViewState state = viewState(engine);
+                final long viewSeqTxn = viewSeqTxn(engine);
+                final AtomicReference<Connection> waitingConnection = new AtomicReference<>();
+                final CountDownLatch isWaiting = new CountDownLatch(1);
+                state.setOnDefinitionWaitForTesting(isWaiting::countDown);
+                try (SequencerMetadataCounter metadataCounter = new SequencerMetadataCounter(engine, viewToken(engine))) {
+                    final StatementThread waiter = new StatementThread(() -> {
+                        final Connection connection = pgConnection();
+                        waitingConnection.set(connection);
+                        try (Statement statement = connection.createStatement()) {
+                            statement.execute(ADD_X);
+                            return "OK";
+                        }
+                    });
+                    try {
+                        Assert.assertTrue("ADD COLUMN did not reach the definition wait", isWaiting.await(GUARD_MILLIS, TimeUnit.MILLISECONDS));
+                        assertWorkerFree(waiter);
+                        Assert.assertEquals(1, metadataCounter.get());
+                        waitingConnection.get().close();
+                        // the statement stops, and returns its compiler and the view's sequencer metadata
+                        TestUtils.assertEventually(() -> {
+                            Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+                            Assert.assertEquals(0, metadataCounter.get());
+                        }, (int) TimeUnit.MILLISECONDS.toSeconds(GUARD_MILLIS));
+                    } finally {
+                        state.setOnDefinitionWaitForTesting(null);
+                        waiter.join();
+                    }
+                }
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn(engine));
+                TestUtils.drainWalQueue(engine);
+                Assert.assertEquals(X_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken(engine)).getMatViewSql());
+                assertViewColumns("ts\nsym\nprice\n");
+
+                try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+                    statement.execute(ADD_X);
+                }
+                TestUtils.drainWalQueue(engine);
+                assertViewColumns("ts\nsym\nprice\nx\n");
             }
         });
     }
@@ -407,6 +466,62 @@ public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testServerCloseAbortsAddColumnParkedOnPendingDefinition() throws Exception {
+        // A server close aborts a view ADD COLUMN parked on a pending definition event without waiting for it, and its
+        // client sees an error. The statement wrote nothing: after a restart with the WAL apply job, the view's WAL
+        // applies the definition event, the view lacks the column, and the same ADD COLUMN takes it.
+        assertMemoryLeak(() -> {
+            final ServerMain serverMain = startServer("120s", PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+            final long viewSeqTxn;
+            boolean isServerClosed = false;
+            StatementThread waiter = null;
+            try {
+                final CairoEngine engine = serverMain.getEngine();
+                createViewWithPendingDefinition(engine);
+                viewSeqTxn = viewSeqTxn(engine);
+                final CountDownLatch isWaiting = new CountDownLatch(1);
+                viewState(engine).setOnDefinitionWaitForTesting(isWaiting::countDown);
+                waiter = new StatementThread(() -> {
+                    try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+                        statement.execute(ADD_X);
+                        return "OK";
+                    }
+                });
+                Assert.assertTrue("ADD COLUMN did not reach the definition wait", isWaiting.await(GUARD_MILLIS, TimeUnit.MILLISECONDS));
+
+                final long closeStartMillis = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMillis = System.currentTimeMillis() - closeStartMillis;
+                Assert.assertTrue("server close waited for the parked ADD COLUMN: " + closeMillis + " ms", closeMillis < GUARD_MILLIS);
+                final String outcome = waiter.awaitOutcome();
+                Assert.assertNotNull("the client of the parked ADD COLUMN did not see the shutdown", outcome);
+                Assert.assertTrue(outcome, outcome.startsWith("ERROR "));
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
+                if (waiter != null) {
+                    waiter.join();
+                }
+            }
+
+            try (ServerMain restarted = startServer("120s")) {
+                final CairoEngine engine = restarted.getEngine();
+                awaitViewWalApplied(engine);
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn(engine));
+                Assert.assertEquals(X_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken(engine)).getMatViewSql());
+                assertViewColumns("ts\nsym\nprice\n");
+                try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+                    statement.execute(ADD_X);
+                }
+                awaitViewWalApplied(engine);
+                assertViewColumns("ts\nsym\nprice\nx\n");
+            }
+        });
+    }
+
+    @Test
     public void testServerCloseAbortsParkedResume() throws Exception {
         assertMemoryLeak(() -> {
             final ServerMain serverMain = startServer("120s");
@@ -462,6 +577,13 @@ public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
         final MatViewState state = viewState(engine);
         Assert.assertTrue(state.isInvalid());
         Assert.assertEquals("base table changed", state.getInvalidationReasonForReport());
+    }
+
+    // The view's columns, one name a line.
+    private static void assertViewColumns(String expected) throws SQLException {
+        try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+            Assert.assertEquals(expected, queryRows(statement, "SELECT \"column\" FROM table_columns('v')"));
+        }
     }
 
     // The view's rows as sym,price lines, which the hourly buckets order.
@@ -526,6 +648,29 @@ public class MatViewStatementWaitFiberTest extends AbstractBootstrapTest {
             Assert.assertTrue(base2Tracker.getWriterTxn() >= base2Tracker.getSeqTxn());
             assertViewRows(BASE_ROWS);
         }, (int) TimeUnit.MILLISECONDS.toSeconds(GUARD_MILLIS));
+    }
+
+    // Base rows a@00:10 (1.0) and b@01:10 (2.0), a MANUAL view on base that the server built, so that no refresh writes
+    // to the view's WAL, and an ALTER ... AS to X_SQL, whose definition event waits in the view's WAL: the server runs
+    // no WAL apply job, and the test applies the WALs.
+    private static void createViewWithPendingDefinition(CairoEngine engine) throws Exception {
+        try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            statement.execute("INSERT INTO base VALUES ('a', 1.0, '2024-01-01T00:10:00.000000Z'), ('b', 2.0, '2024-01-01T01:10:00.000000Z')");
+            TestUtils.drainWalQueue(engine);
+            statement.execute("CREATE MATERIALIZED VIEW v REFRESH MANUAL AS (" + VIEW_SQL + ") PARTITION BY DAY");
+            statement.execute("REFRESH MATERIALIZED VIEW v INCREMENTAL");
+        }
+        TestUtils.assertEventually(() -> {
+            TestUtils.drainWalQueue(engine);
+            assertViewRows(BASE_ROWS);
+        }, (int) TimeUnit.MILLISECONDS.toSeconds(GUARD_MILLIS));
+        try (Connection connection = pgConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("ALTER MATERIALIZED VIEW v AS (" + X_SQL + ")");
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken(engine));
+        Assert.assertEquals(tracker.getSeqTxn(), viewState(engine).getPendingDefinitionSeqTxn());
+        Assert.assertTrue(tracker.getWriterTxn() < tracker.getSeqTxn());
     }
 
     // The view of createView(), moved to base2: invalid until RESUME SKIP BACKLOG.

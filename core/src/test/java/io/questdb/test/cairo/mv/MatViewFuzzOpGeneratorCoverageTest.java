@@ -43,6 +43,8 @@ import org.junit.Test;
  *     <li>an ALTER ... AS whose SQL copies by position: refused for a moved column, for a renamed one and for another
  *     column count, and accepted with the view's columns in their order, after which view ADD and DROP COLUMN are
  *     refused; and none on a view that dropped a column;</li>
+ *     <li>a view ADD COLUMN, DROP COLUMN and ALTER ... AS, accepted and refused, while the definition event of an
+ *     earlier ALTER ... AS waits in the view's WAL, which the statement waits for;</li>
  *     <li>a view ADD COLUMN of a column the SQL produces under another type than the SQL's, which name mapping casts,
  *     and of a column no SQL produces;</li>
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
@@ -72,6 +74,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // incremental refresh
     private static final int CHECK_STEPS = 6;
     private static final int DAY_COUNT = 6;
+    // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL
+    private static final int DEFINITION_PENDING_MIN = 10;
     // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
     private static final int POSITIONAL_ALTER_MIN = 20;
     // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts, in RESTART_SHAPE_ROUNDS rounds
@@ -120,6 +124,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int positionalAlterAccepted = 0;
         int addColumnRefusedPositional = 0;
         int dropColumnRefusedPositional = 0;
+        // the view ADD COLUMN, DROP COLUMN and ALTER ... AS drawn while the definition event of an earlier ALTER ... AS
+        // waits in the view's WAL, which they wait for, accepted and refused
+        final int[] addWhileDefinitionPending = new int[2];
+        final int[] dropWhileDefinitionPending = new int[2];
+        final int[] alterWhileDefinitionPending = new int[2];
         final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
@@ -132,12 +141,24 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             final boolean[] isDetached = new boolean[DAY_COUNT];
             final boolean[] isDropped = new boolean[DAY_COUNT];
             boolean hasDroppedViewColumn = false;
+            boolean isViewColumnAdded = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final ObjList<String> sqlBefore = new ObjList<>();
                 sqlBefore.addAll(generator.getSqlColumns());
                 final boolean wasSqlPositional = generator.isSqlPositional();
+                final boolean wasDefinitionPending = generator.isDefinitionPending();
                 generator.next(rnd, op);
                 kindCounts[op.kind.ordinal()]++;
+                if (wasDefinitionPending) {
+                    final int outcome = op.isRefused ? 1 : 0;
+                    switch (op.kind) {
+                        case VIEW_ADD_COLUMN -> addWhileDefinitionPending[outcome]++;
+                        case VIEW_DROP_COLUMN -> dropWhileDefinitionPending[outcome]++;
+                        case VIEW_ALTER_AS -> alterWhileDefinitionPending[outcome]++;
+                        default -> {
+                        }
+                    }
+                }
                 switch (op.kind) {
                     case VIEW_ALTER_AS -> {
                         if (op.isRefused) {
@@ -308,6 +329,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 // the view's columns always start with ts and sym, which no statement drops
                 Assert.assertEquals(MatViewFuzzOpGenerator.TS, generator.getViewColumns().getQuick(0));
                 Assert.assertEquals(MatViewFuzzOpGenerator.SYM, generator.getViewColumns().getQuick(1));
+                trackDefinitionPending(generator, op, wasDefinitionPending, isViewColumnAdded, step);
+                isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
             }
         }
 
@@ -340,6 +363,15 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("ALTER ... AS copying by position accepted", positionalAlterAccepted, POSITIONAL_ALTER_MIN);
         assertShare("view ADD COLUMN refused while the SQL copies by position", addColumnRefusedPositional, POSITIONAL_ALTER_MIN);
         assertShare("view DROP COLUMN refused while the SQL copies by position", dropColumnRefusedPositional, POSITIONAL_ALTER_MIN);
+        assertShare("view ADD COLUMN accepted while a definition event is pending", addWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
+        assertShare("view DROP COLUMN accepted while a definition event is pending", dropWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
+        assertShare(
+                "view ADD or DROP COLUMN refused while a definition event is pending",
+                addWhileDefinitionPending[1] + dropWhileDefinitionPending[1],
+                DEFINITION_PENDING_MIN
+        );
+        assertShare("ALTER ... AS accepted while a definition event is pending", alterWhileDefinitionPending[0], DEFINITION_PENDING_MIN);
+        assertShare("ALTER ... AS refused while a definition event is pending", alterWhileDefinitionPending[1], DEFINITION_PENDING_MIN);
 
         // rounds of a period view
         final int[] periodKindCounts = new int[MatViewFuzzOpGenerator.Kind.values().length];
@@ -477,9 +509,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             // or period firing counts until the view check
             boolean isValidityUnknown = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
-                final boolean wasSqlPositional = generator.isSqlPositional();
+                final boolean wasDefinitionPending = generator.isDefinitionPending();
                 generator.next(rnd, op);
-                if (isViewWalApplied(op, wasSqlPositional, isViewColumnAdded)) {
+                if (isViewWalApplied(op, wasDefinitionPending, isViewColumnAdded)) {
                     stateOpStage = 0;
                     resumeStage = 0;
                     if (purgeStage == 3) {
@@ -581,6 +613,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     default -> {
                     }
                 }
+                trackDefinitionPending(generator, op, wasDefinitionPending, isViewColumnAdded, step);
                 isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
                 if (step % CHECK_STEPS == CHECK_STEPS - 1) {
                     // the view check drains the queues, which applies the view's WAL, and leaves the view valid
@@ -930,17 +963,39 @@ public class MatViewFuzzOpGeneratorCoverageTest {
 
     // Whether MatViewFuzzTest applies the view's WAL while it runs the operation, see runOperationsFuzzOp(): the
     // operations that wait for the view's WAL or drain the queues, a view DROP PARTITION once the round added a view
-    // column, and an accepted ALTER ... AS whose SQL copies by position or did. A view DROP COLUMN and a SET EXPIRE
-    // whose policy has a read probe apply it while a policy or column change waits in the view's WAL, which this takes
-    // as always.
-    private static boolean isViewWalApplied(MatViewFuzzOpGenerator.Op op, boolean wasSqlPositional, boolean isViewColumnAdded) {
+    // column, a view ADD COLUMN or ALTER ... AS that waits for the definition event of an earlier ALTER ... AS, accepted
+    // or refused, and a RESTART while such an event waits, which the fuzz applies first. A view DROP COLUMN and a SET
+    // EXPIRE whose policy has a read probe apply it while a policy or column change waits in the view's WAL, which this
+    // takes as always.
+    private static boolean isViewWalApplied(MatViewFuzzOpGenerator.Op op, boolean wasDefinitionPending, boolean isViewColumnAdded) {
         return switch (op.kind) {
             case APPLY_WAL, BASE_DETACH_PARTITION, BASE_TRUNCATE_ATTACH_UPDATE, BASE_REPLACE_FULL_RESTART,
                  BASE_REPLACE_RESUME_RESTART, VIEW_DROP_COLUMN, VIEW_RANGE, VIEW_FULL, VIEW_RESUME -> true;
             case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE -> isViewColumnAdded;
             case VIEW_SET_EXPIRE -> op.isProbed;
-            case VIEW_ALTER_AS -> !op.isRefused && (op.isPositional || wasSqlPositional);
+            case VIEW_ADD_COLUMN, VIEW_ALTER_AS, RESTART -> wasDefinitionPending;
             default -> false;
         };
+    }
+
+    // Follows in the generator what MatViewFuzzTest tells it of the definition events that wait in the view's WAL: an
+    // accepted ALTER ... AS issues one, and the fuzz applies the view's WAL in the operations of isViewWalApplied(),
+    // before the statement's own change, and at the view check after every sixth operation.
+    private static void trackDefinitionPending(
+            MatViewFuzzOpGenerator generator,
+            MatViewFuzzOpGenerator.Op op,
+            boolean wasDefinitionPending,
+            boolean isViewColumnAdded,
+            int step
+    ) {
+        if (isViewWalApplied(op, wasDefinitionPending, isViewColumnAdded)) {
+            generator.onViewWalApplied();
+        }
+        if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS && !op.isRefused) {
+            generator.onDefinitionChangeIssued();
+        }
+        if (step % CHECK_STEPS == CHECK_STEPS - 1) {
+            generator.onViewWalApplied();
+        }
     }
 }

@@ -33,6 +33,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.ObjHashSet;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -54,7 +55,7 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Either way the node records the sequencer txn of the definition event, see
  * {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a REFRESH issued right after the statement waits for the
- * new definition.
+ * new definition, and so does a view ADD COLUMN, DROP COLUMN or ALTER ... AS, which checks itself against it.
  */
 public final class MatViewAlter {
     private static final Log LOG = LogFactory.getLog(MatViewAlter.class);
@@ -145,6 +146,53 @@ public final class MatViewAlter {
         }
     }
 
+    /**
+     * Waits until the view's WAL is applied up to the definition event of the last {@code ALTER MATERIALIZED VIEW ...
+     * AS} this node ran, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a view ADD COLUMN, DROP COLUMN
+     * or ALTER ... AS issued right after the statement checks itself against the definition that its own WAL entry
+     * applies after. Returns at once with no such statement pending, and once the view's WAL applied the event, or
+     * passed it, whatever the WAL's state is then. While the event waits, it refuses a dropped view, and a view whose WAL
+     * apply is suspended, see {@link MatViewBacklog#isViewWalSuspended(CairoEngine, TableToken, SeqTxnTracker)}: the WAL
+     * then reaches the event only after a user acts, and the definition the statement's entry would apply after is
+     * unknown until then. Honours the statement timeout and cancellation, as REFRESH's wait does.
+     *
+     * @param viewNamePosition the position of the view name in the statement, where refusals point
+     * @throws SqlException a dropped view, or a view WAL whose apply is suspended
+     */
+    public static void awaitPendingDefinitionForAlter(
+            @NotNull CairoEngine engine,
+            @NotNull SqlExecutionContext executionContext,
+            @NotNull TableToken viewToken,
+            int viewNamePosition
+    ) throws SqlException {
+        final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+        if (viewState == null) {
+            // no ALTER ... AS ran on this node, which alter() refuses for a view without a state
+            return;
+        }
+        final long pendingSeqTxn = viewState.getPendingDefinitionSeqTxn();
+        if (pendingSeqTxn < 0) {
+            return;
+        }
+        // the loop reads every state from this tracker, see MatViewBacklog.isViewWalSuspended()
+        final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+        final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        // The record never resets, so the applied event counts first, whatever the WAL's state is now: a suspension
+        // that came after the event applied stops no statement.
+        while (viewSeqTracker.getWriterTxn() < pendingSeqTxn) {
+            // a dropped view does not exist, whatever stops the apply of its WAL
+            if (viewSeqTracker.isDropped()) {
+                throw SqlException.matViewDoesNotExist(viewNamePosition, viewToken.getTableName());
+            }
+            if (MatViewBacklog.isViewWalSuspended(engine, viewToken, viewSeqTracker)) {
+                throw definitionNotApplied(engine, viewToken, viewNamePosition);
+            }
+            viewState.runDefinitionWaitSeamForTesting();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            MatViewResume.pauseWait(engine);
+        }
+    }
+
     private static long changeBaseTable(
             CairoEngine engine,
             SqlExecutionContext executionContext,
@@ -202,6 +250,18 @@ public final class MatViewAlter {
                         .I$();
             }
         }
+    }
+
+    // The refusal of a view ALTER while the WAL apply of the view stops short of a pending definition event. RESUME WAL
+    // lifts a suspension; a view in the cairo.wal.apply.suspended.tables list also needs its entry, by dir name, out of
+    // the list, which RESUME WAL does not lift.
+    private static SqlException definitionNotApplied(CairoEngine engine, TableToken viewToken, int viewNamePosition) {
+        final SqlException e = SqlException.$(viewNamePosition, "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, ");
+        final ObjHashSet<String> suspendedTables = engine.getConfiguration().getWalApplySuspendedTables();
+        if (suspendedTables != null && suspendedTables.contains(viewToken.getDirName())) {
+            e.put("remove ").put(viewToken.getDirName()).put(" from cairo.wal.apply.suspended.tables and ");
+        }
+        return e.put("run ALTER MATERIALIZED VIEW ").put(viewToken.getTableName()).put(" RESUME WAL first");
     }
 
     private static SqlException fullRefreshPending(TableToken viewToken, int viewNamePosition) {

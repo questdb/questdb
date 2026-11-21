@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.mv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -56,11 +57,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * RESUME, ALTER ... WITH BASE and a REFRESH issued right after ALTER ... AS, run as a fiber task, park their fiber
- * while they wait for the view latch, the view's WAL or the view's new definition: the carrier that drains the
- * runtime returns while the statement is unfinished, and the statement completes on a later drain, on any carrier.
- * The park wakes on a 1 ms timer; a fiber that cannot park sleeps instead, and a shut down runtime or timer aborts
- * the statement with nothing written.
+ * RESUME, ALTER ... WITH BASE, and a REFRESH or a view ADD COLUMN issued right after ALTER ... AS, run as a fiber
+ * task, park their fiber while they wait for the view latch, the view's WAL or the view's new definition: the carrier
+ * that drains the runtime returns while the statement is unfinished, and the statement completes on a later drain, on
+ * any carrier. The park wakes on a 1 ms timer; a fiber that cannot park sleeps instead, and a shut down runtime or
+ * timer aborts the statement with nothing written. A view ADD COLUMN holds the view's sequencer metadata while it
+ * waits, and returns it on whatever carrier the statement ends.
  * <p>
  * At a statement that holds its carrier, the drain does not return while the test holds the blocker, so a watchdog
  * releases the blocker after {@link #WATCHDOG_MILLIS} and the test fails.
@@ -71,6 +73,12 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
             2024-01-01T00:00:00.000000Z\ta\t1.0
             2024-01-01T01:00:00.000000Z\tb\t2.0
             """;
+    // a view ADD COLUMN of the column x that X_SQL produces, which waits for an ALTER ... AS to X_SQL
+    private static final String ADD_X = "ALTER MATERIALIZED VIEW v ADD COLUMN x DOUBLE";
+    // the position of the view name in ALTER MATERIALIZED VIEW statements
+    private static final int ALTER_VIEW_NAME_POSITION = "ALTER MATERIALIZED VIEW ".length();
+    // the refusal of a view ALTER that waits for the definition event of an ALTER ... AS in the suspended WAL of v
+    private static final String DEFINITION_NOT_APPLIED = "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, ";
     private static final Log LOG = LogFactory.getLog(MatViewStatementWaitParkTest.class);
     private static final String NEW_SQL = "SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h";
     private static final String RESUME = "REFRESH MATERIALIZED VIEW v RESUME SKIP BACKLOG";
@@ -79,6 +87,8 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
     private static final String VIEW_SQL_BASE2 = "SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h";
     private static final long WATCHDOG_MILLIS = 30_000;
+    // a SQL that also produces the column x, the average price of the hour, which the view lacks
+    private static final String X_SQL = "SELECT ts, sym, last(price) AS price, avg(price) AS x FROM base SAMPLE BY 1h";
     // The timers that the engine hands out when set, see setUpStatic().
     private static volatile TimerShards timerShardsOverride;
 
@@ -92,6 +102,86 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testAddColumnParkedOnPendingDefinitionContinuesOnAnotherCarrier() throws Exception {
+        // A view ADD COLUMN right after ALTER ... AS parks on carrier A while the definition event waits in the view's
+        // WAL, holding the view's sequencer metadata, and completes on carrier B once the event applied: it checks the
+        // new SQL there and returns the compiler and the metadata.
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            final MatViewState state = viewState();
+            final long viewSeqTxn = viewSeqTxn();
+            final AtomicReference<Thread> waitCarrier = new AtomicReference<>();
+            state.setOnDefinitionWaitForTesting(() -> waitCarrier.set(Thread.currentThread()));
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try (
+                    SequencerMetadataCounter metadataCounter = new SequencerMetadataCounter(engine, viewToken());
+                    SqlExecutionContextImpl context = newContext();
+                    NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker();
+                    Watchdog watchdog = new Watchdog(AbstractCairoTest::drainWalQueue)
+            ) {
+                context.with(circuitBreaker);
+                circuitBreaker.resetTimer();
+                final StatementTask task = new StatementTask(ADD_X, context);
+                Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+
+                // carrier A runs the statement until it parks, and stops draining
+                final AtomicInteger carrierAMounts = new AtomicInteger();
+                final Thread carrierA = new Thread(() -> {
+                    runtime.initializeCarrier();
+                    try {
+                        carrierAMounts.set(runtime.drain(1));
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "carrier-a");
+                carrierA.start();
+                carrierA.join(2 * WATCHDOG_MILLIS);
+                Assert.assertFalse(carrierA.isAlive());
+                watchdog.assertNotFired();
+                Assert.assertEquals(1, carrierAMounts.get());
+                Assert.assertFalse("the statement must still wait", task.isFinished);
+                Assert.assertSame(carrierA, waitCarrier.get());
+                Assert.assertEquals(1, metadataCounter.get());
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+
+                drainWalQueue();
+                // carrier B resumes the statement, which checks the new SQL there
+                final Thread carrierB = new Thread(() -> {
+                    runtime.initializeCarrier();
+                    try {
+                        drainUntilFinished(runtime, task);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "carrier-b");
+                carrierB.start();
+                carrierB.join(2 * WATCHDOG_MILLIS);
+                Assert.assertFalse(carrierB.isAlive());
+                Assert.assertTrue(task.isFinished);
+                Assert.assertNull(task.error);
+                Assert.assertSame(carrierB, task.finishingThread);
+                Assert.assertEquals(0, metadataCounter.get());
+            } finally {
+                state.setOnDefinitionWaitForTesting(null);
+                close(runtime);
+            }
+            Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+            drainWalQueue();
+            assertViewColumns("ts", "sym", "price", "x");
+            execute("INSERT INTO base VALUES ('a', 3.0, '2024-01-01T00:20:00.000000Z')");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW v INCREMENTAL");
+            drainWalAndMatViewQueues();
+            // the refresh recomputes the 00:00 bucket only: avg(1.0, 3.0) = 2.0
+            assertViewRows("""
+                    ts\tsym\tprice\tx
+                    2024-01-01T00:00:00.000000Z\ta\t3.0\t2.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0\tnull
+                    """);
+        });
     }
 
     @Test
@@ -428,6 +518,50 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShutdownWakeAbortsAddColumnParkedOnPendingDefinition() throws Exception {
+        // The configuration clock stands still, so the timer does not wake the parked view ADD COLUMN after the test
+        // applies the definition event; the runtime's shutdown does. The statement aborts instead of checking the new
+        // SQL, writes nothing, and returns the compiler and the view's sequencer metadata.
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            final long viewSeqTxn = viewSeqTxn();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            setCurrentMicros(MicrosecondClockImpl.INSTANCE.getTicks());
+            try (
+                    SequencerMetadataCounter metadataCounter = new SequencerMetadataCounter(engine, viewToken());
+                    SqlExecutionContextImpl context = newContext();
+                    NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker();
+                    Watchdog watchdog = new Watchdog(AbstractCairoTest::drainWalQueue)
+            ) {
+                context.with(circuitBreaker);
+                circuitBreaker.resetTimer();
+                final StatementTask task = new StatementTask(ADD_X, context);
+                assertParks(runtime, task, watchdog);
+                Assert.assertEquals(1, metadataCounter.get());
+
+                drainWalQueue();
+                Assert.assertEquals(X_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+                runtime.beginQuiesce();
+                drainUntilFinished(runtime, task);
+                watchdog.assertNotFired();
+                assertServerClosing(task.error);
+                Assert.assertEquals(0, metadataCounter.get());
+            } finally {
+                setCurrentMicros(-1);
+                close(runtime);
+            }
+            Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            drainWalQueue();
+            assertViewColumns("ts", "sym", "price");
+
+            execute(ADD_X);
+            drainWalQueue();
+            assertViewColumns("ts", "sym", "price", "x");
+        });
+    }
+
+    @Test
     public void testShutdownWakeAbortsParkedResume() throws Exception {
         // The configuration clock stands still, so the timer does not wake the parked statement after the test frees
         // the latch; the runtime's shutdown does. The statement aborts instead of taking the free latch.
@@ -469,6 +603,17 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewDroppedWhileAddColumnParkedOnPendingDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            assertAddColumnStopsAfterWake(
+                    () -> execute("DROP MATERIALIZED VIEW v"),
+                    "materialized view does not exist [view=v]"
+            );
+        });
+    }
+
+    @Test
     public void testViewDroppedWhileResumeParked() throws Exception {
         assertStopsAfterWake(
                 "DROP MATERIALIZED VIEW v",
@@ -477,11 +622,102 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewListedAndDroppedWhileAddColumnParkedOnPendingDefinition() throws Exception {
+        // A dropped view does not exist, whatever stops the apply of its WAL: the statement says so, and does not name
+        // the list entry.
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            final String dirName = viewToken().getDirName();
+            try {
+                assertAddColumnStopsAfterWake(
+                        () -> {
+                            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+                            execute("DROP MATERIALIZED VIEW v");
+                        },
+                        "materialized view does not exist [view=v]"
+                );
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+        });
+    }
+
+    @Test
+    public void testViewListedWhileAddColumnParkedOnPendingDefinition() throws Exception {
+        // The parked statement reads the cairo.wal.apply.suspended.tables list on each pass of its wait, not only when
+        // it starts. Once the list no longer holds the view, its WAL applies the definition event, and ADD COLUMN takes
+        // the column the new SQL produces.
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            final String dirName = viewToken().getDirName();
+            try {
+                assertAddColumnStopsAfterWake(
+                        () -> setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName),
+                        DEFINITION_NOT_APPLIED + "remove " + dirName
+                                + " from cairo.wal.apply.suspended.tables and run ALTER MATERIALIZED VIEW v RESUME WAL first"
+                );
+            } finally {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+            drainWalQueue();
+            Assert.assertEquals(X_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            execute(ADD_X);
+            drainWalQueue();
+            assertViewColumns("ts", "sym", "price", "x");
+        });
+    }
+
+    @Test
+    public void testViewWalSuspendedWhileAddColumnParkedOnPendingDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            assertAddColumnStopsAfterWake(
+                    () -> execute("ALTER MATERIALIZED VIEW v SUSPEND WAL"),
+                    DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW v RESUME WAL first"
+            );
+        });
+    }
+
+    @Test
     public void testViewWalSuspendedWhileResumeParked() throws Exception {
         assertStopsAfterWake(
                 "ALTER MATERIALIZED VIEW v SUSPEND WAL",
                 "materialized view WAL is suspended, run ALTER MATERIALIZED VIEW v RESUME WAL first"
         );
+    }
+
+    // A view ADD COLUMN on the view of createViewWithPendingDefinition() parks while the definition event waits in the
+    // view's WAL; the action then runs on the test thread, and the parked statement stops at its next wake with the
+    // refusal at the view name. It writes nothing, and returns the compiler and the view's sequencer metadata.
+    private void assertAddColumnStopsAfterWake(ParkedAction action, String refusal) throws Exception {
+        final TableToken viewToken = viewToken();
+        final FiberRuntime runtime = new FiberRuntime(1);
+        try (
+                SequencerMetadataCounter metadataCounter = new SequencerMetadataCounter(engine, viewToken);
+                SqlExecutionContextImpl context = newContext();
+                NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker();
+                Watchdog watchdog = new Watchdog(AbstractCairoTest::drainWalQueue)
+        ) {
+            context.with(circuitBreaker);
+            circuitBreaker.resetTimer();
+            final StatementTask task = new StatementTask(ADD_X, context);
+            assertParks(runtime, task, watchdog);
+            Assert.assertEquals(1, metadataCounter.get());
+
+            action.run();
+            final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
+            drainUntilFinished(runtime, task);
+            watchdog.assertNotFired();
+            Assert.assertTrue(String.valueOf(task.error), task.error instanceof SqlException);
+            final SqlException e = (SqlException) task.error;
+            TestUtils.assertEquals(refusal, e.getFlyweightMessage());
+            Assert.assertEquals(ALTER_VIEW_NAME_POSITION, e.getPosition());
+            Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            Assert.assertEquals(0, metadataCounter.get());
+        } finally {
+            close(runtime);
+        }
+        Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
     }
 
     // Runs RESUME on a busy latch after the action has run, which makes the statement's park fail: the statement
@@ -626,6 +862,14 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
         });
     }
 
+    private void assertViewColumns(String... expected) throws Exception {
+        final StringBuilder columns = new StringBuilder("column\n");
+        for (String column : expected) {
+            columns.append(column).append('\n');
+        }
+        assertQuery("SELECT \"column\" FROM table_columns('v')").noLeakCheck().noRandomAccess().returns(columns.toString());
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery("v ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns(expected);
     }
@@ -679,6 +923,14 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
         Assert.assertFalse(viewState().isLocked());
     }
 
+    // The MANUAL view of createBasesWithView(), and an ALTER ... AS to X_SQL, whose definition event waits in the view's
+    // WAL.
+    private void createViewWithPendingDefinition() throws Exception {
+        createBasesWithView("MANUAL");
+        execute("ALTER MATERIALIZED VIEW v AS (" + X_SQL + ")");
+        Assert.assertEquals(viewSeqTxn(), viewState().getPendingDefinitionSeqTxn());
+    }
+
     private static void drainUntilFinished(FiberRuntime runtime, StatementTask task) {
         final long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(WATCHDOG_MILLIS);
         while (!task.isFinished && System.nanoTime() < deadline) {
@@ -721,6 +973,12 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface ParkFailure {
         void arm(FiberRuntime runtime, MatViewState state);
+    }
+
+    // What the test does while a statement is parked.
+    @FunctionalInterface
+    private interface ParkedAction {
+        void run() throws Exception;
     }
 
     // The view latch that the test holds, as a refresh does, and releases once, the way a refresh does.
@@ -774,6 +1032,8 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
         private final SqlExecutionContextImpl context;
         private final String sql;
         volatile Throwable error;
+        // the thread that ran the statement's last step, the carrier the statement ended on
+        volatile Thread finishingThread;
         volatile boolean isFinished;
 
         private StatementTask(String sql, SqlExecutionContextImpl context) {
@@ -793,6 +1053,7 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
             } catch (Throwable th) {
                 error = th;
             } finally {
+                finishingThread = Thread.currentThread();
                 isFinished = true;
             }
         }

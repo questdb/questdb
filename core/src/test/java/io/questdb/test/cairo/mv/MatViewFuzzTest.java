@@ -1884,6 +1884,35 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // Runs a view ALTER of testViewAndBaseOperations(), see executeViewAlter(). When the statement waited, the view's WAL
+    // applied what it held, which the generator learns before the statement's own change.
+    private static void executeOpsViewAlter(MatViewFuzzOpGenerator generator, String sql) throws SqlException {
+        final AtomicBoolean isWaitSeen = new AtomicBoolean();
+        try {
+            executeViewAlter(sql, isWaitSeen);
+        } finally {
+            if (isWaitSeen.get()) {
+                generator.onViewWalApplied();
+            }
+        }
+    }
+
+    // Runs a view ADD COLUMN, DROP COLUMN or ALTER ... AS of the view mv. One issued while an earlier ALTER ... AS waits in
+    // the view's WAL waits until the WAL applies that statement's definition event, which no job applies meanwhile, so
+    // the wait applies the WAL of every table and sets the flag.
+    private static void executeViewAlter(String sql, AtomicBoolean isWaitSeen) throws SqlException {
+        final MatViewState state = opsViewState("mv");
+        state.setOnDefinitionWaitForTesting(() -> {
+            isWaitSeen.set(true);
+            drainWalQueue();
+        });
+        try {
+            execute(sql);
+        } finally {
+            state.setOnDefinitionWaitForTesting(null);
+        }
+    }
+
     // The EVERY timer of the view fires: it enqueues an incremental refresh unless the view is invalid or about to go
     // invalid, as MatViewTimerJob does.
     private static void fireOperationsFuzzTimer() {
@@ -2108,7 +2137,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             MatViewFuzzOpGenerator generator,
             MatViewFuzzOpGenerator.Op op,
             ObjList<String> sqlColumnsBefore,
-            boolean wasSqlPositional,
             MatViewFuzzOracle oracle,
             String timestampType,
             boolean isTimerView
@@ -2199,7 +2227,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case VIEW_ADD_COLUMN -> {
                 final long viewSeqTxn = opsViewSeqTxn();
                 try {
-                    execute("ALTER MATERIALIZED VIEW mv ADD COLUMN " + op.column + ' ' + op.columnType);
+                    executeOpsViewAlter(generator, "ALTER MATERIALIZED VIEW mv ADD COLUMN " + op.column + ' ' + op.columnType);
                     Assert.assertFalse("ADD COLUMN must refuse a view whose SQL copies by position [column=" + op.column + ']', op.isRefused);
                     generator.onColumnChangeIssued();
                     oracle.onViewColumnAdded(op.column, generator.getSqlColumns());
@@ -2220,7 +2248,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 }
                 final long viewSeqTxn = opsViewSeqTxn();
                 try {
-                    execute("ALTER MATERIALIZED VIEW mv DROP COLUMN " + op.column);
+                    executeOpsViewAlter(generator, "ALTER MATERIALIZED VIEW mv DROP COLUMN " + op.column);
                     Assert.assertFalse("DROP COLUMN must refuse a column the EXPIRE ROWS policy reads [column=" + op.column
                             + ", policy=" + generator.getExpireClause() + ']', op.isRefused);
                     generator.onColumnChangeIssued();
@@ -2279,17 +2307,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 LOG.info().$("fuzz: ALTER AS ").$(viewSql).$();
                 final long viewSeqTxn = opsViewSeqTxn();
                 try {
-                    execute("ALTER MATERIALIZED VIEW mv AS (" + viewSql + ')');
+                    executeOpsViewAlter(generator, "ALTER MATERIALIZED VIEW mv AS (" + viewSql + ')');
                     Assert.assertFalse("ALTER ... AS must refuse a column out of its position: " + viewSql, op.isRefused);
+                    generator.onDefinitionChangeIssued();
                     oracle.onSqlChanged(sqlColumnsBefore, op.sqlColumns);
-                    if (op.isPositional || wasSqlPositional) {
-                        // View ADD and DROP COLUMN check the SQL the view has applied, so its WAL applies the SQL
-                        // before the generator's next prediction. That also steers clear of a known bug until it is
-                        // fixed: view ADD and DROP COLUMN pass while a SQL that copies by position waits in the view's
-                        // WAL, and can then move a column under it. Remove that part of the steering with the fix.
-                        drainWalQueue();
-                        generator.onViewWalApplied();
-                    }
                 } catch (SqlException e) {
                     if (!op.isRefused) {
                         throw e;
@@ -2344,7 +2365,17 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             }
             case BACKLOG_UPDATE ->
                     engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
-            case RESTART -> restartOperationsFuzzViewStates(oracle);
+            case RESTART -> {
+                if (generator.isDefinitionPending()) {
+                    // A restart of the view states forgets the seqTxn of the definition event that an ALTER ... AS left
+                    // in the view's WAL, so a view ADD or DROP COLUMN after it would not wait for the event, and would
+                    // check the SQL before it instead of the one the generator predicts with. Until the restart's load
+                    // finds such an event in the view's WAL, the view's WAL applies it first.
+                    drainWalQueue();
+                    generator.onViewWalApplied();
+                }
+                restartOperationsFuzzViewStates(oracle);
+            }
             case APPLY_WAL -> drainWalQueue();
             case RUN_REFRESH_JOB -> {
                 if (isTimerView) {
@@ -2441,7 +2472,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         for (int step = 0; step < steps; step++) {
             sqlColumnsBefore.clear();
             sqlColumnsBefore.addAll(generator.getSqlColumns());
-            final boolean wasSqlPositional = generator.isSqlPositional();
             generator.next(rnd, op);
             LOG.info().$("fuzz: step ").$(step).$(" ").$(op.kind.name()).$(" [day=").$(op.day).$(", column=").$(op.column).I$();
             // Skips the sequence that questdb/questdb#8330 breaks until master fixes it: once a column was added to the
@@ -2451,7 +2481,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             if (isViewColumnAdded && isDroppingNewestViewPartition(op)) {
                 LOG.info().$("fuzz: skipping view DROP PARTITION of the newest view partition, see questdb/questdb#8330").$();
             } else {
-                runOperationsFuzzOp(generator, op, sqlColumnsBefore, wasSqlPositional, oracle, timestampType, isTimerView);
+                runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType, isTimerView);
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
             if (rnd.nextBoolean()) {
@@ -2857,7 +2887,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     LOG.info().$("fuzz: step ").$(step).$(" ALTER AS ").$(sql).$(" [kind=").$(kind).I$();
                     final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
                     try {
-                        execute(alterHead + sql + ')');
+                        executeViewAlter(alterHead + sql + ')', new AtomicBoolean());
                         Assert.assertEquals("ALTER ... AS must refuse a designated timestamp that is not the base's as it is: " + sql,
                                 PassthroughSql.PASSED_THROUGH, kind);
                         // one definition event

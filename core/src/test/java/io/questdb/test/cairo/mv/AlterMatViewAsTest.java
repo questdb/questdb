@@ -45,6 +45,7 @@ import io.questdb.cairo.wal.WalEventCursor;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
@@ -62,6 +63,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -73,6 +75,7 @@ import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -96,6 +99,9 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             """;
     private static final String ALTER_PREFIX = "ALTER MATERIALIZED VIEW price_1h ";
     private static final String BASE2_SQL = "SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h";
+    // the start of the refusal of a view ALTER that waits for the definition event of an earlier ALTER ... AS while the
+    // apply of the view's WAL is suspended
+    private static final String DEFINITION_NOT_APPLIED = "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, ";
     // column names of the base of the positional copy tests, see createLongNameBase()
     private static final String L64 = "long_col_" + "w".repeat(55);
     private static final String L65 = "long_col_" + "y".repeat(56);
@@ -122,6 +128,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             2024-01-01T01:00:00.000000Z\tb\t2.0
             """;
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
+    // a SQL that also produces the column x, the average price of the hour, which the view lacks
+    private static final String X_SQL = "SELECT ts, sym, last(price) AS price, avg(price) AS x FROM base SAMPLE BY 1h";
 
     @After
     public void releaseCheckpoint() throws Exception {
@@ -149,6 +157,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 telemetryJob.runSerially();
                 // the telemetry throttles events of the same view within an interval of the test clock
                 currentMicros += 3_600_000_000L;
+                // the base change waits until the view's WAL applies the first statement's definition event
+                drainWalQueue();
                 execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
                 telemetryJob.runSerially();
                 assertQuery("SELECT event, base_table_txn, invalidation_reason FROM sys.telemetry_mat_view WHERE event = 206 AND view_table_id = "
@@ -193,6 +203,90 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                     "SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h",
                     restarted.getDependentViewGraph().getViewDefinition(restarted.verifyTableName("price_1h")).getMatViewSql()
             ));
+        });
+    }
+
+    @Test
+    public void testBackToBackBaseRevertFollowsSecondStatement() throws Exception {
+        // A second ALTER ... WITH BASE right after a first one waits until the view's WAL applies the first, and compares
+        // its base table with the first one's, as when the WAL applies between the statements: moving the view back to
+        // its old base table is a base change, and the view ends on the old base table with the second SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            final long viewSeqTxn = viewSeqTxn();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                // the second statement waits before the view's WAL applies the first
+                Assert.assertEquals("base", viewDefinition().getBaseTableName());
+                isWaitSeen.set(true);
+                drainWalQueue();
+            });
+            final String secondSql = "SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h";
+            execute(ALTER_PREFIX + "WITH BASE base AS (" + secondSql + ")");
+            Assert.assertTrue(isWaitSeen.get());
+            // each statement writes its invalidation, then its definition event
+            Assert.assertEquals(viewSeqTxn + 4, viewSeqTxn());
+            try (WalEventReader eventReader = new WalEventReader(configuration); Path path = new Path()) {
+                Assert.assertEquals(WalTxnType.MAT_VIEW_INVALIDATE, openViewEvent(eventReader, path, viewSeqTxn + 3).getType());
+                final WalEventCursor definition = openViewEvent(eventReader, path, viewSeqTxn + 4);
+                Assert.assertEquals(WalTxnType.MAT_VIEW_DEFINITION, definition.getType());
+                TestUtils.assertEquals("base", definition.getMatViewDefinitionInfo().getBaseTableName());
+                TestUtils.assertEquals(secondSql, definition.getMatViewDefinitionInfo().getMatViewSql());
+                Assert.assertTrue(definition.getMatViewDefinitionInfo().isBaseTableChange());
+            }
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("base", viewDefinition().getBaseTableName());
+            Assert.assertEquals(secondSql, viewDefinition().getMatViewSql());
+            assertViewStatus("invalid", "base table changed");
+            Assert.assertEquals(
+                    "CREATE MATERIALIZED VIEW 'price_1h' WITH BASE 'base' REFRESH IMMEDIATE AS (\n" + secondSql + "\n) PARTITION BY DAY;\n",
+                    queryShowCreate("price_1h")
+            );
+            assertDependents("base", "price_1h");
+            assertDependents("base2");
+
+            execute(RESUME_SKIP_SQL);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            Assert.assertEquals(engine.verifyTableName("base").getTableId(), viewState().getBaseTableId());
+            // the second SQL computes max(price) * 10 of the new bucket
+            execute("INSERT INTO base VALUES ('c', 3.0, 1.0, '2024-01-01T02:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            final String rows = VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tc\t30.0\n";
+            assertViewRows(rows);
+            // base2's commits no longer reach the view
+            execute("INSERT INTO base2 VALUES ('d', 7.0, 1.0, '2024-01-03T00:10:00.000000Z')");
+            drainWalAndMatViewQueues();
+            assertViewRows(rows);
+        });
+    }
+
+    @Test
+    public void testBackToBackBaseRevertThenFullRebuildsFromSecondBase() throws Exception {
+        // A FULL refresh right after two ALTER ... WITH BASE statements, the second of which moves the view back to its
+        // old base table, rebuilds the view from the old base table with the second SQL, as for a single move there.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final AtomicBoolean isAlterWaitSeen = armSeamDrain();
+            execute(ALTER_PREFIX + "WITH BASE base AS (SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h)");
+            Assert.assertTrue(isAlterWaitSeen.get());
+            final AtomicBoolean isRefreshWaitSeen = armSeamDrain();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            Assert.assertTrue(isRefreshWaitSeen.get());
+            drainMatViewQueue(engine);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            Assert.assertEquals("base", viewDefinition().getBaseTableName());
+            // max(price) * 10 of each bucket of base, and no row of base2's 2024-01-02
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T01:00:00.000000Z\tb\t20.0
+                    """);
         });
     }
 
@@ -1175,6 +1269,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             assertMappingColumns("", "");
             execute(ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price, last(amount) AS extra FROM base SAMPLE BY 1h)");
             assertMappingColumns("", "extra");
+            // the ADD COLUMN waits until the view's WAL applies the definition event
+            drainWalQueue();
             execute(ALTER_PREFIX + "ADD COLUMN amount DOUBLE");
             execute(ALTER_PREFIX + "AS (SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h)");
             assertMappingColumns("amount", "");
@@ -1218,6 +1314,81 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                     2024-01-01T00:00:00.000000Z\ta\t2
                     2024-01-01T01:00:00.000000Z\tb\t1
                     """);
+        });
+    }
+
+    @Test
+    public void testPlainAsAfterPendingBaseChangeReadsNewBase() throws Exception {
+        // A plain ALTER ... AS right after ALTER ... WITH BASE waits until the view's WAL applies the base change, so its
+        // SQL reads the new base table, as when the WAL applies between the statements, and it is no base change.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final long baseChangeSeqTxn = viewSeqTxn();
+            final AtomicBoolean isWaitSeen = armSeamDrain();
+            final String maxSql = "SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h";
+            execute(ALTER_PREFIX + "AS (" + maxSql + ")");
+            Assert.assertTrue(isWaitSeen.get());
+            // the definition event alone, on base2
+            Assert.assertEquals(baseChangeSeqTxn + 1, viewSeqTxn());
+            try (WalEventReader eventReader = new WalEventReader(configuration); Path path = new Path()) {
+                final WalEventCursor definition = openViewEvent(eventReader, path, baseChangeSeqTxn + 1);
+                Assert.assertEquals(WalTxnType.MAT_VIEW_DEFINITION, definition.getType());
+                TestUtils.assertEquals("base2", definition.getMatViewDefinitionInfo().getBaseTableName());
+                TestUtils.assertEquals(maxSql, definition.getMatViewDefinitionInfo().getMatViewSql());
+                Assert.assertFalse(definition.getMatViewDefinitionInfo().isBaseTableChange());
+            }
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("base2", viewDefinition().getBaseTableName());
+            Assert.assertEquals(maxSql, viewDefinition().getMatViewSql());
+            assertViewStatus("invalid", "base table changed");
+            execute(RESUME_SKIP_SQL);
+            drainWalAndMatViewQueues();
+            // the bucket takes the maximum price, 9.0, not the last, 8.0
+            execute("""
+                    INSERT INTO base2 VALUES
+                    ('d', 7.0, 1.0, '2024-01-03T00:10:00.000000Z'),
+                    ('d', 9.0, 1.0, '2024-01-03T00:20:00.000000Z'),
+                    ('d', 8.0, 1.0, '2024-01-03T00:30:00.000000Z')
+                    """);
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            assertViewRows(VIEW_ROWS + "2024-01-03T00:00:00.000000Z\td\t9.0\n");
+        });
+    }
+
+    @Test
+    public void testPlainAsOnOldBaseAfterPendingBaseChangeRefused() throws Exception {
+        // A plain ALTER ... AS right after ALTER ... WITH BASE waits until the view's WAL applies the base change, so a
+        // SQL that still reads the old base table is refused, as when the WAL applies between the statements, instead
+        // of being written and then skipped as stale when it applies.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            final long viewSeqTxn = viewSeqTxn();
+            final AtomicBoolean isWaitSeen = armSeamDrain();
+            final String sql = ALTER_PREFIX + "AS (SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h)";
+            try {
+                execute(sql);
+                Assert.fail("a SQL that reads the old base table must be refused");
+            } catch (SqlException e) {
+                TestUtils.assertEquals(
+                        "materialized view query does not read its base table, name the new base table with WITH BASE [baseTable=base2]",
+                        e.getFlyweightMessage()
+                );
+                Assert.assertEquals(sql.indexOf("SELECT"), e.getPosition());
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertFalse(viewState().isLocked());
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("base2", viewDefinition().getBaseTableName());
+            Assert.assertEquals(BASE2_SQL, viewDefinition().getMatViewSql());
+            assertViewStatus("invalid", "base table changed");
         });
     }
 
@@ -1642,6 +1813,351 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewAlterAcceptedOnSuspendedViewWalOnceDefinitionApplied() throws Exception {
+        // A view ALTER waits only for a definition event that the view's WAL has not applied: once it applied, a later
+        // suspension of the view's WAL, by an apply error, by ALTER ... SUSPEND WAL or by the
+        // cairo.wal.apply.suspended.tables list, stops none of them, although the node keeps the event's seqTxn.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewState().getPendingDefinitionSeqTxn();
+            Assert.assertEquals(viewSeqTxn(), definitionSeqTxn);
+            drainWalQueue();
+            Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            armNoWaitGuard();
+            final String lastSql = "SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h";
+            try {
+                // the suspension an apply error leaves
+                engine.getTableSequencerAPI().suspendTable(viewToken(), ErrorTag.NONE, "test suspension");
+                execute(ALTER_PREFIX + "ADD COLUMN extra INT");
+                execute(ALTER_PREFIX + "RESUME WAL");
+                execute(ALTER_PREFIX + "SUSPEND WAL");
+                execute(ALTER_PREFIX + "ADD COLUMN extra2 INT");
+                execute(ALTER_PREFIX + "RESUME WAL");
+                Assert.assertEquals(definitionSeqTxn, viewState().getPendingDefinitionSeqTxn());
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, viewToken().getDirName());
+                execute(ALTER_PREFIX + "DROP COLUMN extra2");
+                execute(ALTER_PREFIX + "AS (" + lastSql + ")");
+                Assert.assertEquals(viewSeqTxn(), viewState().getPendingDefinitionSeqTxn());
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+            drainWalAndMatViewQueues();
+            // ALTER ... AS adds no view column
+            assertViewColumns("price_1h", "ts", "sym", "price", "extra");
+            Assert.assertEquals(lastSql, viewDefinition().getMatViewSql());
+            assertViewStatus("valid", "");
+        });
+    }
+
+    @Test
+    public void testViewAlterAcceptedOnSuspendedViewWalWithNothingPending() throws Exception {
+        // A view ALTER on a view that ran no ALTER ... AS has no definition to wait for: a suspended or listed view WAL
+        // refuses nothing.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            armNoWaitGuard();
+            try {
+                execute(ALTER_PREFIX + "ADD COLUMN extra INT");
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, viewToken().getDirName());
+                execute(ALTER_PREFIX + "ADD COLUMN extra2 INT");
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+            execute(ALTER_PREFIX + "RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertViewColumns("price_1h", "ts", "sym", "price", "extra", "extra2");
+        });
+    }
+
+    @Test
+    public void testViewAlterAfterDefinitionApplyFailureRefusedUntilSkipped() throws Exception {
+        // A definition event that fails to apply suspends the view's WAL, and a view ALTER refuses until RESUME WAL FROM
+        // TXN skips the event. RESUME WAL FROM TXN leaves the view's applied seqTxn to the WAL apply, so the next view
+        // ALTER waits for it, and then checks the SQL the view kept.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long definitionSeqTxn = viewSeqTxn();
+            final MatViewDefinition definition = viewDefinition();
+            engine.getDependentViewGraph().removeView(viewToken());
+            try {
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(viewToken()));
+            } finally {
+                engine.getDependentViewGraph().addView(definition);
+            }
+            Assert.assertEquals(definitionSeqTxn - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            armNoWaitGuard();
+            try {
+                assertAlterRefused(
+                        "price_1h",
+                        ALTER_PREFIX + "ADD COLUMN x CHAR",
+                        VIEW_NAME_POSITION,
+                        DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+                );
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            execute(ALTER_PREFIX + "RESUME WAL FROM TXN " + (definitionSeqTxn + 1));
+            Assert.assertEquals(definitionSeqTxn - 1, engine.getTableSequencerAPI().getTxnTracker(viewToken()).getWriterTxn());
+            final AtomicBoolean isWaitSeen = armSeamDrain();
+            // the skipped event never applies: the view keeps its SQL, which does not produce x
+            execute(ALTER_PREFIX + "ADD COLUMN x CHAR");
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            drainWalAndMatViewQueues();
+            assertViewColumns("price_1h", "ts", "sym", "price", "x");
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+        });
+    }
+
+    @Test
+    public void testViewAlterAuthorizesBeforeWaiting() throws Exception {
+        // A caller who may not alter the view gets the authorization error at once while an ALTER ... AS waits in the
+        // view's WAL: the statement authorizes before it waits for the definition event.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final long viewSeqTxn = viewSeqTxn();
+            armNoWaitGuard();
+            try (SqlExecutionContextImpl readOnlyContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                readOnlyContext.with(io.questdb.cairo.security.ReadOnlySecurityContext.INSTANCE);
+                for (String tail : new String[]{
+                        "ADD COLUMN x DOUBLE",
+                        "DROP COLUMN price",
+                        "AS (" + VIEW_SQL + ")",
+                        "WITH BASE base2 AS (" + BASE2_SQL + ")"
+                }) {
+                    try {
+                        engine.execute(ALTER_PREFIX + tail, readOnlyContext);
+                        Assert.fail("a read-only context must refuse the statement: " + tail);
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isAuthorizationError());
+                        TestUtils.assertEquals("Write permission denied", e.getFlyweightMessage());
+                    }
+                }
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertFalse(viewState().isLocked());
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            assertViewColumns("price_1h", "ts", "sym", "price");
+        });
+    }
+
+    @Test
+    public void testViewAlterRefusedWhileViewListedInSuspendedTables() throws Exception {
+        assertViewAlterRefusedWhileViewListed(false);
+    }
+
+    @Test
+    public void testViewAlterRefusedWhileViewListedInSuspendedTablesWithWriteDenied() throws Exception {
+        assertViewAlterRefusedWhileViewListed(true);
+    }
+
+    @Test
+    public void testViewAlterRefusedWhileViewWalSuspendedWithoutSuspendedTablesList() throws Exception {
+        // An engine whose configuration keeps no cairo.wal.apply.suspended.tables list at all, as an embedded engine's
+        // may not, refuses a view ALTER while the definition event of an earlier ALTER ... AS waits in a suspended view
+        // WAL, and names RESUME WAL alone.
+        assertMemoryLeak(() -> {
+            final DefaultTestCairoConfiguration conf = new DefaultTestCairoConfiguration(temp.newFolder().getAbsolutePath());
+            Assert.assertNull(conf.getWalApplySuspendedTables());
+            try (
+                    CairoEngine embedded = new CairoEngine(conf);
+                    SqlExecutionContext context = TestUtils.createSqlExecutionCtx(embedded)
+            ) {
+                embedded.load();
+                embedded.execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL", context);
+                embedded.execute("INSERT INTO base VALUES ('a', 1.0, 1.0, '2024-01-01T00:10:00.000000Z')", context);
+                embedded.execute("CREATE MATERIALIZED VIEW price_1h AS (" + VIEW_SQL + ") PARTITION BY DAY", context);
+                drainWalAndMatViewQueues(embedded);
+                embedded.execute(ALTER_PREFIX + "AS (" + X_SQL + ")", context);
+                embedded.execute(ALTER_PREFIX + "SUSPEND WAL", context);
+                final TableToken viewToken = embedded.verifyTableName("price_1h");
+                final MatViewState state = embedded.getMatViewStateStore().getViewState(viewToken);
+                final long viewSeqTxn = embedded.getTableSequencerAPI().lastTxn(viewToken);
+                state.setOnDefinitionWaitForTesting(() -> {
+                    throw new AssertionError("the statement waited for the pending definition event");
+                });
+                try {
+                    embedded.execute(ALTER_PREFIX + "ADD COLUMN x CHAR", context);
+                    Assert.fail("the statement must refuse a suspended view WAL with a pending definition event");
+                } catch (SqlException e) {
+                    TestUtils.assertEquals(DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first", e.getFlyweightMessage());
+                    Assert.assertEquals(VIEW_NAME_POSITION, e.getPosition());
+                } finally {
+                    state.setOnDefinitionWaitForTesting(null);
+                }
+                Assert.assertEquals(viewSeqTxn, embedded.getTableSequencerAPI().lastTxn(viewToken));
+                embedded.execute(ALTER_PREFIX + "RESUME WAL", context);
+                drainWalAndMatViewQueues(embedded);
+                Assert.assertEquals(X_SQL, embedded.getDependentViewGraph().getViewDefinition(viewToken).getMatViewSql());
+            }
+        });
+    }
+
+    @Test
+    public void testViewAlterRefusedWhileViewWalSuspendedWithPendingDefinition() throws Exception {
+        // A view ADD COLUMN, DROP COLUMN or ALTER ... AS issued while the definition event of an earlier ALTER ... AS
+        // waits in a suspended view WAL refuses at once, at the view name, and names RESUME WAL: the definition its own
+        // WAL entry would apply after is unknown until the WAL applies. So it does after ALTER ... SUSPEND WAL, and with
+        // the hard suspension flag alone, which a SUSPEND WAL whose suspension failed leaves. ADD and DROP check the
+        // view's columns first, and the statements that do not check the view's SQL run as before. Once RESUME WAL lets
+        // the definition apply, ADD COLUMN checks the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            final String refusal = DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first";
+            armNoWaitGuard();
+            try {
+                assertDefinitionWaitRefused(refusal);
+                assertAlterFails("ADD COLUMN price DOUBLE", "price DOUBLE", "column 'price' already exists");
+                assertAlterFails("DROP COLUMN nosuch", "nosuch", "Invalid column: nosuch");
+                execute(ALTER_PREFIX + "SET REFRESH LIMIT 10 DAYS");
+                execute(ALTER_PREFIX + "RESUME WAL");
+                engine.addWalApplySuspended(viewToken());
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+                assertDefinitionWaitRefused(refusal);
+                execute(ALTER_PREFIX + "RESUME WAL");
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            drainWalQueue();
+            Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+            assertAlterRefused("price_1h", addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+            execute(ALTER_PREFIX + "ADD COLUMN x DOUBLE");
+            drainWalAndMatViewQueues();
+            assertViewColumns("price_1h", "ts", "sym", "price", "x");
+            assertViewStatus("valid", "");
+        });
+    }
+
+    @Test
+    public void testViewAlterRefusesViewDroppedAfterDefinitionApplied() throws Exception {
+        // A view DROP COLUMN that waited for the definition event of an ALTER ... AS finds the view dropped once the
+        // event applied.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final TableToken viewToken = viewToken();
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                isWaitSeen.set(true);
+                drainWalQueue();
+                try {
+                    execute("DROP MATERIALIZED VIEW price_1h");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            });
+            try {
+                execute(ALTER_PREFIX + "DROP COLUMN price");
+                Assert.fail("the view is dropped");
+            } catch (SqlException e) {
+                TestUtils.assertEquals("materialized view does not exist [view=price_1h]", e.getFlyweightMessage());
+                Assert.assertEquals(VIEW_NAME_POSITION, e.getPosition());
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            Assert.assertTrue(tracker.isDropped());
+            // the definition applied before the drop
+            Assert.assertTrue(tracker.getWriterTxn() >= tracker.getSeqTxn());
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("price_1h"));
+        });
+    }
+
+    @Test
+    public void testViewAlterStopsWaitingForDroppedView() throws Exception {
+        // A view ADD COLUMN that waits for the definition event of an ALTER ... AS stops once the view is dropped, and
+        // writes nothing.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final TableToken viewToken = viewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+            final AtomicLong droppedSeqTxn = new AtomicLong(-1);
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                try {
+                    execute("DROP MATERIALIZED VIEW price_1h");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                droppedSeqTxn.set(tracker.getSeqTxn());
+            });
+            try {
+                execute(ALTER_PREFIX + "ADD COLUMN extra INT");
+                Assert.fail("the view is dropped");
+            } catch (SqlException e) {
+                TestUtils.assertEquals("materialized view does not exist [view=price_1h]", e.getFlyweightMessage());
+                Assert.assertEquals(VIEW_NAME_POSITION, e.getPosition());
+            }
+            Assert.assertTrue(droppedSeqTxn.get() > -1);
+            Assert.assertTrue(tracker.isDropped());
+            // the definition event never applied, and the statement wrote nothing after the drop
+            Assert.assertTrue(tracker.getWriterTxn() < tracker.getSeqTxn());
+            Assert.assertEquals(droppedSeqTxn.get(), tracker.getSeqTxn());
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("price_1h"));
+        });
+    }
+
+    @Test
+    public void testViewAlterWaitsUntilDefinitionApplies() throws Exception {
+        // A view ADD COLUMN polls the view's WAL until another thread applies the definition event of the ALTER ... AS
+        // before it, and then checks the new SQL, which produces the column.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final AtomicReference<Throwable> applierError = new AtomicReference<>();
+            final Thread applier = new Thread(() -> {
+                try {
+                    drainWalQueue();
+                } catch (Throwable th) {
+                    applierError.set(th);
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            viewState().setOnDefinitionWaitForTesting(applier::start);
+            try {
+                execute(ALTER_PREFIX + "ADD COLUMN x DOUBLE");
+                // the statement returned once the definition event applied
+                Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+                applier.join();
+            }
+            Assert.assertNull(applierError.get());
+            // the new SQL produces x, so the mapping leaves nothing out
+            assertMappingColumns("", "");
+            drainWalQueue();
+            execute("INSERT INTO base VALUES ('a', 3.0, 1.0, '2024-01-01T00:20:00.000000Z')");
+            drainWalAndMatViewQueues();
+            // the refresh recomputes the 00:00 bucket only: avg(1.0, 3.0) = 2.0
+            assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns("""
+                    ts\tsym\tprice\tx
+                    2024-01-01T00:00:00.000000Z\ta\t3.0\t2.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0\tnull
+                    """);
+            assertViewStatus("valid", "");
+        });
+    }
+
+    @Test
     public void testViewWithoutSamplingIntervalKeepsPassthroughShape() throws Exception {
         // A non-aggregating view takes only a non-aggregating SQL without SAMPLE BY, and an aggregating view one with
         // its sampling interval, which GROUP BY timestamp_floor() may give.
@@ -1915,8 +2431,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
 
     @Test
     public void testAlterWithMatViewsDisabledIsRefused() throws Exception {
-        // A node that refreshes no views keeps no view states: it refuses ALTER ... AS, and REFRESH has nothing to wait
-        // for.
+        // A node that refreshes no views keeps no view states: it refuses ALTER ... AS, and REFRESH and view ADD COLUMN
+        // have no definition to wait for.
         assertMemoryLeak(() -> {
             createBaseWithRefreshedView("IMMEDIATE");
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ENABLED, "false");
@@ -1932,6 +2448,9 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals(viewSeqTxn, restarted.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
                 restarted.execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL", context);
+                final long lastTxn = restarted.getTableSequencerAPI().lastTxn(viewToken);
+                restarted.execute(ALTER_PREFIX + "ADD COLUMN extra INT", context);
+                Assert.assertEquals(lastTxn + 1, restarted.getTableSequencerAPI().lastTxn(viewToken));
             });
         });
     }
@@ -2193,7 +2712,15 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             createBase2WithRow();
             final long viewSeqTxn = viewSeqTxn();
             execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            // the second statement waits until the view's WAL applies the first statement's events
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                isWaitSeen.set(true);
+                drainWalQueue();
+            });
             execute(ALTER_PREFIX + "WITH BASE base2 AS (SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h)");
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(viewSeqTxn + 3, viewSeqTxn());
             try (WalEventReader eventReader = new WalEventReader(configuration); Path path = new Path()) {
                 final WalEventCursor invalidation = openViewEvent(eventReader, path, viewSeqTxn + 1);
                 Assert.assertEquals(WalTxnType.MAT_VIEW_INVALIDATE, invalidation.getType());
@@ -2214,10 +2741,13 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
                 TestUtils.assertEquals(BASE2_SQL, definition.getMatViewDefinitionInfo().getMatViewSql());
                 Assert.assertTrue(definition.getMatViewDefinitionInfo().isBaseTableChange());
 
-                // the second statement names base2, which is not the applied definition's base: still a base change
-                definition = openViewEvent(eventReader, path, viewSeqTxn + 4);
+                // the second statement names base2, the base table of the definition it waited for: no base change, so
+                // the definition event alone
+                definition = openViewEvent(eventReader, path, viewSeqTxn + 3);
                 Assert.assertEquals(WalTxnType.MAT_VIEW_DEFINITION, definition.getType());
-                Assert.assertTrue(definition.getMatViewDefinitionInfo().isBaseTableChange());
+                TestUtils.assertEquals("base2", definition.getMatViewDefinitionInfo().getBaseTableName());
+                TestUtils.assertEquals("SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h", definition.getMatViewDefinitionInfo().getMatViewSql());
+                Assert.assertFalse(definition.getMatViewDefinitionInfo().isBaseTableChange());
             }
             drainWalAndMatViewQueues();
             final long appliedSeqTxn = viewSeqTxn();
@@ -3153,6 +3683,8 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             drainWalAndMatViewQueues();
             execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute(ALTER_PREFIX + "AS (SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h)");
+            // the base change waits until the view's WAL applies the first statement's definition event
+            drainWalQueue();
             execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
             drainWalAndMatViewQueues();
             final TableToken viewToken = engine.verifyTableName("price_1h");
@@ -3315,6 +3847,26 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         engine.hydrateMatViewStateStore();
     }
 
+    // Arms the definition wait seam of the view price_1h to fail the statement that reaches it: a statement that must
+    // not wait for a definition event fails instead of polling forever under the test's circuit breaker, which never
+    // trips. The seam stays armed when no statement reaches it, so the caller disarms it.
+    private void armNoWaitGuard() {
+        viewState().setOnDefinitionWaitForTesting(() -> {
+            throw new AssertionError("the statement waited for the pending definition event");
+        });
+    }
+
+    // Arms the definition wait seam of the view price_1h to apply the WAL of every table, and returns the flag the seam
+    // sets when it runs.
+    private AtomicBoolean armSeamDrain() {
+        final AtomicBoolean isWaitSeen = new AtomicBoolean();
+        viewState().setOnDefinitionWaitForTesting(() -> {
+            isWaitSeen.set(true);
+            drainWalQueue();
+        });
+        return isWaitSeen;
+    }
+
     // Fails ALTER MATERIALIZED VIEW ... AS (query) on the valid view with the aggregating timestamp rule, see
     // assertAlterRefused(), at the token of the query, or at the query's start when the token is null.
     private void assertAggregatingAlterRefused(String viewName, String query, String token) throws Exception {
@@ -3364,6 +3916,19 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         Assert.assertEquals(definition.getBaseTableName(), definitionAfter.getBaseTableName());
         Assert.assertEquals(isInvalid, state.isInvalid());
         Assert.assertFalse(state.isLocked());
+    }
+
+    // Fails, with the refusal at the view name, each form of view ALTER that checks the view's SQL: ADD COLUMN, DROP
+    // COLUMN, ALTER ... AS and ALTER ... WITH BASE ... AS, see assertAlterRefused(), on the valid view price_1h.
+    private void assertDefinitionWaitRefused(String refusal) throws Exception {
+        for (String tail : new String[]{
+                "ADD COLUMN x CHAR",
+                "DROP COLUMN price",
+                "AS (" + VIEW_SQL + ")",
+                "WITH BASE base2 AS (" + BASE2_SQL + ")"
+        }) {
+            assertAlterRefused("price_1h", ALTER_PREFIX + tail, VIEW_NAME_POSITION, refusal);
+        }
     }
 
     private void assertMappingColumns(String unmapped, String ignored) throws Exception {
@@ -3467,6 +4032,51 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
         Assert.assertEquals(viewSeqTxn, viewSeqTxn());
         Assert.assertTrue(viewState().isInvalid());
         Assert.assertFalse(viewState().isLocked());
+    }
+
+    // The cairo.wal.apply.suspended.tables list stops the apply of the view's WAL without the suspended flag of its
+    // tracker, and RESUME WAL does not lift it. A view ALTER that waits for an earlier ALTER ... AS whose definition
+    // event the WAL of the listed view holds refuses at once and names the list entry: before ALTER ... SUSPEND WAL, under
+    // it and after RESUME WAL. Under cairo.wal.apply.suspended.write.denied the refusal comes before the write refusal
+    // of a listed table. Once the list no longer holds the view, its WAL applies the definition without RESUME WAL, and
+    // ADD COLUMN checks the new SQL.
+    private void assertViewAlterRefusedWhileViewListed(boolean isWriteDenied) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, Boolean.toString(isWriteDenied));
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            // the list does not hold the view yet, so a write denial does not refuse the statement
+            execute(ALTER_PREFIX + "AS (" + X_SQL + ")");
+            final String dirName = viewToken().getDirName();
+            final String refusal = DEFINITION_NOT_APPLIED + "remove " + dirName
+                    + " from cairo.wal.apply.suspended.tables and run ALTER MATERIALIZED VIEW price_1h RESUME WAL first";
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            armNoWaitGuard();
+            try {
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+                assertDefinitionWaitRefused(refusal);
+                if (!isWriteDenied) {
+                    execute(ALTER_PREFIX + "SUSPEND WAL");
+                    assertDefinitionWaitRefused(refusal);
+                    execute(ALTER_PREFIX + "RESUME WAL");
+                    drainWalQueue();
+                    // the list still holds the view, so its WAL does not apply
+                    Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+                    assertDefinitionWaitRefused(refusal);
+                }
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+            drainWalQueue();
+            Assert.assertEquals(X_SQL, viewDefinition().getMatViewSql());
+            final String addChar = ALTER_PREFIX + "ADD COLUMN x CHAR";
+            assertAlterRefused("price_1h", addChar, addChar.indexOf("x CHAR"), "inconvertible types: DOUBLE -> CHAR [from=x, to=x]");
+            execute(ALTER_PREFIX + "ADD COLUMN x DOUBLE");
+            drainWalAndMatViewQueues();
+            assertViewColumns("price_1h", "ts", "sym", "price", "x");
+            assertViewStatus("valid", "");
+        });
     }
 
     private void assertViewColumns(String viewName, String... expected) throws Exception {

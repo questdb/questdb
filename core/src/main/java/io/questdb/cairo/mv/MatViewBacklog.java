@@ -132,7 +132,19 @@ public final class MatViewBacklog {
      * cache updates nor holds back its base table's WAL purging meanwhile.
      */
     public static boolean isViewWalSuspended(@NotNull CairoEngine engine, @NotNull TableToken viewToken) {
-        final SeqTxnTracker viewSeqTracker = engine.getTableSequencerAPI().getTxnTracker(viewToken);
+        return isViewWalSuspended(engine, viewToken, engine.getTableSequencerAPI().getTxnTracker(viewToken));
+    }
+
+    /**
+     * As {@link #isViewWalSuspended(CairoEngine, TableToken)}, with the view's tracker that the caller holds: a wait
+     * loop reads every state from the tracker it took at its start, since the engine hands out a new tracker, which is
+     * not marked dropped, once the WAL purge removed a dropped view's token.
+     */
+    public static boolean isViewWalSuspended(
+            @NotNull CairoEngine engine,
+            @NotNull TableToken viewToken,
+            @NotNull SeqTxnTracker viewSeqTracker
+    ) {
         return viewSeqTracker.isSuspended() || engine.isWalApplySuspended(viewToken, viewSeqTracker);
     }
 

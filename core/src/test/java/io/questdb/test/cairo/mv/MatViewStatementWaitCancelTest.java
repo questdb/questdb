@@ -37,6 +37,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -45,10 +46,16 @@ import java.util.function.Consumer;
  * <ul>
  *     <li>ALTER ... WITH BASE waiting for the view's refresh latch;</li>
  *     <li>REFRESH ... FULL, INCREMENTAL and RANGE waiting for the view's WAL to apply a pending ALTER ... AS;</li>
+ *     <li>view ADD COLUMN, DROP COLUMN, ALTER ... AS and ALTER ... WITH BASE ... AS waiting for the view's WAL to apply
+ *     a pending ALTER ... AS;</li>
  *     <li>RESUME waiting for the view's WAL to apply.</li>
  * </ul>
  */
 public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
+    // the SQL of an ALTER ... WITH BASE base2 AS of the view
+    private static final String BASE2_SQL = "SELECT ts, sym, max(price) AS price FROM base2 SAMPLE BY 1h";
+    // the SQL of a view ALTER ... AS that follows NEW_SQL
+    private static final String MIN_SQL = "SELECT ts, sym, min(price) AS price FROM base SAMPLE BY 1h";
     private static final String NEW_SQL = "SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h";
     private static final String VIEW_ROWS = """
             ts\tsym\tprice
@@ -56,6 +63,36 @@ public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
             2024-01-01T01:00:00.000000Z\tb\t2.0
             """;
     private static final String VIEW_SQL = "SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h";
+
+    @Test
+    public void testAddColumnStopsWhenCancelledWhileWaitingForDefinition() throws Exception {
+        assertAddColumnWaitForDefinitionStops(true);
+    }
+
+    @Test
+    public void testAddColumnStopsWhenTimedOutWhileWaitingForDefinition() throws Exception {
+        assertAddColumnWaitForDefinitionStops(false);
+    }
+
+    @Test
+    public void testAlterAsStopsWhenCancelledWhileWaitingForDefinition() throws Exception {
+        assertAlterAsWaitForDefinitionStops(true);
+    }
+
+    @Test
+    public void testAlterAsStopsWhenTimedOutWhileWaitingForDefinition() throws Exception {
+        assertAlterAsWaitForDefinitionStops(false);
+    }
+
+    @Test
+    public void testAlterWithBaseStopsWhenCancelledWhileWaitingForDefinition() throws Exception {
+        assertAlterWithBaseWaitForDefinitionStops(true);
+    }
+
+    @Test
+    public void testAlterWithBaseStopsWhenTimedOutWhileWaitingForDefinition() throws Exception {
+        assertAlterWithBaseWaitForDefinitionStops(false);
+    }
 
     @Test
     public void testBaseChangeStopsWhenCancelledWhileWaitingForLatch() throws Exception {
@@ -85,6 +122,16 @@ public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
             Assert.assertEquals("base2", engine.getDependentViewGraph().getViewDefinition(viewToken()).getBaseTableName());
             Assert.assertFalse(state.isLocked());
         });
+    }
+
+    @Test
+    public void testDropColumnStopsWhenCancelledWhileWaitingForDefinition() throws Exception {
+        assertDropColumnWaitForDefinitionStops(true);
+    }
+
+    @Test
+    public void testDropColumnStopsWhenTimedOutWhileWaitingForDefinition() throws Exception {
+        assertDropColumnWaitForDefinitionStops(false);
     }
 
     @Test
@@ -149,6 +196,17 @@ public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
                     2024-01-01T02:00:00.000000Z\tc\t3.0\tnull
                     """);
         });
+    }
+
+    // Asserts the error of a statement that the circuit breaker stopped: a cancellation or a timeout.
+    private static void assertStopped(CairoException e, boolean isCancel) {
+        if (isCancel) {
+            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+            TestUtils.assertContains(e.getFlyweightMessage(), "cancelled by user");
+        } else {
+            Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_TIMEOUT, e.getInterruptionReason());
+            TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+        }
     }
 
     // Runs the statement with a circuit breaker that the given hook trips while the statement waits; the statement
@@ -220,6 +278,101 @@ public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
         });
     }
 
+    private void assertAddColumnWaitForDefinitionStops(boolean isCancel) throws Exception {
+        assertViewAlterWaitForDefinitionStops("ALTER MATERIALIZED VIEW price_1h ADD COLUMN extra DOUBLE", isCancel, () -> {
+            assertViewColumns("ts", "sym", "price", "extra");
+            assertViewRows("""
+                    ts\tsym\tprice\textra
+                    2024-01-01T00:00:00.000000Z\ta\t1.0\tnull
+                    2024-01-01T01:00:00.000000Z\tb\t2.0\tnull
+                    """);
+        });
+    }
+
+    private void assertAlterAsWaitForDefinitionStops(boolean isCancel) throws Exception {
+        assertViewAlterWaitForDefinitionStops("ALTER MATERIALIZED VIEW price_1h AS (" + MIN_SQL + ")", isCancel, () -> {
+            Assert.assertEquals(MIN_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            assertViewStatus("valid", "");
+        });
+    }
+
+    private void assertAlterWithBaseWaitForDefinitionStops(boolean isCancel) throws Exception {
+        assertViewAlterWaitForDefinitionStops("ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (" + BASE2_SQL + ")", isCancel, () -> {
+            Assert.assertEquals("base2", engine.getDependentViewGraph().getViewDefinition(viewToken()).getBaseTableName());
+            Assert.assertEquals(BASE2_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            assertViewStatus("invalid", "base table changed");
+        });
+    }
+
+    private void assertDropColumnWaitForDefinitionStops(boolean isCancel) throws Exception {
+        assertViewAlterWaitForDefinitionStops("ALTER MATERIALIZED VIEW price_1h DROP COLUMN price", isCancel, () -> {
+            assertViewColumns("ts", "sym");
+            assertViewRows("""
+                    ts\tsym
+                    2024-01-01T00:00:00.000000Z\ta
+                    2024-01-01T01:00:00.000000Z\tb
+                    """);
+        });
+    }
+
+    // A MANUAL view whose ALTER ... AS waits in the view's WAL. A view ALTER that stops while it waits for the
+    // definition writes nothing: once the definition applies, the view keeps its columns, base table and rows. Run
+    // again, the statement succeeds, which the check asserts once the view's WAL applied it.
+    private void assertViewAlterWaitForDefinitionStops(String alterSql, boolean isCancel, ViewCheck rerunCheck) throws Exception {
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute("CREATE TABLE base2 (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            execute("ALTER MATERIALIZED VIEW price_1h AS (" + NEW_SQL + ")");
+            final long viewSeqTxn = viewSeqTxn();
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 1);
+                 NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker()) {
+                context.with(circuitBreaker);
+                circuitBreaker.resetTimer();
+                viewState().setOnDefinitionWaitForTesting(() -> {
+                    isWaitSeen.set(true);
+                    if (isCancel) {
+                        circuitBreaker.cancel();
+                    } else {
+                        circuitBreaker.setTimeout(SqlExecutionCircuitBreaker.TIMEOUT_FAIL_ON_FIRST_CHECK);
+                    }
+                });
+                try {
+                    execute(alterSql, context);
+                    Assert.fail("the statement must stop: " + alterSql);
+                } catch (CairoException e) {
+                    assertStopped(e, isCancel);
+                } finally {
+                    viewState().setOnDefinitionWaitForTesting(null);
+                }
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertFalse(viewState().isLocked());
+            drainWalAndMatViewQueues();
+            assertViewStatus("valid", "");
+            Assert.assertEquals(NEW_SQL, engine.getDependentViewGraph().getViewDefinition(viewToken()).getMatViewSql());
+            Assert.assertEquals("base", engine.getDependentViewGraph().getViewDefinition(viewToken()).getBaseTableName());
+            assertViewColumns("ts", "sym", "price");
+            assertViewRows(VIEW_ROWS);
+
+            // run again, the statement succeeds
+            execute(alterSql);
+            drainWalAndMatViewQueues();
+            rerunCheck.run();
+            Assert.assertFalse(viewState().isLocked());
+        });
+    }
+
+    private void assertViewColumns(String... expected) throws Exception {
+        final StringBuilder columns = new StringBuilder("column\n");
+        for (String column : expected) {
+            columns.append(column).append('\n');
+        }
+        assertQuery("SELECT \"column\" FROM table_columns('price_1h')").noLeakCheck().noRandomAccess().returns(columns.toString());
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery("price_1h ORDER BY ts, sym").timestamp("ts").noLeakCheck().expectSize().returns(expected);
     }
@@ -271,5 +424,10 @@ public class MatViewStatementWaitCancelTest extends AbstractCairoTest {
 
     private static TableToken viewToken() {
         return engine.verifyTableName("price_1h");
+    }
+
+    @FunctionalInterface
+    private interface ViewCheck {
+        void run() throws Exception;
     }
 }

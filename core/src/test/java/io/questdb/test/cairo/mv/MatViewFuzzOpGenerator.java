@@ -160,6 +160,8 @@ public final class MatViewFuzzOpGenerator {
     private boolean isBareNameSwitchStanding;
     // the test ran a view ADD or DROP COLUMN and has not applied the view's WAL since, as far as it has told
     private boolean isColumnChangePending;
+    // the test ran an ALTER ... AS and has not applied the view's WAL since, as far as it has told
+    private boolean isDefinitionPending;
     // the test ran a SET or DROP EXPIRE and has not applied the view's WAL since, as far as it has told
     private boolean isPolicyChangePending;
     // an ALTER ... AS of the bare-name round changed the reading of the view's later rows since the last FULL, so the
@@ -438,6 +440,12 @@ public final class MatViewFuzzOpGenerator {
         return isColumnChangePending;
     }
 
+    // Whether the view's WAL may hold the definition event of an ALTER ... AS, which a view ADD COLUMN, DROP COLUMN or
+    // ALTER ... AS waits for, and which a restart of the view states forgets.
+    public boolean isDefinitionPending() {
+        return isDefinitionPending;
+    }
+
     // Whether the day is a gap day of a period view's round, which takes no row until its period ends.
     public boolean isGapDay(int day) {
         return gapDays[day];
@@ -660,6 +668,11 @@ public final class MatViewFuzzOpGenerator {
         isColumnChangePending = true;
     }
 
+    // The test ran an ALTER ... AS, whose definition event waits in the view's WAL.
+    public void onDefinitionChangeIssued() {
+        isDefinitionPending = true;
+    }
+
     // The executor's answer to a DETACH: the partition detaches only when the base holds it and a newer one.
     public void onDetached(int day, boolean isDetached) {
         attachableDays[day] = isDetached;
@@ -673,9 +686,10 @@ public final class MatViewFuzzOpGenerator {
         isPolicyChangePending = true;
     }
 
-    // The test has applied the view's WAL: the view's applied columns and policy are the generator's.
+    // The test has applied the view's WAL: the view's applied columns, SQL and policy are the generator's.
     public void onViewWalApplied() {
         isColumnChangePending = false;
+        isDefinitionPending = false;
         isPolicyChangePending = false;
     }
 

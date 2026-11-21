@@ -131,7 +131,8 @@ public class MatViewState implements QuietCloseable {
     private final Object bareNameSwitchesLock = new Object();
     // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
     // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
-    // the new SQL. Kept in memory only: a restart loses it.
+    // the new SQL, and so do view ADD COLUMN, DROP COLUMN and ALTER ... AS, so that they check themselves against it.
+    // Kept in memory only: a restart loses it.
     private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
     // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
@@ -1838,8 +1839,9 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
-     * Test seam: runs once, while a REFRESH waits for the definition event of an ALTER MATERIALIZED VIEW ... AS to
-     * apply, see {@link MatViewAlter#awaitPendingDefinition}.
+     * Test seam: runs once, while a REFRESH or a view ADD COLUMN, DROP COLUMN or ALTER ... AS waits for the definition
+     * event of an ALTER MATERIALIZED VIEW ... AS to apply, see {@link MatViewAlter#awaitPendingDefinition} and
+     * {@link MatViewAlter#awaitPendingDefinitionForAlter}.
      */
     @TestOnly
     public void setOnDefinitionWaitForTesting(Runnable onDefinitionWaitForTesting) {
