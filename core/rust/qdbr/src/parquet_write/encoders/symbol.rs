@@ -324,7 +324,9 @@ fn read_symbol_to_utf8(
     })?;
 
     let utf16_iter = utf16_bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|b| u16::from_le_bytes([b[0], b[1]]));
 
     let utf8_len = write_utf8_from_utf16_iter(dest, utf16_iter)

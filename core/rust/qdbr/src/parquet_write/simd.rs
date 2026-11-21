@@ -181,7 +181,7 @@ fn try_encode_i64_rle<W: Write>(
     let mut all_not_null = true;
     let mut all_null = true;
 
-    for chunk in probe_slice.chunks_exact(8) {
+    for chunk in probe_slice.as_chunks::<8>().0 {
         let values = Simd::<i64, 8>::from_slice(chunk);
         let mask = values.simd_ne(null_val).to_bitmask();
 
@@ -199,7 +199,7 @@ fn try_encode_i64_rle<W: Write>(
     }
 
     // Handle probe remainder (for small slices not aligned to 8)
-    for &val in probe_slice.chunks_exact(8).remainder() {
+    for &val in probe_slice.as_chunks::<8>().1 {
         if val == i64::MIN {
             all_not_null = false;
         } else {
@@ -236,8 +236,7 @@ fn scan_i64_verify_all_not_null<W: Write>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
     null_val: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<i64>>> {
-    let chunks = rest_slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<8>();
 
     let mut min_vec = Simd::<i64, 8>::splat(i64::MAX);
     let mut max_vec = Simd::<i64, 8>::splat(i64::MIN + 1);
@@ -246,8 +245,7 @@ fn scan_i64_verify_all_not_null<W: Write>(
     let probe_len = full_slice.len() - rest_slice.len();
     let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        let probe_chunks = probe_slice.chunks_exact(8);
-        let probe_remainder = probe_chunks.remainder();
+        let (probe_chunks, probe_remainder) = probe_slice.as_chunks::<8>();
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<i64, 8>::from_slice(chunk);
@@ -374,8 +372,7 @@ fn scan_i64_verify_all_null<W: Write>(
     rest_slice: &[i64],
     null_val: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<i64>>> {
-    let chunks = rest_slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<8>();
 
     for chunk in chunks {
         let values = Simd::<i64, 8>::from_slice(chunk);
@@ -431,8 +428,7 @@ fn encode_i64_def_levels_bitpacked<W: Write>(
     let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // Process slice in chunks of 8 for SIMD
-    let chunks = slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<8>();
 
     for chunk in chunks {
         let values = Simd::<i64, 8>::from_slice(chunk);
@@ -528,7 +524,7 @@ fn try_encode_i32_rle<W: Write>(
     let mut all_not_null = true;
     let mut all_null = true;
 
-    for chunk in probe_slice.chunks_exact(16) {
+    for chunk in probe_slice.as_chunks::<16>().0 {
         let values = Simd::<i32, 16>::from_slice(chunk);
         let mask = values.simd_ne(null_val).to_bitmask();
 
@@ -545,7 +541,7 @@ fn try_encode_i32_rle<W: Write>(
     }
 
     // Handle probe remainder (for small slices not aligned to 16)
-    for &val in probe_slice.chunks_exact(16).remainder() {
+    for &val in probe_slice.as_chunks::<16>().1 {
         if val == i32::MIN {
             all_not_null = false;
         } else {
@@ -581,8 +577,7 @@ fn scan_i32_verify_all_not_null<W: Write>(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
     null_val: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<i32>>> {
-    let chunks = rest_slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<16>();
 
     let mut min_vec = Simd::<i32, 16>::splat(i32::MAX);
     let mut max_vec = Simd::<i32, 16>::splat(i32::MIN + 1);
@@ -591,8 +586,7 @@ fn scan_i32_verify_all_not_null<W: Write>(
     let probe_len = full_slice.len() - rest_slice.len();
     let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        let probe_chunks = probe_slice.chunks_exact(16);
-        let probe_remainder = probe_chunks.remainder();
+        let (probe_chunks, probe_remainder) = probe_slice.as_chunks::<16>();
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<i32, 16>::from_slice(chunk);
@@ -717,8 +711,7 @@ fn scan_i32_verify_all_null<W: Write>(
     rest_slice: &[i32],
     null_val: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<i32>>> {
-    let chunks = rest_slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<16>();
 
     for chunk in chunks {
         let values = Simd::<i32, 16>::from_slice(chunk);
@@ -772,8 +765,7 @@ fn encode_i32_def_levels_bitpacked<W: Write>(
     let mut bit_writer = BitWriter::new(writer, top_remaining_bits);
 
     // Process in chunks of 16 (produces 2 bytes)
-    let chunks = slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<16>();
 
     for chunk in chunks {
         let values = Simd::<i32, 16>::from_slice(chunk);
@@ -886,7 +878,7 @@ fn try_encode_f64_rle<W: Write>(
     let mut all_not_null = true;
     let mut all_null = true;
 
-    for chunk in probe_slice.chunks_exact(8) {
+    for chunk in probe_slice.as_chunks::<8>().0 {
         let values = Simd::<f64, 8>::from_slice(chunk);
         // SAFETY: Simd<f64, 8> and Simd<i64, 8> have identical size and alignment.
         // Reinterprets float bits as integers for IEEE 754 NaN detection.
@@ -908,7 +900,7 @@ fn try_encode_f64_rle<W: Write>(
     }
 
     // Handle probe remainder (for small slices not aligned to 8)
-    for &val in probe_slice.chunks_exact(8).remainder() {
+    for &val in probe_slice.as_chunks::<8>().1 {
         if f64_is_nan(val) {
             all_not_null = false;
         } else {
@@ -946,8 +938,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
     sign_mask_vec: Simd<i64, 8>,
     infinity_vec: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<f64>>> {
-    let chunks = rest_slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<8>();
 
     let mut min_vec = Simd::<f64, 8>::splat(f64::INFINITY);
     let mut max_vec = Simd::<f64, 8>::splat(f64::NEG_INFINITY);
@@ -956,8 +947,7 @@ fn scan_f64_verify_all_not_null<W: Write>(
     let probe_len = full_slice.len() - rest_slice.len();
     let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        let probe_chunks = probe_slice.chunks_exact(8);
-        let probe_remainder = probe_chunks.remainder();
+        let (probe_chunks, probe_remainder) = probe_slice.as_chunks::<8>();
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<f64, 8>::from_slice(chunk);
@@ -1099,8 +1089,7 @@ fn scan_f64_verify_all_null<W: Write>(
     sign_mask_vec: Simd<i64, 8>,
     infinity_vec: Simd<i64, 8>,
 ) -> std::io::Result<Option<DefLevelResult<f64>>> {
-    let chunks = rest_slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<8>();
 
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
@@ -1163,8 +1152,7 @@ fn encode_f64_def_levels_bitpacked<W: Write>(
     let infinity_vec = Simd::<i64, 8>::splat(F64_INFINITY_BITS);
 
     // Process in chunks of 8
-    let chunks = slice.chunks_exact(8);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<8>();
 
     for chunk in chunks {
         let values = Simd::<f64, 8>::from_slice(chunk);
@@ -1280,7 +1268,7 @@ fn try_encode_f32_rle<W: Write>(
     let mut all_not_null = true;
     let mut all_null = true;
 
-    for chunk in probe_slice.chunks_exact(16) {
+    for chunk in probe_slice.as_chunks::<16>().0 {
         let values = Simd::<f32, 16>::from_slice(chunk);
         // SAFETY: Simd<f32, 16> and Simd<i32, 16> have identical size and alignment.
         // Reinterprets float bits as integers for IEEE 754 NaN detection.
@@ -1302,7 +1290,7 @@ fn try_encode_f32_rle<W: Write>(
     }
 
     // Handle probe remainder (for small slices not aligned to 16)
-    for &val in probe_slice.chunks_exact(16).remainder() {
+    for &val in probe_slice.as_chunks::<16>().1 {
         if f32_is_nan(val) {
             all_not_null = false;
         } else {
@@ -1340,8 +1328,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
     sign_mask_vec: Simd<i32, 16>,
     infinity_vec: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<f32>>> {
-    let chunks = rest_slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<16>();
 
     let mut min_vec = Simd::<f32, 16>::splat(f32::INFINITY);
     let mut max_vec = Simd::<f32, 16>::splat(f32::NEG_INFINITY);
@@ -1350,8 +1337,7 @@ fn scan_f32_verify_all_not_null<W: Write>(
     let probe_len = full_slice.len() - rest_slice.len();
     let probe_slice = &full_slice[..probe_len];
     if compute_stats {
-        let probe_chunks = probe_slice.chunks_exact(16);
-        let probe_remainder = probe_chunks.remainder();
+        let (probe_chunks, probe_remainder) = probe_slice.as_chunks::<16>();
         if let Some(ref mut h) = bloom_hashes {
             for chunk in probe_chunks {
                 let values = Simd::<f32, 16>::from_slice(chunk);
@@ -1493,8 +1479,7 @@ fn scan_f32_verify_all_null<W: Write>(
     sign_mask_vec: Simd<i32, 16>,
     infinity_vec: Simd<i32, 16>,
 ) -> std::io::Result<Option<DefLevelResult<f32>>> {
-    let chunks = rest_slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = rest_slice.as_chunks::<16>();
 
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
@@ -1557,8 +1542,7 @@ fn encode_f32_def_levels_bitpacked<W: Write>(
     let infinity_vec = Simd::<i32, 16>::splat(F32_INFINITY_BITS);
 
     // Process in chunks of 16
-    let chunks = slice.chunks_exact(16);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = slice.as_chunks::<16>();
 
     for chunk in chunks {
         let values = Simd::<f32, 16>::from_slice(chunk);
