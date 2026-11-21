@@ -2678,7 +2678,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+            // Recoverable so WAL apply skips a typo'd CONVERT the way DROP PARTITION skips a missing day (#8161).
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink).put(']');
         }
 
@@ -2843,7 +2844,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
+            // Recoverable so WAL apply skips a typo'd CONVERT the way DROP PARTITION skips a missing day (#8161).
+            throw CairoException.partitionManipulationRecoverable().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
                     .put(", partition=").put(utf8Sink)
                     .put(']');
         }
