@@ -103,6 +103,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // constants of a filter on t.x, whose keys run from 0 to 3, see randomKeyPredicate()
     private static final String[] KEY_CONSTANTS = {"0", "1", "2", "3", "NULL"};
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
+    private static final String NESTED_COMPUTED_UNION = nestedComputedUnion();
     // the start of the CASE of nestedScalarSubQuery()
     private static final String NESTED_SCALAR_SUB_QUERY = "CASE WHEN (SELECT count() FROM";
     // the plan nodes of a RIGHT or FULL join
@@ -167,6 +168,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // value known only when the query runs on a column of known type, and drops every NULL-extended row
     // only through a predicate on a computed column
     private int mixedTypeVerdictCount;
+    // queries over NESTED_COMPUTED_UNION whose LATERAL rows were compared with the reference rows
+    private int nestedComputedUnionComparedCount;
     // queries with a CASE over a scalar sub-query, see nestedScalarSubQuery(), whose LATERAL rows were
     // compared with the reference rows
     private int nestedSubQueryComparedCount;
@@ -364,6 +367,43 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return sb.append(" FROM trades)").toString();
     }
 
+    // Three levels of UNION ALL over trades, whose first operands compute every column but id and x, which
+    // they pass through: the bottom level casts the column to its type, the middle level computes the column
+    // and <column>_2 from it, and the top level computes the column from those two. The optimiser types a
+    // column of the top level by typing both of its inputs, the second of which takes the type of the column
+    // of the bottom level from the memo of the type query, see SqlOptimiser.getSetOperationColumnType(), so
+    // the types in the memo decide whether a filter on the column drops the rows that a RIGHT or FULL join
+    // NULL-extends. Each CASE returns the column whatever x holds. CASE rejects two GEOHASH branches, and IS
+    // NULL an array, so a GEOHASH column takes CASE expressions of one branch, whose condition holds.
+    private static String nestedComputedUnion() {
+        final StringBuilder bottom = new StringBuilder("SELECT id, x");
+        final StringBuilder middle = new StringBuilder("SELECT id, x");
+        final StringBuilder middleLater = new StringBuilder("SELECT id, x");
+        final StringBuilder top = new StringBuilder("SELECT id, x");
+        final StringBuilder later = new StringBuilder("SELECT id, x");
+        for (FuzzColumn column : COLUMNS) {
+            final String name = column.name;
+            bottom.append(", CAST(").append(name).append(" AS ").append(column.type).append(") ").append(name);
+            if (column.type.startsWith("GEOHASH")) {
+                middle.append(", CASE WHEN ").append(name).append(" IS NULL OR ").append(name).append(" IS NOT NULL THEN ")
+                        .append(name).append(" END ").append(name)
+                        .append(", CASE WHEN ").append(name).append(" IS NOT NULL OR ").append(name).append(" IS NULL THEN ")
+                        .append(name).append(" END ").append(name).append("_2");
+                top.append(", CASE WHEN ").append(name).append("_2 IS NOT NULL OR ").append(name).append(" IS NULL THEN ")
+                        .append(name).append(" END ").append(name);
+            } else {
+                middle.append(", CASE WHEN x > 0 THEN ").append(name).append(" ELSE ").append(name).append(" END ").append(name)
+                        .append(", CASE WHEN x > 1 THEN ").append(name).append(" ELSE ").append(name).append(" END ").append(name).append("_2");
+                top.append(", CASE WHEN x > 0 THEN ").append(name).append(" ELSE ").append(name).append("_2 END ").append(name);
+            }
+            middleLater.append(", ").append(name).append(", ").append(name);
+            later.append(", ").append(name);
+        }
+        return "(" + top + " FROM (" + middle + " FROM (" + bottom + " FROM trades UNION ALL " + later
+                + " FROM trades WHERE id < 0) UNION ALL " + middleLater + " FROM trades WHERE id < 0) UNION ALL "
+                + later + " FROM trades WHERE id < 0)";
+    }
+
     // A scalar sub-query over trades whose value is never NULL: the maximum of the column, or, while
     // trades is empty or holds only NULL in the column, the first of the values of the column
     private static String nonNullScalarSubQuery(FuzzColumn column) {
@@ -503,9 +543,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         if (rnd.nextBoolean()) {
             return mixedProjection(rnd, computedColumns, knownColumn, computedColumn);
         }
-        int source = rnd.nextInt(8);
-        while (source == 5 && !isUnionAllAllowed) {
-            source = rnd.nextInt(8);
+        int source = rnd.nextInt(9);
+        while ((source == 5 || source == 7) && !isUnionAllAllowed) {
+            source = rnd.nextInt(9);
         }
         return switch (source) {
             case 0 -> "(SELECT * FROM trades)";
@@ -515,6 +555,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case 4 -> projection(true);
             case 5 -> "(SELECT * FROM trades UNION ALL SELECT * FROM trades WHERE id < 0)";
             case 6 -> "(SELECT * FROM trades WHERE id IS NOT NULL OR id IS NULL)";
+            case 7 -> NESTED_COMPUTED_UNION;
             default -> "trades";
         };
     }
@@ -721,6 +762,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             if (hasNestedScalarSubQuery(filter)) {
                 nestedSubQueryComparedCount++;
             }
+            if (table == NESTED_COMPUTED_UNION) {
+                nestedComputedUnionComparedCount++;
+            }
             if (hasWhereKeyCorrelated) {
                 whereKeyCorrelatedComparedCount++;
             }
@@ -821,6 +865,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             reducedJoinComparedCount = 0;
             laterRuntimeVerdictCount = 0;
             mixedTypeVerdictCount = 0;
+            nestedComputedUnionComparedCount = 0;
             nestedSubQueryComparedCount = 0;
             twoRightJoinsComparedCount = 0;
             unnestComparedCount = 0;
@@ -863,7 +908,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     + " compared with an UNNEST before the RIGHT or FULL join, " + laterJoinComparedCount
                     + " compared with a join after a RIGHT join to a correlated sub-query, " + mixedTypeVerdictCount
                     + " proven by a computed column next to a predicate against a runtime value, "
-                    + nestedSubQueryComparedCount + " compared with a nested sub-query, " + whereKeyCorrelatedComparedCount
+                    + nestedSubQueryComparedCount + " compared with a nested sub-query, " + nestedComputedUnionComparedCount
+                    + " compared over nested computed UNION ALL levels, " + whereKeyCorrelatedComparedCount
                     + " compared with a WHERE key next to a correlated condition, " + slaveKeyReadEarlierComparedCount
                     + " compared with the key on a table joined after an ON clause that reads the outer key, "
                     + reducedJoinComparedCount + " compared with the RIGHT joins planned as INNER joins";
@@ -875,6 +921,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                     .$(", laterJoinCompared=").$(laterJoinComparedCount)
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
                     .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount)
+                    .$(", nestedComputedUnionCompared=").$(nestedComputedUnionComparedCount)
                     .$(", whereKeyCorrelatedCompared=").$(whereKeyCorrelatedComparedCount)
                     .$(", slaveKeyReadEarlierCompared=").$(slaveKeyReadEarlierComparedCount)
                     .$(", reducedJoinCompared=").$(reducedJoinComparedCount).I$();
@@ -906,6 +953,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // A generator that never nested a sub-query below the top of an operand would not show that
             // the filter reads its value per execution there.
             Assert.assertTrue("no query with a nested sub-query compared: " + counts, nestedSubQueryComparedCount > 0);
+            // A generator that never read nested levels of computed UNION ALL would not show that the
+            // optimiser types their columns, through the memo of its type query, as the code generator does.
+            Assert.assertTrue("no query over nested computed UNION ALL levels compared: " + counts, nestedComputedUnionComparedCount > 0);
             // A generator that never put a condition on the outer key next to WHERE t.x = o.k would
             // not show that the rewriter keeps it when it removes the outer-ref join.
             Assert.assertTrue("no query with a WHERE key next to a correlated condition compared: " + counts, whereKeyCorrelatedComparedCount > 0);

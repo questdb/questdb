@@ -17584,6 +17584,83 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterJoinOverDeepComputedUnionMatchesMaterializedUnion() throws Exception {
+        // The optimiser types the columns of a set operation whose operands compute them, see
+        // SqlOptimiser.getSetOperationColumnType(), to decide whether a filter drops the rows that an outer, ASOF or
+        // LT join NULL-extends. ref holds the rows of 12 nested levels of computed UNION ALL with the column types of a
+        // table, so the joins over the union must return the rows of the joins over ref. Every level maps (a, b, c, e)
+        // to (a+b+c+e, a-b+c-e, a+b-c-e, a-b-c+e), which applied twice multiplies them by 4: the 12 levels multiply the
+        // rows of t by 4096, and the constant row (1, 2, 3, 4) of level j becomes 4^((12-j)/2) (1, 2, 3, 4) for even
+        // 12-j, and 4^((11-j)/2) (10, -2, -4, 0) for odd 12-j, with k = 5. NULL in a, b, c or e makes the four NULL.
+        // The server memoizes a function that the level above reads more than once, which tests turn off by
+        // default: without it, each row of the union would evaluate the expressions of level 1 4^11 times.
+        allowFunctionMemoization();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c INT, e INT, k INT, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 2, 3, 4, 5, '2020-01-01T00:00:01'),
+                        (2, 0, 1, -1, 6, '2020-01-01T00:00:02'),
+                        (-1, 1, 1, 1, 5, '2020-01-01T00:00:03'),
+                        (NULL, 1, 1, 1, 5, '2020-01-01T00:00:04'),
+                        (1, NULL, 1, 1, 7, '2020-01-01T00:00:05'),
+                        (1, 1, NULL, 1, 6, '2020-01-01T00:00:06'),
+                        (1, 1, 1, NULL, 5, '2020-01-01T00:00:07'),
+                        (1, 1, 1, 1, NULL, '2020-01-01T00:00:08'),
+                        (0, 0, 0, 0, 8, NULL)""");
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO a VALUES
+                        (5, '2020-01-01T00:00:00'),
+                        (6, '2020-01-01T00:00:02'),
+                        (NULL, '2020-01-01T00:00:05'),
+                        (9, '2020-01-01T00:00:06'),
+                        (7, '2020-01-01T00:00:09')""");
+            execute("CREATE TABLE b (k INT, x INT)");
+            execute("INSERT INTO b VALUES (10, 1), (4, 2), (1, 3), (NULL, 4), (99, 5)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (10), (4), (1), (5), (NULL), (12_345)");
+            final String union = '(' + nestedComputedUnion(12) + ')';
+            execute("CREATE TABLE ref AS " + union);
+
+            // each shape with the number of rows that it returns
+            final String[][] shapes = {
+                    // a.k = 5 matches the 12 constant rows and (4096, 8192, 12288, 16384) of t, a.k = 6 matches
+                    // (8192, 0, 4096, -4096), and a NULL a.k matches the NULL k of (4096, 4096, 4096, 4096)
+                    {"SELECT u.a, u.b, u.c, u.e, u.k, u.ts, a.k ak, a.ts ats FROM {u} u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0"
+                            + " ORDER BY 1, 2, 3, 4, 5, 6, 7, 8", "15"},
+                    // The NULL a of the rows of t at 00:00:04, 00:00:05, 00:00:06 and 00:00:07, and of the row that
+                    // the join NULL-extends for a.k = 9: the filter keeps the rows that the join NULL-extends, which a
+                    // type without NULL, such as SHORT, would drop.
+                    {"SELECT u.a, u.b, u.c, u.e, u.k, u.ts, a.k ak, a.ts ats FROM {u} u RIGHT JOIN a ON a.k = u.k WHERE u.a IS NULL"
+                            + " ORDER BY 1, 2, 3, 4, 5, 6, 7, 8", "5"},
+                    // the constant row of level 12
+                    {"SELECT u.a, u.b, u.c, u.e, u.k, u.ts, a.k ak, a.ts ats FROM {u} u FULL JOIN a ON a.k = u.k WHERE u.a = 1"
+                            + " ORDER BY 1, 2, 3, 4, 5, 6, 7, 8", "1"},
+                    // the constant row of level 11
+                    {"SELECT u.a, u.b, u.c, u.e, u.k, u.ts, c.k ck FROM {u} u RIGHT JOIN c ON c.k = u.a WHERE u.a = 10"
+                            + " ORDER BY 1, 2, 3, 4, 5, 6, 7", "1"},
+                    // the constant rows of levels 12, 10 and 11
+                    {"SELECT c.k ck, u.a, u.b, u.c, u.e, u.k, u.ts, b.k bk, b.x FROM c LEFT JOIN {u} u ON c.k = u.a"
+                            + " JOIN b ON b.k = u.a AND b.k = c.k WHERE u.a > 0 ORDER BY 1, 2, 3, 4, 5, 6, 7, 8, 9", "3"},
+                    // the last of the constant rows at 00:00:00, the rows of t at 00:00:02 and at 00:00:08
+                    {"SELECT a.k ak, a.ts ats, u.a, u.b, u.c, u.e, u.k, u.ts FROM a"
+                            + " ASOF JOIN ((SELECT * FROM {u} ORDER BY ts, a, b, c, e, k) TIMESTAMP(ts)) u WHERE u.a > 0"
+                            + " ORDER BY 1, 2, 3, 4, 5, 6, 7, 8", "3"}
+            };
+            for (String[] shape : shapes) {
+                final String reference = shape[0].replace("{u}", "ref");
+                assertQuery("SELECT count() FROM (" + reference + ')')
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n" + shape[1] + '\n');
+                assertSqlCursors(reference, shape[0].replace("{u}", union));
+            }
+        });
+    }
+
+    @Test
     public void testOuterJoinPrefixKeepsNullExtensionWithEveryJoinType() throws Exception {
         // However a table joins the tables before a RIGHT/FULL join, it executes before that join: each
         // unmatched row of the outer join comes back once, with every earlier column NULL. NULL keys match
@@ -22025,6 +22102,16 @@ public class JoinTest extends AbstractCairoTest {
                         .returns(empty);
             }
         });
+    }
+
+    // depth levels of UNION ALL over t, whose columns a, b, c, e and k are INT and ts TIMESTAMP. The first operand of
+    // each level computes a, b, c and e from a, b, c and e of the level below.
+    private static String nestedComputedUnion(int depth) {
+        if (depth == 0) {
+            return "t";
+        }
+        return "SELECT a+b+c+e AS a, a-b+c-e AS b, a+b-c-e AS c, a-b-c+e AS e, k, ts FROM (" + nestedComputedUnion(depth - 1)
+                + ") UNION ALL SELECT 1, 2, 3, 4, 5, '2020-01-01'::TIMESTAMP FROM long_sequence(1)";
     }
 
     // a join key of 0, 1 or 2, or NULL now and then

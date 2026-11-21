@@ -116,4 +116,25 @@ public class ObjObjHashMapTest {
             }
         }
     }
+
+    @Test
+    public void testCapacity() {
+        // A map holds fewer keys than its capacity until the put of the key that fills it, which doubles the
+        // capacity. clear() keeps the capacity, and the initial capacity is 16 at least.
+        Assert.assertEquals(16, new ObjObjHashMap<>().capacity());
+        Assert.assertEquals(16, new ObjObjHashMap<>(4).capacity());
+        Assert.assertEquals(64, new ObjObjHashMap<>(64).capacity());
+        final ObjObjHashMap<Integer, Integer> map = new ObjObjHashMap<>(16);
+        for (int i = 0; i < 15; i++) {
+            map.put(i, i);
+        }
+        Assert.assertEquals(15, map.size());
+        Assert.assertEquals(16, map.capacity());
+        map.put(15, 15);
+        Assert.assertEquals(16, map.size());
+        Assert.assertEquals(32, map.capacity());
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(32, map.capacity());
+    }
 }

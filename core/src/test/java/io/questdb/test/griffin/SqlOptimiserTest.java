@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.Misc;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
@@ -1029,6 +1030,81 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(implicitJoinQuery)
                     .noLeakCheck()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testNestedComputedSetOperationColumnTypeMatchesCodeGenerator() throws Exception {
+        // Three nested set operations whose first operands compute their columns, see nestedComputedSetOperation().
+        // A type query on x or y of the top level types c, x and y of the middle level, and x and y of the middle
+        // level both read c, x and y of the bottom level: the second of them takes their types from the memo of
+        // getSetOperationColumnType(), so the types that the memo holds decide the result, which must be the type
+        // that the code generator outputs.
+        final String[] types = {
+                "BOOLEAN", "BYTE", "SHORT", "CHAR", "INT", "LONG", "DATE", "TIMESTAMP", "TIMESTAMP_NS", "FLOAT",
+                "DOUBLE", "STRING", "SYMBOL", "VARCHAR", "UUID", "IPv4", "LONG256", "GEOHASH(4c)", "GEOHASH(8c)",
+                "DECIMAL(10,2)", "DECIMAL(18,4)", "DOUBLE[]"
+        };
+        final int symbol = 12;
+        final int intType = 4;
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < types.length; i++) {
+                execute("CREATE TABLE t" + i + " (k " + types[i] + ", c INT, cl LONG)");
+            }
+            final StringSink mismatches = new StringSink();
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                // every operand of the same type, for each set operation
+                for (String operation : new String[]{"UNION ALL", "EXCEPT", "INTERSECT"}) {
+                    for (int a = 0; a < types.length; a++) {
+                        final String query = nestedComputedSetOperation(types, operation, a, a, a, "0");
+                        assertSetOperationColumnType(compiler, query, 0, true, a == symbol, mismatches);
+                        assertSetOperationColumnType(compiler, query, 1, true, a == symbol, mismatches);
+                    }
+                }
+                // the later operands widen the type of the bottom and the middle level
+                final int[] chainTypes = {2, 3, 4, 7, 11, 12, 13, 17, 19, 21};
+                for (int a : chainTypes) {
+                    for (int b : chainTypes) {
+                        for (int c : chainTypes) {
+                            if (isDecimalWithArray(types, a, b, c)) {
+                                continue;
+                            }
+                            final String query = nestedComputedSetOperation(types, "UNION ALL", a, b, c, "0");
+                            final boolean isSymbol = a == symbol && b == symbol && c == symbol;
+                            assertSetOperationColumnType(compiler, query, 0, true, isSymbol, mismatches);
+                            assertSetOperationColumnType(compiler, query, 1, true, isSymbol, mismatches);
+                        }
+                    }
+                }
+
+                // y of the bottom level compares c with a bind variable, so its type is unknown, and so are those
+                // of x and y of the levels above, which read it
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 0);
+                IQueryModel model = setOperationHead(compiler.generateExecutionModel(
+                        nestedComputedSetOperation(types, "UNION ALL", intType, intType, intType, "$1"),
+                        sqlExecutionContext
+                ));
+                assertEquals(-1, compiler.getSetOperationColumnType(model, 0));
+                assertEquals(-1, compiler.getSetOperationColumnType(model, 1));
+                bindVariableService.clear();
+
+                // The type query on x of the top level reads 11 pairs: (top, x); (middle, c), which reads
+                // (bottom, c); (middle, x), which reads (bottom, c) again, (bottom, x) and (bottom, y); and
+                // (middle, y), which reads the three pairs of the bottom level again. It parses x of the top
+                // level, x and y of the middle level, and x and y of the bottom level once each: 5 parses, where
+                // typing each read again parsed x and y of the bottom level twice, 7 parses.
+                model = setOperationHead(compiler.generateExecutionModel(
+                        nestedComputedSetOperation(types, "UNION ALL", intType, intType, intType, "0"),
+                        sqlExecutionContext
+                ));
+                final long calls = compiler.getSetOperationColumnTypeCalls();
+                final long parses = compiler.getVirtualColumnTypeCalls();
+                assertEquals(ColumnType.INT, compiler.getSetOperationColumnType(model, 0));
+                assertEquals(11, compiler.getSetOperationColumnTypeCalls() - calls);
+                assertEquals(5, compiler.getVirtualColumnTypeCalls() - parses);
+            }
+            assertEquals("", mismatches.toString());
         });
     }
 
@@ -5906,6 +5982,71 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testSetOperationColumnTypeCostGrowsLinearlyWithNesting() throws Exception {
+        // Each caller that types a column of a set operation, see getQueryColumnType(), types a, which reads b, c
+        // and e of the level below, at the same cost: a type query on a column of nestedComputedUnion(d) costs a
+        // number of calls and parses linear in d, and the SQL above the union, the same at every depth, decides
+        // how many type queries a compile runs. Typing each read again made them grow 4 times per level.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c INT, e INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE b (k INT, x INT)");
+            execute("CREATE TABLE c (k INT)");
+            for (int d = 10; d <= 12; d++) {
+                execute("CREATE VIEW v" + d + " AS (" + nestedComputedUnion(d, "t", true) + ')');
+            }
+            final String[] shapes = {
+                    // the scan filter copy of assignFilters() and moveWhereInsideSubQueries()
+                    "SELECT * FROM ({union}) u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0",
+                    // the NULL record of the filter
+                    "SELECT * FROM ({union}) u FULL JOIN a ON a.k = u.k WHERE u.a = 1",
+                    // collectNullRejectedJoins()
+                    "SELECT * FROM a ASOF JOIN (({union}) TIMESTAMP(ts)) u WHERE u.a > 0",
+                    "SELECT * FROM a LT JOIN (({union}) TIMESTAMP(ts)) u WHERE u.a < 0",
+                    // addTransitiveFilters()
+                    "SELECT * FROM ({union}) u RIGHT JOIN c ON c.k = u.a WHERE u.a = 5",
+                    // the NULL rejection of the key that the INNER join implies
+                    "SELECT * FROM c LEFT JOIN ({union}) u ON c.k = u.a JOIN b ON b.k = u.a AND b.k = c.k WHERE u.a > 0",
+                    // a CTE and a view
+                    "WITH u AS ({union}) SELECT * FROM u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0",
+                    "SELECT * FROM v{depth} u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0"
+            };
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                for (String shape : shapes) {
+                    final long[] calls = new long[3];
+                    final long[] parses = new long[3];
+                    for (int i = 0; i < 3; i++) {
+                        final int depth = 10 + i;
+                        final String query = shape.replace("{union}", nestedComputedUnion(depth, "t", true))
+                                .replace("{depth}", Integer.toString(depth));
+                        final long callsBefore = compiler.getSetOperationColumnTypeCalls();
+                        final long parsesBefore = compiler.getVirtualColumnTypeCalls();
+                        try (RecordCursorFactory ignore = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                            calls[i] = compiler.getSetOperationColumnTypeCalls() - callsBefore;
+                            parses[i] = compiler.getVirtualColumnTypeCalls() - parsesBefore;
+                        }
+                        assertEquals(query, 16, compiler.getSetOperationColumnTypesCapacity());
+                        assertEquals(query, 16, compiler.getSetOperationColumnTypeModelsCapacity());
+                    }
+                    final String counts = shape + ": calls " + Arrays.toString(calls) + ", parses " + Arrays.toString(parses);
+                    assertTrue(counts, calls[1] > calls[0]);
+                    assertTrue(counts, parses[1] > parses[0]);
+                    assertEquals(counts, calls[1] - calls[0], calls[2] - calls[1]);
+                    assertEquals(counts, parses[1] - parses[0], parses[2] - parses[1]);
+                }
+            }
+            // the optimisations that the types allow still apply at depth: the copy of the filter on the scan of u,
+            // and the filter on c that the key implies
+            assertQuery("SELECT * FROM (" + nestedComputedUnion(12, "t", true) + ") u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: 0<a");
+            assertQuery("SELECT * FROM (" + nestedComputedUnion(12, "t", true) + ") u RIGHT JOIN c ON c.k = u.a WHERE u.a = 5")
+                    .noLeakCheck()
+                    .assertsPlanContaining("filter: k=5");
+        });
+    }
+
+    @Test
     public void testSetOperationColumnTypeMatchesCodeGenerator() throws Exception {
         // The optimiser keys joins and checks NULL rejection on the type that getSetOperationColumnType() gives a
         // set-operation column, so the type must be the one that the code generator outputs, or -1 when the
@@ -6003,6 +6144,194 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 }
             }
             assertEquals("", mismatches.toString());
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeMemoCostIgnoresEarlierTypeQueries() throws Exception {
+        // clear() fills the whole key array of a map, and rehash() never shrinks it. The type query on a of
+        // nestedComputedUnion(12) stores 44 pairs, which grow the maps of the memo, and getSetOperationColumnType()
+        // replaces such maps when the type query ends, so that the type queries after it, here those of a union
+        // of 101 operands whose first operand reads a union of 100 operands, clear no more than their own pairs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c INT, e INT, k INT)");
+            execute("CREATE TABLE a (k INT)");
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                IQueryModel model = setOperationHead(compiler.generateExecutionModel(nestedComputedUnion(12, "t", false), sqlExecutionContext));
+                assertEquals(ColumnType.INT, compiler.getSetOperationColumnType(model, columnIndex(model, "a")));
+                assertEquals(16, compiler.getSetOperationColumnTypesCapacity());
+                assertEquals(16, compiler.getSetOperationColumnTypeModelsCapacity());
+
+                // The type query reads its own pair and x of the union below, and parses x + 0 and each of the
+                // 200 constants once.
+                final String wide = wideComputedUnion(100, 100);
+                model = setOperationHead(compiler.generateExecutionModel(wide, sqlExecutionContext));
+                final long calls = compiler.getSetOperationColumnTypeCalls();
+                final long parses = compiler.getVirtualColumnTypeCalls();
+                assertEquals(ColumnType.INT, compiler.getSetOperationColumnType(model, 0));
+                assertEquals(2, compiler.getSetOperationColumnTypeCalls() - calls);
+                assertEquals(201, compiler.getVirtualColumnTypeCalls() - parses);
+                assertEquals(16, compiler.getSetOperationColumnTypesCapacity());
+                assertEquals(16, compiler.getSetOperationColumnTypeModelsCapacity());
+                try (RecordCursorFactory factory = compiler.compile(wide, sqlExecutionContext).getRecordCursorFactory()) {
+                    assertEquals(ColumnType.INT, factory.getMetadata().getColumnType(0));
+                }
+
+                // each type query of the compile costs 2 calls, and parses in proportion to the operands
+                final long[] compileCalls = new long[3];
+                final long[] compileParses = new long[3];
+                for (int i = 0; i < 3; i++) {
+                    final int operandCount = 50 + 25 * i;
+                    final String query = "SELECT * FROM (" + wideComputedUnion(operandCount, operandCount) + ") u RIGHT JOIN a ON a.k = u.k WHERE u.k > 0";
+                    final long callsBefore = compiler.getSetOperationColumnTypeCalls();
+                    final long parsesBefore = compiler.getVirtualColumnTypeCalls();
+                    try (RecordCursorFactory ignore = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                        compileCalls[i] = compiler.getSetOperationColumnTypeCalls() - callsBefore;
+                        compileParses[i] = compiler.getVirtualColumnTypeCalls() - parsesBefore;
+                    }
+                    assertEquals(16, compiler.getSetOperationColumnTypesCapacity());
+                    assertEquals(16, compiler.getSetOperationColumnTypeModelsCapacity());
+                }
+                final String counts = "calls " + Arrays.toString(compileCalls) + ", parses " + Arrays.toString(compileParses);
+                assertTrue(counts, compileCalls[0] > 0);
+                assertEquals(counts, compileCalls[0], compileCalls[1]);
+                assertEquals(counts, compileCalls[1], compileCalls[2]);
+                assertTrue(counts, compileParses[1] > compileParses[0]);
+                assertEquals(counts, compileParses[1] - compileParses[0], compileParses[2] - compileParses[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeMemoEndsWithTypeQuery() throws Exception {
+        // The compiler takes the models and columns of each compile from its pools, so compiles of texts of the same
+        // shape hand out the same objects. The memo of getSetOperationColumnType() holds the types of one type query:
+        // one that outlived it would give the next type query the types of the tables that the previous one read.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (a INT, b INT, c INT, e INT, k INT)");
+            execute("CREATE TABLE td (a DOUBLE, b DOUBLE, c DOUBLE, e DOUBLE, k DOUBLE)");
+            final String[] tables = {"ti", "td", "ti", "ti"};
+            // ti.a turns DOUBLE before the last type query, and a of each level reads a of the level below
+            final int[] expectedTypes = {ColumnType.INT, ColumnType.DOUBLE, ColumnType.INT, ColumnType.DOUBLE};
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                IQueryModel firstModel = null;
+                IQueryModel firstNestedModel = null;
+                for (int i = 0; i < tables.length; i++) {
+                    if (i == 3) {
+                        execute("ALTER TABLE ti ALTER COLUMN a TYPE DOUBLE");
+                    }
+                    final String query = nestedComputedUnion(3, tables[i], false);
+                    final IQueryModel model = setOperationHead(compiler.generateExecutionModel(query, sqlExecutionContext));
+                    if (firstModel == null) {
+                        firstModel = model;
+                        firstNestedModel = model.getNestedModel();
+                    } else {
+                        assertSame(firstModel, model);
+                        assertSame(firstNestedModel, model.getNestedModel());
+                    }
+                    final int type = compiler.getSetOperationColumnType(model, columnIndex(model, "a"));
+                    try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                        assertEquals(query, expectedTypes[i], factory.getMetadata().getColumnType("a"));
+                    }
+                    assertEquals(query, expectedTypes[i], type);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeMemoKeysTheSetOperation() throws Exception {
+        // A column object can be a column of two set operations that one type query reads: wrappers delegate their
+        // columns, and rewrites share column objects between the layers that they build. The test makes x of the
+        // union over td the column object of the union over ti, which the type query reads first. The memo must not
+        // answer for the union over td with the type that it holds for the union over ti: x of the union over td is
+        // DOUBLE, x * 1 over it DOUBLE, and the top UNION ALL widens INT with DOUBLE to DOUBLE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (k INT)");
+            execute("CREATE TABLE td (k DOUBLE)");
+            final String query = "SELECT x * 1 AS z FROM (SELECT k AS x FROM ti UNION ALL SELECT k FROM ti) UNION ALL "
+                    + "SELECT x * 1 FROM (SELECT k AS x FROM td UNION ALL SELECT k FROM td)";
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                final IQueryModel model = setOperationHead(compiler.generateExecutionModel(query, sqlExecutionContext));
+                final IQueryModel intUnion = model.getNestedModel();
+                final IQueryModel doubleUnion = model.getUnionModel().getNestedModel();
+                assertNotNull(intUnion.getUnionModel());
+                assertNotNull(doubleUnion.getUnionModel());
+                final QueryColumn sharedColumn = intUnion.getColumns().getQuick(0);
+                doubleUnion.getColumns().setQuick(0, sharedColumn);
+                doubleUnion.getAliasToColumnMap().put(sharedColumn.getAlias(), sharedColumn);
+                assertEquals(ColumnType.DOUBLE, compiler.getSetOperationColumnType(model, 0));
+            }
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeOfColumnTheSetOperationDoesNotList() throws Exception {
+        // getSetOperationColumnType() types a column by its position among the columns of the set operation. The test
+        // makes x, which the top level reads by name, name the column of the later operand of the union below, which
+        // reads the INT k but which the union does not list: x has no type, and neither has z, which reads it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (k INT)");
+            final String query = "SELECT x * 1 AS z FROM (SELECT k AS x FROM ti UNION ALL SELECT k FROM ti) UNION ALL "
+                    + "SELECT 1 FROM long_sequence(1)";
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                final IQueryModel model = setOperationHead(compiler.generateExecutionModel(query, sqlExecutionContext));
+                final IQueryModel union = model.getNestedModel();
+                assertNotNull(union.getUnionModel());
+                assertEquals(ColumnType.INT, compiler.getSetOperationColumnType(model, 0));
+                final QueryColumn unlistedColumn = union.getUnionModel().getColumns().getQuick(0);
+                assertEquals(-1, union.getColumns().indexOf(unlistedColumn));
+                union.getAliasToColumnMap().put("x", unlistedColumn);
+                assertEquals(-1, compiler.getSetOperationColumnType(model, 0));
+            }
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeOfOperandWithFewerColumns() throws Exception {
+        // The optimiser types u.c for the filter after the RIGHT join before it checks that every operand of the
+        // union has as many columns as the first. The later operand has no c, so c has no type, and the query fails
+        // on the column count.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, c INT)");
+            execute("CREATE TABLE a (k INT)");
+            assertExceptionNoLeakCheck(
+                    "SELECT * FROM (SELECT k, c FROM t UNION ALL SELECT k FROM t) u RIGHT JOIN a ON a.k = u.k WHERE u.c > 0",
+                    44,
+                    "queries have different number of columns"
+            );
+        });
+    }
+
+    @Test
+    public void testSetOperationColumnTypeTypesEachPairOncePerTypeQuery() throws Exception {
+        // Each computed column of nestedComputedUnion(d) reads a, b, c and e of the level below. A type query on a
+        // reads its own pair once, the 4 pairs of the level below once each, and the 4 pairs of each lower level
+        // once from each of the 4 computed columns above them: 1 call at d = 1, and 1 + 4 + 16 (d - 2) = 16d - 27
+        // calls from d = 2. Each of the 1 + 4 (d - 1) pairs that it types parses the column of both operands, a
+        // computed column and a constant: 8d - 6 parses. Typing each read again made 1, 5, 21, 85... calls and 2,
+        // 10, 42, 170... parses. The type query stores the 4 (d - 1) pairs below its own, 16 or more from d = 5,
+        // which grow the maps, and the maps have their initial capacity again when it ends.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, c INT, e INT, k INT)");
+            try (SetOperationTypeCompiler compiler = new SetOperationTypeCompiler(engine)) {
+                for (int d = 1; d <= 12; d++) {
+                    final String query = nestedComputedUnion(d, "t", false);
+                    final IQueryModel model = setOperationHead(compiler.generateExecutionModel(query, sqlExecutionContext));
+                    final int columnIndex = columnIndex(model, "a");
+                    final long calls = compiler.getSetOperationColumnTypeCalls();
+                    final long parses = compiler.getVirtualColumnTypeCalls();
+                    final int type = compiler.getSetOperationColumnType(model, columnIndex);
+                    assertEquals("calls, d=" + d, d == 1 ? 1 : 16 * d - 27, compiler.getSetOperationColumnTypeCalls() - calls);
+                    assertEquals("parses, d=" + d, 8 * d - 6, compiler.getVirtualColumnTypeCalls() - parses);
+                    assertEquals("d=" + d, 16, compiler.getSetOperationColumnTypesCapacity());
+                    assertEquals("d=" + d, 16, compiler.getSetOperationColumnTypeModelsCapacity());
+                    try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+                        assertEquals("d=" + d, ColumnType.INT, factory.getMetadata().getColumnType("a"));
+                    }
+                    assertEquals("d=" + d, ColumnType.INT, type);
+                }
+            }
         });
     }
 
@@ -7121,6 +7450,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 .put(", optimiser ").put(computedType < 0 ? "unknown" : ColumnType.nameOf(computedType)).put('\n');
     }
 
+    private static int columnIndex(IQueryModel model, CharSequence alias) {
+        final int index = model.getColumns().indexOf(model.getAliasToColumnMap().get(alias));
+        assertTrue(index > -1);
+        return index;
+    }
+
     // The code generator widens DECIMAL with an array to VARCHAR, but has no cast from DECIMAL to VARCHAR: the query
     // fails an assertion, or a NullPointerException without assertions. That is not the type the optimiser reads.
     private static boolean isDecimalWithArray(String[] types, int... operands) {
@@ -7131,6 +7466,55 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             hasArray |= types[operand].endsWith("[]");
         }
         return hasDecimal && hasArray;
+    }
+
+    // Three nested set operations of the operation over the tables t<bottom>, t<middle> and t<top> of the types:
+    // the first operand of the bottom level casts k to x and computes y with a CASE over k that compares c with the
+    // operand, and the first operands of the middle and the top level compute x and y with a CASE over c, x and y
+    // of the level below. The later operand of the bottom level reads t<middle>, those of the middle and the top
+    // level read t<top>. The cast is in parentheses, as the parser reads the alias after a GEOHASH type as part
+    // of the type.
+    private static String nestedComputedSetOperation(String[] types, String operation, int bottom, int middle, int top, String operand) {
+        final String bottomLevel = "SELECT (k::" + types[bottom] + ") AS x, CASE WHEN c > " + operand + " THEN k ELSE k END AS y, c FROM t" + bottom
+                + ' ' + operation + " SELECT k, k, c FROM t" + middle;
+        final String middleLevel = "SELECT CASE WHEN c > 0 THEN x ELSE y END AS x, CASE WHEN c > 0 THEN y ELSE x END AS y, c FROM ("
+                + bottomLevel + ") " + operation + " SELECT k, k, c FROM t" + top;
+        return "SELECT CASE WHEN c > 0 THEN x ELSE y END AS x, CASE WHEN c > 0 THEN y ELSE x END AS y, c FROM ("
+                + middleLevel + ") " + operation + " SELECT k, k, c FROM t" + top;
+    }
+
+    // depth levels of UNION ALL over the table, whose columns a, b, c, e and k are INT, and ts TIMESTAMP when
+    // hasTimestamp. The first operand of each level computes a, b, c and e from a, b, c and e of the level below.
+    private static String nestedComputedUnion(int depth, String table, boolean hasTimestamp) {
+        if (depth == 0) {
+            return table;
+        }
+        return "SELECT a+b+c+e AS a, a-b+c-e AS b, a+b-c-e AS c, a-b-c+e AS e, k" + (hasTimestamp ? ", ts" : "")
+                + " FROM (" + nestedComputedUnion(depth - 1, table, hasTimestamp) + ") UNION ALL SELECT 1, 2, 3, 4, 5"
+                + (hasTimestamp ? ", '2020-01-01'::TIMESTAMP" : "") + " FROM long_sequence(1)";
+    }
+
+    // the model of the first operand of the outermost set operation of the query
+    private static IQueryModel setOperationHead(ExecutionModel executionModel) {
+        IQueryModel model = (IQueryModel) executionModel;
+        while (model.getUnionModel() == null) {
+            model = model.getNestedModel();
+        }
+        return model;
+    }
+
+    // A UNION ALL whose first operand computes k from x of a UNION ALL of innerCount constants, and whose later
+    // outerCount operands are constants
+    private static String wideComputedUnion(int innerCount, int outerCount) {
+        final StringBuilder sb = new StringBuilder("SELECT x + 0 AS k FROM (SELECT 1 AS x FROM long_sequence(1)");
+        for (int i = 2; i <= innerCount; i++) {
+            sb.append(" UNION ALL SELECT ").append(i).append(" FROM long_sequence(1)");
+        }
+        sb.append(')');
+        for (int i = 1; i <= outerCount; i++) {
+            sb.append(" UNION ALL SELECT ").append(i).append(" FROM long_sequence(1)");
+        }
+        return sb.toString();
     }
 
     private void testRewriteTrivialExpressions(boolean aliasExpressionsEnabled) throws Exception {
@@ -7197,8 +7581,24 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             return optimiser.getSetOperationColumnTypeForTesting(model, columnIndex, sqlExecutionContext);
         }
 
+        long getSetOperationColumnTypeCalls() {
+            return optimiser.getSetOperationColumnTypeCallsForTesting();
+        }
+
+        int getSetOperationColumnTypeModelsCapacity() {
+            return optimiser.getSetOperationColumnTypeModelsCapacityForTesting();
+        }
+
         int getSetOperationColumnTypeWithoutContext(IQueryModel model, int columnIndex) {
             return optimiser.getSetOperationColumnTypeForTesting(model, columnIndex, null);
+        }
+
+        int getSetOperationColumnTypesCapacity() {
+            return optimiser.getSetOperationColumnTypesCapacityForTesting();
+        }
+
+        long getVirtualColumnTypeCalls() {
+            return optimiser.getVirtualColumnTypeCallsForTesting();
         }
     }
 }

@@ -68,6 +68,12 @@ import java.util.stream.Stream;
  * operation compiles the query text and closes the factory without opening a cursor, so it covers
  * the lexer, parser, optimiser and code generation, and nothing else.
  * <p>
+ * Two more queries filter a RIGHT JOIN on a column of a set operation whose operands compute it,
+ * which the optimiser types to decide whether the filter drops the rows that the join
+ * NULL-extends: 12 nested levels of UNION ALL, each computing its columns from those of the level
+ * below, and a UNION ALL of 101 operands whose first operand computes its column from a UNION ALL
+ * of 100 operands.
+ * <p>
  * Every query also compiles on a build that predates audited views, so the class runs unchanged
  * against a base commit, to show that the feature costs such queries nothing. Run it with
  * {@code -prof gc} as well: the allocation per compile is exact where the time is not.
@@ -91,7 +97,7 @@ import java.util.stream.Stream;
         "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED"
 })
 public class QueryCompileBenchmark {
-    @Param({"table", "declare", "view", "view_declare", "mat_view"})
+    @Param({"table", "declare", "view", "view_declare", "mat_view", "computed_union_join", "wide_union_join"})
     public String query;
     private SqlCompiler compiler;
     private SqlExecutionContextImpl ctx;
@@ -151,6 +157,8 @@ public class QueryCompileBenchmark {
         drainWal(engine);
         drainMatViews(engine);
         drainWal(engine);
+        engine.execute("CREATE TABLE t (a INT, b INT, c INT, e INT, k INT)", ctx);
+        engine.execute("CREATE TABLE a (k INT)", ctx);
 
         sql = switch (query) {
             case "table" -> "SELECT ts, sym, price FROM trades WHERE sym = 'AAPL' AND price > 10";
@@ -159,6 +167,10 @@ public class QueryCompileBenchmark {
             case "view" -> "SELECT ts, sym, price FROM v_trades WHERE price > 10";
             case "view_declare" -> "DECLARE @sym := 'MSFT' SELECT ts, sym, price FROM v_trades_sym WHERE price > 10";
             case "mat_view" -> "SELECT ts, sym, price FROM mv_trades WHERE sym = 'AAPL' AND price > 10";
+            case "computed_union_join" ->
+                    "SELECT * FROM (" + nestedComputedUnion(12) + ") u RIGHT JOIN a ON a.k = u.k WHERE u.a > 0";
+            case "wide_union_join" ->
+                    "SELECT * FROM (" + wideComputedUnion(100, 100) + ") u RIGHT JOIN a ON a.k = u.k WHERE u.k > 0";
             default -> throw new IllegalArgumentException("unknown query: " + query);
         };
     }
@@ -195,5 +207,29 @@ public class QueryCompileBenchmark {
                 while (walApplyJob.run()) ;
             }
         }
+    }
+
+    // depth levels of UNION ALL over t, whose first operand computes a, b, c and e from a, b, c and e of the level
+    // below
+    private static String nestedComputedUnion(int depth) {
+        if (depth == 0) {
+            return "t";
+        }
+        return "SELECT a+b+c+e AS a, a-b+c-e AS b, a+b-c-e AS c, a-b-c+e AS e, k FROM (" + nestedComputedUnion(depth - 1)
+                + ") UNION ALL SELECT 1, 2, 3, 4, 5 FROM long_sequence(1)";
+    }
+
+    // A UNION ALL whose first operand computes k from x of a UNION ALL of innerCount constants, and whose later
+    // outerCount operands are constants
+    private static String wideComputedUnion(int innerCount, int outerCount) {
+        final StringBuilder sb = new StringBuilder("SELECT x + 0 AS k FROM (SELECT 1 AS x FROM long_sequence(1)");
+        for (int i = 2; i <= innerCount; i++) {
+            sb.append(" UNION ALL SELECT ").append(i).append(" FROM long_sequence(1)");
+        }
+        sb.append(')');
+        for (int i = 1; i <= outerCount; i++) {
+            sb.append(" UNION ALL SELECT ").append(i).append(" FROM long_sequence(1)");
+        }
+        return sb.toString();
     }
 }

@@ -101,7 +101,9 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
@@ -202,6 +204,8 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
 
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
+    // The capacity of the maps of the memo of getSetOperationColumnType(), see clearSetOperationColumnTypes()
+    private static final int SET_OPERATION_COLUMN_TYPES_CAPACITY = 16;
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
@@ -478,6 +482,8 @@ public class SqlOptimiser implements Mutable {
     private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // True while getSetOperationColumnType() answers a type query, see there
+    private boolean isTypingSetOperationColumn;
     // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
     // view's metadata, see optimiseExpressionModels()
     private boolean isViewMetadataCheckDeferred;
@@ -503,8 +509,22 @@ public class SqlOptimiser implements Mutable {
     // The number of ordering edges that applyModelOnOrderingConstraints has applied over the life of the
     // optimiser. clear() keeps it, so tests read the delta around a compile.
     private long orderingEdgeApplications;
+    // The number of getSetOperationColumnType() calls, memo hits included, over the life of the optimiser. It
+    // counts on entry, before any work. clear() keeps it, so tests read the delta around a type query or a compile.
+    private long setOperationColumnTypeCalls;
+    // The memo of the type query in progress, see getSetOperationColumnType(): the set operation that a call typed
+    // each column in, and the type that it gave the column. Each computed column of a level reads several columns
+    // of the set operation below, which the other columns of the level read too: without the memo, each read
+    // would type those columns, and every level below them, again, and the work would grow exponentially with the
+    // number of levels.
+    private ObjObjHashMap<QueryColumn, IQueryModel> setOperationColumnTypeModels = new ObjObjHashMap<>(SET_OPERATION_COLUMN_TYPES_CAPACITY);
+    private ObjIntHashMap<QueryColumn> setOperationColumnTypes = new ObjIntHashMap<>(SET_OPERATION_COLUMN_TYPES_CAPACITY, 0.5, -1);
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
+    // The number of getVirtualColumnType() calls, each of which parses one expression at most, over the life of
+    // the optimiser. It counts on entry, before any work. clear() keeps it, so tests read the delta around a type
+    // query or a compile.
+    private long virtualColumnTypeCalls;
     // The execution context of the query that optimise() optimises, which getVirtualColumnType() parses
     // expressions with, or null outside optimise()
     private SqlExecutionContext virtualColumnTypeContext;
@@ -727,6 +747,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     @TestOnly
+    public long getSetOperationColumnTypeCallsForTesting() {
+        return setOperationColumnTypeCalls;
+    }
+
+    @TestOnly
     public int getSetOperationColumnTypeForTesting(IQueryModel model, int columnIndex, SqlExecutionContext executionContext) {
         final SqlExecutionContext previousContext = virtualColumnTypeContext;
         virtualColumnTypeContext = executionContext;
@@ -735,6 +760,21 @@ public class SqlOptimiser implements Mutable {
         } finally {
             virtualColumnTypeContext = previousContext;
         }
+    }
+
+    @TestOnly
+    public int getSetOperationColumnTypeModelsCapacityForTesting() {
+        return setOperationColumnTypeModels.capacity();
+    }
+
+    @TestOnly
+    public int getSetOperationColumnTypesCapacityForTesting() {
+        return setOperationColumnTypes.capacity();
+    }
+
+    @TestOnly
+    public long getVirtualColumnTypeCallsForTesting() {
+        return virtualColumnTypeCalls;
     }
 
     public boolean hasOrderedGroupByFunc(ExpressionNode node) {
@@ -3900,6 +3940,21 @@ public class SqlOptimiser implements Mutable {
             return qc;
         }
         return null;
+    }
+
+    // Empties the memo of getSetOperationColumnType() at the end of a type query. clear() fills the whole key
+    // array, and rehash() never shrinks it, so the maps that a type query may have grown are replaced: every type
+    // query starts with the initial arrays, and empties them at a cost that its own pairs bound, not those of the
+    // type queries before it. A map does not rehash before it holds SET_OPERATION_COLUMN_TYPES_CAPACITY keys.
+    private void clearSetOperationColumnTypes() {
+        final int size = setOperationColumnTypes.size();
+        if (size >= SET_OPERATION_COLUMN_TYPES_CAPACITY) {
+            setOperationColumnTypeModels = new ObjObjHashMap<>(SET_OPERATION_COLUMN_TYPES_CAPACITY);
+            setOperationColumnTypes = new ObjIntHashMap<>(SET_OPERATION_COLUMN_TYPES_CAPACITY, 0.5, -1);
+        } else if (size > 0) {
+            setOperationColumnTypeModels.clear();
+            setOperationColumnTypes.clear();
+        }
     }
 
     /**
@@ -7741,57 +7796,29 @@ public class SqlOptimiser implements Mutable {
     // differs, which leaves the type unknown, unless every operand is SYMBOL: the column is then SYMBOL or
     // STRING, which compare with constants and encode join keys alike.
     // SqlOptimiserTest.testSetOperationColumnTypeMatchesCodeGenerator() checks the result against the generator.
+    // A type query, a call from any other method, reads each pair of a set operation below it once: the calls
+    // that it makes keep the type of each pair in the memo, which the type query empties when it ends. The
+    // optimiser changes the models between type queries, and the next compile takes the same pooled columns and
+    // models again, so no entry outlives the type query.
     private int getSetOperationColumnType(IQueryModel model, QueryColumn column) {
-        final int index = model.getColumns().indexOf(column);
-        final int firstType = getSetOperationOperandColumnType(model, column);
-        if (index < 0 || firstType < 0) {
-            return -1;
-        }
-        int type = firstType;
-        boolean isSameType = true;
-        boolean isUnionRun = false;
-        boolean isSymbolRun = false;
-        for (IQueryModel left = model, right = model.getUnionModel(); right != null; left = right, right = right.getUnionModel()) {
-            final ObjList<QueryColumn> rightColumns = right.getColumns();
-            if (index >= rightColumns.size()) {
-                return -1;
-            }
-            final int rightType = getSetOperationOperandColumnType(right, rightColumns.getQuick(index));
-            if (rightType < 0) {
-                return -1;
-            }
-            isSameType &= rightType == firstType;
-            if (type >= 0) {
-                final int operation = left.getSetOperationType();
-                if (operation == IQueryModel.SET_OPERATION_UNION || operation == IQueryModel.SET_OPERATION_UNION_ALL) {
-                    if (!isUnionRun) {
-                        isUnionRun = true;
-                        isSymbolRun = ColumnType.isSymbol(type);
-                    }
-                    isSymbolRun &= ColumnType.isSymbol(rightType);
-                    if (type != rightType || ColumnType.isSymbol(type)) {
-                        type = getUnionCastTypeOrUnknown(type, rightType);
-                    }
-                } else {
-                    if (isUnionRun && isSymbolRun) {
-                        type = ColumnType.SYMBOL;
-                    }
-                    isUnionRun = false;
-                    if (type != rightType) {
-                        type = getUnionCastTypeOrUnknown(type, rightType);
-                    } else if (ColumnType.isSymbol(type)) {
-                        type = -1;
-                    }
-                }
-            }
-            if (type < 0 && !isSameType) {
-                return -1;
+        setOperationColumnTypeCalls++;
+        if (!isTypingSetOperationColumn) {
+            isTypingSetOperationColumn = true;
+            try {
+                // the calls that it makes type the models below it, so nothing reads this pair again
+                return widenSetOperationColumnType(model, column);
+            } finally {
+                isTypingSetOperationColumn = false;
+                clearSetOperationColumnTypes();
             }
         }
-        if (isSameType) {
-            return firstType;
+        if (setOperationColumnTypeModels.get(column) == model) {
+            return setOperationColumnTypes.get(column);
         }
-        return isUnionRun && isSymbolRun ? ColumnType.SYMBOL : type;
+        final int type = widenSetOperationColumnType(model, column);
+        setOperationColumnTypeModels.put(column, model);
+        setOperationColumnTypes.put(column, type);
+        return type;
     }
 
     // Returns the type of the column of an operand of a set operation: the type of the column that it reads, see
@@ -7844,6 +7871,7 @@ public class SqlOptimiser implements Mutable {
     // the code generator changes after it parses the expression, that of a bind variable the client left to it or of
     // a cursor, which it rejects, is unknown.
     private int getVirtualColumnType(IQueryModel model, QueryColumn column) {
+        virtualColumnTypeCalls++;
         final SqlExecutionContext executionContext = virtualColumnTypeContext;
         if (executionContext == null || model.getSelectModelType() != SELECT_MODEL_VIRTUAL) {
             return -1;
@@ -19356,6 +19384,61 @@ public class SqlOptimiser implements Mutable {
             validateWindowJoins(model.getJoinModels().get(i).getNestedModel(), sqlExecutionContext, recursionLevel + 1);
         }
         validateWindowJoins(model.getUnionModel(), sqlExecutionContext, recursionLevel + 1);
+    }
+
+    // Folds the types that the operands of the set operation give the column, see getSetOperationColumnType(),
+    // which memoises the result
+    private int widenSetOperationColumnType(IQueryModel model, QueryColumn column) {
+        final int index = model.getColumns().indexOf(column);
+        final int firstType = getSetOperationOperandColumnType(model, column);
+        if (index < 0 || firstType < 0) {
+            return -1;
+        }
+        int type = firstType;
+        boolean isSameType = true;
+        boolean isUnionRun = false;
+        boolean isSymbolRun = false;
+        for (IQueryModel left = model, right = model.getUnionModel(); right != null; left = right, right = right.getUnionModel()) {
+            final ObjList<QueryColumn> rightColumns = right.getColumns();
+            if (index >= rightColumns.size()) {
+                return -1;
+            }
+            final int rightType = getSetOperationOperandColumnType(right, rightColumns.getQuick(index));
+            if (rightType < 0) {
+                return -1;
+            }
+            isSameType &= rightType == firstType;
+            if (type >= 0) {
+                final int operation = left.getSetOperationType();
+                if (operation == IQueryModel.SET_OPERATION_UNION || operation == IQueryModel.SET_OPERATION_UNION_ALL) {
+                    if (!isUnionRun) {
+                        isUnionRun = true;
+                        isSymbolRun = ColumnType.isSymbol(type);
+                    }
+                    isSymbolRun &= ColumnType.isSymbol(rightType);
+                    if (type != rightType || ColumnType.isSymbol(type)) {
+                        type = getUnionCastTypeOrUnknown(type, rightType);
+                    }
+                } else {
+                    if (isUnionRun && isSymbolRun) {
+                        type = ColumnType.SYMBOL;
+                    }
+                    isUnionRun = false;
+                    if (type != rightType) {
+                        type = getUnionCastTypeOrUnknown(type, rightType);
+                    } else if (ColumnType.isSymbol(type)) {
+                        type = -1;
+                    }
+                }
+            }
+            if (type < 0 && !isSameType) {
+                return -1;
+            }
+        }
+        if (isSameType) {
+            return firstType;
+        }
+        return isUnionRun && isSymbolRun ? ColumnType.SYMBOL : type;
     }
 
     /**
