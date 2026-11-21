@@ -203,6 +203,7 @@ impl ColumnChunkBuffers {
     // Fully charged page buffers move to the pool with their charge; buffers a failed decode
     // left partially charged are dropped and credited by `reset`.
     pub(crate) fn reset_for_decode(&mut self, page_buffer_pool: &mut PageBufferPool) {
+        poison_released(&mut self.page_buffers);
         if self.page_buffers_counted == self.page_buffers.len()
             && self.page_buffers_charged == self.page_buffers_capacity
         {
@@ -215,6 +216,7 @@ impl ColumnChunkBuffers {
     // The inner tracker-aware data/aux vectors keep their capacity so the next decode grows
     // them via realloc only when the new chunk exceeds the historical peak.
     pub fn reset(&mut self) {
+        self.poison_released();
         self.data_vec.clear();
         self.data_size = 0;
         self.data_ptr = ptr::null_mut();
@@ -230,6 +232,16 @@ impl ColumnChunkBuffers {
         self.page_buffers_counted = 0;
         self.top_rows.clear();
         self.refresh_top_rows_ptr();
+    }
+
+    // Debug builds overwrite the decoded bytes before a reset or drop releases them, so an
+    // aux entry or slice read after its buffer was released reads a wrong value.
+    fn poison_released(&mut self) {
+        if cfg!(debug_assertions) {
+            self.data_vec.fill(RELEASED_POISON_BYTE);
+            self.aux_vec.fill(RELEASED_POISON_BYTE);
+            poison_released(&mut self.page_buffers);
+        }
     }
 
     /// The column-top rows of the decoded chunk, see the `top_rows` field.
@@ -263,6 +275,20 @@ impl ColumnChunkBuffers {
     }
 }
 
+/// The byte debug builds write over released decode buffers. An aux entry made of it reads
+/// as null in both the VARCHAR and VARCHAR_SLICE layouts (bit 2 is set), and value bytes made
+/// of it are invalid UTF-8.
+const RELEASED_POISON_BYTE: u8 = 0xA5;
+
+// Debug builds overwrite page buffers before they are parked for reuse or freed.
+fn poison_released(page_buffers: &mut [Vec<u8>]) {
+    if cfg!(debug_assertions) {
+        for buf in page_buffers {
+            buf.fill(RELEASED_POISON_BYTE);
+        }
+    }
+}
+
 /// Appends the rows `[lo, hi)` to ascending, disjoint runs, joining them to the last run when
 /// it ends at `lo`.
 fn push_top_rows(top_rows: &mut AcVec<[u64; 2]>, lo: usize, hi: usize) -> ParquetResult<()> {
@@ -291,6 +317,7 @@ impl Drop for ColumnChunkBuffers {
     // so its charge must be credited explicitly here to keep the tracker
     // balanced when a cursor closes without a final `reset`.
     fn drop(&mut self) {
+        self.poison_released();
         self.release_page_buffers_charge();
     }
 }

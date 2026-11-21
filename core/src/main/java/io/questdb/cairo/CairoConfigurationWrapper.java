@@ -1980,6 +1980,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isDebugFreedBufferPoisonEnabled() {
+        return getDelegate().isDebugFreedBufferPoisonEnabled();
+    }
+
+    @Override
     public boolean isDebugWriterInvariantCheckEnabled() {
         return getDelegate().isDebugWriterInvariantCheckEnabled();
     }
