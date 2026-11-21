@@ -543,6 +543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isO3PartitionUpdatePending;
     // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
     // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
     // them checks this first.
@@ -11229,13 +11230,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             geometry.commitUpdate(partitionIndex, e);
             // E must not move: assert what commitUpdate's own max() already enforces, defensively.
             assert geometry.getE(partitionIndex) == e;
-            final long geometryRef = geometry.publish(
-                    partitionIndex,
-                    txWriter.getTxn() + 1,
-                    getCompositePartitionSeqTxn(),
-                    configuration.getMicrosecondClock().getTicks(),
-                    getFlushCommitMode()
-            );
+            final long geometryRef = publishGeometry(geometry, partitionIndex);
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
         } else {
             geometry.abandonUpdate();
@@ -13168,13 +13163,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", deadRows=").$(deadRows)
                     .I$();
             geometry.lowerEToLiveRows(partitionIndex);
-            final long geometryRef = geometry.publish(
-                    partitionIndex,
-                    txWriter.getTxn() + 1,
-                    getCompositePartitionSeqTxn(),
-                    configuration.getMicrosecondClock().getTicks(),
-                    getFlushCommitMode()
-            );
+            final long geometryRef = publishGeometry(geometry, partitionIndex);
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
             // The partition ends up plain with fewer rows under the same name txn, and later in-place appends
             // can bring the row count back to a value an incremental backup already archived, with different
@@ -13649,13 +13638,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
         assert geometry.getE(partitionIndex) == e;
-        final long geometryRef = geometry.publish(
-                partitionIndex,
-                txWriter.getTxn() + 1,
-                getCompositePartitionSeqTxn(),
-                configuration.getMicrosecondClock().getTicks(),
-                getFlushCommitMode()
-        );
+        final long geometryRef = publishGeometry(geometry, partitionIndex);
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
 
         // insertPartition only touches attachedPartitions.
@@ -14364,6 +14347,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        isO3PartitionUpdatePending = false;
         if (partitionsRemoved) {
             o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
 
@@ -15578,6 +15562,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
 
+        isO3PartitionUpdatePending = true;
         try {
             resizePartitionUpdateSink();
 
@@ -17991,6 +17976,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPartitionGeometryRefTracked(partitionTimestamp, newRef);
     }
 
+    private long publishGeometry(PartitionGeometry geometry, int partitionIndex) {
+        assert !isO3PartitionUpdatePending : "writer geometry published while O3 geometry refs are unapplied";
+        return geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                getFlushCommitMode()
+        );
+    }
+
     /**
      * Split removal carves the last timestamp group off a PLAIN partition by lowering its {@code _txn} size alone:
      * its files keep rows {@code [liveRows, fileRows)}, which a reader pinned before the carve still resolves. A plain
@@ -18009,13 +18005,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.beginUpdate(partitionIndex);
         geometry.addPiece(minTimestamp, maxTimestamp, 0, liveRows, writerTxn, lastWriteMicros);
         geometry.commitUpdate(partitionIndex, fileRows);
-        final long geometryRef = geometry.publish(
-                partitionIndex,
-                txWriter.getTxn() + 1,
-                getCompositePartitionSeqTxn(),
-                configuration.getMicrosecondClock().getTicks(),
-                getFlushCommitMode()
-        );
+        final long geometryRef = publishGeometry(geometry, partitionIndex);
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 
@@ -21772,13 +21762,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // preserving: file-adjacent pieces already tile one contiguous run.
                     geometry.foldPending();
                     geometry.commitUpdate(targetPartitionIndex, targetExtent + appendedRows);
-                    final long targetGeometryRef = geometry.publish(
-                            targetPartitionIndex,
-                            txWriter.getTxn() + 1,
-                            getCompositePartitionSeqTxn(),
-                            configuration.getMicrosecondClock().getTicks(),
-                            getFlushCommitMode()
-                    );
+                    final long targetGeometryRef = publishGeometry(geometry, targetPartitionIndex);
                     txWriter.updatePartitionSizeByTimestamp(targetPartition, newLiveRows);
                     setGeometryRefRetiringGenerations(targetPartition, targetGeometryRef);
                 } else {
@@ -22875,13 +22859,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
         assert geometry.getE(partitionIndex) == e;
-        final long geometryRef = geometry.publish(
-                partitionIndex,
-                txWriter.getTxn() + 1,
-                getCompositePartitionSeqTxn(),
-                configuration.getMicrosecondClock().getTicks(),
-                getFlushCommitMode()
-        );
+        final long geometryRef = publishGeometry(geometry, partitionIndex);
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 

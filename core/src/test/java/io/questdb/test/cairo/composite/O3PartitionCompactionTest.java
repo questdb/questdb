@@ -735,6 +735,97 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * MAKE-PLAIN, then a split removal that makes the front composite again through the same writer, with the purge
+     * of the retired generation still pending: the new chain must not reuse the retired generation.
+     */
+    @Test
+    public void testSplitRemovalAfterMakePlainOpensTheChainOnAFreshGeneration() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            final TableToken tt = engine.verifyTableName("x");
+            final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
+            final long siblingMinTs = siblingMinTimestampOfDay();
+
+            removeSiblingOfDay(siblingMinTs);
+            drainWalQueueOnOneWriter();
+            Assert.assertFalse("the carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertEquals("the carve moved the front", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
+            Assert.assertTrue("the carve did not record the front as composite", isComposite("x", "2024-01-01"));
+            final long ref = committedGeometryRefOfDay("x", "2024-01-01");
+            Assert.assertEquals(
+                    "the new chain went on inside the generation MAKE-PLAIN retired",
+                    retiredGeneration + 1,
+                    TxReader.geometryGeneration(ref)
+            );
+            Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
+
+            assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 1);
+            insertIntoFront();
+            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedRowsOfDay(siblingMinTs));
+        });
+    }
+
+    /**
+     * The same carve, failing after it published the front's geometry: the apply rolls back and suspends the table,
+     * and the carve that RESUME WAL retries must still open the chain on a fresh generation.
+     */
+    @Test
+    public void testSplitRemovalAfterMakePlainRecoversFromAFailedCarve() throws Exception {
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger failures = new AtomicInteger();
+        assertMemoryLeak(new WindowsMappedTruncateFacade() {
+            @Override
+            public int mkdir(LPSZ path, int mode) {
+                if (isArmed.get() && Utf8s.containsAscii(path, "2024-01-01T")) {
+                    failures.incrementAndGet();
+                    return -1;
+                }
+                return super.mkdir(path, mode);
+            }
+        }, () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            final TableToken tt = engine.verifyTableName("x");
+            final long siblingMinTs = siblingMinTimestampOfDay();
+
+            isArmed.set(true);
+            removeSiblingOfDay(siblingMinTs);
+            drainWalQueueOnOneWriter();
+            isArmed.set(false);
+            Assert.assertEquals("the carve did not create its split directory once", 1, failures.get());
+            Assert.assertTrue("the failed carve did not suspend the table", engine.getTableSequencerAPI().isSuspended(tt));
+            TestUtils.assertContains(walErrorMessage(), "could not open");
+            Assert.assertFalse("the failed carve left the front composite", isComposite("x", "2024-01-01"));
+            Assert.assertEquals("the failed carve changed the day's partitions", 2, partitionCountOfDay("x", "2024-01-01"));
+
+            execute("alter table x resume wal");
+            drainWalQueueOnOneWriter();
+            Assert.assertFalse("the retried carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+            Assert.assertTrue("the retried carve did not record the front as composite", isComposite("x", "2024-01-01"));
+            final long ref = committedGeometryRefOfDay("x", "2024-01-01");
+            Assert.assertEquals(
+                    "the retried carve did not reuse the generation the failed carve wrote",
+                    retiredGeneration + 1,
+                    TxReader.geometryGeneration(ref)
+            );
+            Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
+
+            assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 1);
+            Assert.assertFalse(
+                    "the carves left a geometry file past the live generation",
+                    hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration + 2)
+            );
+            insertIntoFront();
+            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expectedRowsOfDay(siblingMinTs));
+        });
+    }
+
+    /**
      * An incremental backup treats a plain partition as unchanged while its name txn, row count and squash counter
      * all match the archived copy. MOVE-TAIL starts the tail sibling at its first row, not one past the front's last,
      * so rows timestamped in between still route to the front and append to it in place after MAKE-PLAIN trims it.
@@ -1902,6 +1993,27 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
     }
 
+    private static void assertPurgeRemovesTheRetiredGeneration(int retiredGeneration, int liveGeneration) throws Exception {
+        runColumnPurgeJob();
+        Assert.assertFalse(
+                "the purge kept the generation MAKE-PLAIN retired",
+                hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration)
+        );
+        Assert.assertTrue(
+                "the purge deleted the live generation",
+                hasGeometryFileOfDay("x", "2024-01-01", liveGeneration)
+        );
+    }
+
+    private static long committedGeometryRefOfDay(String table, String day) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.getGeometryRef(partitionIndex);
+        }
+    }
+
     private static void createDayTable(String table, String day, int rows) throws Exception {
         execute("create table " + table + " as (select cast(x as int) i," +
                 " timestamp_sequence('" + day + "', 1000000L) ts" +
@@ -1972,6 +2084,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         TestUtils.assertPhysicalRowCountsMatchFiles(engine);
     }
 
+    private static void drainWalQueueOnOneWriter() {
+        engine.releaseAllReaders();
+        AbstractCairoTest.drainWalQueue();
+        TestUtils.assertPhysicalRowCountsMatchFiles(engine);
+    }
+
     // Compaction is always on now; kept as a no-op so call sites still document intent.
 
     /**
@@ -2013,6 +2131,26 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     private static void enableMergeAppend() {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+    }
+
+    private static String expectedRowsOfDay(long siblingMinTs) throws Exception {
+        long count = 1;
+        long sum = 424_242;
+        final long dayTs = parseMicros("2024-01-01T00:00:00.000000Z");
+        for (int i = 1; i <= 20_000; i++) {
+            if (dayTs + (i - 1) * Micros.SECOND_MICROS < siblingMinTs) {
+                count++;
+                sum += i;
+            }
+        }
+        final long strideTs = parseMicros("2024-01-01T05:00:00.000000Z");
+        for (int i = 1; i <= 200; i++) {
+            if (strideTs + (i - 1) * Micros.SECOND_MICROS < siblingMinTs) {
+                count += 5;
+                sum += 5L * (i + 500_000);
+            }
+        }
+        return "c\ts\n" + count + '\t' + sum + '\n';
     }
 
     /**
@@ -2132,6 +2270,29 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private static boolean hasGeometryFileOfDay(String table, String day, int generation) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final long partitionTs = parseMicros(day + "T00:00:00.000000Z");
+            final int partitionIndex = txReader.getPartitionIndex(partitionTs);
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt);
+            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
+            path.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
+        }
+    }
+
+    private static void insertIntoFront() throws Exception {
+        execute("insert into x values (424_242, '2024-01-01T03:00:00.000000Z')");
+        drainWalQueue();
+        Assert.assertFalse(
+                "an O3 commit into the front suspended the table",
+                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
+        );
+    }
+
     /**
      * Whether the day's own partition is composite: more than one piece, or dead space above the live
      * rows, or rows starting above file row 0.
@@ -2153,6 +2314,50 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertTrue("day has no partition", partitionIndex > -1);
             return txReader.isPartitionReadOnly(partitionIndex);
         }
+    }
+
+    /**
+     * MOVE-TAIL, then MAKE-PLAIN through the writer that stays open for the commits that follow.
+     *
+     * @return the generation MAKE-PLAIN retired, whose purge is still pending
+     */
+    private static int makeFrontPlainNextToMoveTailSibling() throws Exception {
+        enableMergeAppend();
+        enableCompaction();
+        letPreSplitCut();
+        setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+        createDayTable("x", "2024-01-01", 20_000);
+        buildMoveTailWaste("x");
+        pinPieceCap(2);
+
+        try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+            Assert.assertNotNull(pinned);
+            runCompactionPasses("x");
+        }
+        Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+        Assert.assertEquals(
+                "MOVE-TAIL must leave the day as front + one sibling split",
+                2,
+                partitionCountOfDay("x", "2024-01-01")
+        );
+        final int retiredGeneration = TxReader.geometryGeneration(committedGeometryRefOfDay("x", "2024-01-01"));
+        final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
+
+        setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+        runCompactionPassesOnOneWriter("x");
+        Assert.assertFalse("fixture did not reach MAKE-PLAIN", isComposite("x", "2024-01-01"));
+        Assert.assertEquals("MAKE-PLAIN moved the front", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
+        Assert.assertEquals("compaction changed the day's partitions", 2, partitionCountOfDay("x", "2024-01-01"));
+        Assert.assertTrue(
+                "the generation MAKE-PLAIN retired is gone before its purge ran",
+                hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration)
+        );
+        return retiredGeneration;
     }
 
     private static long liveRows(String table) throws Exception {
@@ -2193,6 +2398,12 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private static void removeSiblingOfDay(long siblingMinTs) throws Exception {
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("x"))) {
+            walWriter.commitWithParams(siblingMinTs, parseMicros("2024-01-02T00:00:00.000000Z"), WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+    }
+
     /**
      * One drain of the column purge queue into the log table, then one processing pass - the job schedules the
      * queued note {@code column.purge.retry.delay} into the future, so the clock has to move between the two.
@@ -2217,16 +2428,27 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     private static long runCompactionPasses(String table) throws Exception {
         for (int i = 0; i < 6; i++) {
-            // A day of its own per commit, and a day never reused by a later call: re-inserting the
-            // same timestamps would be an O3 write into an existing partition, which rewrites it and
-            // charges those rows to physicallyWrittenRows - so the row accounting below would be wrong
-            // by however much that merge amplified rather than by the 12 rows actually inserted.
-            execute("insert into " + table + " select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
-                    " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
+            insertCompactionPass(table);
             drainWalQueue();
         }
         engine.releaseInactive();
         return 12; // 6 commits x 2 rows, all into partitions of their own
+    }
+
+    private static void runCompactionPassesOnOneWriter(String table) throws Exception {
+        for (int i = 0; i < 6; i++) {
+            insertCompactionPass(table);
+            drainWalQueueOnOneWriter();
+        }
+    }
+
+    private static void insertCompactionPass(String table) throws Exception {
+        // A day of its own per commit, and a day never reused by a later call: re-inserting the
+        // same timestamps would be an O3 write into an existing partition, which rewrites it and
+        // charges those rows to physicallyWrittenRows - so the row accounting of runCompactionPasses
+        // would be wrong by however much that merge amplified rather than by the 12 rows actually inserted.
+        execute("insert into " + table + " select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
+                " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
     }
 
     /**
@@ -2241,6 +2463,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         engine.releaseInactive();
     }
 
+    private static long siblingMinTimestampOfDay() throws Exception {
+        return scalar("select minTimestamp from table_partitions('x')" +
+                " where name like '2024-01-01%' order by minTimestamp desc limit 1");
+    }
+
     private static String snapshot(String sql) throws Exception {
         sink.clear();
         printSql(sql);
@@ -2252,6 +2479,15 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue("query returned no row: " + sql, c.hasNext());
                 return c.getRecord().getLong(0);
+            }
+        }
+    }
+
+    private static String walErrorMessage() throws Exception {
+        try (RecordCursorFactory factory = select("select errorMessage from wal_tables() where name = 'x'")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue("wal_tables() does not list the table", cursor.hasNext());
+                return cursor.getRecord().getStrA(0).toString();
             }
         }
     }
