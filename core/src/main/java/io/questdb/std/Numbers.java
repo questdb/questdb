@@ -848,29 +848,37 @@ public final class Numbers {
     }
 
     public static boolean extractLong256(@NotNull CharSequence value, @NotNull Long256Acceptor acceptor) {
-        int len = value.length();
-        if (len > 2 && ((len & 1) == 0) && len < 67 && value.charAt(0) == '0' && value.charAt(1) == 'x') {
-            try {
-                Long256FromCharSequenceDecoder.decode(value, 2, len, acceptor);
-                return true;
-            } catch (ImplicitCastException e) {
-                return false;
-            }
+        int start = 0;
+        int end = value.length();
+        if (end == 0) {
+            return false;
         }
-        return false;
+        if (end > 2 && value.charAt(0) == '0' && (value.charAt(1) | 32) == 'x') {
+            start = 2;
+        }
+        try {
+            Long256FromCharSequenceDecoder.decode(value, start, end, acceptor);
+            return true;
+        } catch (ImplicitCastException e) {
+            return false;
+        }
     }
 
     public static boolean extractLong256(@NotNull Utf8Sequence value, @NotNull Long256Acceptor acceptor) {
         int size = value.size();
-        if (size > 2 && ((size & 1) == 0) && size < 67 && value.byteAt(0) == '0' && value.byteAt(1) == 'x') {
-            try {
-                Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), 2, size, acceptor);
-                return true;
-            } catch (ImplicitCastException e) {
-                return false;
-            }
+        if (size == 0) {
+            return false;
         }
-        return false;
+        int start = 0;
+        if (size > 2 && value.byteAt(0) == '0' && (value.byteAt(1) | 32) == 'x') {
+            start = 2;
+        }
+        try {
+            Long256FromCharSequenceDecoder.decode(value.asAsciiCharSequence(), start, size, acceptor);
+            return true;
+        } catch (ImplicitCastException e) {
+            return false;
+        }
     }
 
     public static long floorPow2(long value) {
