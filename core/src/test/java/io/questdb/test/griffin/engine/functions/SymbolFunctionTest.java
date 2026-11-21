@@ -97,6 +97,16 @@ public class SymbolFunctionTest {
         Assert.assertEquals('X', function.getChar(null));
     }
 
+    @Test
+    public void testGetCharEmptySymbol() {
+        Assert.assertEquals((char) 0, charFunctionOf("").getChar(null));
+    }
+
+    @Test
+    public void testGetCharNullSymbol() {
+        Assert.assertEquals((char) 0, charFunctionOf(null).getChar(null));
+    }
+
     @Test(expected = UnsupportedOperationException.class)
     public void testGetDate() {
         function.getDate(null);
@@ -278,5 +288,39 @@ public class SymbolFunctionTest {
         }) {
             Assert.assertEquals("2024-04-09T00:00:00.000Z", NanosTimestampDriver.INSTANCE.toMSecString(symbolFunction.getTimestamp(null)));
         }
+    }
+
+    private static SymbolFunction charFunctionOf(CharSequence symbol) {
+        return new SymbolFunction() {
+            @Override
+            public int getInt(Record rec) {
+                return 0;
+            }
+
+            @Override
+            public CharSequence getSymbol(Record rec) {
+                return symbol;
+            }
+
+            @Override
+            public CharSequence getSymbolB(Record rec) {
+                return symbol;
+            }
+
+            @Override
+            public boolean isSymbolTableStatic() {
+                return false;
+            }
+
+            @Override
+            public CharSequence valueBOf(int key) {
+                return symbol;
+            }
+
+            @Override
+            public CharSequence valueOf(int symbolKey) {
+                return symbol;
+            }
+        };
     }
 }
