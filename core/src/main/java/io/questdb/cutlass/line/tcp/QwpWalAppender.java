@@ -198,6 +198,47 @@ public class QwpWalAppender implements QuietCloseable {
         this.symbolCache = symbolCache;
     }
 
+    // Adds a column that a block names and the table's writer lacks, and returns its index. Another connection may
+    // have added the column since the table lookup caught the writer up with the table's structure. addColumn()
+    // catches the writer up itself, but a refusal ahead of it does not, so a refused add catches the writer up
+    // and stands only when the column is still missing, as QwpTudCache serves a refused connection the table
+    // another connection has just created.
+    private static int addColumn(
+            SecurityContext securityContext,
+            TableWriterAPI writer,
+            TableRecordMetadata metadata,
+            String columnName,
+            int columnType
+    ) {
+        try {
+            securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
+            // Checked ahead of addColumn(): the column commits before the DDL listener grants it to this owner,
+            // so a refusal there would leave the column behind.
+            securityContext.authorizeAutoCreateOwner();
+        } catch (CairoException e) {
+            // a read-only node refuses whatever the table's structure, and its writer is left as it is
+            if (e.isReadOnlyAccessRefusal() || !(writer instanceof WalWriter walWriter)) {
+                throw e;
+            }
+            walWriter.goActive();
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                throw e;
+            }
+            return columnIndex;
+        }
+        try {
+            writer.addColumn(columnName, columnType, securityContext);
+        } catch (CairoException e) {
+            final int columnIndex = metadata.getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                throw e;
+            }
+            return columnIndex;
+        }
+        return metadata.getColumnIndexQuiet(columnName);
+    }
+
     /**
      * Creates a CairoException for unsupported type coercions.
      */
@@ -1034,20 +1075,7 @@ public class QwpWalAppender implements QuietCloseable {
                         if (shouldDeferMissingArrayColumnCreation(colType, newColumnType)) {
                             columnWriterIndex = -1;
                         } else {
-                            try {
-                                securityContext.authorizeAlterTableAddColumn(writer.getTableToken());
-                                // Checked ahead of addColumn(): the column commits before the DDL
-                                // listener grants it to this owner, so a refusal there would leave
-                                // the column behind.
-                                securityContext.authorizeAutoCreateOwner();
-                                writer.addColumn(columnName, newColumnType, securityContext);
-                                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                            } catch (CairoException e) {
-                                columnWriterIndex = metadata.getColumnIndexQuiet(columnName);
-                                if (columnWriterIndex < 0) {
-                                    throw e;
-                                }
-                            }
+                            columnWriterIndex = addColumn(securityContext, writer, metadata, columnName, newColumnType);
                         }
                     } else if (!autoCreateNewColumns) {
                         throw CairoException.schemaMismatch()
