@@ -27,6 +27,7 @@ package io.questdb.test.cairo.composite;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionCompactionPolicy;
 import io.questdb.cairo.PartitionCompactionScanJob;
@@ -48,6 +49,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TestTableReaderRecordCursor;
@@ -103,6 +105,44 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * scenarios ruled out.
  */
 public class O3PartitionCompactionTest extends AbstractCairoTest {
+    private static final int LAST_GEOMETRY_GENERATION = 15;
+    private static final String SPLIT_DAY = "2024-01-01";
+    private static final int SPLIT_DAY_ROWS = 20_000;
+    private static final String TYPED_COLUMNS = """
+            rnd_boolean() c_bool,
+            (x % 100)::byte c_byte,
+            (x % 1_000)::short c_short,
+            rnd_char() c_char,
+            rnd_int(0, 1_000, 4) c_int,
+            rnd_long(0, 100_000, 4) c_long,
+            rnd_float(4) c_float,
+            rnd_double(4) c_double,
+            (CASE WHEN x % 5 = 0 THEN NULL ELSE x * 1_000 END)::date c_date,
+            (CASE WHEN x % 5 = 0 THEN NULL ELSE x * 1_000 END)::timestamp c_micros,
+            (CASE WHEN x % 5 = 0 THEN NULL ELSE x * 1_000 END)::timestamp_ns c_nanos,
+            rnd_str(2, 30, 4) c_string,
+            rnd_varchar(1, 40, 4) c_varchar,
+            rnd_bin(4, 64, 4) c_binary,
+            rnd_uuid4(4) c_uuid,
+            rnd_ipv4() c_ipv4,
+            rnd_long256() c_long256,
+            rnd_geohash(4) c_geobyte,
+            rnd_geohash(12) c_geoshort,
+            rnd_geohash(25) c_geoint,
+            rnd_geohash(50) c_geolong,
+            rnd_decimal(2, 1, 4) c_decimal8,
+            rnd_decimal(4, 2, 4) c_decimal16,
+            rnd_decimal(9, 3, 4) c_decimal32,
+            rnd_decimal(18, 4, 4) c_decimal64,
+            rnd_decimal(38, 6, 4) c_decimal128,
+            rnd_decimal(76, 8, 4) c_decimal256,
+            rnd_double_array(1, 4) c_array,
+            rnd_symbol('a', 'b', 'c', NULL) c_symbol,
+            rnd_symbol('a', 'b', 'c', NULL) c_indexed,
+            rnd_symbol('a', 'b', 'c', NULL) c_covering,
+            (x % 1_000)::int c_to_long,
+            rnd_str(2, 30, 4) c_to_varchar,
+            """;
 
     @Before
     public void resetPassDays() {
@@ -744,119 +784,237 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testSplitRemovalAfterMakePlainOpensTheChainOnAFreshGeneration() throws Exception {
         assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
-            final TableToken tt = engine.verifyTableName("x");
-            final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
-            final long siblingMinTs = siblingMinTimestampOfDay();
+            final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
+            final long siblingMinTs = siblingMinTimestamp();
 
-            removeSiblingOfDay(siblingMinTs);
-            drainWalQueueOnOneWriter();
-            Assert.assertFalse("the carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
-            Assert.assertEquals("the carve moved the front", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
-            Assert.assertTrue("the carve did not record the front as composite", isComposite("x", "2024-01-01"));
-            final long ref = committedGeometryRefOfDay("x", "2024-01-01");
-            Assert.assertEquals(
-                    "the new chain went on inside the generation MAKE-PLAIN retired",
-                    retiredGeneration + 1,
-                    TxReader.geometryGeneration(ref)
-            );
-            Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
+            removeSibling(siblingMinTs);
+            drainWalQueueHoldingOffMakePlain();
+            assertNotSuspended();
+            Assert.assertEquals("the carve moved the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+            assertFrontChainStartsAt(retiredGeneration + 1);
 
             assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 1);
             insertIntoFront();
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(expectedRowsOfDay(siblingMinTs, true));
+            assertRowsOfSplitDay(siblingMinTs, true);
         });
     }
 
-    /**
-     * The same carve, failing after it published the front's geometry: the apply suspends the table and the writer
-     * pool closes the distressed writer, and the carve that RESUME WAL retries must still open the chain on a fresh
-     * generation.
-     */
     @Test
     public void testSplitRemovalAfterMakePlainRecoversFromAFailedCarve() throws Exception {
-        final SplitDirectoryRefusingFacade facade = new SplitDirectoryRefusingFacade();
+        final DirectoryRefusingFacade facade = new DirectoryRefusingFacade(SPLIT_DAY + "T");
         assertMemoryLeak(facade, () -> {
             final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
-            final TableToken tt = engine.verifyTableName("x");
-            final long siblingMinTs = siblingMinTimestampOfDay();
+            final long siblingMinTs = siblingMinTimestamp();
 
             facade.isArmed = true;
-            removeSiblingOfDay(siblingMinTs);
+            removeSibling(siblingMinTs);
             drainWalQueueOnOneWriter();
             facade.isArmed = false;
             Assert.assertEquals("the carve did not create its split directory once", 1, facade.refusedCount.get());
-            Assert.assertTrue("the failed carve did not suspend the table", engine.getTableSequencerAPI().isSuspended(tt));
-            TestUtils.assertContains(walErrorMessage(), "could not open");
-            Assert.assertFalse("the failed carve left the front composite", isComposite("x", "2024-01-01"));
-            Assert.assertEquals("the failed carve changed the day's partitions", 2, partitionCountOfDay("x", "2024-01-01"));
-            Assert.assertFalse(
-                    "the failed carve left the generation it opened behind",
-                    hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration + 1)
-            );
+            assertSuspended("could not open");
+            Assert.assertFalse("the failed carve left the front composite", isComposite("x", SPLIT_DAY));
+            Assert.assertEquals("the failed carve changed the day's partitions", 2, partitionCountOfDay("x", SPLIT_DAY));
+            Assert.assertFalse("the failed carve wrote a geometry record", hasFrontGeometryFile(retiredGeneration + 1));
 
             execute("alter table x resume wal");
-            drainWalQueueOnOneWriter();
-            Assert.assertFalse("the retried carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
-            Assert.assertTrue("the retried carve did not record the front as composite", isComposite("x", "2024-01-01"));
-            final long ref = committedGeometryRefOfDay("x", "2024-01-01");
-            Assert.assertEquals(
-                    "the retried carve did not open the generation the failed carve released",
-                    retiredGeneration + 1,
-                    TxReader.geometryGeneration(ref)
-            );
-            Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
+            drainWalQueueHoldingOffMakePlain();
+            assertNotSuspended();
+            assertFrontChainStartsAt(retiredGeneration + 1);
 
             assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 1);
-            Assert.assertFalse(
-                    "the carves left a geometry file past the live generation",
-                    hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration + 2)
-            );
+            Assert.assertFalse("the carves left a file past the live generation", hasFrontGeometryFile(retiredGeneration + 2));
             insertIntoFront();
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(expectedRowsOfDay(siblingMinTs, true));
+            assertRowsOfSplitDay(siblingMinTs, true);
+        });
+    }
+
+    @Test
+    public void testSplitRemovalAfterMakePlainRecoversFromAFailedPublish() throws Exception {
+        final GeometryWriteFailingFacade facade = new GeometryWriteFailingFacade();
+        assertMemoryLeak(facade, () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            final long siblingMinTs = siblingMinTimestamp();
+            final String rowsBefore = fingerprintOfDay("x", SPLIT_DAY);
+
+            facade.isArmed = true;
+            removeSibling(siblingMinTs);
+            drainWalQueueOnOneWriter();
+            facade.isArmed = false;
+            assertSuspended("could not append partition geometry");
+            Assert.assertFalse("the failed publish left the front composite", isComposite("x", SPLIT_DAY));
+            Assert.assertEquals("the failed publish changed the day's partitions", 2, partitionCountOfDay("x", SPLIT_DAY));
+            // not assertQuery(): its engine.clear() drops the pending purge
+            Assert.assertEquals("the failed publish changed the day's rows", rowsBefore, fingerprintOfDay("x", SPLIT_DAY));
+
+            execute("alter table x resume wal");
+            drainWalQueueHoldingOffMakePlain();
+            assertNotSuspended();
+            // the failed write left a whole record in the generation after the retired one
+            assertFrontChainStartsAt(retiredGeneration + 2);
+
+            assertPurgeRemovesTheRetiredGeneration(retiredGeneration, retiredGeneration + 2);
+            insertIntoFront();
+            assertRowsOfSplitDay(siblingMinTs, true);
         });
     }
 
     @Test
     public void testSplitRemovalOfACompositeParentKeepsItsCommittedGenerationWhenItFails() throws Exception {
-        final SplitDirectoryRefusingFacade facade = new SplitDirectoryRefusingFacade();
+        final DirectoryRefusingFacade facade = new DirectoryRefusingFacade(SPLIT_DAY + "T");
         assertMemoryLeak(facade, () -> {
             buildCompositeFrontNextToMoveTailSibling();
-            final TableToken tt = engine.verifyTableName("x");
-            final long siblingMinTs = siblingMinTimestampOfDay();
-            final long committedRef = committedGeometryRefOfDay("x", "2024-01-01");
+            final long siblingMinTs = siblingMinTimestamp();
+            final long committedRef = frontGeometryRef();
             final int generation = TxReader.geometryGeneration(committedRef);
-            final long lengthBefore = geometryFileLengthOfDay("x", "2024-01-01", generation);
+            final long committedLength = frontGeometryFileLength(generation);
 
             facade.isArmed = true;
-            removeSiblingOfDay(siblingMinTs);
+            removeSibling(siblingMinTs);
             drainWalQueueOnOneWriter();
             facade.isArmed = false;
             Assert.assertEquals("the carve did not create its split directory once", 1, facade.refusedCount.get());
-            Assert.assertTrue("the failed carve did not suspend the table", engine.getTableSequencerAPI().isSuspended(tt));
-            Assert.assertEquals("the failed carve moved the committed geometry ref", committedRef, committedGeometryRefOfDay("x", "2024-01-01"));
-            final long lengthAfter = geometryFileLengthOfDay("x", "2024-01-01", generation);
-            Assert.assertNotEquals("the failed carve deleted the committed generation", -1, lengthAfter);
-            Assert.assertTrue("the failed carve did not append to the committed generation", lengthAfter > lengthBefore);
-            Assert.assertFalse("the failed carve opened a generation", hasGeometryFileOfDay("x", "2024-01-01", generation + 1));
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(expectedRowsOfDay(Long.MAX_VALUE, false));
+            assertSuspended("could not open");
+            Assert.assertEquals("the failed carve moved the committed ref", committedRef, frontGeometryRef());
+            Assert.assertEquals("the failed carve touched the committed generation", committedLength, frontGeometryFileLength(generation));
+            Assert.assertFalse("the failed carve opened a generation", hasFrontGeometryFile(generation + 1));
+            assertRowsOfSplitDay(Long.MAX_VALUE, false);
 
             execute("alter table x resume wal");
             drainWalQueueOnOneWriter();
-            Assert.assertFalse("the retried carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
+            assertNotSuspended();
             insertIntoFront();
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
+            assertRowsOfSplitDay(siblingMinTs, true);
+        });
+    }
+
+    @Test
+    public void testSplitRemovalPreservesEveryColumnType() throws Exception {
+        assertSplitRemovalPreservesTypedFront("timestamp", false, false);
+    }
+
+    @Test
+    public void testSplitRemovalPreservesEveryColumnTypeNanos() throws Exception {
+        assertSplitRemovalPreservesTypedFront("timestamp_ns", false, false);
+    }
+
+    @Test
+    public void testSplitRemovalOfASingleTimestampParentPublishesNoGeometry() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            // a classic split: merge-append would leave the parent composite
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            execute("create table x (i int, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into x select x::int, '2024-01-01'::timestamp from long_sequence(8_000)");
+            execute("insert into x select x::int, timestamp_sequence('2024-01-01T03:00:00', 1_000_000L) from long_sequence(200)");
+            execute("insert into x select x::int, timestamp_sequence('2024-01-05', 1_000_000L) from long_sequence(2)");
+            drainWalQueue();
+            execute("insert into x select x::int, timestamp_sequence('2024-01-01T03:00:00', 1_000_000L) from long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals("fixture did not split the day", 2, partitionCountOfDay("x", SPLIT_DAY));
+            final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
+            enableMergeAppend();
+
+            removeSibling(siblingMinTimestamp());
+            drainWalQueue();
+            assertNotSuspended();
+            Assert.assertEquals("the day kept a split", 1, partitionCountOfDay("x", SPLIT_DAY));
+            Assert.assertNotEquals("the parent kept its directory", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+            Assert.assertFalse("the parent became composite", isComposite("x", SPLIT_DAY));
+            Assert.assertFalse("a geometry record was published", hasFrontGeometryFile(0));
+            // 1 + 2 + ... + 8000
+            assertQuery("select count() c, sum(i) s from x where ts in '" + SPLIT_DAY + "'")
                     .noRandomAccess()
                     .expectSize()
-                    .returns(expectedRowsOfDay(siblingMinTs, true));
+                    .returns("c\ts\n8000\t32004000\n");
+        });
+    }
+
+    @Test
+    public void testSplitRemovalOfTheLastPartition() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            execute("alter table x drop partition where ts >= '2024-03-01'");
+            drainWalQueueOnOneWriter();
+            final long siblingMinTs = siblingMinTimestamp();
+
+            removeSibling(siblingMinTs);
+            drainWalQueueHoldingOffMakePlain();
+            assertNotSuspended();
+            assertFrontChainStartsAt(retiredGeneration + 1);
+
+            insertIntoFront();
+            assertRowsOfSplitDay(siblingMinTs, true);
+        });
+    }
+
+    @Test
+    public void testSplitRemovalRewritePreservesEveryColumnType() throws Exception {
+        assertSplitRemovalPreservesTypedFront("timestamp", false, true);
+    }
+
+    @Test
+    public void testSplitRemovalRewritePreservesEveryColumnTypeNanos() throws Exception {
+        assertSplitRemovalPreservesTypedFront("timestamp_ns", false, true);
+    }
+
+    @Test
+    public void testSplitRemovalRewritePreservesEveryColumnTypeOfTheLastPartition() throws Exception {
+        assertSplitRemovalPreservesTypedFront("timestamp", true, true);
+    }
+
+    @Test
+    public void testSplitRemovalRewriteKeepsReadOnlyAndStampsTheSeqTxn() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            final TableToken tt = engine.verifyTableName("x");
+            try (TableWriter writer = getWriter(tt)) {
+                final int partitionIndex = writer.getTxWriter().getPartitionIndex(parseMicros(SPLIT_DAY + "T00:00:00.000000Z"));
+                writer.getTxWriter().setPartitionReadOnly(partitionIndex, true);
+                writer.getTxWriter().setPartitionRemote(partitionIndex, true);
+                writer.bumpPartitionTableVersion();
+            }
+            final long siblingMinTs = siblingMinTimestamp();
+            holdEveryGenerationOfFront(retiredGeneration);
+
+            removeSibling(siblingMinTs);
+            drainWalQueueOnOneWriter();
+            assertNotSuspended();
+            try (TableReader reader = engine.getReader(tt)) {
+                final TxReader txReader = reader.getTxFile();
+                final int partitionIndex = txReader.getPartitionIndex(dayTimestamp(reader, SPLIT_DAY));
+                Assert.assertTrue("the rewrite made a read-only partition writable", txReader.isPartitionReadOnly(partitionIndex));
+                Assert.assertFalse("the new version claims the old one's upload", txReader.isPartitionRemote(partitionIndex));
+                Assert.assertEquals("the rewrite did not stamp its seqTxn", txReader.getSeqTxn(), txReader.getNativePartitionSeqTxn(partitionIndex));
+            }
+            assertRowsOfSplitDay(siblingMinTs, false);
+        });
+    }
+
+    @Test
+    public void testSplitRemovalRewriteRecoversFromAFailure() throws Exception {
+        final DirectoryRefusingFacade facade = new DirectoryRefusingFacade(SPLIT_DAY + ".");
+        assertMemoryLeak(facade, () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
+            final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
+            final long siblingMinTs = siblingMinTimestamp();
+            holdEveryGenerationOfFront(retiredGeneration);
+
+            facade.isArmed = true;
+            removeSibling(siblingMinTs);
+            drainWalQueueOnOneWriter();
+            facade.isArmed = false;
+            Assert.assertEquals("the rewrite did not create its directory once", 1, facade.refusedCount.get());
+            assertSuspended("could not create directories");
+            Assert.assertEquals("the failed rewrite moved the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+            assertRowsOfSplitDay(Long.MAX_VALUE, false);
+
+            execute("alter table x resume wal");
+            drainWalQueueOnOneWriter();
+            assertNotSuspended();
+            Assert.assertNotEquals("the retry did not rewrite the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+            insertIntoFront();
+            assertRowsOfSplitDay(siblingMinTs, true);
         });
     }
 
@@ -864,72 +1022,20 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     public void testSplitRemovalWithMergeAppendOffCarvesDespiteEveryGenerationHeld() throws Exception {
         assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
-            final TableToken tt = engine.verifyTableName("x");
-            final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
-            final long siblingMinTs = siblingMinTimestampOfDay();
-            copyGeometryRecordToEveryOtherGenerationOfDay("x", "2024-01-01", retiredGeneration);
+            final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
+            final long siblingMinTs = siblingMinTimestamp();
+            holdEveryGenerationOfFront(retiredGeneration);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
 
-            removeSiblingOfDay(siblingMinTs);
+            removeSibling(siblingMinTs);
             drainWalQueueOnOneWriter();
-            Assert.assertFalse("the carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
-            Assert.assertEquals("the carve rewrote the front", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
-            Assert.assertFalse("the carve recorded the front as composite", isComposite("x", "2024-01-01"));
-            Assert.assertEquals("the carve did not split the front's last line off", 2, partitionCountOfDay("x", "2024-01-01"));
+            assertNotSuspended();
+            Assert.assertEquals("the carve rewrote the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+            Assert.assertFalse("the carve recorded the front as composite", isComposite("x", SPLIT_DAY));
+            Assert.assertEquals("the carve did not split the front's last line off", 2, partitionCountOfDay("x", SPLIT_DAY));
 
             insertIntoFront();
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(expectedRowsOfDay(siblingMinTs, true));
-        });
-    }
-
-    /**
-     * The same carve, with every generation of the front's directory holding a record: the carve has no generation
-     * to record the front as composite on, so it rewrites the front into a fresh partition version instead.
-     */
-    @Test
-    public void testSplitRemovalWithEveryGenerationHeldRewritesThePlainFront() throws Exception {
-        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
-            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();
-            execute("alter table x add column v varchar");
-            execute("alter table x add column s symbol index");
-            drainWalQueueOnOneWriter();
-            final TableToken tt = engine.verifyTableName("x");
-            final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
-            final long siblingMinTs = siblingMinTimestampOfDay();
-            copyGeometryRecordToEveryOtherGenerationOfDay("x", "2024-01-01", retiredGeneration);
-
-            removeSiblingOfDay(siblingMinTs);
-            drainWalQueueOnOneWriter();
-            Assert.assertFalse("the carve suspended the table", engine.getTableSequencerAPI().isSuspended(tt));
-            Assert.assertNotEquals("the front was not rewritten into a fresh version", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
-            Assert.assertFalse("the rewritten front is composite", isComposite("x", "2024-01-01"));
-            Assert.assertEquals("the day kept a split", 1, partitionCountOfDay("x", "2024-01-01"));
-            for (int generation = 0; generation <= 15; generation++) {
-                Assert.assertFalse(
-                        "the fresh version carries a geometry file of generation " + generation,
-                        hasGeometryFileOfDay("x", "2024-01-01", generation)
-                );
-            }
-
-            runColumnPurgeJob();
-            insertIntoFront();
-            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(expectedRowsOfDay(siblingMinTs, true));
-
-            execute("insert into x (i, ts, v, s) values (424_243, '2024-01-01T03:30:00.000000Z', 'abc', 'a')");
-            drainWalQueue();
-            assertQuery("select count(v) cv, count(s) cs from x where ts in '2024-01-01'")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("cv\tcs\n1\t1\n");
-            assertQuery("select i, v, s, ts from x where s = 'a'")
-                    .timestamp("ts")
-                    .returns("i\tv\ts\tts\n424243\tabc\ta\t2024-01-01T03:30:00.000000Z\n");
+            assertRowsOfSplitDay(siblingMinTs, true);
         });
     }
 
@@ -2087,13 +2193,121 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertFrontChainStartsAt(int generation) throws Exception {
+        Assert.assertTrue("the front is not composite", isComposite("x", SPLIT_DAY));
+        final long ref = frontGeometryRef();
+        Assert.assertEquals("the chain opened on the wrong generation", generation, TxReader.geometryGeneration(ref));
+        Assert.assertEquals("a chain opens at offset 0", 0, TxReader.geometryOffset(ref));
+    }
+
+    private static void assertNotSuspended() {
+        Assert.assertFalse("the table is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+    }
+
+    private static void assertPurgeRemovesTheRetiredGeneration(int retiredGeneration, int liveGeneration) throws Exception {
+        runColumnPurgeJob();
+        Assert.assertFalse("the purge kept the retired generation", hasFrontGeometryFile(retiredGeneration));
+        Assert.assertTrue("the purge deleted the live generation", hasFrontGeometryFile(liveGeneration));
+    }
+
+    private static void assertSplitRemovalPreservesTypedFront(String timestampType, boolean isLastPartition, boolean isRewrite) throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            final int retiredGeneration = makeFrontPlainNextToMoveTailSibling(timestampType, TYPED_COLUMNS);
+            execute("alter table x alter column c_indexed add index");
+            execute("alter table x alter column c_covering add index type posting include (i, c_varchar)");
+            execute("alter table x alter column c_to_long type long");
+            execute("alter table x alter column c_to_varchar type varchar");
+            execute("alter table x add column c_all_null varchar");
+            execute("alter table x add column c_partial_top long");
+            drainWalQueueOnOneWriter();
+            execute("update x set c_partial_top = i where ts >= '2024-01-01T02:00:00.000000Z' and ts < '2024-01-01T04:00:00.000000Z'");
+            drainWalQueueOnOneWriter();
+            if (isLastPartition) {
+                execute("alter table x drop partition where ts >= '2024-03-01'");
+                drainWalQueueOnOneWriter();
+            }
+            Assert.assertFalse("fixture left the front composite", isComposite("x", SPLIT_DAY));
+            Assert.assertEquals("fixture lost the sibling", 2, partitionCountOfDay("x", SPLIT_DAY));
+
+            final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
+            final long siblingMinTs = siblingMinTimestamp();
+            execute("create table expected as (select * from x where ts in '" + SPLIT_DAY + "' and ts < " +
+                    siblingMinTs + "L::" + timestampType + ") timestamp(ts) partition by day");
+            drainWalQueueOnOneWriter();
+            if (isRewrite) {
+                holdEveryGenerationOfFront(retiredGeneration);
+            }
+
+            final String snapshotBefore = snapshot("select count() c, sum(i) s from x");
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                removeSibling(siblingMinTs);
+                // not drainWalQueueOnOneWriter(): it cannot release a pinned reader
+                AbstractCairoTest.drainWalQueue();
+                assertNotSuspended();
+                Assert.assertEquals("wrong partitions left in the day", isRewrite ? 1 : 2, partitionCountOfDay("x", SPLIT_DAY));
+                if (isRewrite) {
+                    Assert.assertNotEquals("the front was not rewritten", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+                    Assert.assertFalse("the rewritten front is composite", isComposite("x", SPLIT_DAY));
+                    for (int generation = 0; generation <= LAST_GEOMETRY_GENERATION; generation++) {
+                        Assert.assertFalse("the new version carries generation " + generation, hasFrontGeometryFile(generation));
+                    }
+                } else {
+                    Assert.assertEquals("the carve moved the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+                    assertFrontChainStartsAt(retiredGeneration + 1);
+                }
+                assertTypedFrontMatchesExpected();
+
+                runColumnPurgeJob();
+                insertIntoTypedFrontAndExpected("2024-01-01T03:00:00.500000Z");
+                assertTypedFrontMatchesExpected();
+                insertIntoTypedFrontAndExpected("2024-01-01T23:00:00.000000Z");
+                assertTypedFrontMatchesExpected();
+                Assert.assertEquals("the pinned reader's snapshot changed", snapshotBefore, countAndSum(pinned));
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertTypedFrontMatchesExpected();
+        });
+    }
+
+    private static void assertSuspended(String message) throws Exception {
+        Assert.assertTrue("the table is not suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+        try (RecordCursorFactory factory = select("select errorMessage from wal_tables() where name = 'x'")) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue("wal_tables() does not list the table", cursor.hasNext());
+                TestUtils.assertContains(cursor.getRecord().getStrA(0), message);
+            }
+        }
+    }
+
+    private static void assertTypedFrontMatchesExpected() throws Exception {
+        TestUtils.assertContains(
+                snapshot("explain select i, c_varchar from x where c_covering = 'b' and ts in '" + SPLIT_DAY + "'"),
+                "CoveringIndex"
+        );
+        assertSqlCursors("expected", "select * from x where ts in '" + SPLIT_DAY + "'");
+        assertSqlCursors(
+                "select i, ts from expected where c_indexed = 'b'",
+                "select i, ts from x where c_indexed = 'b' and ts in '" + SPLIT_DAY + "'"
+        );
+        assertSqlCursors(
+                "select i, c_varchar from expected where c_covering = 'b'",
+                "select i, c_varchar from x where c_covering = 'b' and ts in '" + SPLIT_DAY + "'"
+        );
+    }
+
     private static void backdate(String table, String ts, int rows) throws Exception {
-        execute("insert into " + table + " select cast(x as int) + 500000 i," +
+        execute("insert into " + table + " (i, ts) select cast(x as int) + 500000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
         drainWalQueue();
     }
 
     private static void buildCompositeFrontNextToMoveTailSibling() throws Exception {
+        buildCompositeFrontNextToMoveTailSibling("timestamp", "");
+    }
+
+    private static void buildCompositeFrontNextToMoveTailSibling(String timestampType, String extraColumns) throws Exception {
         enableMergeAppend();
         enableCompaction();
         letPreSplitCut();
@@ -2103,7 +2317,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
 
-        createDayTable("x", "2024-01-01", 20_000);
+        createDayTable("x", SPLIT_DAY, SPLIT_DAY_ROWS, timestampType, extraColumns);
         buildMoveTailWaste("x");
         pinPieceCap(2);
 
@@ -2111,12 +2325,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertNotNull(pinned);
             runCompactionPasses("x");
         }
-        Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
-        Assert.assertEquals(
-                "MOVE-TAIL must leave the day as front + one sibling split",
-                2,
-                partitionCountOfDay("x", "2024-01-01")
-        );
+        Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", SPLIT_DAY));
+        Assert.assertEquals("MOVE-TAIL must leave the day as front + one sibling split", 2, partitionCountOfDay("x", SPLIT_DAY));
     }
 
     private static void buildMoveTailWaste(String table) throws Exception {
@@ -2127,53 +2337,26 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
     }
 
-    private static void assertPurgeRemovesTheRetiredGeneration(int retiredGeneration, int liveGeneration) throws Exception {
-        runColumnPurgeJob();
-        Assert.assertFalse(
-                "the purge kept the generation MAKE-PLAIN retired",
-                hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration)
-        );
-        Assert.assertTrue(
-                "the purge deleted the live generation",
-                hasGeometryFileOfDay("x", "2024-01-01", liveGeneration)
-        );
-    }
-
-    private static long committedGeometryRefOfDay(String table, String day) throws Exception {
-        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
-            final TxReader txReader = reader.getTxFile();
-            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
-            Assert.assertTrue("day has no partition", partitionIndex > -1);
-            return txReader.getGeometryRef(partitionIndex);
-        }
-    }
-
-    private static void copyGeometryRecordToEveryOtherGenerationOfDay(String table, String day, int generation) throws Exception {
-        final TableToken tt = engine.verifyTableName(table);
-        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
-        try (
-                TableReader reader = engine.getReader(tt);
-                Path path = new Path();
-                PartitionGeometryFile record = new PartitionGeometryFile(MemoryTag.NATIVE_DEFAULT)
-        ) {
-            final TxReader txReader = reader.getTxFile();
-            final long partitionTs = parseMicros(day + "T00:00:00.000000Z");
-            final int partitionIndex = txReader.getPartitionIndex(partitionTs);
-            Assert.assertTrue("day has no partition", partitionIndex > -1);
-            path.of(engine.getConfiguration().getDbRoot()).concat(tt);
-            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
-            record.read(ff, path, generation, 0);
-            for (int other = 0; other <= 15; other++) {
-                if (other != generation) {
-                    record.append(ff, path, other, 0, engine.getConfiguration().getCommitMode());
-                }
+    private static String countAndSum(TableReader reader) {
+        long count = 0;
+        long sum = 0;
+        final int columnIndex = reader.getMetadata().getColumnIndex("i");
+        try (TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)) {
+            while (cursor.hasNext()) {
+                count++;
+                sum += cursor.getRecord().getInt(columnIndex);
             }
         }
+        return "c\ts\n" + count + '\t' + sum + '\n';
     }
 
     private static void createDayTable(String table, String day, int rows) throws Exception {
-        execute("create table " + table + " as (select cast(x as int) i," +
-                " timestamp_sequence('" + day + "', 1000000L) ts" +
+        createDayTable(table, day, rows, "timestamp", "");
+    }
+
+    private static void createDayTable(String table, String day, int rows, String timestampType, String extraColumns) throws Exception {
+        execute("create table " + table + " as (select cast(x as int) i, " + extraColumns +
+                " timestamp_sequence('" + day + "', 1000000L)::" + timestampType + " ts" +
                 " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY WAL");
         drainWalQueue();
     }
@@ -2189,6 +2372,11 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                     " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
             drainWalQueue();
         }
+    }
+
+    private static long dayTimestamp(TableReader reader, String day) throws Exception {
+        return ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType())
+                .fromMicros(parseMicros(day + "T00:00:00.000000Z"));
     }
 
     private static long deadRows(String table) throws Exception {
@@ -2241,6 +2429,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         TestUtils.assertPhysicalRowCountsMatchFiles(engine);
     }
 
+    private static void drainWalQueueHoldingOffMakePlain() {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            Assert.assertNotNull(reader);
+            AbstractCairoTest.drainWalQueue();
+        }
+        TestUtils.assertPhysicalRowCountsMatchFiles(engine);
+    }
+
     private static void drainWalQueueOnOneWriter() {
         engine.releaseAllReaders();
         AbstractCairoTest.drainWalQueue();
@@ -2288,26 +2484,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     private static void enableMergeAppend() {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
-    }
-
-    private static String expectedRowsOfDay(long cutoffTs, boolean isFrontInsertIncluded) throws Exception {
-        long count = isFrontInsertIncluded ? 1 : 0;
-        long sum = isFrontInsertIncluded ? 424_242 : 0;
-        final long dayTs = parseMicros("2024-01-01T00:00:00.000000Z");
-        for (int i = 1; i <= 20_000; i++) {
-            if (dayTs + (i - 1) * Micros.SECOND_MICROS < cutoffTs) {
-                count++;
-                sum += i;
-            }
-        }
-        final long strideTs = parseMicros("2024-01-01T05:00:00.000000Z");
-        for (int i = 1; i <= 200; i++) {
-            if (strideTs + (i - 1) * Micros.SECOND_MICROS < cutoffTs) {
-                count += 5;
-                sum += 5L * (i + 500_000);
-            }
-        }
-        return "c\ts\n" + count + '\t' + sum + '\n';
     }
 
     /**
@@ -2377,6 +2553,22 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return count + "/" + intSum + "/" + strLenSum;
     }
 
+    private static long frontGeometryFileLength(int generation) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
+            setPathToFront(path, reader).concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation);
+            return engine.getConfiguration().getFilesFacade().length(path.$());
+        }
+    }
+
+    private static long frontGeometryRef() throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(dayTimestamp(reader, SPLIT_DAY));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.getGeometryRef(partitionIndex);
+        }
+    }
+
     /**
      * The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL.
      */
@@ -2384,7 +2576,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         final TableToken tt = engine.verifyTableName(table);
         try (TableReader reader = engine.getReader(tt)) {
             final TxReader txReader = reader.getTxFile();
-            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            final int partitionIndex = txReader.getPartitionIndex(dayTimestamp(reader, day));
             Assert.assertTrue("day has no partition", partitionIndex > -1);
             return txReader.getPartitionNameTxn(partitionIndex);
         }
@@ -2427,31 +2619,48 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
-    private static long geometryFileLengthOfDay(String table, String day, int generation) throws Exception {
-        final TableToken tt = engine.verifyTableName(table);
-        try (TableReader reader = engine.getReader(tt)) {
-            final TxReader txReader = reader.getTxFile();
-            final long partitionTs = parseMicros(day + "T00:00:00.000000Z");
-            final int partitionIndex = txReader.getPartitionIndex(partitionTs);
-            Assert.assertTrue("day has no partition", partitionIndex > -1);
-            final Path path = Path.getThreadLocal(engine.getConfiguration().getDbRoot()).concat(tt);
-            TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
-            path.concat(TableUtils.PARTITION_GEOMETRY_FILE_NAME).put('.').put(generation);
-            return engine.getConfiguration().getFilesFacade().length(path.$());
+    private static boolean hasFrontGeometryFile(int generation) throws Exception {
+        return frontGeometryFileLength(generation) > -1;
+    }
+
+    private static void holdEveryGenerationOfFront(int sourceGeneration) throws Exception {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        try (
+                TableReader reader = engine.getReader(engine.verifyTableName("x"));
+                Path path = new Path();
+                PartitionGeometryFile record = new PartitionGeometryFile(MemoryTag.NATIVE_DEFAULT)
+        ) {
+            setPathToFront(path, reader);
+            record.read(ff, path, sourceGeneration, 0);
+            for (int generation = 0; generation <= LAST_GEOMETRY_GENERATION; generation++) {
+                if (generation != sourceGeneration) {
+                    record.append(ff, path, generation, 0, engine.getConfiguration().getCommitMode());
+                }
+            }
         }
     }
 
-    private static boolean hasGeometryFileOfDay(String table, String day, int generation) throws Exception {
-        return geometryFileLengthOfDay(table, day, generation) > -1;
+    private static void insertCompactionPass(String table) throws Exception {
+        // A day of its own per commit, and a day never reused by a later call: re-inserting the
+        // same timestamps would be an O3 write into an existing partition, which rewrites it and
+        // charges those rows to physicallyWrittenRows - so the row accounting of runCompactionPasses
+        // would be wrong by however much that merge amplified rather than by the 12 rows actually inserted.
+        execute("insert into " + table + " (i, ts) select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
+                " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
     }
 
     private static void insertIntoFront() throws Exception {
         execute("insert into x (i, ts) values (424_242, '2024-01-01T03:00:00.000000Z')");
         drainWalQueue();
-        Assert.assertFalse(
-                "an O3 commit into the front suspended the table",
-                engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x"))
-        );
+        assertNotSuspended();
+    }
+
+    private static void insertIntoTypedFrontAndExpected(String ts) throws Exception {
+        final String values = " (i, c_varchar, c_indexed, c_covering, ts) values (424_242, 'inserted-after-the-removal', 'b', 'b', '" + ts + "')";
+        execute("insert into x" + values);
+        execute("insert into expected" + values);
+        drainWalQueue();
+        assertNotSuspended();
     }
 
     /**
@@ -2462,7 +2671,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         final TableToken tt = engine.verifyTableName(table);
         try (TableReader reader = engine.getReader(tt)) {
             final TxReader txReader = reader.getTxFile();
-            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            final int partitionIndex = txReader.getPartitionIndex(dayTimestamp(reader, day));
             return partitionIndex > -1 && txReader.isPartitionComposite(partitionIndex);
         }
     }
@@ -2477,25 +2686,24 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private static int makeFrontPlainNextToMoveTailSibling() throws Exception {
+        return makeFrontPlainNextToMoveTailSibling("timestamp", "");
+    }
+
     /**
-     * MOVE-TAIL, then MAKE-PLAIN through the writer that stays open for the commits that follow.
-     *
      * @return the generation MAKE-PLAIN retired, whose purge is still pending
      */
-    private static int makeFrontPlainNextToMoveTailSibling() throws Exception {
-        buildCompositeFrontNextToMoveTailSibling();
-        final int retiredGeneration = TxReader.geometryGeneration(committedGeometryRefOfDay("x", "2024-01-01"));
-        final long frontNameTxn = frontNameTxnOfDay("x", "2024-01-01");
+    private static int makeFrontPlainNextToMoveTailSibling(String timestampType, String extraColumns) throws Exception {
+        buildCompositeFrontNextToMoveTailSibling(timestampType, extraColumns);
+        final int retiredGeneration = TxReader.geometryGeneration(frontGeometryRef());
+        final long frontNameTxn = frontNameTxnOfDay("x", SPLIT_DAY);
 
         setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
         runCompactionPassesOnOneWriter("x");
-        Assert.assertFalse("fixture did not reach MAKE-PLAIN", isComposite("x", "2024-01-01"));
-        Assert.assertEquals("MAKE-PLAIN moved the front", frontNameTxn, frontNameTxnOfDay("x", "2024-01-01"));
-        Assert.assertEquals("compaction changed the day's partitions", 2, partitionCountOfDay("x", "2024-01-01"));
-        Assert.assertTrue(
-                "the generation MAKE-PLAIN retired is gone before its purge ran",
-                hasGeometryFileOfDay("x", "2024-01-01", retiredGeneration)
-        );
+        Assert.assertFalse("fixture did not reach MAKE-PLAIN", isComposite("x", SPLIT_DAY));
+        Assert.assertEquals("MAKE-PLAIN moved the front", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
+        Assert.assertEquals("compaction changed the day's partitions", 2, partitionCountOfDay("x", SPLIT_DAY));
+        Assert.assertTrue("the retired generation is gone before its purge ran", hasFrontGeometryFile(retiredGeneration));
         return retiredGeneration;
     }
 
@@ -2537,9 +2745,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
-    private static void removeSiblingOfDay(long siblingMinTs) throws Exception {
-        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("x"))) {
-            walWriter.commitWithParams(siblingMinTs, parseMicros("2024-01-02T00:00:00.000000Z"), WAL_DEDUP_MODE_REPLACE_RANGE);
+    private static void removeSibling(long siblingMinTs) throws Exception {
+        final TableToken tt = engine.verifyTableName("x");
+        final long rangeHi;
+        try (TableReader reader = engine.getReader(tt)) {
+            rangeHi = dayTimestamp(reader, "2024-01-02");
+        }
+        try (WalWriter walWriter = engine.getWalWriter(tt)) {
+            walWriter.commitWithParams(siblingMinTs, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
         }
     }
 
@@ -2581,15 +2794,6 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
-    private static void insertCompactionPass(String table) throws Exception {
-        // A day of its own per commit, and a day never reused by a later call: re-inserting the
-        // same timestamps would be an O3 write into an existing partition, which rewrites it and
-        // charges those rows to physicallyWrittenRows - so the row accounting of runCompactionPasses
-        // would be wrong by however much that merge amplified rather than by the 12 rows actually inserted.
-        execute("insert into " + table + " select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
-                " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
-    }
-
     /**
      * {@link #runCompactionPasses} for a table that also has the var-size {@code s} column.
      */
@@ -2602,9 +2806,19 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         engine.releaseInactive();
     }
 
-    private static long siblingMinTimestampOfDay() throws Exception {
+    private static Path setPathToFront(Path path, TableReader reader) throws Exception {
+        final TxReader txReader = reader.getTxFile();
+        final long partitionTs = dayTimestamp(reader, SPLIT_DAY);
+        final int partitionIndex = txReader.getPartitionIndex(partitionTs);
+        Assert.assertTrue("day has no partition", partitionIndex > -1);
+        path.of(engine.getConfiguration().getDbRoot()).concat(reader.getTableToken());
+        TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTs, txReader.getPartitionNameTxn(partitionIndex));
+        return path;
+    }
+
+    private static long siblingMinTimestamp() throws Exception {
         return scalar("select minTimestamp from table_partitions('x')" +
-                " where name like '2024-01-01%' order by minTimestamp desc limit 1");
+                " where name like '" + SPLIT_DAY + "%' order by minTimestamp desc limit 1");
     }
 
     private static String snapshot(String sql) throws Exception {
@@ -2622,26 +2836,75 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
-    private static String walErrorMessage() throws Exception {
-        try (RecordCursorFactory factory = select("select errorMessage from wal_tables() where name = 'x'")) {
-            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                Assert.assertTrue("wal_tables() does not list the table", cursor.hasNext());
-                return cursor.getRecord().getStrA(0).toString();
+    private void assertRowsOfSplitDay(long cutoffTs, boolean isFrontInsertIncluded) throws Exception {
+        long count = isFrontInsertIncluded ? 1 : 0;
+        long sum = isFrontInsertIncluded ? 424_242 : 0;
+        final long dayTs = parseMicros(SPLIT_DAY + "T00:00:00.000000Z");
+        for (int i = 1; i <= SPLIT_DAY_ROWS; i++) {
+            if (dayTs + (i - 1) * Micros.SECOND_MICROS < cutoffTs) {
+                count++;
+                sum += i;
             }
         }
+        // the five 200-row strides of buildMoveTailWaste
+        final long strideTs = dayTs + 5 * Micros.HOUR_MICROS;
+        for (int i = 1; i <= 200; i++) {
+            if (strideTs + (i - 1) * Micros.SECOND_MICROS < cutoffTs) {
+                count += 5;
+                sum += 5L * (i + 500_000);
+            }
+        }
+        assertQuery("select count() c, sum(i) s from x where ts in '" + SPLIT_DAY + "'")
+                .noRandomAccess()
+                .expectSize()
+                .returns("c\ts\n" + count + '\t' + sum + '\n');
     }
 
-    private static class SplitDirectoryRefusingFacade extends WindowsMappedTruncateFacade {
+    private static class DirectoryRefusingFacade extends WindowsMappedTruncateFacade {
+        private final String refusedFragment;
         private final AtomicInteger refusedCount = new AtomicInteger();
         private volatile boolean isArmed;
 
+        private DirectoryRefusingFacade(String refusedFragment) {
+            this.refusedFragment = refusedFragment;
+        }
+
         @Override
         public int mkdir(LPSZ path, int mode) {
-            if (isArmed && Utf8s.containsAscii(path, "2024-01-01T")) {
+            return isRefused(path) ? -1 : super.mkdir(path, mode);
+        }
+
+        @Override
+        public int mkdirs(Path path, int mode) {
+            return isRefused(path) ? -1 : super.mkdirs(path, mode);
+        }
+
+        private boolean isRefused(Utf8Sequence path) {
+            if (isArmed && Utf8s.containsAscii(path, refusedFragment)) {
                 refusedCount.incrementAndGet();
-                return -1;
+                return true;
             }
-            return super.mkdir(path, mode);
+            return false;
+        }
+    }
+
+    private static class GeometryWriteFailingFacade extends WindowsMappedTruncateFacade {
+        private volatile long geometryFd = -1;
+        private volatile boolean isArmed;
+
+        @Override
+        public synchronized long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (isArmed && Utf8s.containsAscii(name, TableUtils.PARTITION_GEOMETRY_FILE_NAME + '.')) {
+                geometryFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            final long written = super.write(fd, address, len, offset);
+            return isArmed && fd == geometryFd ? -1 : written;
         }
     }
 }

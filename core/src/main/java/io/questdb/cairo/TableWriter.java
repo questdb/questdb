@@ -433,8 +433,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionRemoveCandidates = new LongList();
     // indexed columns a FORCE REINDEX rebuilds in a partition
     private final IntList reindexColumnIndexes = new IntList();
-    // (partitionTimestamp, nameTxn, generation, writerTxn)
-    private final LongList openedGeometryGenerations = new LongList();
     // (partition timestamp, replaced name txn) of the partitions a reindex replaced: the stale parquet ones an ADD
     // INDEX reindexed in its transaction, or the ones a FORCE REINDEX committed
     private final LongList reindexedPartitions = new LongList();
@@ -5226,7 +5224,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 freeColumns(false);
                 txWriter.unsafeLoadAll();
-                settleOpenedGeometryGenerations();
                 discardWalLag("rollback");
                 recountCompositePartitions();
                 rollbackIndexes();
@@ -8321,7 +8318,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert assertCompositeCountMatchesScan();
         maybeUpgradeStorageVersion();
         txWriter.commit(commitMode, denseSymbolMapWriters);
-        settleOpenedGeometryGenerations();
         maybeDowngradeStorageVersion();
     }
 
@@ -8598,7 +8594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
 
         final long e = geometry.getE(partitionIndex);
-        LOG.info().$("compacting composite partition, REWRITE [table=").$(tableToken)
+        LOG.info().$("compacting partition, REWRITE [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, srcNameTxn))
                 .$(", pieces=").$(pieceCount)
                 .$(", liveRows=").$(liveRows)
@@ -10479,7 +10475,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", err=").$(th)
                     .I$();
         }
-        settleOpenedGeometryGenerations();
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
@@ -11234,7 +11229,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             geometry.commitUpdate(partitionIndex, e);
             // E must not move: assert what commitUpdate's own max() already enforces, defensively.
             assert geometry.getE(partitionIndex) == e;
-            final long geometryRef = publishGeometry(geometry, partitionIndex);
+            final long geometryRef = geometry.publish(
+                    partitionIndex,
+                    txWriter.getTxn() + 1,
+                    getCompositePartitionSeqTxn(),
+                    configuration.getMicrosecondClock().getTicks(),
+                    getFlushCommitMode()
+            );
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
         } else {
             geometry.abandonUpdate();
@@ -13167,7 +13168,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", deadRows=").$(deadRows)
                     .I$();
             geometry.lowerEToLiveRows(partitionIndex);
-            final long geometryRef = publishGeometry(geometry, partitionIndex);
+            final long geometryRef = geometry.publish(
+                    partitionIndex,
+                    txWriter.getTxn() + 1,
+                    getCompositePartitionSeqTxn(),
+                    configuration.getMicrosecondClock().getTicks(),
+                    getFlushCommitMode()
+            );
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
             // The partition ends up plain with fewer rows under the same name txn, and later in-place appends
             // can bring the row count back to a value an incremental backup already archived, with different
@@ -13642,7 +13649,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
         assert geometry.getE(partitionIndex) == e;
-        final long geometryRef = publishGeometry(geometry, partitionIndex);
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                getFlushCommitMode()
+        );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
 
         // insertPartition only touches attachedPartitions.
@@ -14512,6 +14525,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                     removeAttachedPartitionsTracked(partitionTimestamp);
+                } else if (isMergeAppendTable()
+                        && !txWriter.isPartitionComposite(i - 1)
+                        && !getGeometry().hasGenerationForNextPublish(i - 1, 1)) {
+                    rewriteSplitParent(i - 1);
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                    removeAttachedPartitionsTracked(partitionTimestamp);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -14525,15 +14544,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                         long newPrevPartitionSize = attachMinTimestamp;
                         long newSplitPartitionTimestamp = attachMaxTimestamp;
-                        if (isMergeAppendTable()
-                                && !txWriter.isPartitionComposite(i - 1)
-                                && !getGeometry().hasGenerationForNextPublish(i - 1, 1)) {
-                            LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
-                                    .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
-                                    .I$();
-                            newPrevPartitionSize = 0;
-                            newSplitPartitionTimestamp = prevPartitionTimestamp;
-                        }
 
                         assert newSplitPartitionTimestamp < partitionTimestamp || (newPrevPartitionSize == 0 && newSplitPartitionTimestamp == partitionTimestamp);
 
@@ -14574,14 +14584,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 insertPartitionIndex = removeAttachedPartitionsTracked(prevPartitionTimestamp);
                             } else {
                                 txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
-                                if (prevPartitionComposite) {
-                                    // A composite directory counts its live rows in the geometry, not in _txn.
-                                    // Without this the pieces go on claiming the rows that just moved out and a
-                                    // reader returns them twice, once here and once in the new split.
-                                    trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
-                                } else if (isMergeAppendTable()) {
-                                    publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
-                                }
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
@@ -14633,6 +14635,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
                             distressed = true;
                             throw th;
+                        }
+
+                        // Published last, so that a failure above leaves no geometry record behind.
+                        if (newPrevPartitionSize > 0) {
+                            if (prevPartitionComposite) {
+                                // A composite directory counts its live rows in the geometry, not in _txn.
+                                // Without this the pieces go on claiming the rows that just moved out and a
+                                // reader returns them twice, once here and once in the new split.
+                                trimCompositePartitionToRows(i - 1, newPrevPartitionSize, newSplitPartitionTimestamp - 1);
+                            } else if (isMergeAppendTable()) {
+                                publishPlainPrefixAsComposite(i - 1, newPrevPartitionSize, prevPartitionSize, newSplitPartitionTimestamp - 1);
+                            }
                         }
                     } finally {
                         path.trimTo(pathSize);
@@ -17987,26 +18001,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPartitionGeometryRefTracked(partitionTimestamp, newRef);
     }
 
-    private long publishGeometry(PartitionGeometry geometry, int partitionIndex) {
-        final long writerTxn = txWriter.getTxn() + 1;
-        final long geometryRef = geometry.publish(
-                partitionIndex,
-                writerTxn,
-                getCompositePartitionSeqTxn(),
-                configuration.getMicrosecondClock().getTicks(),
-                getFlushCommitMode()
-        );
-        if (TxReader.geometryOffset(geometryRef) == 0) {
-            openedGeometryGenerations.add(
-                    txWriter.getPartitionTimestampByIndex(partitionIndex),
-                    txWriter.getPartitionNameTxn(partitionIndex),
-                    TxReader.geometryGeneration(geometryRef),
-                    writerTxn
-            );
-        }
-        return geometryRef;
-    }
-
     /**
      * Split removal carves the last timestamp group off a PLAIN partition by lowering its {@code _txn} size alone:
      * its files keep rows {@code [liveRows, fileRows)}, which a reader pinned before the carve still resolves. A plain
@@ -18025,7 +18019,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.beginUpdate(partitionIndex);
         geometry.addPiece(minTimestamp, maxTimestamp, 0, liveRows, writerTxn, lastWriteMicros);
         geometry.commitUpdate(partitionIndex, fileRows);
-        final long geometryRef = publishGeometry(geometry, partitionIndex);
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                getFlushCommitMode()
+        );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 
@@ -18052,23 +18052,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 retiredGeometryGenerations.size()
         );
         retiredGeometryGenerations.clear();
-    }
-
-    private void settleOpenedGeometryGenerations() {
-        for (int i = 0, n = openedGeometryGenerations.size(); i < n; i += 4) {
-            if (openedGeometryGenerations.getQuick(i + 3) > txWriter.getTxn()) {
-                setPathForNativePartition(
-                        path.trimTo(pathSize),
-                        timestampType,
-                        partitionBy,
-                        openedGeometryGenerations.getQuick(i),
-                        openedGeometryGenerations.getQuick(i + 1)
-                );
-                ff.removeQuiet(PartitionGeometryFile.geometryFileName(path, (int) openedGeometryGenerations.getQuick(i + 2)));
-                path.trimTo(pathSize);
-            }
-        }
-        openedGeometryGenerations.clear();
     }
 
     private void publishCompactedParquetPartition(
@@ -20420,6 +20403,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    private void rewriteSplitParent(int partitionIndex) {
+        LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                .I$();
+        assert partitionIndex < txWriter.getPartitionCount() - 1 : "split parent rewritten as the last partition";
+        final boolean isRewritten = compactPartition0(partitionIndex);
+        assert isRewritten : "split parent has no rows to rewrite";
+        // REWRITE keeps the entry's seqTxn, but the removed split changed the logical partition
+        txWriter.setPartitionSeqTxn(partitionIndex, getCompositePartitionSeqTxn());
+    }
+
     /**
      * Restores the _cv state that the committed _txn references. A transaction that fails between the
      * _cv commit and the _txn commit leaves _cv one version ahead; its previous version is still in
@@ -21799,7 +21793,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // preserving: file-adjacent pieces already tile one contiguous run.
                     geometry.foldPending();
                     geometry.commitUpdate(targetPartitionIndex, targetExtent + appendedRows);
-                    final long targetGeometryRef = publishGeometry(geometry, targetPartitionIndex);
+                    final long targetGeometryRef = geometry.publish(
+                            targetPartitionIndex,
+                            txWriter.getTxn() + 1,
+                            getCompositePartitionSeqTxn(),
+                            configuration.getMicrosecondClock().getTicks(),
+                            getFlushCommitMode()
+                    );
                     txWriter.updatePartitionSizeByTimestamp(targetPartition, newLiveRows);
                     setGeometryRefRetiringGenerations(targetPartition, targetGeometryRef);
                 } else {
@@ -22896,7 +22896,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         geometry.commitUpdate(partitionIndex, e);
         // E must not move: assert what commitUpdate's own max() already enforces, defensively.
         assert geometry.getE(partitionIndex) == e;
-        final long geometryRef = publishGeometry(geometry, partitionIndex);
+        final long geometryRef = geometry.publish(
+                partitionIndex,
+                txWriter.getTxn() + 1,
+                getCompositePartitionSeqTxn(),
+                configuration.getMicrosecondClock().getTicks(),
+                getFlushCommitMode()
+        );
         setGeometryRefRetiringGenerations(partitionTs, geometryRef);
     }
 
