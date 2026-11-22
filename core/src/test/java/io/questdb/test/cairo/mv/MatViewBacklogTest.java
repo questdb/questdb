@@ -2284,6 +2284,45 @@ public class MatViewBacklogTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeTaskKeepsRangeWhenPendingInvalidationIsCoveredByFullAndRefreshesImmediateView() throws Exception {
+        // As in testRangeTaskKeepsRangeWhenPendingInvalidationIsCoveredByFull(), with an IMMEDIATE view and no REFRESH
+        // statement: the range task queues the view's incremental refresh behind the invalidation, the invalidation
+        // finds its marker covered by the last FULL refresh and leaves the view valid, and the refresh then recomputes
+        // the cached range.
+        assertMemoryLeak(() -> {
+            createBase();
+            insertBaseRows();
+            createView("IMMEDIATE");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS);
+            assertRefreshBaseTxn(1);
+
+            execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+            drainWalQueue();
+            // a change at base txn 1, which the FULL refresh's snapshot includes
+            publishBaseTableInvalidation("covered invalidation", 1);
+            drainWalAndMatViewQueues();
+            Assert.assertFalse(viewState().hasPendingInvalidationReason());
+            // the base's txns: the rows, then the UPDATE
+            assertQuery("SELECT view_status, invalidation_reason, refresh_base_table_txn, base_table_txn FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tinvalidation_reason\trefresh_base_table_txn\tbase_table_txn
+                            valid\t\t2\t2
+                            """);
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t9.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    """);
+            assertSqlCursors(VIEW_SQL, "price_1h");
+        });
+    }
+
+    @Test
     public void testRangeTaskMeetsViewSuspendedBeforeLatch() throws Exception {
         // With writes to a suspended WAL denied, the view's WAL is suspended after an ATTACH range task's checks and
         // before its latch, and the view's WAL refuses the task's writer. A valid view drops the range, as when a
