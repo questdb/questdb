@@ -218,12 +218,6 @@ public class SqlOptimiser implements Mutable {
     private final ObjList<ExpressionNode> innerAliasWindowLiterals = new ObjList<>();
     // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
     private final ObjList<IQueryModel> innerWindowModels = new ObjList<>();
-    // Window model columns that name a column by its inner virtual model alias, each paired with
-    // the translating model name of the same column. See rewriteSelectClause0().
-    private final ObjList<CharSequence> innerAliasWindowColumnNames = new ObjList<>();
-    private final ObjList<QueryColumn> innerAliasWindowColumns = new ObjList<>();
-    // True while rewriteSelectClause0() rewrites a projection that holds a window function.
-    private boolean isWindowProjection;
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
@@ -325,6 +319,8 @@ public class SqlOptimiser implements Mutable {
     // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
     // view's metadata, see optimiseExpressionModels()
     private boolean isViewMetadataCheckDeferred;
+    // True while rewriteSelectClause0() rewrites a projection that holds a window function.
+    private boolean isWindowProjection;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
@@ -845,6 +841,15 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
+    }
+
+    // True when the model exposes the name as a plain reference to the same name below it.
+    private static boolean isPassThroughColumn(IQueryModel model, CharSequence name) {
+        final QueryColumn qc = model.getAliasToColumnMap().get(name);
+        return qc != null
+                && !qc.isWindowExpression()
+                && qc.getAst().type == LITERAL
+                && Chars.equalsIgnoreCase(qc.getAst().token, name);
     }
 
     private static boolean isPivotInSubquery(IQueryModel model, ExpressionNode node) {
@@ -3780,35 +3785,60 @@ public class SqlOptimiser implements Mutable {
                 // no key in the group-by model;
                 // create an alias and add it to the inner models
                 final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
-                // The inner virtual model may already expose innerAlias as another column, one that
-                // a window function reads. Two columns of the inner virtual model then share the
-                // name, and a reference to it by that name is ambiguous.
-                final boolean isInnerAliasAmbiguous = innerVirtualModel.getAliasToColumnMap().contains(innerAlias);
-                translatedColumn = nextColumn(innerAlias, translatedColumnName, includeIntoWildcard);
+                translatedColumn = SqlUtil.nextColumn(
+                        queryColumnPool,
+                        expressionNodePool,
+                        innerAlias,
+                        translatedColumnName,
+                        includeIntoWildcard,
+                        columnAst.position
+                );
                 translatedColumn.setGenerated(isGenerated);
-                innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
                 groupByModel.addBottomUpColumn(translatedColumn);
-                if (isWindowProjection
-                        && !isGroupBy
-                        && !isInnerAliasAmbiguous
-                        && !Chars.equalsIgnoreCase(innerAlias, translatedColumnName)
-                        && !(isPassThroughColumn(innerVirtualModel, translatedColumnName)
-                        && isPassThroughColumn(windowModel, translatedColumnName))) {
-                    // translatedColumn names the column as the translating model exposes it. Unless
-                    // the projection also selects the column under that name, the models above the
-                    // translating model do not expose it: translatedColumnName is missing there, or
-                    // names another column of the projection, as in "x + 1 AS x, x AS px". The
-                    // window model and the model above it refer to innerAlias instead. The window
-                    // model reads the translating model when rewriteSelectClause0() cancels the
-                    // inner virtual model, so remember the translating model name for that case.
-                    final QueryColumn windowColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
+                if (isWindowProjection && !isGroupBy && !Chars.equalsIgnoreCase(innerAlias, translatedColumnName)) {
+                    // translatedColumn reads translatedColumnName, which the models above the inner
+                    // virtual model do not expose unless the inner virtual model passes it through.
+                    // The window model reads the column's pass-through, the one that window function
+                    // arguments and the column selected under its own name read too, and renames it;
+                    // the model above the window model reads the new name.
+                    //
+                    // The inner virtual model keeps the column under innerAlias as well, for the other
+                    // expressions of the projection that refer to innerAlias, unless innerAlias names
+                    // another column there: a table column that a window function argument reads,
+                    // which takes precedence over the alias.
+                    final boolean isInnerAliasFree = innerVirtualModel.getAliasToColumnMap().excludes(innerAlias);
+                    if (isInnerAliasFree) {
+                        innerVirtualModel.addBottomUpColumn(translatedColumn);
+                    }
+                    final CharSequence innerName = passThroughTranslatedColumn(
+                            translatedColumnName,
+                            isInnerAliasFree ? innerAlias : null,
+                            columnAst.position,
+                            translatingModel,
+                            innerVirtualModel
+                    );
+                    final QueryColumn windowColumn = SqlUtil.nextColumn(
+                            queryColumnPool,
+                            expressionNodePool,
+                            innerAlias,
+                            innerName,
+                            includeIntoWildcard,
+                            columnAst.position
+                    );
                     windowColumn.setGenerated(isGenerated);
+                    // The model above the window model reads the window model, which always exposes
+                    // innerAlias. When the projection selected the column under its own name before,
+                    // the window model exposes translatedColumnName too, and the plan stays as it was.
+                    if (Chars.equalsIgnoreCase(innerName, translatedColumnName)
+                            && isPassThroughColumn(windowModel, translatedColumnName)) {
+                        outerColumn = translatedColumn;
+                    } else {
+                        outerColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
+                        outerColumn.setGenerated(isGenerated);
+                    }
                     windowModel.addBottomUpColumn(windowColumn);
-                    innerAliasWindowColumns.add(windowColumn);
-                    innerAliasWindowColumnNames.add(translatedColumnName);
-                    outerColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
-                    outerColumn.setGenerated(isGenerated);
                 } else {
+                    innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
                     windowModel.addBottomUpColumn(translatedColumn);
                     // The group-by exposes innerAlias for this column, not translatedColumnName,
                     // so when columnName != translatedColumnName the outer reference must use
@@ -3975,15 +4005,6 @@ public class SqlOptimiser implements Mutable {
                 );
             }
         }
-    }
-
-    // True when the model exposes the name as a plain reference to the same name below it.
-    private static boolean isPassThroughColumn(IQueryModel model, CharSequence name) {
-        final QueryColumn qc = model.getAliasToColumnMap().get(name);
-        return qc != null
-                && !qc.isWindowExpression()
-                && qc.getAst().type == LITERAL
-                && Chars.equalsIgnoreCase(qc.getAst().token, name);
     }
 
     private ExpressionNode createToUtcCall(ExpressionNode value, ExpressionNode timezone) {
@@ -8563,6 +8584,48 @@ public class SqlOptimiser implements Mutable {
      * RIGHT/FULL OUTER and no context has been built, so it predicts the homogenization by inspecting
      * the raw criteria instead of reading the (not-yet-built) context.
      */
+    // Returns the name under which the inner virtual model exposes the translating model column,
+    // adding a pass-through when it exposes none. The name is the translating model name, unless
+    // another column of the inner virtual model has it:
+    // - an expression that took the name as its alias, as in "qty * 10 AS qty". The inner virtual
+    //   model then stays, and the renamed column, when the inner virtual model holds it, will do.
+    // - a column that the projection renamed to the name, as in "id AS qty". rewriteSelectClause0()
+    //   may cancel the inner virtual model, and the window model then reads the translating model,
+    //   so the pass-through takes a name of its own that the translating model exposes too.
+    private CharSequence passThroughTranslatedColumn(
+            CharSequence translatedColumnName,
+            @Nullable CharSequence renamedColumnName,
+            int position,
+            IQueryModel translatingModel,
+            IQueryModel innerVirtualModel
+    ) throws SqlException {
+        final QueryColumn innerColumn = innerVirtualModel.getAliasToColumnMap().get(translatedColumnName);
+        if (innerColumn == null) {
+            innerVirtualModel.addBottomUpColumn(nextColumn(translatedColumnName, true, position));
+            return translatedColumnName;
+        }
+        if (isPassThroughColumn(innerVirtualModel, translatedColumnName)) {
+            return translatedColumnName;
+        }
+        if (renamedColumnName != null && innerColumn.getAst().type != LITERAL) {
+            return renamedColumnName;
+        }
+        final CharSequence innerName = createColumnAlias(translatedColumnName, innerVirtualModel);
+        innerVirtualModel.addBottomUpColumn(SqlUtil.nextColumn(
+                queryColumnPool,
+                expressionNodePool,
+                innerName,
+                translatedColumnName,
+                true,
+                position
+        ));
+        final QueryColumn translatingColumn = translatingModel.getAliasToColumnMap().get(translatedColumnName);
+        translatingModel.addBottomUpColumnIfNotExists(
+                queryColumnPool.next().of(innerName, deepClone(expressionNodePool, translatingColumn.getAst()))
+        );
+        return innerName;
+    }
+
     private void precomputeHasNonEquiNullingJoin(IQueryModel parent) throws SqlException {
         hasNonEquiNullingJoin = false;
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -13891,8 +13954,6 @@ public class SqlOptimiser implements Mutable {
         innerAliasWindowLiteralNames.clear();
         innerAliasWindowLiterals.clear();
         innerWindowModels.clear();
-        innerAliasWindowColumnNames.clear();
-        innerAliasWindowColumns.clear();
         isWindowProjection = false;
         clearWindowFunctionHashMap();
 
@@ -14008,7 +14069,9 @@ public class SqlOptimiser implements Mutable {
             if (isWindowExpr && qc.getAst().type != FUNCTION) {
                 throw SqlException.$(qc.getAst().position, "Window function expected");
             }
-            isWindowProjection |= isWindowExpr || findWindowFunctionPosition(qc.getAst()) >= 0;
+            if (!isWindowProjection) {
+                isWindowProjection = isWindowExpr || findWindowFunctionPosition(qc.getAst()) >= 0;
+            }
             if (isWindowJoin || isHorizonJoin) {
                 // Look for a window function anywhere in the column, not only at its root. A nested one,
                 // as in row_number() OVER () + 1, routes the column to a window model that pre-empts the
@@ -14516,34 +14579,13 @@ public class SqlOptimiser implements Mutable {
         // A kept inner virtual model exposes both names, and the literal keeps the alias: renaming it would
         // order the window by another copy of the timestamp than the one the code generator designates,
         // which forces a sort and rejects a RANGE frame.
-        // With inner window models, the window model reads the last of them, not the translating model.
-        // They expose the translating model name only when the projection selects the column under it
-        // too. Otherwise the literal keeps the alias, which they pass through and which the block below
-        // copies into the translating model.
         if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) == 0) {
             for (int i = 0, n = innerAliasWindowLiterals.size(); i < n; i++) {
-                final CharSequence name = innerAliasWindowLiteralNames.getQuick(i);
-                if (innerWindowModels.size() == 0 || isPassThroughColumn(windowModel, name)) {
-                    innerAliasWindowLiterals.getQuick(i).token = name;
-                }
+                innerAliasWindowLiterals.getQuick(i).token = innerAliasWindowLiteralNames.getQuick(i);
             }
         }
         innerAliasWindowLiteralNames.clear();
         innerAliasWindowLiterals.clear();
-
-        // The same holds for a window model column that names a column by an inner virtual model alias.
-        // With inner window models between the two, the alias stays: the block below copies it into the
-        // translating model, and the inner window models pass it through.
-        if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) == 0 && innerWindowModels.size() == 0) {
-            for (int i = 0, n = innerAliasWindowColumns.size(); i < n; i++) {
-                final QueryColumn qc = innerAliasWindowColumns.getQuick(i);
-                final CharSequence name = innerAliasWindowColumnNames.getQuick(i);
-                qc.getAst().token = name;
-                windowModel.replaceColumnNameMap(qc.getAlias(), qc.getAlias(), name);
-            }
-        }
-        innerAliasWindowColumnNames.clear();
-        innerAliasWindowColumns.clear();
 
         // When innerVirtualModel is not used but we have innerWindowModels,
         // copy renamed aliases from innerVirtualModel to translatingModel.
@@ -14774,11 +14816,16 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = windowCols.size(); i < n; i++) {
                 QueryColumn col = windowCols.getQuick(i);
                 if (!col.isWindowExpression()) {
-                    // Add this non-window column to each inner window model as pass-through
+                    // Add this non-window column to each inner window model as pass-through. The window
+                    // model reads the column's token, which differs from its alias when the window model
+                    // renames the column, as in "qty AS q2", so the inner window models pass the token
+                    // through.
+                    final CharSequence name = col.getAst().token;
+                    final boolean isRenamed = !Chars.equalsIgnoreCase(name, col.getAlias());
                     for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
                         IQueryModel innerWm = innerWindowModels.getQuick(j);
-                        if (innerWm.getAliasToColumnMap().excludes(col.getAlias())) {
-                            innerWm.addBottomUpColumn(col);
+                        if (innerWm.getAliasToColumnMap().excludes(name)) {
+                            innerWm.addBottomUpColumn(isRenamed ? nextColumn(name) : col);
                         }
                     }
                 }

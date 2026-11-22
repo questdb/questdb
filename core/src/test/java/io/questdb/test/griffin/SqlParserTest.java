@@ -14697,7 +14697,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // only appear in the outer select-window layers.
         assertQuery(
                 "select-window a, a b, sum(sum) sum over () from (" +
-                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a, a b from (" +
+                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (" +
                         "select-choose [x a, a a1] x a, a a1 from (" +
                         "select [x, a] from x timestamp (ts))))",
                 "SELECT x as a, x as b, sum(sum(a) OVER ()) OVER () FROM x",
@@ -14716,7 +14716,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // The select-choose layer should NOT contain projection aliases like "a b".
         assertQuery(
                 "select-window a, a b, sum(sum) sum over (), row_number() row_number over () from (" +
-                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a, a b from (" +
+                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (" +
                         "select-choose [x a, a a1] x a, a a1 from (" +
                         "select [x, a] from x timestamp (ts))))",
                 "SELECT x as a, x as b, sum(sum(a) OVER ()) OVER (), row_number() OVER () FROM x",
@@ -14755,8 +14755,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
         // The select-choose layer should NOT contain projection aliases like "a b" or "a c".
         assertQuery(
                 "select-window a, a b, a c, sum(sum1) sum over () from (" +
-                        "select-window [a, sum(sum) sum1 over ()] sum(sum) sum1 over (), a, a b, a c from (" +
-                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a, a b, a c from (" +
+                        "select-window [a, sum(sum) sum1 over ()] sum(sum) sum1 over (), a from (" +
+                        "select-window [a, sum(a1) sum over ()] sum(a1) sum over (), a from (" +
                         "select-choose [x a, a a1] x a, a a1 from (" +
                         "select [x, a] from x timestamp (ts)))))",
                 "SELECT x as a, x as b, x as c, sum(sum(sum(a) OVER ()) OVER ()) OVER () FROM x",
@@ -14778,7 +14778,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-window a, a b, sum(sum + sum1) sum over () from (" +
                         "select-window [a, sum(b1) sum1 over (), sum(a1) sum over ()] " +
-                        "sum(a1) sum over (), sum(b1) sum1 over (), a, a b from (" +
+                        "sum(a1) sum over (), sum(b1) sum1 over (), a from (" +
                         "select-choose [x a, b b1, a a1] x a, a a1, b, b b1 from (" +
                         "select [x, b, a] from x timestamp (ts))))",
                 "SELECT x as a, x as b, sum(sum(a) OVER () + sum(b) OVER ()) OVER () FROM x",

@@ -22749,26 +22749,397 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowFunctionRenamedColumnAmbiguousWithWindowFunctionArgument() throws Exception {
-        // Known limitation. The projection gives the renamed column the name of another column that a
-        // window function argument reads, so the model under the window holds two columns of that
-        // name. The optimiser does not tell them apart: it rejects the query rather than let the
-        // window function read the wrong one.
+    public void testWindowFunctionRenamedColumnAlsoSelectedUnderOwnName() throws Exception {
+        // The projection selects the designated timestamp under another name and under its own
+        // name. The window reads a single copy of it, the designated one, so it keeps streaming
+        // and accepts a RANGE frame, wherever the window function sits in the projection.
         assertMemoryLeak(() -> {
             createColumnSelectedTwiceTable();
 
+            assertQuery("""
+                    SELECT sum(qty) OVER (ORDER BY ts RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) AS s,
+                           ts + 1 AS f, ts AS ts2, ts
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over (range between 60000000 preceding and current row)]
+                                VirtualRecord
+                                  functions: [qty,ts,ts+1]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            s\tf\tts2\tts
+                            15.0\t2024-01-01T00:00:00.000001Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            40.0\t2024-01-01T00:01:00.000001Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z
+                            30.0\t2024-01-01T00:02:00.000001Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z
+                            40.0\t2024-01-01T00:03:00.000001Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z
+                            """);
+            assertQuery("""
+                    SELECT sum(qty) OVER (ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS s,
+                           ts + 1 AS f, ts AS ts2, ts
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over ( rows between 2 preceding and current row)]
+                                VirtualRecord
+                                  functions: [qty,ts,ts+1]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            s\tf\tts2\tts
+                            15.0\t2024-01-01T00:00:00.000001Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            40.0\t2024-01-01T00:01:00.000001Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z
+                            45.0\t2024-01-01T00:02:00.000001Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z
+                            65.0\t2024-01-01T00:03:00.000001Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z
+                            """);
+            assertQuery("""
+                    SELECT avg(qty) OVER (ORDER BY ts RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) AS ma,
+                           timestamp_floor('1m', ts) AS bucket, ts AS time, *
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ma\tbucket\ttime\tid\tgrp\tqty\tts
+                            15.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3\ta\t15.0\t2024-01-01T00:00:00.000000Z
+                            20.0\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t1\tb\t25.0\t2024-01-01T00:01:00.000000Z
+                            15.0\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t4\ta\t5.0\t2024-01-01T00:02:00.000000Z
+                            20.0\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t2\tb\t35.0\t2024-01-01T00:03:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnAfterNestedWindowFunctionInJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinColumnSelectedTwiceTables();
+
+            assertQuery("SELECT sum(sum(b.id) OVER ()) OVER () AS s, b.id AS bid2 FROM ta a JOIN tb b ON a.k = b.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tbid2
+                            18.0\t3
+                            18.0\t1
+                            18.0\t2
+                            """);
+            // the outer window orders by the column
+            assertQuery("SELECT sum(sum(b.id) OVER ()) OVER (ORDER BY b.id) AS s, b.id AS bid2 FROM ta a JOIN tb b ON a.k = b.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tbid2
+                            18.0\t3
+                            6.0\t1
+                            12.0\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnSourceNameTakenByRenamedColumn() throws Exception {
+        // One column takes the name of another table column, and the projection then selects that
+        // other column under a new name. The model under the window holds the first column under
+        // that name, so the second column reads its table column under a name of its own.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT qty * 2 AS x, id * 2 AS y, id AS qty, qty AS q2, row_number() OVER () AS rn FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ty\tqty\tq2\trn
+                            30.0\t6\t3\t15.0\t1
+                            50.0\t2\t1\t25.0\t2
+                            10.0\t8\t4\t5.0\t3
+                            70.0\t4\t2\t35.0\t4
+                            """);
+            // nested window functions read the table: the window reads that name from the table too
+            assertQuery("""
+                    SELECT sum(lead(qty) OVER ()) OVER () AS s, sum(lead(id) OVER ()) OVER () AS s2,
+                           id AS qty, qty AS q2
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\ts2\tqty\tq2
+                            65.0\t7.0\t3\t15.0
+                            65.0\t7.0\t1\t25.0
+                            65.0\t7.0\t4\t5.0
+                            65.0\t7.0\t2\t35.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnTakesWindowFunctionArgumentName() throws Exception {
+        // The projection gives the renamed column the name of another table column, one that a window
+        // function argument reads. The window function reads the table column, and the renamed column
+        // holds the values of its source column.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            // a cached window function
+            final String query = "SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id FROM trades";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid
+                            1\t30.0\t15.0
+                            4\t50.0\t25.0
+                            2\t10.0\t5.0
+                            null\t70.0\t35.0
+                            """);
             // a streaming window function
             assertQuery("""
                     SELECT sum(id) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s,
                            qty * 2 AS x, qty AS id
                     FROM trades
                     """)
-                    .fails(0, "Invalid column: qty");
-            // a cached window function
-            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id FROM trades")
-                    .fails(0, "Invalid column: qty");
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tx\tid
+                            3.0\t30.0\t15.0
+                            4.0\t50.0\t25.0
+                            8.0\t10.0\t5.0
+                            10.0\t70.0\t35.0
+                            """);
             assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id, id AS i2 FROM trades")
-                    .fails(0, "Invalid column: qty");
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid\ti2
+                            1\t30.0\t15.0\t3
+                            4\t50.0\t25.0\t1
+                            2\t10.0\t5.0\t4
+                            null\t70.0\t35.0\t2
+                            """);
+            // the alias differs from the window function argument in letter case only
+            assertQuery("SELECT lead(ID) OVER () AS n, qty * 2 AS x, qty AS Id FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tId
+                            1\t30.0\t15.0
+                            4\t50.0\t25.0
+                            2\t10.0\t5.0
+                            null\t70.0\t35.0
+                            """);
+            // a later window orders by the renamed column's source column
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id, sum(qty) OVER (ORDER BY qty) AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid\ts
+                            1\t30.0\t15.0\t20.0
+                            4\t50.0\t25.0\t45.0
+                            2\t10.0\t5.0\t5.0
+                            null\t70.0\t35.0\t80.0
+                            """);
+            // an expression over a window function adds a model above the window model
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id, row_number() OVER () + 1 AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid\trn
+                            1\t30.0\t15.0\t2
+                            4\t50.0\t25.0\t3
+                            2\t10.0\t5.0\t4
+                            null\t70.0\t35.0\t5
+                            """);
+            // the filter over the renamed column selects by its source column's values
+            assertQuery("SELECT * FROM (" + query + ") WHERE id > 20")
+                    .noLeakCheck()
+                    .returns("""
+                            n\tx\tid
+                            4\t50.0\t25.0
+                            null\t70.0\t35.0
+                            """);
+            assertQuery("SELECT DISTINCT lead(id) OVER () AS n, qty * 2 AS x, qty AS id FROM trades ORDER BY x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid
+                            2\t10.0\t5.0
+                            1\t30.0\t15.0
+                            4\t50.0\t25.0
+                            null\t70.0\t35.0
+                            """);
+            // the wildcard selects the table column under a name of its own
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id, * FROM trades")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid\tid1\tgrp\tqty\tts
+                            1\t30.0\t15.0\t3\ta\t15.0\t2024-01-01T00:00:00.000000Z
+                            4\t50.0\t25.0\t1\tb\t25.0\t2024-01-01T00:01:00.000000Z
+                            2\t10.0\t5.0\t4\ta\t5.0\t2024-01-01T00:02:00.000000Z
+                            null\t70.0\t35.0\t2\tb\t35.0\t2024-01-01T00:03:00.000000Z
+                            """);
+            // an expression takes the source column's name as well
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 10 AS qty, qty AS id FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tqty\tid
+                            1\t150.0\t15.0
+                            4\t250.0\t25.0
+                            2\t50.0\t5.0
+                            null\t350.0\t35.0
+                            """);
+            // a nested window function reads the table column
+            assertQuery("SELECT sum(lead(id) OVER ()) OVER () AS s, qty * 2 AS x, qty AS id FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tx\tid
+                            7.0\t30.0\t15.0
+                            7.0\t50.0\t25.0
+                            7.0\t10.0\t5.0
+                            7.0\t70.0\t35.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnTakesWindowFunctionArgumentNameInJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createJoinColumnSelectedTwiceTables();
+
+            assertQuery("SELECT lead(a.id) OVER () AS n, b.id * 2 AS x, b.id AS id FROM ta a JOIN tb b ON a.k = b.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid
+                            20\t6\t3
+                            30\t2\t1
+                            null\t4\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnTakesWindowFunctionArgumentNameOwnNameSelected() throws Exception {
+        // The projection also selects the renamed column's source column under its own name, so the
+        // window model reads it there. The window function must still read the table column.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty, qty AS id FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tqty\tid
+                            1\t30.0\t15.0\t15.0
+                            4\t50.0\t25.0\t25.0
+                            2\t10.0\t5.0\t5.0
+                            null\t70.0\t35.0\t35.0
+                            """);
+            assertQuery("""
+                    SELECT sum(id) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS s,
+                           qty * 2 AS x, qty, qty AS id
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            s\tx\tqty\tid
+                            3.0\t30.0\t15.0\t15.0
+                            4.0\t50.0\t25.0\t25.0
+                            8.0\t10.0\t5.0\t5.0
+                            10.0\t70.0\t35.0\t35.0
+                            """);
+            // the source column is selected under its own name after the renamed column
+            assertQuery("SELECT lead(id) OVER () AS n, qty * 2 AS x, qty AS id, qty FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tx\tid\tqty
+                            1\t30.0\t15.0\t15.0
+                            4\t50.0\t25.0\t25.0
+                            2\t10.0\t5.0\t5.0
+                            null\t70.0\t35.0\t35.0
+                            """);
+            // The renamed column is the designated timestamp. The window keeps reading the input in
+            // timestamp order and accepts the RANGE frame; the RANGE frame sums the ids of the rows
+            // within the minute.
+            assertQuery("""
+                    SELECT sum(id) OVER (ORDER BY ts RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) AS s,
+                           ts, qty * 2 AS x, ts AS id
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("id")
+                    .expectSize()
+                    .returns("""
+                            s\tts\tx\tid
+                            3.0\t2024-01-01T00:00:00.000000Z\t30.0\t2024-01-01T00:00:00.000000Z
+                            4.0\t2024-01-01T00:01:00.000000Z\t50.0\t2024-01-01T00:01:00.000000Z
+                            5.0\t2024-01-01T00:02:00.000000Z\t10.0\t2024-01-01T00:02:00.000000Z
+                            6.0\t2024-01-01T00:03:00.000000Z\t70.0\t2024-01-01T00:03:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionRenamedColumnTakesWindowFunctionArgumentNameReadsTable() throws Exception {
+        // No expression keeps the model under the window, so the window reads the table, and the
+        // renamed column reads its source column there. The plan is the one without the rename.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT lead(id) OVER () AS n, lead(qty) OVER () AS m, qty AS id FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              unorderedFunctions: [lead(id, 1, NULL) over (),lead(qty, 1, NULL) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            n\tm\tid
+                            1\t25.0\t15.0
+                            4\t5.0\t25.0
+                            2\t35.0\t5.0
+                            null\tnull\t35.0
+                            """);
+            // a later window orders by the renamed column's source column
+            assertQuery("SELECT lead(id) OVER () AS n, lead(qty) OVER () AS m, qty AS id, sum(qty) OVER (ORDER BY qty) AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n\tm\tid\ts
+                            1\t25.0\t15.0\t20.0
+                            4\t5.0\t25.0\t45.0
+                            2\t35.0\t5.0\t5.0
+                            null\tnull\t35.0\t80.0
+                            """);
         });
     }
 
