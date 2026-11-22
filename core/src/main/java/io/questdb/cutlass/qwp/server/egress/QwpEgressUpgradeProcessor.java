@@ -1474,18 +1474,15 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             if (pageFrameCursor != null) {
                 // SEQUENTIAL_CACHED hints the kernel to read ahead and to drop
                 // page cache after streaming, so a 10M-row scan doesn't evict
-                // the server's working set. Unlike SEQUENTIAL_EVICT (used by
-                // the parquet exporter), the partition stays mapped on pool
-                // return so the next QWP query reuses the FdCache.
-                // The hint is only for forward scans: readahead runs forward,
-                // so under MADV_SEQUENTIAL the descending walk of a backward
-                // scan faults in uncached pages one at a time. Backward scans
-                // keep the default mapping, whose fault read-around reaches
-                // below the faulting page, and read their frames ahead
-                // themselves, see QwpBackwardReadAhead.
-                if (!isPageFrameBackward) {
-                    pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
-                }
+                // the server's working set: Linux gives the pages read through
+                // a MADV_SEQUENTIAL mapping no recency, so reclaim takes them
+                // first. Unlike SEQUENTIAL_EVICT (used by the parquet exporter),
+                // the partition stays mapped on pool return so the next QWP
+                // query reuses the FdCache. A backward scan needs the hint as
+                // much as a forward one, but the hint's readahead only runs
+                // forward, so it reads its frames ahead itself, see
+                // QwpBackwardReadAhead.
+                pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 state.beginStreamingPageFrame(requestId, factory, pageFrameCursor, isPageFrameBackward,
                         sqlCtx.getMemoryTracker(), columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {

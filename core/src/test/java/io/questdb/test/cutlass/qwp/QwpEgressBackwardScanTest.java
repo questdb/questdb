@@ -24,8 +24,6 @@
 
 package io.questdb.test.cutlass.qwp;
 
-import io.questdb.Bootstrap;
-import io.questdb.DefaultBootstrapConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.client.cutlass.qwp.client.QwpBindSetter;
@@ -54,6 +52,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -164,18 +163,24 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     }
 
     @Test
-    public void testBackwardScanMapsPartitionsWithoutSequentialHint() throws Exception {
-        // MADV_SEQUENTIAL points readahead forward, the wrong way for a backward scan, so
-        // only forward streams open their partitions under the sequential scan profile,
-        // which maps them with it. Only Linux has the hint: elsewhere POSIX_MADV_SEQUENTIAL
-        // is -1, the "no advice" value every unhinted mapping passes to madvise() too.
-        final boolean hasSequentialHint = Files.POSIX_MADV_SEQUENTIAL != -1;
+    public void testBackwardScanMapsPartitionsWithSequentialHints() throws Exception {
+        // A stream reads each row once. On Linux, reads through a mapping advised
+        // MADV_SEQUENTIAL give its pages no recency, so page reclaim takes them before the
+        // server's working set, and MADV_DONTNEED unmaps them as their partition closes.
+        // Streams in both directions open their partitions under the sequential scan
+        // profile, which applies both hints. Only Linux has the hints: elsewhere both are
+        // -1, the "no advice" value every unhinted mapping passes to madvise() too.
+        final boolean hasHints = Files.POSIX_MADV_SEQUENTIAL != -1;
+        Assert.assertEquals(hasHints, Files.POSIX_MADV_DONTNEED != -1);
         final AtomicInteger sequentialHints = new AtomicInteger();
+        final AtomicInteger dontNeedHints = new AtomicInteger();
         final FilesFacade ff = new TestFilesFacadeImpl() {
             @Override
             public void madvise(long address, long len, int advise) {
-                if (hasSequentialHint && advise == Files.POSIX_MADV_SEQUENTIAL) {
+                if (hasHints && advise == Files.POSIX_MADV_SEQUENTIAL) {
                     sequentialHints.incrementAndGet();
+                } else if (hasHints && advise == Files.POSIX_MADV_DONTNEED) {
+                    dontNeedHints.incrementAndGet();
                 }
                 super.madvise(address, len, advise);
             }
@@ -184,12 +189,17 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         final Queue<String> partitionOpens = new ConcurrentLinkedQueue<>();
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServerWithRetry(() -> {
-                final TestServerMain server = new TestServerMain(new Bootstrap(new DefaultBootstrapConfiguration() {
-                    @Override
-                    public FilesFacade getFilesFacade() {
-                        return ff;
-                    }
-                }, Bootstrap.getServerMainArgs(root)));
+                // A reader back in the pool keeps only its newest partition open: a stream
+                // returns its reader before it sends the end of its result, closing the rest.
+                // The metrics count how often a stream parks.
+                final TestServerMain server = new TestServerMain(newBootstrapWithEnvVariables(
+                        root,
+                        Map.of(
+                                PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS.getEnvVarName(), "1",
+                                PropertyKey.METRICS_ENABLED.getEnvVarName(), "true"
+                        ),
+                        ff
+                ));
                 try {
                     // set before start(), so every worker that creates a reader sees it
                     server.getEngine().setReaderListener((reader, partitionIndex) -> {
@@ -205,31 +215,69 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
                 }
             })) {
                 serverMain.execute("CREATE TABLE t (x LONG, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                serverMain.execute("INSERT INTO t SELECT x, 'v' || x, (x * 3_600_000_000L)::TIMESTAMP FROM long_sequence(100)");
+                // values too long to sit inline in the aux vector, so that v maps its data file too
+                serverMain.execute("INSERT INTO t SELECT x, 'value number ' || x, (x * 3_600_000_000L)::TIMESTAMP FROM long_sequence(100)");
                 serverMain.awaitTable("t");
-                try (QwpQueryClient client = connect("")) {
-                    // a released reader opens and maps its partitions afresh on the next query
-                    serverMain.getEngine().releaseAllReaders();
-                    partitionOpens.clear();
-                    sequentialHints.set(0);
-                    Assert.assertEquals(descendingLongs(100, 1), column(qwpRows(client, "SELECT x, v FROM t ORDER BY ts DESC"), 0));
+                try (
+                        QwpQueryClient client = connect("");
+                        // Batches of 10 rows and a credit of one batch park the stream after each
+                        // batch, and it opens the later partitions as it resumes, on any worker.
+                        QwpQueryClient parkingClient = QwpQueryClient.fromConfig(
+                                "ws::addr=127.0.0.1:" + HTTP_PORT + ";max_batch_rows=10;"
+                        ).withInitialCredit(1)
+                ) {
+                    parkingClient.connect();
+                    // Runs sql on readers that open and map their partitions afresh, checks the
+                    // x values it streams and the partitions it opens, each with the scan profile
+                    // it opens under, and returns the hints it sent.
+                    final ScanHints scan = (c, sql, expectedX, expectedOpens) -> {
+                        serverMain.getEngine().releaseAllReaders();
+                        partitionOpens.clear();
+                        sequentialHints.set(0);
+                        dontNeedHints.set(0);
+                        Assert.assertEquals(sql, expectedX, column(qwpRows(c, sql), 0));
+                        Assert.assertEquals(sql, expectedOpens, partitionOpens.toString());
+                        return "sequential=" + sequentialHints.get() + ", dontNeed=" + dontNeedHints.get();
+                    };
                     // ts runs from 1970-01-01T01:00 to 1970-01-05T04:00: daily partitions 0 to 4
-                    Assert.assertEquals(
-                            "[4:DEFAULT, 3:DEFAULT, 2:DEFAULT, 1:DEFAULT, 0:DEFAULT]",
-                            partitionOpens.toString()
+                    final String hints = scan.run(
+                            client,
+                            "SELECT x, v FROM t ORDER BY ts",
+                            reversed(descendingLongs(100, 1)),
+                            "[0:SEQUENTIAL_CACHED, 1:SEQUENTIAL_CACHED, 2:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 4:SEQUENTIAL_CACHED]"
                     );
-                    Assert.assertEquals(0, sequentialHints.get());
+                    Assert.assertEquals(hints, hasHints, sequentialHints.get() > 0);
+                    Assert.assertEquals(hints, hasHints, dontNeedHints.get() > 0);
+                    // Both directions map the same files of the same partitions, each with
+                    // MADV_SEQUENTIAL, and their readers close the same partitions with
+                    // MADV_DONTNEED as they return to the pool: the compiled query, the same
+                    // query from the factory cache, and a stream that parks after each batch.
+                    final String desc = "SELECT x, v FROM t ORDER BY ts DESC";
+                    final String descOpens = "[4:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 2:SEQUENTIAL_CACHED, 1:SEQUENTIAL_CACHED, 0:SEQUENTIAL_CACHED]";
+                    Assert.assertEquals(hints, scan.run(client, desc, descendingLongs(100, 1), descOpens));
+                    Assert.assertEquals(hints, scan.run(client, desc, descendingLongs(100, 1), descOpens));
+                    final QwpEgressMetrics metrics = serverMain.getEngine().getMetrics().qwpEgressMetrics();
+                    final long suspensions = metrics.creditSuspensionsCount();
+                    Assert.assertEquals(hints, scan.run(parkingClient, desc, descendingLongs(100, 1), descOpens));
+                    // ten batches, and the stream parks before each of the last nine
+                    final long parks = metrics.creditSuspensionsCount() - suspensions;
+                    Assert.assertTrue("parks=" + parks, parks >= 9);
 
-                    serverMain.getEngine().releaseAllReaders();
-                    partitionOpens.clear();
-                    Assert.assertEquals(100, qwpRows(client, "SELECT x, v FROM t ORDER BY ts").size());
-                    Assert.assertEquals(
-                            "[0:SEQUENTIAL_CACHED, 1:SEQUENTIAL_CACHED, 2:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 4:SEQUENTIAL_CACHED]",
-                            partitionOpens.toString()
+                    // an interval scan opens partitions 2 to 4
+                    final String intervalHints = scan.run(
+                            client,
+                            "SELECT x, v FROM t WHERE ts >= '1970-01-03' ORDER BY ts",
+                            reversed(descendingLongs(100, 48)),
+                            "[2:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 4:SEQUENTIAL_CACHED]"
                     );
-                    if (hasSequentialHint) {
-                        Assert.assertTrue("hints=" + sequentialHints.get(), sequentialHints.get() > 0);
-                    }
+                    Assert.assertEquals(intervalHints, hasHints, sequentialHints.get() > 0);
+                    Assert.assertEquals(intervalHints, hasHints, dontNeedHints.get() > 0);
+                    Assert.assertEquals(intervalHints, scan.run(
+                            client,
+                            "SELECT x, v FROM t WHERE ts >= '1970-01-03' ORDER BY ts DESC",
+                            descendingLongs(100, 48),
+                            "[4:SEQUENTIAL_CACHED, 3:SEQUENTIAL_CACHED, 2:SEQUENTIAL_CACHED]"
+                    ));
                 }
             }
         });
@@ -1257,6 +1305,11 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         final int from = select.lastIndexOf(" FROM long_sequence(");
         serverMain.execute("INSERT INTO " + table + " " + select.substring(0, from) + columnTopSelect(totalRows - firstHalf));
         serverMain.awaitTable(table);
+    }
+
+    @FunctionalInterface
+    private interface ScanHints {
+        String run(QwpQueryClient client, String sql, List<String> expectedX, String expectedOpens);
     }
 
     @FunctionalInterface

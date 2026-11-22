@@ -343,9 +343,9 @@ public class QwpBackwardReadAheadTest {
 
     @Test
     public void testLargeFramesAreNeverTrusted() throws Exception {
-        // A fault in a frame with a range past SMALL_FRAME_RANGE_BYTES reads 64 KiB of it at a
-        // time, not the whole range, so the stream checks each window of such a frame, however
-        // many before it were in memory.
+        // A fault in a frame with a range past SMALL_FRAME_RANGE_BYTES reads at most 64 KiB of
+        // it at a time, not the whole range, so the stream checks each window of such a frame,
+        // however many before it were in memory.
         TestUtils.assertMemoryLeak(() -> {
             // 20,000 LONG rows, 160,000 bytes: windows of 16,384 and 3,616 rows
             try (TestFrame frame = new TestFrame(new int[]{ColumnType.LONG}, false, 0, 20_000)) {

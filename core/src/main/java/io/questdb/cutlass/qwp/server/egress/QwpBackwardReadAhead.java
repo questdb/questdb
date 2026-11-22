@@ -61,16 +61,16 @@ import org.jetbrains.annotations.TestOnly;
  * is in memory, see {@link FilesFacade#isPageCacheResident(long, long)}, and advises only
  * the ranges that are not. After a window with missing pages it advises the next 1, 3,
  * 7, up to 63 windows without asking, so a cold stream pays for almost no checks. A check
- * costs about as much as a request, so on small frames, whose every range one fault reads
- * in a single IO, see {@link #SMALL_FRAME_RANGE_BYTES}, the stream stops checking after
+ * costs about as much as a request, so on small frames, whose short ranges keep a wrong
+ * guess cheap, see {@link #SMALL_FRAME_RANGE_BYTES}, the stream stops checking after
  * {@link #TRUST_STREAK} frames in a row turn out to be in memory, and trusts the next
  * ones to be. Before each trusted frame it reads the byte its walk reads first, and goes
  * back to checking as soon as its thread has taken a major page fault, a read from
  * storage, see {@link FilesFacade#getThreadMajorFaults()}, or the stream runs on another
  * thread, as a query fiber may after a yield. A trusted frame that is not in memory
- * after all costs a synchronous read of each range the stream did not ask for, one IO
- * each, and the frames the stream must find in memory before it trusts again double
- * each time.
+ * after all costs synchronous reads of each range the stream did not ask for, see
+ * {@link #SMALL_FRAME_RANGE_BYTES}, and the frames the stream must find in memory before
+ * it trusts again double each time.
  * <p>
  * Elsewhere it reads the whole frame forward once, before the first slice: the OS reads
  * it in large requests, and the walk down finds it in page cache. The stream asks the OS
@@ -81,8 +81,10 @@ public class QwpBackwardReadAhead implements Mutable {
     public static final long INITIAL_WINDOW_ROWS = QwpEgressUpgradeProcessor.MAX_ROWS_PER_BATCH;
     public static final long MAX_WINDOW_BYTES = 16L * 1024 * 1024;
     // A frame is small when no range it publishes, of values, aux entries or data, holds more
-    // than this many bytes. A walk that faults on a small range reads all of it in one IO:
-    // Linux reads half of its default 128 KiB fault read-around below the faulting page.
+    // than this many bytes. Under the default mapping, a walk that faults on a small range
+    // reads all of it in one IO: Linux reads half of its default 128 KiB fault read-around
+    // below the faulting page. Under MADV_SEQUENTIAL, as QWP egress maps the partitions it
+    // opens, Linux reads from the faulting page up, so the walk down reads a page per IO.
     public static final long SMALL_FRAME_RANGE_BYTES = 64 * 1024;
     // small frames in a row that must turn out to be in memory before the stream trusts the next ones
     public static final int TRUST_STREAK = 8;
@@ -383,7 +385,7 @@ public class QwpBackwardReadAhead implements Mutable {
             // parked stream resumes on any worker, and a query fiber on any carrier after a yield.
             if (CARRIER.get() == trustedCarrier) {
                 // Read the byte the walk reads first: when the frame is not in memory, this
-                // faults, and one IO reads the range around the byte.
+                // faults, a read from storage that the major faults of the thread count.
                 touchSink += Unsafe.getByte(probeAddress);
                 if (ff.getThreadMajorFaults() == trustedMajorFaults) {
                     return 0;
