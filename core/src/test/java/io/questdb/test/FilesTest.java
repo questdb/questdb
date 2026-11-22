@@ -1178,9 +1178,14 @@ public class FilesTest {
                         // the whole file
                         Assert.assertEquals(isLinux ? 8 : 0, Files.madviseWillNeed(address, fileSize));
                         Assert.assertEquals(isLinux ? 8 : 0, FilesFacadeImpl.INSTANCE.madviseWillNeed(address, fileSize));
-                        // a range that starts inside a page starts the requests at that page:
+                        // a range that ends inside a request takes a request for its tail:
                         // 100 + 300 KiB from the start of the mapping
                         Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 300 * 1024));
+                        // madvise(2) rejects a start that is not page-aligned, so the requests of a
+                        // range that starts inside a page start at that page: 256 KiB from 100 bytes
+                        // into the page end 100 bytes past the second request and take a third,
+                        // where requests that started at the range would take only 2
+                        Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 2 * requestSize));
                         // a range that ends on a request boundary
                         Assert.assertEquals(isLinux ? 2 : 0, Files.madviseWillNeed(address, 2 * requestSize));
                         Assert.assertEquals(isLinux ? 1 : 0, Files.madviseWillNeed(address + fileSize - 1, 1));
