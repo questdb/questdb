@@ -22836,8 +22836,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowFunctionRenamedColumnAlsoSelectedUnderOwnName() throws Exception {
         // The projection selects the designated timestamp under another name and under its own
-        // name. The window reads a single copy of it, the designated one, so it keeps streaming
-        // and accepts a RANGE frame, wherever the window function sits in the projection.
+        // name, after the window function. The window reads the designated copy, so it streams
+        // and accepts a RANGE frame.
         assertMemoryLeak(() -> {
             createColumnSelectedTwiceTable();
 
@@ -22956,7 +22956,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             10.0\t8\t4\t5.0\t3
                             70.0\t4\t2\t35.0\t4
                             """);
-            // nested window functions read the table: the window reads that name from the table too
+            // no expression keeps the model under the window, so the window reads the fresh name
+            // from the model that reads the table
             assertQuery("""
                     SELECT sum(lead(qty) OVER ()) OVER () AS s, sum(lead(id) OVER ()) OVER () AS s2,
                            id AS qty, qty AS q2
@@ -23168,9 +23169,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             2\t10.0\t5.0\t5.0
                             null\t70.0\t35.0\t35.0
                             """);
-            // The renamed column is the designated timestamp. The window keeps reading the input in
-            // timestamp order and accepts the RANGE frame; the RANGE frame sums the ids of the rows
-            // within the minute.
+            // The renamed column is the designated timestamp: the window orders by it without a
+            // sort, and the RANGE frame sums the ids within the minute.
             assertQuery("""
                     SELECT sum(id) OVER (ORDER BY ts RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) AS s,
                            ts, qty * 2 AS x, ts AS id

@@ -12573,9 +12573,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 } else { // column
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
                     if (columnIndex < 0) {
-                        // SqlOptimiser passes every column that the window model reads through the
-                        // model below it, and no known query reaches this. Should a column go missing,
-                        // report it rather than read the metadata at index -1.
+                        // No known query gets here: SqlOptimiser passes every column the window
+                        // model reads through the model below. Fail instead of reading index -1.
                         throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
                     }
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
@@ -12739,9 +12738,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!qc.isWindowExpression()) {
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
                     if (columnIndex < 0) {
-                        // SqlOptimiser passes every column that the window model reads through the
-                        // model below it, and no known query reaches this. Should a column go missing,
-                        // report it rather than read the metadata at index -1.
+                        // No known query gets here: SqlOptimiser passes every column the window
+                        // model reads through the model below. Fail instead of reading index -1.
                         throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
                     }
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);

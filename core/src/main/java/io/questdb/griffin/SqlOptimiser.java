@@ -3671,11 +3671,10 @@ public class SqlOptimiser implements Mutable {
     }
 
     // order hash is used to determine redundant order when parsing window function definition
-    // Names a window function nested in the argument of another one. The inner window models pass the
-    // table columns and the projection's columns through under their own names, next to the window
-    // functions they compute, so the name must differ from those as well as from the names that the
-    // translating model holds so far, which it does not until the projection reads the columns. In
-    // "sum(row_number() OVER ()) OVER (), row_number", the function name would name the table column too.
+    // Names a window function nested in another one's argument. The inner window model that computes it
+    // also passes table and projection columns through under their own names, so the name must not be
+    // one of those. The translating model holds a table column only once the projection reads it: in
+    // "sum(row_number() OVER ()) OVER (), row_number", createColumnAlias() alone returns row_number.
     private CharSequence createNestedWindowAlias(
             ExpressionNode node,
             IQueryModel translatingModel,
@@ -3816,16 +3815,13 @@ public class SqlOptimiser implements Mutable {
                 translatedColumn.setGenerated(isGenerated);
                 groupByModel.addBottomUpColumn(translatedColumn);
                 if (isWindowProjection && !isGroupBy && !Chars.equalsIgnoreCase(innerAlias, translatedColumnName)) {
-                    // translatedColumn reads translatedColumnName, which the models above the inner
-                    // virtual model do not expose unless the inner virtual model passes it through.
-                    // The window model reads the column's pass-through, the one that window function
-                    // arguments and the column selected under its own name read too, and renames it;
-                    // the model above the window model reads the new name.
+                    // The models above the inner virtual model see translatedColumnName only if the
+                    // inner virtual model passes it through. The window model reads that pass-through,
+                    // which window function arguments share, and renames it to innerAlias.
                     //
-                    // The inner virtual model keeps the column under innerAlias as well, for the other
-                    // expressions of the projection that refer to innerAlias, unless innerAlias names
-                    // another column there: a table column that a window function argument reads,
-                    // which takes precedence over the alias.
+                    // The inner virtual model also keeps translatedColumn, for projection expressions
+                    // that refer to innerAlias, unless innerAlias already names a table column that a
+                    // window function argument reads: the table column takes precedence.
                     final boolean isInnerAliasFree = innerVirtualModel.getAliasToColumnMap().excludes(innerAlias);
                     if (isInnerAliasFree) {
                         innerVirtualModel.addBottomUpColumn(translatedColumn);
@@ -3846,9 +3842,9 @@ public class SqlOptimiser implements Mutable {
                             columnAst.position
                     );
                     windowColumn.setGenerated(isGenerated);
-                    // The model above the window model reads the window model, which always exposes
-                    // innerAlias. When the projection selected the column under its own name before,
-                    // the window model exposes translatedColumnName too, and the plan stays as it was.
+                    // The window model always exposes innerAlias. If the projection selected the
+                    // column under its own name earlier, it exposes translatedColumnName too, and the
+                    // model above reads that, as it does when no column is renamed.
                     if (Chars.equalsIgnoreCase(innerName, translatedColumnName)
                             && isPassThroughColumn(windowModel, translatedColumnName)) {
                         outerColumn = translatedColumn;
@@ -8605,13 +8601,12 @@ public class SqlOptimiser implements Mutable {
      * the raw criteria instead of reading the (not-yet-built) context.
      */
     // Returns the name under which the inner virtual model exposes the translating model column,
-    // adding a pass-through when it exposes none. The name is the translating model name, unless
-    // another column of the inner virtual model has it:
-    // - an expression that took the name as its alias, as in "qty * 10 AS qty". The inner virtual
-    //   model then stays, and the renamed column, when the inner virtual model holds it, will do.
-    // - a column that the projection renamed to the name, as in "id AS qty". rewriteSelectClause0()
-    //   may cancel the inner virtual model, and the window model then reads the translating model,
-    //   so the pass-through takes a name of its own that the translating model exposes too.
+    // adding a pass-through when there is none. The name is translatedColumnName, unless another
+    // column of the inner virtual model has it:
+    // - an expression, as in "qty * 10 AS qty": the inner virtual model cannot be cancelled then,
+    //   so the renamed column itself serves, if the inner virtual model holds it.
+    // - a renamed column, as in "id AS qty": rewriteSelectClause0() may cancel the inner virtual
+    //   model, so the pass-through gets a fresh name that the translating model exposes too.
     private CharSequence passThroughTranslatedColumn(
             CharSequence translatedColumnName,
             @Nullable CharSequence renamedColumnName,
@@ -14836,10 +14831,8 @@ public class SqlOptimiser implements Mutable {
             for (int i = 0, n = windowCols.size(); i < n; i++) {
                 QueryColumn col = windowCols.getQuick(i);
                 if (!col.isWindowExpression()) {
-                    // Add this non-window column to each inner window model as pass-through. The window
-                    // model reads the column's token, which differs from its alias when the window model
-                    // renames the column, as in "qty AS q2", so the inner window models pass the token
-                    // through.
+                    // Pass this non-window column through each inner window model under the name the
+                    // window model reads: its token, which differs from its alias in "qty AS q2".
                     final CharSequence name = col.getAst().token;
                     final boolean isRenamed = !Chars.equalsIgnoreCase(name, col.getAlias());
                     for (int j = 0, m = innerWindowModels.size(); j < m; j++) {
