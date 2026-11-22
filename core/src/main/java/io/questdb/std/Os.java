@@ -396,8 +396,12 @@ public final class Os {
         // ru_maxrss, ru_ixrss, ru_idrss, ru_isrss and ru_minflt
         private static final long MAJFLT_OFFSET = 72;
         private static final int RUSAGE_THREAD = 1;
-        // struct rusage: the two struct timevals, then 14 longs
-        private static final ThreadLocal<MemorySegment> USAGE = ThreadLocal.withInitial(
+        // struct rusage: the two struct timevals, then 14 longs. One per carrier, the OS thread
+        // that makes the call, see CarrierLocal. Query fibers call majorFaults(), and a
+        // ThreadLocal is unsafe there: compiled code can carry the Thread of the carrier a fiber
+        // yielded on over to the one it resumes on, see CARRIER_LOCAL.md. majorFaults() fills
+        // and reads the struct within one call, which cannot yield, so no two calls use it at once.
+        private static final CarrierLocal<MemorySegment> USAGE = new CarrierLocal<>(
                 () -> MemorySegment.ofArray(new long[18])
         );
 

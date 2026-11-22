@@ -30,6 +30,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogError;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.Chars;
 import io.questdb.std.FdCache;
 import io.questdb.std.Files;
@@ -1066,6 +1067,13 @@ public class FilesTest {
                         Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isPageCacheResident(address, readSize));
                         // a range inside a page
                         Assert.assertEquals(isLinux, Files.isPageCacheResident(address + 100, 10));
+                        // a worker thread, which binds as a carrier, see CarrierIdentity, gets the same answers
+                        runOnCarrier(() -> {
+                            Assert.assertEquals(isLinux, Files.isPageCacheResident(address, readSize));
+                            Assert.assertEquals(isLinux, FilesFacadeImpl.INSTANCE.isPageCacheResident(address, readSize));
+                            Assert.assertFalse(Files.isPageCacheResident(address + fileSize - readSize, readSize));
+                            Assert.assertFalse(Files.isPageCacheResident(address, fileSize));
+                        });
                         // The far end of the file, which nothing read: the fault read-around that
                         // brought the first 4 MiB in reaches no further than a few hundred KiB past them.
                         Assert.assertFalse(Files.isPageCacheResident(address + fileSize - readSize, readSize));
@@ -2163,6 +2171,26 @@ public class FilesTest {
                 .redirectOutput(ProcessBuilder.Redirect.DISCARD)
                 .start()
                 .waitFor();
+    }
+
+    // runs the code on a thread that binds as a carrier, see CarrierIdentity, as a worker thread does
+    private static void runOnCarrier(Runnable code) throws InterruptedException {
+        final AtomicReference<Throwable> failure = new AtomicReference<>();
+        final Thread carrier = new Thread(() -> {
+            CarrierIdentity.bind();
+            try {
+                code.run();
+            } catch (Throwable th) {
+                failure.set(th);
+            } finally {
+                CarrierIdentity.unbind();
+            }
+        });
+        carrier.start();
+        carrier.join();
+        if (failure.get() != null) {
+            throw new AssertionError(failure.get());
+        }
     }
 
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {

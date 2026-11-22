@@ -36,6 +36,12 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cutlass.qwp.server.egress.QwpBackwardReadAhead;
+import io.questdb.mp.CarrierIdentity;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -53,6 +59,12 @@ import org.junit.Test;
 
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.LongUnaryOperator;
 
 /**
@@ -67,6 +79,10 @@ import java.util.function.LongUnaryOperator;
  * first slice, and asks the OS for nothing, so it counts none of those bytes as read ahead.
  */
 public class QwpBackwardReadAheadTest {
+    // frames a stream walks in a round of an allocation measurement, and before the first round
+    private static final int ALLOCATION_ROUND_FRAMES = 1_000;
+    private static final int ALLOCATION_ROUNDS = 5;
+    private static final int ALLOCATION_WARM_UP_FRAMES = 10_000;
     // the egress walks a frame down in slices of at most this many rows
     private static final int SLICE_ROWS = 1_024;
     private static final int TRUST_STREAK = QwpBackwardReadAhead.TRUST_STREAK;
@@ -571,6 +587,55 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testStreamAllocatesNothingPerFrame() throws Exception {
+        // The read-ahead runs on the egress data path, frame after frame: once warm, it allocates
+        // nothing, whether it checks windows, trusts small frames or reads whole frames, on a
+        // worker thread, which binds as a carrier, and on a thread that does not.
+        TestUtils.assertMemoryLeak(() -> {
+            final ExecutorService carrier = newCarrier();
+            try (
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    TestFrame small = smallFrame();
+                    // 160,000 bytes a column: a window holds part of the frame
+                    TestFrame large = new TestFrame(new int[]{ColumnType.LONG, ColumnType.DOUBLE}, false, 0, 20_000)
+            ) {
+                final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+                for (TestFrame frame : new TestFrame[]{small, large}) {
+                    // the pages of the frame are in memory
+                    for (int ci = 0, n = frame.getColumnCount(); ci < n; ci++) {
+                        Vect.memset(frame.getPageAddress(ci), frame.getPageSize(ci), 0);
+                    }
+                }
+                for (boolean isWillNeedSupported : new boolean[]{true, false}) {
+                    for (TestFrame frame : new TestFrame[]{small, large}) {
+                        for (boolean isCarrier : new boolean[]{false, true}) {
+                            final String context = (isWillNeedSupported ? "windows" : "whole frames")
+                                    + ", rows=" + frame.rows + ", carrier=" + isCarrier;
+                            final ReadAheadFilesFacade ff = new ReadAheadFilesFacade(isWillNeedSupported);
+                            final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                            readAhead.of(frame.metadata());
+                            final Callable<Long> stream = () -> leastAllocatedPerRound(threadMXBean, readAhead, frame);
+                            Assert.assertEquals(context, 0, (long) (isCarrier ? runOn(carrier, stream) : stream.call()));
+                            if (!isWillNeedSupported) {
+                                Assert.assertEquals(context, 0, ff.residencyCheckCount());
+                            } else if (Os.isLinux() && frame == small) {
+                                // The stream trusted the frames in memory: fewer checks than frames, where
+                                // a stream that checked every frame would ask about both columns of each.
+                                final long frames = ALLOCATION_WARM_UP_FRAMES + (long) ALLOCATION_ROUNDS * ALLOCATION_ROUND_FRAMES;
+                                Assert.assertTrue(context + ", checks=" + ff.residencyCheckCount(), ff.residencyCheckCount() < frames);
+                            } else {
+                                Assert.assertTrue(context, ff.residencyCheckCount() > 0);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                stop(carrier);
+            }
+        });
+    }
+
+    @Test
     public void testTouchPathCountsNothing() throws Exception {
         // Without MADV_WILLNEED the stream reads each frame at once, in memory or not: it has
         // nothing to check or trust, and asks the OS for nothing, so it counts none of the
@@ -829,6 +894,93 @@ public class QwpBackwardReadAheadTest {
                     Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
                     Assert.assertEquals(checks, ff.residencyChecks);
                     streak *= 2;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testTrustEndsWhenTheFiberMovesCarrier() throws Exception {
+        // A query fiber that yields between two frames can resume on another carrier, the OS
+        // thread whose major faults the stream reads: the stream checks the next frame, and
+        // trusts after the usual streak. A fiber that resumes on the carrier it yielded on keeps
+        // the trust. Both carriers stay bound throughout, as the workers of a pool do.
+        TestUtils.assertMemoryLeak(() -> {
+            final ExecutorService first = newCarrier();
+            final ExecutorService second = newCarrier();
+            final FiberRuntime runtime = new FiberRuntime(1, 1);
+            try (TestFrame frame = smallFrame()) {
+                final RecordingFacade ff = new RecordingFacade(true);
+                ff.isResident = true;
+                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                readAhead.of(frame.metadata());
+                // the carrier of each stretch the fiber runs between two yields
+                final IntList stretchCarriers = new IntList();
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final FiberTask stream = new FiberTask() {
+                    @Override
+                    protected void onError(Throwable th) {
+                        failure.set(th);
+                    }
+
+                    @Override
+                    protected boolean runStep() {
+                        stretchCarriers.add(CarrierIdentity.current());
+                        walkFirstBatch(readAhead, frame);
+                        for (int f = 0; f < TRUST_STREAK; f++) {
+                            Assert.assertEquals(0, walk(readAhead, frame));
+                        }
+                        // trusted on the first carrier
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                        Assert.assertEquals(2, ff.faultReads);
+
+                        yieldAndRecordCarrier(stretchCarriers);
+                        // back on the first carrier: still trusted
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(2 * TRUST_STREAK, ff.residencyChecks);
+                        Assert.assertEquals(3, ff.faultReads);
+
+                        yieldAndRecordCarrier(stretchCarriers);
+                        // on the second carrier, whose faults say nothing about the frames before
+                        for (int f = 0; f < TRUST_STREAK; f++) {
+                            Assert.assertEquals(0, walk(readAhead, frame));
+                            Assert.assertEquals(2 * TRUST_STREAK + 2 * (f + 1), ff.residencyChecks);
+                        }
+                        Assert.assertEquals(4, ff.faultReads);
+                        // trusted on the second carrier, after a streak no longer than the first
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(4 * TRUST_STREAK, ff.residencyChecks);
+                        Assert.assertEquals(5, ff.faultReads);
+
+                        yieldAndRecordCarrier(stretchCarriers);
+                        // on the first carrier again
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        Assert.assertEquals(4 * TRUST_STREAK + 2, ff.residencyChecks);
+                        Assert.assertEquals(5, ff.faultReads);
+                        return true;
+                    }
+                };
+                Assert.assertEquals(LaunchResult.LAUNCHED, runOn(first, () -> runtime.launch(stream)));
+                // each drain runs the fiber from where it yielded last to its next yield
+                for (ExecutorService carrier : new ExecutorService[]{first, first, second, first}) {
+                    final int drained = runOn(carrier, () -> runtime.drain(1));
+                    if (failure.get() != null) {
+                        throw new AssertionError(failure.get());
+                    }
+                    Assert.assertEquals(1, drained);
+                }
+                Assert.assertTrue(stream.isDone());
+                final int firstId = runOn(first, CarrierIdentity::current);
+                final int secondId = runOn(second, CarrierIdentity::current);
+                Assert.assertNotEquals(firstId, secondId);
+                Assert.assertEquals("[" + firstId + ',' + firstId + ',' + secondId + ',' + firstId + ']', stretchCarriers.toString());
+            } finally {
+                try {
+                    close(runtime);
+                } finally {
+                    stop(first);
+                    stop(second);
                 }
             }
         });
@@ -1282,6 +1434,16 @@ public class QwpBackwardReadAheadTest {
         ff.assertWithinExtents(context, frame);
     }
 
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(64);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
+    }
+
     // whether, after its first batch and TRUST_STREAK frames in memory, a stream of the frame trusts the next one
     private static boolean isTrustedAfterStreak(PageFrame frame, GenericRecordMetadata metadata) {
         final RecordingFacade ff = new RecordingFacade(true);
@@ -1300,6 +1462,24 @@ public class QwpBackwardReadAheadTest {
         return ff.residencyChecks == checks;
     }
 
+    // The fewest bytes the calling thread allocates in a round of frames of the stream, after
+    // a warm-up: a round that allocates nothing shows that the compiled code allocates nothing
+    // per frame.
+    private static long leastAllocatedPerRound(com.sun.management.ThreadMXBean threadMXBean, QwpBackwardReadAhead readAhead, TestFrame frame) {
+        for (int f = 0; f < ALLOCATION_WARM_UP_FRAMES; f++) {
+            walk(readAhead, frame);
+        }
+        long leastAllocated = Long.MAX_VALUE;
+        for (int round = 0; round < ALLOCATION_ROUNDS; round++) {
+            final long allocatedBefore = threadMXBean.getCurrentThreadAllocatedBytes();
+            for (int f = 0; f < ALLOCATION_ROUND_FRAMES; f++) {
+                walk(readAhead, frame);
+            }
+            leastAllocated = Math.min(leastAllocated, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
+        }
+        return leastAllocated;
+    }
+
     private static GenericRecordMetadata metadata(int[] types) {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         for (int i = 0; i < types.length; i++) {
@@ -1307,6 +1487,22 @@ public class QwpBackwardReadAheadTest {
             metadata.add(new TableColumnMetadata("c" + i, types[i], IndexType.NONE, 0, false, null));
         }
         return metadata;
+    }
+
+    // a carrier thread, bound for its whole life as the worker of a pool is, that runs what the test hands it
+    private static ExecutorService newCarrier() {
+        return Executors.newSingleThreadExecutor(worker -> {
+            final Thread thread = new Thread(() -> {
+                CarrierIdentity.bind();
+                try {
+                    worker.run();
+                } finally {
+                    CarrierIdentity.unbind();
+                }
+            });
+            thread.setDaemon(true);
+            return thread;
+        });
     }
 
     private static void onAnotherThread(Runnable task) throws InterruptedException {
@@ -1322,6 +1518,14 @@ public class QwpBackwardReadAheadTest {
         thread.join();
         if (failure[0] != null) {
             throw new AssertionError(failure[0]);
+        }
+    }
+
+    private static <T> T runOn(ExecutorService carrier, Callable<T> task) throws Exception {
+        try {
+            return carrier.submit(task).get(30, TimeUnit.SECONDS);
+        } catch (ExecutionException e) {
+            throw new AssertionError(e.getCause());
         }
     }
 
@@ -1347,6 +1551,11 @@ public class QwpBackwardReadAheadTest {
     // two columns, LONG and DOUBLE, of 3,000 rows: 48,000 bytes in two 24,000-byte ranges
     private static TestFrame smallFrame() {
         return new TestFrame(new int[]{ColumnType.LONG, ColumnType.DOUBLE}, false, 0, 3_000);
+    }
+
+    private static void stop(ExecutorService carrier) throws InterruptedException {
+        carrier.shutdown();
+        Assert.assertTrue(carrier.awaitTermination(30, TimeUnit.SECONDS));
     }
 
     // how much a trusted frame adds to the touch sink: the byte its walk reads first
@@ -1389,6 +1598,12 @@ public class QwpBackwardReadAheadTest {
         for (long streamRows = 0; streamRows < QwpBackwardReadAhead.INITIAL_WINDOW_ROWS; streamRows += frame.rows) {
             Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
         }
+    }
+
+    // yields the fiber that runs the code, and records the carrier it resumes on
+    private static void yieldAndRecordCarrier(IntList carriers) {
+        Assert.assertTrue(Fiber.yieldCooperatively());
+        carriers.add(CarrierIdentity.current());
     }
 
     /**

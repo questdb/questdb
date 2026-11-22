@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.std.CarrierLocal;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -65,10 +66,11 @@ import org.jetbrains.annotations.TestOnly;
  * {@link #TRUST_STREAK} frames in a row turn out to be in memory, and trusts the next
  * ones to be. Before each trusted frame it reads the byte its walk reads first, and goes
  * back to checking as soon as its thread has taken a major page fault, a read from
- * storage, see {@link FilesFacade#getThreadMajorFaults()}, or runs on another thread. A
- * trusted frame that is not in memory after all costs a synchronous read of each range
- * the stream did not ask for, one IO each, and the frames the stream must find in memory
- * before it trusts again double each time.
+ * storage, see {@link FilesFacade#getThreadMajorFaults()}, or the stream runs on another
+ * thread, as a query fiber may after a yield. A trusted frame that is not in memory
+ * after all costs a synchronous read of each range the stream did not ask for, one IO
+ * each, and the frames the stream must find in memory before it trusts again double
+ * each time.
  * <p>
  * Elsewhere it reads the whole frame forward once, before the first slice: the OS reads
  * it in large requests, and the walk down finds it in page cache. The stream asks the OS
@@ -84,6 +86,11 @@ public class QwpBackwardReadAhead implements Mutable {
     public static final long SMALL_FRAME_RANGE_BYTES = 64 * 1024;
     // small frames in a row that must turn out to be in memory before the stream trusts the next ones
     public static final int TRUST_STREAK = 8;
+    // An object per carrier, the OS thread that runs the stream, see CarrierLocal. A query fiber
+    // can resume on another carrier after a yield, and compiled code can then still see the
+    // Thread of the carrier it yielded on, see CARRIER_LOCAL.md; this object names the carrier
+    // that runs it now. A thread that does not bind as a carrier has an object of its own.
+    private static final CarrierLocal<Object> CARRIER = new CarrierLocal<>(Object::new);
     // after a window with missing pages, the stream advises up to 2^MAX_COLD_RUN - 1 windows without checking
     private static final int MAX_COLD_RUN = 6;
     private static final int MAX_TRUST_STREAK = 1 << 20;
@@ -127,9 +134,10 @@ public class QwpBackwardReadAhead implements Mutable {
     // Sum of the bytes the whole-frame read loads. Storing it keeps the JIT from dropping
     // loads whose values nothing else reads; only tests read it back.
     private long touchSink;
-    // the major faults of the trusted thread when the stream started trusting
+    // the carrier the stream trusts, see CARRIER
+    private Object trustedCarrier;
+    // the major faults of the trusted carrier when the stream started trusting
     private long trustedMajorFaults;
-    private Thread trustedThread;
     // small frames in a row found in memory, and how many the stream needs to trust the next ones
     private int trustStreak;
     private int trustStreakNeeded = TRUST_STREAK;
@@ -371,8 +379,9 @@ public class QwpBackwardReadAhead implements Mutable {
     // to trust the next ones.
     private long adviseSmallFrame() {
         if (isTrusted) {
-            // QWP workers are platform threads: the faults of the thread are those of its OS thread
-            if (Thread.currentThread() == trustedThread) {
+            // The OS counts the faults of each OS thread, and a stream can move to another one: a
+            // parked stream resumes on any worker, and a query fiber on any carrier after a yield.
+            if (CARRIER.get() == trustedCarrier) {
                 // Read the byte the walk reads first: when the frame is not in memory, this
                 // faults, and one IO reads the range around the byte.
                 touchSink += Unsafe.getByte(probeAddress);
@@ -382,7 +391,7 @@ public class QwpBackwardReadAhead implements Mutable {
                 // this frame, or the walk of an earlier one, read from storage
                 trustStreakNeeded = (int) Math.min(MAX_TRUST_STREAK, 2L * trustStreakNeeded);
             }
-            // a stream that moved to another thread cannot tell whether it read from storage
+            // a stream that moved to another carrier cannot tell whether it read from storage
             isTrusted = false;
             trustStreak = 0;
         }
@@ -394,7 +403,7 @@ public class QwpBackwardReadAhead implements Mutable {
             final long majorFaults = ff.getThreadMajorFaults();
             if (majorFaults >= 0) {
                 isTrusted = true;
-                trustedThread = Thread.currentThread();
+                trustedCarrier = CARRIER.get();
                 trustedMajorFaults = majorFaults;
             } else {
                 // without the thread's faults the stream cannot tell when to stop trusting
@@ -444,7 +453,7 @@ public class QwpBackwardReadAhead implements Mutable {
     private void clearStream() {
         streamRows = 0;
         isTrusted = false;
-        trustedThread = null;
+        trustedCarrier = null;
         trustStreak = 0;
         trustStreakNeeded = TRUST_STREAK;
         coldRun = 0;

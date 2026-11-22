@@ -1087,7 +1087,12 @@ public final class Files {
         // call allocates no segment for it. mincore(2) never waits for IO, so the binding is
         // critical, and may fill a heap array.
         private static final MethodHandle MINCORE;
-        private static final ThreadLocal<MemorySegment> VECTOR = ThreadLocal.withInitial(
+        // One vector per carrier, the OS thread that makes the call, see CarrierLocal. Query
+        // fibers call isResident(), and a ThreadLocal is unsafe there: compiled code can carry
+        // the Thread of the carrier a fiber yielded on over to the one it resumes on, see
+        // CARRIER_LOCAL.md. isResident() fills and reads the vector within one call, which
+        // cannot yield, so no two calls use it at once.
+        private static final CarrierLocal<MemorySegment> VECTOR = new CarrierLocal<>(
                 () -> MemorySegment.ofArray(new byte[CHUNK_PAGES])
         );
 

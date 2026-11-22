@@ -24,6 +24,7 @@
 
 package io.questdb.test.std;
 
+import io.questdb.mp.CarrierIdentity;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.MemoryTag;
@@ -114,16 +115,11 @@ public class OsTest {
         Assert.assertNotEquals(0, Os.getRss());
     }
 
-    /**
-     * QuestDB ships C++ and sqllogictest native libraries for exactly four platforms. The
-     * Rust Maven plugin builds libquestdbr from source for the current host, while the release
-     * workflow gathers the four supported builds into the cross-platform jar. x86-64 (Intel)
-     * macOS remains source-buildable but is not an officially shipped platform.
-     */
     @Test
     public void testGetThreadMajorFaults() throws Exception {
         // Linux counts the major faults of each thread: a read through a mapping of a page that
-        // is not in memory waits for storage, and counts on the reading thread.
+        // is not in memory waits for storage, and counts on the reading thread, whether a worker
+        // thread, which binds as a carrier, see CarrierIdentity, or a thread that does not.
         if (!Os.isLinux()) {
             Assert.assertEquals(-1, Os.getThreadMajorFaults());
             Assert.assertEquals(-1, FilesFacadeImpl.INSTANCE.getThreadMajorFaults());
@@ -131,7 +127,9 @@ public class OsTest {
         }
         Assert.assertTrue(Os.getThreadMajorFaults() >= 0);
         final File file = temporaryFolder.newFile();
-        final int fileSize = 64 * 1024;
+        // a page for each reader, far enough apart that the read-around of a fault on one does not reach the other
+        final int fileSize = 4 * 1024 * 1024;
+        final long[] pages = {0, fileSize / 2};
         try (FileOutputStream out = new FileOutputStream(file)) {
             out.write(new byte[fileSize]);
             out.getFD().sync();
@@ -144,20 +142,35 @@ public class OsTest {
                 final long address = Files.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_DEFAULT);
                 try {
                     // a file system that keeps the pages, such as tmpfs, never reads from storage
-                    Assume.assumeFalse("the file system keeps the pages in memory", Files.isPageCacheResident(address, Files.PAGE_SIZE));
-                    final long[] faults = new long[2];
-                    final byte[] values = new byte[1];
-                    final Thread reader = new Thread(() -> {
-                        faults[0] = Os.getThreadMajorFaults();
-                        values[0] = Unsafe.getByte(address);
-                        // the files facade asks the OS
-                        faults[1] = FilesFacadeImpl.INSTANCE.getThreadMajorFaults();
-                    });
-                    reader.start();
-                    reader.join();
-                    Assert.assertEquals(0, values[0]);
-                    Assert.assertTrue(faults[0] >= 0);
-                    Assert.assertTrue("before=" + faults[0] + ", after=" + faults[1], faults[1] > faults[0]);
+                    for (long page : pages) {
+                        Assume.assumeFalse("the file system keeps the pages in memory", Files.isPageCacheResident(address + page, Files.PAGE_SIZE));
+                    }
+                    for (int i = 0; i < pages.length; i++) {
+                        final boolean isCarrier = i == 1;
+                        final long pageAddress = address + pages[i];
+                        final long[] faults = new long[2];
+                        final byte[] values = new byte[1];
+                        final Thread reader = new Thread(() -> {
+                            if (isCarrier) {
+                                CarrierIdentity.bind();
+                            }
+                            try {
+                                faults[0] = Os.getThreadMajorFaults();
+                                values[0] = Unsafe.getByte(pageAddress);
+                                // the files facade asks the OS
+                                faults[1] = FilesFacadeImpl.INSTANCE.getThreadMajorFaults();
+                            } finally {
+                                if (isCarrier) {
+                                    CarrierIdentity.unbind();
+                                }
+                            }
+                        });
+                        reader.start();
+                        reader.join();
+                        Assert.assertEquals(0, values[0]);
+                        Assert.assertTrue(faults[0] >= 0);
+                        Assert.assertTrue("carrier=" + isCarrier + ", before=" + faults[0] + ", after=" + faults[1], faults[1] > faults[0]);
+                    }
                 } finally {
                     Files.munmap(address, fileSize, MemoryTag.MMAP_DEFAULT);
                 }
@@ -167,6 +180,12 @@ public class OsTest {
         }
     }
 
+    /**
+     * QuestDB ships C++ and sqllogictest native libraries for exactly four platforms. The
+     * Rust Maven plugin builds libquestdbr from source for the current host, while the release
+     * workflow gathers the four supported builds into the cross-platform jar. x86-64 (Intel)
+     * macOS remains source-buildable but is not an officially shipped platform.
+     */
     @Test
     public void testNativeLibraryPlatformCoverage() {
         assertShipped("/io/questdb/bin/darwin-aarch64/libquestdb.dylib");
