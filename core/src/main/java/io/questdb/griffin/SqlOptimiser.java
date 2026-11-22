@@ -3610,6 +3610,24 @@ public class SqlOptimiser implements Mutable {
         );
     }
 
+    // Names a column of the model that the translating model gets under the same name: the name itself while
+    // that is free in the model, otherwise a name that is also free in the translating model. The translating
+    // model may already use the first name createColumnAlias() returns for another column, as id1 for b.id in
+    // a join of two tables with an id column, or a nested window function. Adding the column under that name
+    // would replace the other column, or fail.
+    private CharSequence createColumnAliasFreeIn(
+            CharSequence name,
+            IQueryModel model,
+            IQueryModel translatingModel
+    ) {
+        CharSequence alias = createColumnAlias(name, model);
+        while (alias != name && translatingModel.getAliasToColumnMap().contains(alias)) {
+            // createColumnAlias() continues the sequence where the previous call left off
+            alias = createColumnAlias(name, model);
+        }
+        return alias;
+    }
+
     // use only if input is a column literal!
     private QueryColumn createGroupByColumn(
             CharSequence columnAlias,
@@ -3677,8 +3695,8 @@ public class SqlOptimiser implements Mutable {
     // also passes table and projection columns through under their own names, so the name must not be
     // one of those. The translating model holds a table column only once the projection reads it: in
     // "sum(row_number() OVER ()) OVER (), row_number", createColumnAlias() alone returns row_number.
-    // The name must not be the alias of a projection column either: the translating model holds the name,
-    // and createSelectColumn() would rename a later column with that alias, as in
+    // Nor may the name be the alias of a projection column: the translating model holds the name, and
+    // createSelectColumn() would rename a later column with that alias, as in
     // "sum(lead(x) OVER ()) OVER (), y AS lead1" over a table with a lead column.
     private CharSequence createNestedWindowAlias(
             ExpressionNode node,
@@ -3691,12 +3709,13 @@ public class SqlOptimiser implements Mutable {
                 int i = 1;
                 baseModelHasColumn(baseModel, alias)
                         || innerVirtualModel.getAliasToColumnMap().contains(alias)
-                        || isColumnProjectionAlias(alias);
+                        || isColumnProjectionAlias(alias)
+                        || translatingModel.getAliasToColumnMap().contains(alias);
                 i++
         ) {
             final CharacterStoreEntry entry = characterStore.newEntry();
             entry.put(node.token).put(i);
-            alias = createColumnAlias(entry.toImmutable(), translatingModel);
+            alias = entry.toImmutable();
         }
         return alias;
     }
@@ -3738,24 +3757,6 @@ public class SqlOptimiser implements Mutable {
         if (union != null) {
             createOrderHash(union);
         }
-    }
-
-    // Names a column that the inner virtual model passes through: its own name while that is free in the
-    // inner virtual model, otherwise a name that is also free in the translating model, which gets the
-    // column under that name as well. Another column of the translating model may already have the first
-    // name createColumnAlias() returns, as id1 names b.id in a join of two tables with an id column.
-    // Adding the column under that name would replace the other one.
-    private CharSequence createPassThroughAlias(
-            CharSequence name,
-            IQueryModel innerVirtualModel,
-            IQueryModel translatingModel
-    ) {
-        CharSequence alias = createColumnAlias(name, innerVirtualModel);
-        while (alias != name && translatingModel.getAliasToColumnMap().contains(alias)) {
-            // createColumnAlias() continues the sequence where the previous call left off
-            alias = createColumnAlias(name, innerVirtualModel);
-        }
-        return alias;
     }
 
     // add the existing group by column to outer and distinct models
@@ -3907,7 +3908,7 @@ public class SqlOptimiser implements Mutable {
             final CharSequence innerAlias;
             if (groupByModel.getAliasToColumnMap().contains(columnName)) {
                 // the column is not yet translated, but another column is referenced via the same name
-                innerAlias = createColumnAlias(columnName, groupByModel);
+                innerAlias = createColumnAliasFreeIn(columnName, groupByModel, translatingModel);
             } else {
                 innerAlias = createColumnAlias(columnName, translatingModel);
             }
@@ -4589,7 +4590,7 @@ public class SqlOptimiser implements Mutable {
             if (index > -1) {
                 // Column not yet referenced by inner model - validate and add it
                 ExpressionNode resolvedColumnAst = validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
-                CharSequence alias = createPassThroughAlias(n.token, innerVirtualModel, translatingModel);
+                CharSequence alias = createColumnAliasFreeIn(n.token, innerVirtualModel, translatingModel);
                 ExpressionNode columnAst = resolvedColumnAst != null
                         ? ExpressionNode.deepClone(expressionNodePool, resolvedColumnAst)
                         : n;
@@ -8654,7 +8655,7 @@ public class SqlOptimiser implements Mutable {
         if (renamedColumnName != null && innerColumn.getAst().type != LITERAL) {
             return renamedColumnName;
         }
-        final CharSequence innerName = createPassThroughAlias(translatedColumnName, innerVirtualModel, translatingModel);
+        final CharSequence innerName = createColumnAliasFreeIn(translatedColumnName, innerVirtualModel, translatingModel);
         innerVirtualModel.addBottomUpColumn(SqlUtil.nextColumn(
                 queryColumnPool,
                 expressionNodePool,
@@ -13400,6 +13401,15 @@ public class SqlOptimiser implements Mutable {
 
             // Check for duplicate window column using O(1) hash lookup
             CharSequence existingAlias = findDuplicateWindowFunction(ast, hash);
+            if (existingAlias != null) {
+                // The duplicate reads the existing window function by name from the window model. A nested one
+                // is not there, and another window function of the projection may have its name, so the
+                // duplicate would read nothing or that other one: compute the duplicate on its own.
+                final QueryColumn windowColumn = windowModel.getAliasToColumnMap().get(existingAlias);
+                if (windowColumn == null || !ExpressionNode.compareNodesExact(windowColumn.getAst(), ast)) {
+                    existingAlias = null;
+                }
+            }
 
             QueryColumn ref;
             if (existingAlias != null) {

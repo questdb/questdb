@@ -21193,6 +21193,69 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionDuplicatesNestedWindowFunction() throws Exception {
+        // A window function of the projection duplicates a nested one, which another window function of the
+        // projection names, so the duplicate must not read the nested one by that name.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS row_number, row_number() OVER () AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            row_number\trn
+                            10.0\t1
+                            10.0\t2
+                            10.0\t3
+                            10.0\t4
+                            """);
+            // the generated names, sum for both window functions that take sum(qty)
+            assertQuery("SELECT sum(sum(qty) OVER ()) OVER (), sum(qty) OVER (), qty FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sum\tsum1\tqty
+                            320.0\t80.0\t15.0
+                            320.0\t80.0\t25.0
+                            320.0\t80.0\t5.0
+                            320.0\t80.0\t35.0
+                            """);
+            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS lead, lead(qty) OVER () AS nq, qty FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            lead\tnq\tqty
+                            65.0\t25.0\t15.0
+                            65.0\t5.0\t25.0
+                            65.0\t35.0\t5.0
+                            65.0\tnull\t35.0
+                            """);
+            // no window function of the projection takes the nested one's name
+            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS s, lead(qty) OVER () AS nq, qty FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tnq\tqty
+                            65.0\t25.0\t15.0
+                            65.0\t5.0\t25.0
+                            65.0\t35.0\t5.0
+                            65.0\tnull\t35.0
+                            """);
+            // a duplicate of a window function of the projection reads that one
+            assertQuery("SELECT lead(qty) OVER () AS a, sum(qty) OVER () AS s, lead(qty) OVER () AS b FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\ts\tb
+                            25.0\t80.0\t25.0
+                            5.0\t80.0\t5.0
+                            35.0\t80.0\t35.0
+                            null\t80.0\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowFunctionFailsInNonWindowContext() throws Exception {
         assertMemoryLeak(() -> {
             Class<?>[] factories = new Class<?>[]{
@@ -21496,6 +21559,36 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             100
                             200
                             """);
+            // the outer window function takes the nested one's name, and a duplicate of the nested one reads it
+            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS lead1, lead(qty) OVER () AS nq, qty FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            lead1\tnq\tqty
+                            30.0\t25.0\t15.0
+                            30.0\t5.0\t25.0
+                            30.0\tnull\t5.0
+                            """);
+            // the duplicate of the nested window function takes the name the nested one would take
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, row_number() OVER () AS row_number1, row_number FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\trow_number1\trow_number
+                            6.0\t1\t300
+                            6.0\t2\t100
+                            6.0\t3\t200
+                            """);
+            // two nested window functions of the same name
+            assertQuery("SELECT sum(lead(qty) OVER () + lead(row_number) OVER ()) OVER () AS s, lead FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tlead
+                            330.0\t3.0
+                            330.0\t1.0
+                            330.0\t2.0
+                            """);
             assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, lead AS row_number1 FROM u")
                     .noLeakCheck()
                     .expectSize()
@@ -21517,18 +21610,6 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             """);
             // a projection column, not a table column, is named like the nested window function
             createColumnSelectedTwiceTable();
-            // the window function that takes the name is not a column, so the nested one keeps the name
-            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS lead, qty FROM trades")
-                    .noLeakCheck()
-                    .expectSize()
-                    .withPlanContaining("sum(lead) over ()")
-                    .returns("""
-                            lead\tqty
-                            65.0\t15.0
-                            65.0\t25.0
-                            65.0\t5.0
-                            65.0\t35.0
-                            """);
             assertQuery("SELECT id AS lead, sum(lead(qty) OVER ()) OVER () AS s, grp AS lead1 FROM trades")
                     .noLeakCheck()
                     .expectSize()
@@ -21623,6 +21704,43 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             50.0\t65.0
                             10.0\t65.0
                             70.0\t65.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionNestedNameTakenByWildcardColumn() throws Exception {
+        // The wildcard names the second copy of a column like the nested window function lead1, or
+        // row_number1. The nested window function takes that name first, so the copy takes another.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (lead DOUBLE, row_number LONG, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u VALUES
+                        (3.0, 300, 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1.0, 100, 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (2.0, 200, 5.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+
+            assertQuery("SELECT sum(lead(a.qty) OVER ()) OVER () AS s, * FROM u a JOIN u b ON a.ts = b.ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\tlead\trow_number\tqty\tts\tlead2\trow_number1\tqty1\tts1
+                            30.0\t3.0\t300\t15.0\t2024-01-01T00:00:00.000000Z\t3.0\t300\t15.0\t2024-01-01T00:00:00.000000Z
+                            30.0\t1.0\t100\t25.0\t2024-01-01T00:01:00.000000Z\t1.0\t100\t25.0\t2024-01-01T00:01:00.000000Z
+                            30.0\t2.0\t200\t5.0\t2024-01-01T00:02:00.000000Z\t2.0\t200\t5.0\t2024-01-01T00:02:00.000000Z
+                            """);
+            // the projection selects another column under the name of a table column first
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, qty AS row_number, * FROM u")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            s\trow_number\tlead\trow_number2\tqty\tts
+                            6.0\t15.0\t3.0\t300\t15.0\t2024-01-01T00:00:00.000000Z
+                            6.0\t25.0\t1.0\t100\t25.0\t2024-01-01T00:01:00.000000Z
+                            6.0\t5.0\t2.0\t200\t5.0\t2024-01-01T00:02:00.000000Z
                             """);
         });
     }
