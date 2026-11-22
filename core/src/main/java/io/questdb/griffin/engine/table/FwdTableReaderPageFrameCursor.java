@@ -358,9 +358,10 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     adjustedHi = Math.min(partitionHi, Math.addExact(windowStartRow, canonicalHi));
                 } else {
                     preparedNativeBaseWindow = -1;
-                    final long frameLimit = reenterPageFrameRowLimit > 0
-                            ? Math.addExact(partitionLo, reenterPageFrameRowLimit)
-                            : Long.MAX_VALUE;
+                    // nextSlow() gives every native partition a frame limit of one row or more
+                    final long frameRowLimit = getNativeFrameRowLimit();
+                    assert frameRowLimit > 0 : frameRowLimit;
+                    final long frameLimit = Math.addExact(partitionLo, frameRowLimit);
                     final long requestedHi = Math.min(Math.min(partitionHi, windowEndRow), frameLimit);
                     final long physicalLo = Math.addExact(baseStartRow, partitionLo - windowStartRow);
                     final long requestedPhysicalHi = Math.addExact(physicalLo, requestedHi - partitionLo);
@@ -389,6 +390,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 }
 
                 remainingRowsInInterval = partitionHi - adjustedHi;
+                rampRowCount += adjustedHi - partitionLo;
                 frame.pieceShift = 0;
                 frame.skipSkeleton = false;
                 frame.format = PartitionFormat.NATIVE;

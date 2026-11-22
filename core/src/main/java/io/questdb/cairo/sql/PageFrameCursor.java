@@ -178,9 +178,10 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      * query worker count, until frames reach the size that they take without the ramp-up. A reader
      * that stops early then waits only for small frames, while the frames of a long read grow
      * geometrically to their regular size. A frame never holds more rows than it would without the
-     * ramp-up. Frames of Parquet partitions keep their row groups, and their rows count among the
-     * rows before. Opening the cursor again drops the ramp-up. Cursors that cannot split their
-     * frames ignore the call.
+     * ramp-up. The ramp-up does not resize the frames of Parquet partitions or the sub-frames that
+     * materialize a Delta partition window with late rows, but their rows count among the rows
+     * before. Opening the cursor again drops the ramp-up. Cursors that cannot split their frames
+     * ignore the call.
      *
      * @param firstFrameRowCount the rows of the first frame, greater than zero
      */
