@@ -318,8 +318,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     @Test
     public void testAddRefreshRangeReadOnlyRefusalOfCacheWriteDefers() throws Exception {
         assertMemoryLeak(() -> {
-            for (boolean isInvalid : new boolean[]{false, true}) {
-                // A MANUAL view, whose UPDATE queues only its range task, refreshed at base txn 1, valid or invalid.
+            // a valid view, an invalid one, and a valid one with an invalidation pending
+            for (int viewKind = 0; viewKind < 3; viewKind++) {
+                final boolean isInvalid = viewKind == 1;
+                final boolean isInvalidationPending = viewKind == 2;
+                // A MANUAL view, whose UPDATE queues only its range task, refreshed at base txn 1.
                 createBasePriceTable();
                 execute("CREATE MATERIALIZED VIEW price_1h REFRESH MANUAL AS (" +
                         "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h" +
@@ -336,11 +339,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                     drainWalAndMatViewQueues();
                     Assert.assertTrue(state.isInvalid());
                 }
+                if (isInvalidationPending) {
+                    state.markAsPendingInvalidation("pending invalidation");
+                }
 
                 // The node turns read-only while the UPDATE's range task holds the view lock, after it acquired the
                 // view's writer: the commit fence refuses the view state event that persists the cache with the range.
                 // The refusal is a deferral, not a failure: the task neither invalidates the view nor loses its
-                // backlog, and writes nothing, while the in-memory cache keeps the range.
+                // backlog, and writes nothing, while the in-memory cache keeps the range. A pending invalidation stays
+                // pending, as the release on a read-only node wakes nothing.
                 execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
                 drainWalQueue();
                 final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
@@ -372,6 +379,38 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("view_name\tview_status\nprice_1h\t" + (isInvalid ? "invalid" : "valid") + "\n");
                 assertJpyPrice("103.21");
+                Assert.assertEquals(isInvalidationPending ? "pending invalidation" : null, state.getPendingInvalidationReason());
+                if (isInvalidationPending) {
+                    // A lock holder's release on the writable node wakes the invalidation, which persists the cache,
+                    // the range included, as the backlog the view starts with.
+                    Assert.assertTrue(state.tryLock());
+                    MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+                    drainWalAndMatViewQueues();
+                    Assert.assertTrue(state.isInvalid());
+                    Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
+                    try (Path path = new Path(); BlockFileReader reader = new BlockFileReader(configuration)) {
+                        path.of(configuration.getDbRoot()).concat(viewToken).concat(MatViewState.MAT_VIEW_STATE_FILE_NAME);
+                        reader.of(path.$());
+                        final MatViewStateReader persisted = new MatViewStateReader().of(reader, viewToken);
+                        Assert.assertTrue(persisted.isInvalid());
+                        TestUtils.assertEquals("pending invalidation", persisted.getInvalidationReason());
+                        Assert.assertEquals(2, persisted.getRefreshIntervalsBaseTxn());
+                        TestUtils.assertEquals(updatedDay, persisted.getRefreshIntervals());
+                    }
+                    assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views()")
+                            .noRandomAccess()
+                            .noLeakCheck()
+                            .returns("view_name\tview_status\tinvalidation_reason\nprice_1h\tinvalid\tpending invalidation\n");
+                    assertJpyPrice("103.21");
+
+                    // RESUME catches up on the range
+                    execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+                    drainWalQueue();
+                    execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                    drainWalAndMatViewQueues();
+                    assertPriceViewValid();
+                    assertJpyPrice("9.9");
+                }
                 execute("DROP MATERIALIZED VIEW price_1h");
                 execute("DROP TABLE base_price");
                 drainWalAndMatViewQueues();
@@ -380,14 +419,15 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAddRefreshRangeStopsOnInvalidationPublishedBeforeLock() throws Exception {
+    public void testAddRefreshRangeKeepsRangeOnInvalidationPublishedBeforeLock() throws Exception {
         assertMemoryLeak(() -> {
             final MatViewFixture fixture = createAutoPriceViewFixture();
             final MatViewState state = fixture.state();
 
-            // An invalidation lands between the range task's checks and its lock. Once the task holds the lock it
-            // finds the view no longer refreshable, adds nothing and releases the lock, whose release wakes the
-            // invalidation.
+            // An invalidation lands between the range task's checks and its lock. The view is still valid once the task
+            // holds the lock, so the task takes the range, which only it carries, into the view's cache, and its release
+            // wakes the invalidation, which makes the cache, the range included, the backlog the view starts with.
+            // RESUME then recomputes the range.
             execute("UPDATE base_price SET price = 9.9 WHERE sym = 'jpyusd'");
             drainWalQueue();
             final AtomicBoolean hasFired = new AtomicBoolean();
@@ -403,7 +443,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
 
             Assert.assertTrue(hasFired.get());
             Assert.assertTrue(state.isInvalid());
-            Assert.assertEquals(0, state.getRefreshIntervals().size());
+            Assert.assertEquals(2, state.getRefreshIntervalsBaseTxn());
+            final LongList updatedDay = new LongList();
+            updatedDay.add(parseFloorPartialTimestamp("2024-09-10T00:00:00.000000Z"));
+            updatedDay.add(parseFloorPartialTimestamp("2024-09-10T23:59:59.999999Z"));
+            TestUtils.assertEquals(updatedDay, state.getRefreshIntervals());
             assertQuery("select view_name, base_table_name, view_status, invalidation_reason from materialized_views")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -412,6 +456,11 @@ public class MatViewPendingInvalidationTrapTest extends AbstractCairoTest {
                             price_1h\tbase_price\tinvalid\tinvalidation before the lock
                             """);
             assertJpyPrice("103.21");
+
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+            drainWalAndMatViewQueues();
+            assertPriceViewValid();
+            assertJpyPrice("9.9");
         });
     }
 

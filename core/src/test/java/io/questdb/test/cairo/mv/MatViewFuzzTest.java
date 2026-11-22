@@ -1096,7 +1096,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // Ingestion mixed with base partition operations (DROP, DETACH and ATTACH PARTITION), TRUNCATE, UPDATE, TTL,
         // base replacements, view ADD and DROP COLUMN, view DROP PARTITION, ALTER MATERIALIZED VIEW ... AS, with SQL
         // that maps by name or copies by position, SET and
-        // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, forced invalidations, backlog updates, WAL
+        // DROP EXPIRE of policies that hide no row, RANGE, FULL and RESUME, invalidations, some of which publish their
+        // marker before the range tasks queued ahead of them run, as an apply-time invalidation does, see
+        // invalidateOperationsFuzzView(), backlog updates, WAL
         // purges, which delete the txn-log parts below the applied ones in a round that keeps the transaction logs in
         // parts, and restarts of the view states, among
         // them restarts right after a base replacement followed by FULL or RESUME, and reloads of a base day with
@@ -1573,7 +1575,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             LOG.info().$("fuzz: refresh job ran before the base's tracker moved [rangeTaskTxn=").$(rangeTaskTxns.getQuick(0))
                     .$(", updateTxn=").$(updateTxn)
                     .I$();
-            oracle.onRefreshJobRun();
             if (rangeTaskTxns.getQuick(0) == updateTxn) {
                 oracle.onRangeTaskRun(day);
             }
@@ -1940,6 +1941,41 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute(sink);
     }
 
+    // An invalidation of the view in the shape the generator drew for a VIEW_INVALIDATE, or for the invalidation that
+    // follows an UPDATE or ATTACH, see MatViewFuzzOpGenerator.INVALIDATE_*. A shape that publishes the marker first
+    // applies the WAL before, so that the range tasks of the UPDATEs and ATTACHes since the last refresh job run wait in
+    // the refresh queue ahead of the INVALIDATE task and meet the marker on the still valid view, as when the bare-name
+    // guard publishes its invalidation in a later WAL batch. The bare-name guard's marker names the base table at its
+    // first transaction, which a FULL refresh of that table covers: its INVALIDATE leaves the view valid after such a
+    // FULL refresh since the last restart, and invalidates it otherwise. Like the guard, the test publishes no marker on
+    // an invalid view.
+    private static void invalidateOperationsFuzzView(MatViewFuzzOpGenerator generator, MatViewFuzzOpGenerator.Op op) {
+        final TableToken viewToken = engine.verifyTableName("mv");
+        if (op.invalidationShape == MatViewFuzzOpGenerator.INVALIDATE_TASK) {
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, FUZZ_INVALIDATION_REASON);
+            return;
+        }
+        drainWalQueue();
+        generator.onViewWalApplied();
+        final MatViewState state = opsViewState("mv");
+        final boolean isValid = !state.isInvalid();
+        LOG.info().$("fuzz: publishing invalidation marker first [shape=").$(op.invalidationShape)
+                .$(", viewValid=").$(isValid)
+                .I$();
+        if (op.invalidationShape == MatViewFuzzOpGenerator.INVALIDATE_MARKER_FIRST) {
+            if (isValid) {
+                state.markAsPendingInvalidation(FUZZ_INVALIDATION_REASON);
+            }
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, FUZZ_INVALIDATION_REASON);
+        } else {
+            final TableToken baseToken = engine.verifyTableName("base");
+            if (isValid) {
+                state.markAsPendingInvalidationForTesting(FUZZ_INVALIDATION_REASON, baseToken, 1, false);
+            }
+            engine.getMatViewStateStore().enqueueInvalidate(viewToken, FUZZ_INVALIDATION_REASON, baseToken, 1, false);
+        }
+    }
+
     // Whether a view DROP PARTITION would remove the view's newest partition. The view's WAL applies first, as an
     // APPLY_WAL operation would, so the drop finds the partitions read here when it applies.
     private static boolean isDroppingNewestViewPartition(MatViewFuzzOpGenerator.Op op) {
@@ -2058,9 +2094,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private static void replaceOperationsFuzzBase(MatViewFuzzOpGenerator.Op op, MatViewFuzzOracle oracle, String timestampType) throws SqlException {
         LOG.info().$("fuzz: replacing base table").$();
         execute("DROP TABLE base");
-        // the drop invalidates the views on the base
+        // the drop invalidates the views on the base, and the range tasks of the old base drop their ranges
         oracle.onBaseReplaced();
-        oracle.onInvalidationPublished();
         createOperationsFuzzBase(timestampType);
         insertOperationsFuzzRows(op, oracle);
     }
@@ -2168,7 +2203,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     oracle.onBaseRemoved(op.day);
                 }
             }
-            case BASE_ATTACH_PARTITION -> attachOperationsFuzzDay(op.day, oracle);
+            case BASE_ATTACH_PARTITION -> {
+                attachOperationsFuzzDay(op.day, oracle);
+                if (op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_NONE) {
+                    invalidateOperationsFuzzView(generator, op);
+                }
+            }
             case BASE_TRUNCATE -> {
                 execute("TRUNCATE TABLE base");
                 oracle.onBaseRemovedBefore(OPS_DAY_COUNT);
@@ -2181,7 +2221,12 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 updateOperationsFuzzDay(op.day, oracle);
                 applyOperationsFuzzWalWithEarlyRangeTask(op.day, oracle);
             }
-            case BASE_UPDATE -> updateOperationsFuzzDay(op.day, oracle);
+            case BASE_UPDATE -> {
+                updateOperationsFuzzDay(op.day, oracle);
+                if (op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_NONE) {
+                    invalidateOperationsFuzzView(generator, op);
+                }
+            }
             case BASE_SET_TTL -> {
                 execute("ALTER TABLE base SET TTL " + op.day + " DAYS");
                 oracle.onTtl(op.day);
@@ -2196,7 +2241,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 execute("REFRESH MATERIALIZED VIEW mv FULL");
                 oracle.onFullIssued();
                 drainMatViewQueue(engine);
-                oracle.onRefreshJobRun();
                 restartOperationsFuzzViewStates(oracle);
             }
             case BASE_REPLACE_RESUME_RESTART -> {
@@ -2359,10 +2403,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     engine.getMatViewStateStore().enqueueRangeRefresh(engine.verifyTableName("mv"), Numbers.LONG_NULL, periodHi);
                 }
             }
-            case VIEW_INVALIDATE -> {
-                engine.getMatViewStateStore().enqueueInvalidate(engine.verifyTableName("mv"), FUZZ_INVALIDATION_REASON);
-                oracle.onInvalidationPublished();
-            }
+            case VIEW_INVALIDATE -> invalidateOperationsFuzzView(generator, op);
             case BACKLOG_UPDATE ->
                     engine.getMatViewStateStore().enqueueUpdateRefreshIntervals(engine.verifyTableName("mv"));
             case RESTART -> {
@@ -2382,7 +2423,6 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                     fireOperationsFuzzTimer();
                 }
                 drainMatViewQueue(engine);
-                oracle.onRefreshJobRun();
             }
             // under the ADAPTIVE commit mode, a save point of the view's applied transactions comes first, as the WAL
             // apply job takes one now and then, so that the purge deletes the view's txn-log parts below them

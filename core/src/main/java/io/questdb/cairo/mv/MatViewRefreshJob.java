@@ -795,9 +795,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     // Whether a base table range that an ATTACH PARTITION or an UPDATE changed goes into the view's cache: a valid
-    // view's, unless an invalidation is pending, and an invalid view's while its backlog is tracked.
+    // view's, even while an invalidation is pending, whose invalidation then persists the cache, the range included, as
+    // the backlog the view starts with, and an invalid view's while its backlog is tracked.
     private static boolean isRefreshRangeAccepted(MatViewState viewState) {
-        return viewState.isInvalid() ? viewState.hasTrackedBacklog() : !viewState.hasPendingInvalidationReason();
+        return !viewState.isInvalid() || viewState.hasTrackedBacklog();
     }
 
     // Recognizes the "table is suspended" refusal that CairoEngine.getWalWriter raises for a hard-suspended
@@ -972,6 +973,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * TIMER view. An invalid view takes the range into its backlog while the backlog is tracked, see
      * {@link MatViewBacklog}, and recomputes it after REFRESH ... RESUME.
      * <p>
+     * A valid view takes the range even while an invalidation is pending: only this task carries the range, since the
+     * base table's WAL scan skips UPDATE and ATTACH, and the invalidation persists the cache, the range included, as the
+     * backlog the view starts with.
+     * <p>
      * A failure invalidates a valid view, whose cache becomes its backlog: the backlog is lost, since only this task
      * carries the range, unless the task's scan brought the cache up to the operation and merged the range into it, as
      * when the view state event fails. A failure loses an invalid view's backlog.
@@ -986,7 +991,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         final MatViewState viewState = stateStore.getViewState(viewToken);
         if (viewState == null || viewState.isDropped() || !isRefreshRangeAccepted(viewState)) {
             // An invalid view whose backlog is lost, or that never completed a refresh, does not track its base's
-            // changes, and neither does a valid view about to go invalid.
+            // changes.
             return;
         }
 

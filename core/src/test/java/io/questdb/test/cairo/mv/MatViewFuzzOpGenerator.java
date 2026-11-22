@@ -33,9 +33,10 @@ import io.questdb.std.datetime.microtime.Micros;
 /**
  * Generates the operations of {@link MatViewFuzzTest#testViewAndBaseOperations()}: ingestion into the base table,
  * base partition operations, TRUNCATE, UPDATE, TTL and replacement, view column DDL, view DROP PARTITION,
- * {@code ALTER MATERIALIZED VIEW ... AS}, the view's EXPIRE ROWS policy, the REFRESH statements, forced invalidations,
- * restarts of the view states and the job runs that interleave them. For a period view of one day, it also draws the
- * period timer's firings, which complete the days one at a time from the first.
+ * {@code ALTER MATERIALIZED VIEW ... AS}, the view's EXPIRE ROWS policy, the REFRESH statements, invalidations, some of
+ * which publish their marker first, as an apply-time invalidation does, see {@link #INVALIDATE_MARKER_FIRST}, restarts
+ * of the view states and the job runs that interleave them. For a period view of one day, it also draws the period
+ * timer's firings, which complete the days one at a time from the first.
  * <p>
  * It also draws a reload of the base: a TRUNCATE, the ATTACH of a detached partition and an UPDATE of the attached
  * day, which one WAL apply run applies, and whose range task the refresh job takes before the apply job moves the
@@ -96,6 +97,17 @@ public final class MatViewFuzzOpGenerator {
     // View columns that no SQL produces; they hold NULL in every row.
     public static final String[] EXTRA_NAMES = {"note", "flag"};
     public static final String[] EXTRA_TYPES = {"VARCHAR", "INT"};
+    // The shapes of an invalidation, see Op.invalidationShape: the INVALIDATE task alone, which publishes its marker when
+    // the refresh job runs it; a forced marker that the test publishes on a valid view before it queues the task, as an
+    // apply-time invalidation does; and the marker of a base table change at the base's first transaction that does not
+    // force, as the bare-name guard publishes it, which the last FULL refresh covers. Before it publishes a marker, the
+    // test applies the base's WAL, so that the range tasks of the UPDATEs and ATTACHes drawn since the last refresh job
+    // run wait ahead of the task and meet the marker on the still valid view. An UPDATE or ATTACH followed by no
+    // invalidation has none.
+    public static final int INVALIDATE_GUARD_MARKER = 2;
+    public static final int INVALIDATE_MARKER_FIRST = 1;
+    public static final int INVALIDATE_NONE = -1;
+    public static final int INVALIDATE_TASK = 0;
     // A column name longer than 64 characters: a SQL that references it without an alias relies on a generated column
     // name, so the view copies its columns by position.
     public static final String LONG_NAME = "long_" + "l".repeat(60);
@@ -507,9 +519,12 @@ public final class MatViewFuzzOpGenerator {
             }
             case BASE_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_LIST -> op.day = rnd.nextInt(dayCount);
             // in a period view's round, mostly a correction of a day whose period ended, which the view holds
-            case BASE_UPDATE -> op.day = isPeriodView && completeDays > 0 && rnd.nextInt(4) > 0
-                    ? rnd.nextInt(completeDays)
-                    : rnd.nextInt(dayCount);
+            case BASE_UPDATE -> {
+                op.day = isPeriodView && completeDays > 0 && rnd.nextInt(4) > 0
+                        ? rnd.nextInt(completeDays)
+                        : rnd.nextInt(dayCount);
+                op.invalidationShape = drawInvalidationAfterRangeOperation(rnd);
+            }
             case BASE_DROP_PARTITION_WHERE, VIEW_DROP_PARTITION_WHERE -> op.day = 1 + rnd.nextInt(dayCount);
             case BASE_DETACH_PARTITION -> {
                 // the newest partition does not detach, so pick one with a newer one after it
@@ -534,6 +549,7 @@ public final class MatViewFuzzOpGenerator {
                 if (op.day < 0) {
                     return insteadInsert(rnd, op);
                 }
+                op.invalidationShape = drawInvalidationAfterRangeOperation(rnd);
             }
             case BASE_TRUNCATE_ATTACH_UPDATE -> {
                 // the oracle compares the complete days of a period view only
@@ -648,6 +664,7 @@ public final class MatViewFuzzOpGenerator {
                 op.dayHi = op.day + 1 + rnd.nextInt(dayCount - op.day);
             }
             case VIEW_RESUME -> op.isSkipBacklog = rnd.nextInt(3) == 0;
+            case VIEW_INVALIDATE -> op.invalidationShape = rnd.nextInt(3);
             case VIEW_PERIOD_REFRESH -> {
                 // the day whose period ends
                 if (completeDays == dayCount) {
@@ -716,6 +733,16 @@ public final class MatViewFuzzOpGenerator {
         for (int i = 0, n = picked.size(); i < n; i++) {
             columns.add(picked.getQuick(i));
         }
+    }
+
+    // The invalidation that follows an UPDATE or ATTACH, see Op.invalidationShape: for a quarter of them, one that
+    // publishes its marker first once the operation applied, as when a base column change in a later WAL batch makes the
+    // bare-name guard invalidate the view while the operation's range task waits in the refresh queue.
+    private static int drawInvalidationAfterRangeOperation(Rnd rnd) {
+        if (rnd.nextInt(4) > 0) {
+            return INVALIDATE_NONE;
+        }
+        return rnd.nextBoolean() ? INVALIDATE_MARKER_FIRST : INVALIDATE_GUARD_MARKER;
     }
 
     // The outcome of the view mv2 that the raced change's RACER_CREATE_VIEW creates, see RACED_VIEW_*: a racer after
@@ -1141,7 +1168,8 @@ public final class MatViewFuzzOpGenerator {
         // the period timer's firing at the end of the next day, which moves a period view's clock there and enqueues
         // the period's range refresh
         VIEW_PERIOD_REFRESH,
-        // a forced invalidation, which stands for a failed refresh
+        // an invalidation, which stands for a failed refresh or, in the shapes that publish the marker first, see
+        // Op.invalidationShape, for an apply-time invalidation such as the bare-name guard's
         VIEW_INVALIDATE,
         // the refresh intervals update that the timer job enqueues for an invalid view's backlog
         BACKLOG_UPDATE,
@@ -1170,6 +1198,9 @@ public final class MatViewFuzzOpGenerator {
         public int dayHi;
         // the policy as materialized_views().expire_clause shows it
         public String expireClause;
+        // the shape of a VIEW_INVALIDATE, one of INVALIDATE_*, and of the invalidation that follows a BASE_UPDATE or
+        // BASE_ATTACH_PARTITION, INVALIDATE_NONE for none
+        public int invalidationShape;
         // a BASE_RACED_BARE_NAME_COLUMN_CHANGE adds the column count, rather than drops it
         public boolean isColumnAdded;
         // the SQL of an ALTER ... AS copies by position, see viewSql(ObjList, boolean)
@@ -1195,6 +1226,7 @@ public final class MatViewFuzzOpGenerator {
             column = null;
             columnType = null;
             expireClause = null;
+            invalidationShape = INVALIDATE_NONE;
             isColumnAdded = false;
             isPositional = false;
             isProbed = false;

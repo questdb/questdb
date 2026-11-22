@@ -612,30 +612,31 @@ public class MatViewBaseOperationsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAttachRangeSkipsViewWithPendingInvalidation() throws Exception {
-        // A range task that finds an invalidation pending on the view adds nothing: the view is about to go invalid.
+    public void testAttachRangeKeepsRangeOfViewWithPendingInvalidation() throws Exception {
+        // A range task that finds an invalidation pending on the still valid view takes the range into the view's
+        // cache, since only the task carries it. The task's release wakes the invalidation, which makes the cache, the
+        // range included, the backlog the view starts with, and RESUME recomputes the attached day.
         assertMemoryLeak(() -> {
             createBaseWithAttachableDay();
             createView("price_1h", "IMMEDIATE");
             drainWalAndMatViewQueues();
-            final TableToken viewToken = engine.verifyTableName("price_1h");
 
             execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
             drainWalQueue();
             final MatViewState state = getViewState("price_1h");
             state.markAsPendingInvalidation("pending invalidation");
             drainMatViewQueue(engine);
-            Assert.assertEquals(0, state.getRefreshIntervals().size());
-
-            // A lock holder's release wakes the pending invalidation.
-            Assert.assertTrue(state.tryLock());
-            MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
-            drainWalAndMatViewQueues();
+            Assert.assertFalse(state.isLocked());
+            drainWalQueue();
             assertViewStatus("price_1h", "invalid", "pending invalidation");
-            assertViewRows("""
-                    ts\tsym\tprice
-                    2024-01-02T00:00:00.000000Z\tc\t3.0
-                    """);
+            assertCache(3, "2024-01-01T00:00:00.000000Z", "2024-01-01T23:59:59.999999Z");
+            assertViewRows(VIEW_ROWS_BEFORE_ATTACH);
+
+            execute("REFRESH MATERIALIZED VIEW price_1h RESUME");
+            drainWalAndMatViewQueues();
+            assertViewRows(VIEW_ROWS_AFTER_ATTACH);
+            assertViewValidAndCaughtUp("price_1h");
+            assertSqlCursors(VIEW_SQL, "price_1h");
         });
     }
 

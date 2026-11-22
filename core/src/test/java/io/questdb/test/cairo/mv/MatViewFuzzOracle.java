@@ -46,9 +46,10 @@ import java.util.TreeMap;
  *     <li>A view day dropped with view DROP PARTITION holds no row until a refresh recomputes a bucket, so a bucket of
  *     the twin may be missing there, but a bucket the view has must match the twin's.</li>
  *     <li>An ATTACH or UPDATE range reaches the view through an in-memory task, which a restart before the task runs
- *     loses, and which a view with an invalidation pending drops. The buckets of such a range may hold old values
- *     until a RANGE refresh recomputes them. Once the task ran, the range is in the view's cache, which a restart
- *     reloads.</li>
+ *     loses, and which a base replacement drops. The buckets of such a range may hold old values until a RANGE
+ *     refresh recomputes them. Once the task ran, the range is in the view's cache, which a restart reloads, also
+ *     while an invalidation is pending on the view: the invalidation makes the cache the backlog the view starts
+ *     with.</li>
  *     <li>Every other bucket of the twin, the base's buckets, must be in the view with the same values in the view's
  *     columns that its SQL produces.</li>
  *     <li>A period view and its twin hold the days whose period ended, which the clock completes one at a time from
@@ -78,7 +79,6 @@ final class MatViewFuzzOracle {
     private boolean isBacklogLostMarkerUnpersisted;
     private boolean isFullPending;
     private boolean isGapAccepted;
-    private boolean isInvalidationPending;
     private boolean isNeedsBackfill;
     private int nextColumnId;
     private int ttlDays;
@@ -227,9 +227,17 @@ final class MatViewFuzzOracle {
         }
     }
 
+    // The base table was dropped and re-created: the range tasks of the old base that have not run drop their ranges,
+    // and the days the old base held are suspect.
     void onBaseReplaced() {
         baseEpoch++;
         ttlDays = 0;
+        for (int d = 0; d < dayCount; d++) {
+            if (isPendingRange[d]) {
+                isRangeLost[d] = true;
+                isPendingRange[d] = false;
+            }
+        }
         onBaseRemovedBefore(dayCount);
     }
 
@@ -252,7 +260,6 @@ final class MatViewFuzzOracle {
     // view waits for the view's own WAL, which a drain applies after the refresh job ran, so a FULL can outlive the
     // drain; the caller passes whether the view still holds one.
     void onDrained(boolean isFullPending) {
-        onRefreshJobRun();
         this.isFullPending = isFullPending;
         for (int d = 0; d < dayCount; d++) {
             isPendingRange[d] = false;
@@ -298,34 +305,17 @@ final class MatViewFuzzOracle {
         onRecreated(day);
     }
 
-    void onInvalidationPublished() {
-        isInvalidationPending = true;
-    }
-
     // The period of the next day ended.
     void onPeriodCompleted() {
         completeDays++;
     }
 
-    // The range task of an ATTACH or UPDATE of the day ran, after a refresh job run's bookkeeping, see
-    // onRefreshJobRun(): the view's cache holds the range, or the view recomputed it.
+    // The range task of an ATTACH or UPDATE of the day ran: the view's cache holds the range, or the view recomputed it.
     void onRangeTaskRun(int day) {
         isPendingRange[day] = false;
     }
 
-    // The refresh job ran: a range task it ran while an invalidation was pending dropped its range.
-    void onRefreshJobRun() {
-        if (isInvalidationPending) {
-            for (int d = 0; d < dayCount; d++) {
-                if (isPendingRange[d]) {
-                    isRangeLost[d] = true;
-                }
-            }
-            isInvalidationPending = false;
-        }
-    }
-
-    // A restart loses the range tasks that have not run and the pending invalidation.
+    // A restart loses the range tasks that have not run.
     void onRestart() {
         for (int d = 0; d < dayCount; d++) {
             if (isPendingRange[d]) {
@@ -333,7 +323,6 @@ final class MatViewFuzzOracle {
                 isPendingRange[d] = false;
             }
         }
-        isInvalidationPending = false;
         isFullPending = false;
     }
 

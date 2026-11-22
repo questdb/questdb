@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.mv.MatViewBareNameGuard;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -41,8 +42,10 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -148,6 +151,16 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     private static final String PRICE_VIEW_ROWS_AFTER_INSERT = PRICE_VIEW_ROWS + "2024-01-01T02:00:00.000000Z\tb\t5.5\n";
     private static final String PRICE_VIEW_SQL = "SELECT ts, sym, last(price) AS price FROM base SAMPLE BY 1h";
     private static final String REGULAR_VIEW_SQL = "SELECT ts, sym, last(amount) AS amount FROM rv SAMPLE BY 1h";
+    // the rows of RENAMED_VERSION_VIEW_SQL over the base rows once an UPDATE set the price of a to 9.0
+    private static final String RENAMED_VERSION_UPDATED_ROWS = """
+            ts\tsym\tversion\tprice
+            2024-01-01T00:00:00.000000Z\ta\t1\t9.0
+            2024-01-01T00:00:00.000000Z\ta\t2\t9.0
+            2024-01-01T00:00:00.000000Z\tb\t1\t2.5
+            2024-01-01T01:00:00.000000Z\ta\t2\t9.0
+            """;
+    // BARE_VERSION_VIEW_SQL fixed for a base that renamed version to ver
+    private static final String RENAMED_VERSION_VIEW_SQL = "SELECT ts, sym, ver AS version, last(price) AS price FROM base SAMPLE BY 1h";
     // the rows of COUNT_VIEW_SQL over the table that replaces the base in createViewRebuiltFromReplacedBase()
     private static final String REPLACED_BASE_ROWS = """
             ts\tsym\tcount\tprice
@@ -740,6 +753,163 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
                     """);
             assertViewInvalid("child", MatViewBareNameGuard.invalidationReason("count"));
             assertViewRows("child", "ts, sym, count", childRows);
+        });
+    }
+
+    @Test
+    public void testGuardColumnChangeInLaterBatchKeepsAttachRangeForResume() throws Exception {
+        // As testGuardColumnChangeInLaterBatchKeepsUpdateRangeForResume(), with an ATTACH PARTITION in place of the
+        // UPDATE: the ATTACH's range task takes the attached day into the still valid view's cache, the bare-name guard's
+        // invalidation makes the cache the backlog, and RESUME brings the attached day.
+        assertMemoryLeak(() -> {
+            createBase();
+            execute("""
+                    INSERT INTO base VALUES
+                    ('a', 1.5, 10.0, 1, '2024-01-01T00:10:00.000000Z'),
+                    ('c', 3.5, 30.0, 2, '2024-01-02T00:10:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE base DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            makeAttachable("2024-01-01");
+            createView("versions", BARE_VERSION_VIEW_SQL);
+            drainWalAndMatViewQueues();
+            final String dayTwoRows = """
+                    ts\tsym\tversion\tprice
+                    2024-01-02T00:00:00.000000Z\tc\t2\t3.5
+                    """;
+            assertViewRows("versions", "ts, sym, version", dayTwoRows);
+            assertRefreshBaseTxn("versions", 2);
+
+            // base txn 3, then base txn 4 in the next WAL batch
+            execute("ALTER TABLE base ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE base RENAME COLUMN version TO ver");
+            drainWalQueue();
+            final MatViewState state = getViewState("versions");
+            Assert.assertEquals(VERSION_REASON, state.getPendingInvalidationReason());
+            Assert.assertFalse(state.isInvalid());
+            final TableToken viewToken = engine.verifyTableName("versions");
+            final long viewSeqTxn = getSeqTxn(viewToken);
+            drainWalAndMatViewQueues();
+            assertViewInvalid("versions", VERSION_REASON);
+            // the range task's view state event, then the invalidation's
+            Assert.assertEquals(viewSeqTxn + 2, getSeqTxn(viewToken));
+            Assert.assertNull(state.getBacklogLostReason());
+            assertFirstDayCached(state, ColumnType.TIMESTAMP_MICRO, 4);
+            assertViewRows("versions", "ts, sym, version", dayTwoRows);
+
+            execute("ALTER MATERIALIZED VIEW versions AS (" + RENAMED_VERSION_VIEW_SQL + ")");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW versions RESUME");
+            drainWalAndMatViewQueues();
+            assertViewValid("versions");
+            assertViewRows("versions", "ts, sym, version", """
+                    ts\tsym\tversion\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t1\t1.5
+                    2024-01-02T00:00:00.000000Z\tc\t2\t3.5
+                    """);
+            assertSqlCursors(RENAMED_VERSION_VIEW_SQL + " ORDER BY ts, sym, version", "versions ORDER BY ts, sym, version");
+        });
+    }
+
+    @Test
+    public void testGuardColumnChangeInLaterBatchKeepsUpdateRangeForResume() throws Exception {
+        // A base UPDATE applies in one WAL batch, and its range task still waits in the refresh queue when a RENAME or
+        // DROP of the bare name version applies in the next batch, whose bare-name guard publishes the view's
+        // invalidation first. The range task takes the UPDATE's range, which only it carries, into the still valid
+        // view's cache, and the invalidation makes the cache, the range included, the backlog the view starts with.
+        // Once ALTER ... AS fixes the SQL, RESUME catches up on the UPDATE: for an IMMEDIATE view at once, for a MANUAL
+        // view at its next REFRESH ... INCREMENTAL. The range is in the base's timestamp units.
+        assertMemoryLeak(() -> {
+            for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                for (boolean isDrop : new boolean[]{false, true}) {
+                    for (boolean isImmediate : new boolean[]{true, false}) {
+                        execute("CREATE TABLE base (sym SYMBOL, price DOUBLE, amount DOUBLE, version INT, ts " + ColumnType.nameOf(timestampType)
+                                + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                        insertBaseRows();
+                        drainWalQueue();
+                        execute("CREATE MATERIALIZED VIEW versions " + (isImmediate ? "" : "REFRESH MANUAL ")
+                                + "AS (" + BARE_VERSION_VIEW_SQL + ") PARTITION BY DAY");
+                        drainWalQueue();
+                        if (!isImmediate) {
+                            execute("REFRESH MATERIALIZED VIEW versions INCREMENTAL");
+                        }
+                        drainWalAndMatViewQueues();
+                        assertViewRows("versions", "ts, sym, version", inTimestampUnits(BARE_VERSION_VIEW_ROWS, timestampType));
+                        assertRefreshBaseTxn("versions", 1);
+
+                        // base txn 2, then base txn 3 in the next WAL batch
+                        execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+                        drainWalQueue();
+                        execute(isDrop ? "ALTER TABLE base DROP COLUMN version" : "ALTER TABLE base RENAME COLUMN version TO ver");
+                        drainWalQueue();
+                        final MatViewState state = getViewState("versions");
+                        Assert.assertEquals(VERSION_REASON, state.getPendingInvalidationReason());
+                        Assert.assertFalse(state.isInvalid());
+                        final TableToken viewToken = engine.verifyTableName("versions");
+                        final long viewSeqTxn = getSeqTxn(viewToken);
+                        drainWalAndMatViewQueues();
+                        assertViewInvalid("versions", VERSION_REASON);
+                        // the range task's view state event, then the invalidation's
+                        Assert.assertEquals(viewSeqTxn + 2, getSeqTxn(viewToken));
+                        Assert.assertNull(state.getBacklogLostReason());
+                        assertFirstDayCached(state, timestampType, 3);
+                        assertViewRows("versions", "ts, sym, version", inTimestampUnits(BARE_VERSION_VIEW_ROWS, timestampType));
+
+                        final String fixedSql = isDrop
+                                ? "SELECT ts, sym, NULL::INT AS version, last(price) AS price FROM base SAMPLE BY 1h"
+                                : RENAMED_VERSION_VIEW_SQL;
+                        execute("ALTER MATERIALIZED VIEW versions AS (" + fixedSql + ")");
+                        drainWalQueue();
+                        execute("REFRESH MATERIALIZED VIEW versions RESUME");
+                        drainWalQueue();
+                        if (!isImmediate) {
+                            execute("REFRESH MATERIALIZED VIEW versions INCREMENTAL");
+                        }
+                        drainWalAndMatViewQueues();
+                        assertViewValid("versions");
+                        assertViewRows("versions", "ts, sym, version", inTimestampUnits(isDrop ? """
+                                ts\tsym\tversion\tprice
+                                2024-01-01T00:00:00.000000Z\ta\tnull\t9.0
+                                2024-01-01T00:00:00.000000Z\tb\tnull\t2.5
+                                2024-01-01T01:00:00.000000Z\ta\tnull\t9.0
+                                """ : RENAMED_VERSION_UPDATED_ROWS, timestampType));
+                        assertSqlCursors(fixedSql + " ORDER BY ts, sym, version", "versions ORDER BY ts, sym, version");
+                        execute("DROP MATERIALIZED VIEW versions");
+                        execute("DROP TABLE base");
+                        drainWalAndMatViewQueues();
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGuardColumnChangeInUpdateBatchResumesExactly() throws Exception {
+        // A base UPDATE and a RENAME of the bare name version apply in one WAL batch: the bare-name guard publishes the
+        // view's invalidation before the batch queues the UPDATE's range task, so the view is invalid when the task
+        // takes the range into its backlog, and RESUME, once ALTER ... AS fixes the SQL, catches up on the UPDATE.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView("versions", BARE_VERSION_VIEW_SQL);
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            assertViewRows("versions", "ts, sym, version", BARE_VERSION_VIEW_ROWS);
+
+            execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+            execute("ALTER TABLE base RENAME COLUMN version TO ver");
+            final TableToken viewToken = engine.verifyTableName("versions");
+            final long viewSeqTxn = getSeqTxn(viewToken);
+            drainWalAndMatViewQueues();
+            assertViewInvalid("versions", VERSION_REASON);
+            // the invalidation's view state event, then the range task's
+            Assert.assertEquals(viewSeqTxn + 2, getSeqTxn(viewToken));
+            final MatViewState state = getViewState("versions");
+            Assert.assertNull(state.getBacklogLostReason());
+            assertFirstDayCached(state, ColumnType.TIMESTAMP_MICRO, 3);
+
+            assertResumeAfterFixCatchesUpOnUpdate();
         });
     }
 
@@ -1941,6 +2111,82 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGuardInvalidationKeepsUpdateRangeAcrossRestart() throws Exception {
+        // As testGuardColumnChangeInLaterBatchKeepsUpdateRangeForResume(), with a restart after the bare-name guard's
+        // invalidation: the view's state keeps the backlog with the UPDATE's range, and loses the switch the guard
+        // recorded in memory. RESUME refuses the SQL, which reads version as a column the base no longer has, and once
+        // ALTER ... AS fixes it, RESUME catches up on the UPDATE.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView("versions", BARE_VERSION_VIEW_SQL);
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+            drainWalQueue();
+            execute("ALTER TABLE base RENAME COLUMN version TO ver");
+            drainWalQueue();
+            drainWalAndMatViewQueues();
+            assertViewInvalid("versions", VERSION_REASON);
+
+            restartViewStates();
+            assertViewInvalid("versions", VERSION_REASON);
+            final MatViewState state = getViewState("versions");
+            Assert.assertTrue(state.isInvalid());
+            Assert.assertNull(state.getBacklogLostReason());
+            assertFirstDayCached(state, ColumnType.TIMESTAMP_MICRO, 3);
+            assertExceptionNoLeakCheck(
+                    "REFRESH MATERIALIZED VIEW versions RESUME",
+                    VIEW_NAME_POSITION,
+                    "materialized view SQL does not compile, fix it with ALTER MATERIALIZED VIEW ... AS first "
+                            + "[view=versions, error=version is not a column; write version() to call the function]"
+            );
+            Assert.assertTrue(state.isInvalid());
+            assertFirstDayCached(state, ColumnType.TIMESTAMP_MICRO, 3);
+
+            assertResumeAfterFixCatchesUpOnUpdate();
+        });
+    }
+
+    @Test
+    public void testGuardInvalidationLosingLatchKeepsUpdateRangeForResume() throws Exception {
+        // A base UPDATE and a RENAME of the bare name version apply in one WAL batch while a refresh holds the view
+        // latch: the bare-name guard's invalidation cannot take the latch and stays pending, and the UPDATE's range
+        // task, which finds the latch taken, goes back on the queue. Once the holder lets go, the task takes the range
+        // into the still valid view's cache, the invalidation that the release wakes makes the cache the backlog, and
+        // RESUME, once ALTER ... AS fixes the SQL, catches up on the UPDATE.
+        assertMemoryLeak(() -> {
+            createBase();
+            createView("versions", BARE_VERSION_VIEW_SQL);
+            insertBaseRows();
+            drainWalAndMatViewQueues();
+            execute("UPDATE base SET price = 9.0 WHERE sym = 'a'");
+            execute("ALTER TABLE base RENAME COLUMN version TO ver");
+            drainWalQueue();
+            final TableToken viewToken = engine.verifyTableName("versions");
+            final MatViewState state = getViewState("versions");
+            final long viewSeqTxn = getSeqTxn(viewToken);
+            Assert.assertTrue(state.tryLock());
+            try {
+                drainMatViewQueue(engine);
+                Assert.assertFalse(state.isInvalid());
+                Assert.assertEquals(VERSION_REASON, state.getPendingInvalidationReason());
+                Assert.assertEquals(0, state.getRefreshIntervals().size());
+                Assert.assertEquals(viewSeqTxn, getSeqTxn(viewToken));
+            } finally {
+                MatViewRefreshJob.finalizeAndUnlock(engine, engine.getMatViewStateStore(), viewToken, state, false);
+            }
+            drainWalAndMatViewQueues();
+            assertViewInvalid("versions", VERSION_REASON);
+            // the range task's view state event, then the invalidation's
+            Assert.assertEquals(viewSeqTxn + 2, getSeqTxn(viewToken));
+            Assert.assertNull(state.getBacklogLostReason());
+            assertFirstDayCached(state, ColumnType.TIMESTAMP_MICRO, 3);
+
+            assertResumeAfterFixCatchesUpOnUpdate();
+        });
+    }
+
+    @Test
     public void testGuardInvalidationOfRaceIsCoveredByLaterFull() throws Exception {
         // A FULL refresh fixes its base reader while the DROP of count applies, the DROP becomes visible, and the FULL
         // publishes the guard's invalidation of the DROP's base txn 2 again when it commits refresh position 1. A second
@@ -2904,6 +3150,17 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         return engine.getTableSequencerAPI().getTxnTracker(tableToken).getWriterTxn();
     }
 
+    // Asserts that the view's cache holds the base's first day, 2024-01-01, in the base's timestamp units, at the base
+    // table txn.
+    private static void assertFirstDayCached(MatViewState state, int timestampType, long baseTxn) throws NumericException {
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final LongList firstDay = new LongList();
+        firstDay.add(driver.parseFloorLiteral("2024-01-01T00:00:00.000000Z"));
+        firstDay.add(driver.parseFloorLiteral("2024-01-02T00:00:00.000000Z") - 1);
+        Assert.assertEquals(baseTxn, state.getRefreshIntervalsBaseTxn());
+        TestUtils.assertEquals(firstDay, state.getRefreshIntervals());
+    }
+
     private static void assertNames(LowerCaseCharSequenceHashSet names, String... expected) {
         Assert.assertNotNull(names);
         Assert.assertEquals(expected.length, names.size());
@@ -3006,8 +3263,24 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
         );
     }
 
+    // The rows as a view over a base of the timestamp type prints them: a TIMESTAMP_NS timestamp has nine fraction
+    // digits.
+    private static String inTimestampUnits(String rows, int timestampType) {
+        return timestampType == ColumnType.TIMESTAMP_NANO ? rows.replace("Z\t", "000Z\t") : rows;
+    }
+
     private static void insertBaseRows() throws SqlException {
         execute(INSERT_BASE_ROWS);
+    }
+
+    // Turns the detached partition of the base into one that ATTACH PARTITION takes.
+    private static void makeAttachable(String partition) {
+        final TableToken baseToken = engine.verifyTableName("base");
+        try (Path path = new Path(); Path other = new Path()) {
+            path.of(configuration.getDbRoot()).concat(baseToken).concat(partition).put(TableUtils.DETACHED_DIR_MARKER).$();
+            other.of(configuration.getDbRoot()).concat(baseToken).concat(partition).put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+        }
     }
 
     // The state, see describeState(), of a valid view at the refresh position, with the bare-name guard's invalidation
@@ -3102,6 +3375,18 @@ public class MatViewColumnChangeTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("refresh_base_table_txn\n" + expectedTxn + "\n");
+    }
+
+    // Fixes the SQL of the view versions, whose bare version the base renamed to ver, with ALTER ... AS, and resumes the
+    // view: RESUME catches up on the UPDATE that set the price of a to 9.0, as the fixed SQL run on the base gives.
+    private void assertResumeAfterFixCatchesUpOnUpdate() throws Exception {
+        execute("ALTER MATERIALIZED VIEW versions AS (" + RENAMED_VERSION_VIEW_SQL + ")");
+        drainWalQueue();
+        execute("REFRESH MATERIALIZED VIEW versions RESUME");
+        drainWalAndMatViewQueues();
+        assertViewValid("versions");
+        assertViewRows("versions", "ts, sym, version", RENAMED_VERSION_UPDATED_ROWS);
+        assertSqlCursors(RENAMED_VERSION_VIEW_SQL + " ORDER BY ts, sym, version", "versions ORDER BY ts, sym, version");
     }
 
     private void assertUnreadColumnChangeKeepsViewValid(String changeSql, String insertSql) throws Exception {

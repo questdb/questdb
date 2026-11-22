@@ -53,6 +53,10 @@ import org.junit.Test;
  *     day, applied in one WAL apply run whose range task the refresh job takes before the apply job moves the base's
  *     SeqTxnTracker; in a period view's round, of a day whose period ended;</li>
  *     <li>RESUME with and without SKIP BACKLOG;</li>
+ *     <li>an invalidation that publishes its marker first, after the WAL apply that queues the range task of an UPDATE
+ *     or ATTACH and before the refresh job runs it, so that the task meets the marker on a valid view: the forced
+ *     marker, and the bare-name guard's marker, after a FULL refresh that covers it and with no FULL since the last
+ *     restart; drawn as a VIEW_INVALIDATE, and as the invalidation that follows an UPDATE or ATTACH;</li>
  *     <li>a base replacement that leaves out the first day, so the view keeps the old base's rows there;</li>
  *     <li>a SET EXPIRE of each policy shape, one that reads two columns, and one over a column the view lacks, which
  *     the statement refuses;</li>
@@ -76,6 +80,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     private static final int DAY_COUNT = 6;
     // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL
     private static final int DEFINITION_PENDING_MIN = 10;
+    // each shape of an invalidation that publishes its marker while a range task waits in the refresh queue
+    private static final int MARKER_FIRST_SHAPE_MIN = 20;
     // each shape of an ALTER ... AS that copies by position, and the column changes it refuses
     private static final int POSITIONAL_ALTER_MIN = 20;
     // the restarts of testRestartShapesOverViewWal() above the purged txn-log parts, in RESTART_SHAPE_ROUNDS rounds
@@ -112,6 +118,14 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         int insertIntoDropped = 0;
         int resumeSkip = 0;
         int resumePlain = 0;
+        // an invalidation that publishes its marker first while the range task of an UPDATE or ATTACH waits in the
+        // refresh queue: the forced marker, and the bare-name guard's marker after a VIEW_FULL that a view check ran and
+        // with no VIEW_FULL, since the last restart or base replacement; of them, the invalidations that follow an
+        // UPDATE or ATTACH
+        int markerFirstBehindRangeTask = 0;
+        int guardMarkerBehindRangeTaskCovered = 0;
+        int guardMarkerBehindRangeTaskUncovered = 0;
+        int markerFirstAfterRangeOperation = 0;
         int replaceLeavesFirstDay = 0;
         int bulkInsert = 0;
         int setExpireRefused = 0;
@@ -142,6 +156,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             final boolean[] isDropped = new boolean[DAY_COUNT];
             boolean hasDroppedViewColumn = false;
             boolean isViewColumnAdded = false;
+            // the range task of an UPDATE or ATTACH waits in the refresh queue: no refresh job run, restart, TRUNCATE,
+            // base replacement or view check came since
+            boolean isRangeTaskQueued = false;
+            // a VIEW_FULL was drawn, and a view check ran it, with no restart or base replacement since
+            boolean isFullIssued = false;
+            boolean isFullCovering = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final ObjList<String> sqlBefore = new ObjList<>();
                 sqlBefore.addAll(generator.getSqlColumns());
@@ -326,6 +346,50 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     default -> {
                     }
                 }
+                switch (op.kind) {
+                    // an UPDATE of a day the base holds no partition of queues no range
+                    case BASE_UPDATE -> isRangeTaskQueued |= generator.isBaseDay(op.day);
+                    case BASE_ATTACH_PARTITION -> isRangeTaskQueued = true;
+                    case VIEW_INVALIDATE -> Assert.assertNotEquals(MatViewFuzzOpGenerator.INVALIDATE_NONE, op.invalidationShape);
+                    case RUN_REFRESH_JOB, BASE_TRUNCATE, BASE_TRUNCATE_ATTACH_UPDATE -> isRangeTaskQueued = false;
+                    case VIEW_FULL -> isFullIssued = true;
+                    case RESTART, BASE_REPLACE, BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART -> {
+                        isRangeTaskQueued = false;
+                        isFullIssued = false;
+                        isFullCovering = false;
+                    }
+                    default -> {
+                    }
+                }
+                switch (op.kind) {
+                    case BASE_UPDATE, BASE_ATTACH_PARTITION, VIEW_INVALIDATE -> {
+                        if (isRangeTaskQueued) {
+                            switch (op.invalidationShape) {
+                                case MatViewFuzzOpGenerator.INVALIDATE_MARKER_FIRST -> markerFirstBehindRangeTask++;
+                                case MatViewFuzzOpGenerator.INVALIDATE_GUARD_MARKER -> {
+                                    if (isFullCovering) {
+                                        guardMarkerBehindRangeTaskCovered++;
+                                    } else if (!isFullIssued) {
+                                        guardMarkerBehindRangeTaskUncovered++;
+                                    }
+                                }
+                                default -> {
+                                }
+                            }
+                            if (op.kind != MatViewFuzzOpGenerator.Kind.VIEW_INVALIDATE && op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_NONE) {
+                                markerFirstAfterRangeOperation++;
+                            }
+                        }
+                    }
+                    default -> {
+                    }
+                }
+                if (step % CHECK_STEPS == CHECK_STEPS - 1) {
+                    // the view check drains the queues, which runs the range tasks and a FULL refresh
+                    isRangeTaskQueued = false;
+                    isFullCovering |= isFullIssued;
+                    isFullIssued = false;
+                }
                 // the view's columns always start with ts and sym, which no statement drops
                 Assert.assertEquals(MatViewFuzzOpGenerator.TS, generator.getViewColumns().getQuick(0));
                 Assert.assertEquals(MatViewFuzzOpGenerator.SYM, generator.getViewColumns().getQuick(1));
@@ -346,6 +410,22 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         assertShare("row that recreates a dropped partition", insertIntoDropped, 100);
         assertShare("RESUME SKIP BACKLOG", resumeSkip, 50);
         assertShare("plain RESUME", resumePlain, 100);
+        assertShare("forced invalidation marker published while a range task waits", markerFirstBehindRangeTask, MARKER_FIRST_SHAPE_MIN);
+        assertShare(
+                "bare-name guard's invalidation marker published while a range task waits, after a covering FULL",
+                guardMarkerBehindRangeTaskCovered,
+                MARKER_FIRST_SHAPE_MIN
+        );
+        assertShare(
+                "bare-name guard's invalidation marker published while a range task waits, without a FULL",
+                guardMarkerBehindRangeTaskUncovered,
+                MARKER_FIRST_SHAPE_MIN
+        );
+        assertShare(
+                "invalidation marker published right after an UPDATE or ATTACH applied",
+                markerFirstAfterRangeOperation,
+                MARKER_FIRST_SHAPE_MIN
+        );
         assertShare("base replacement without the first day", replaceLeavesFirstDay, 50);
         assertShare("bulk INSERT", bulkInsert, 100);
         assertShare("SET EXPIRE refused over a column the view lacks", setExpireRefused, 100);
@@ -529,8 +609,14 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     }
                 }
                 switch (op.kind) {
-                    case VIEW_INVALIDATE -> {
-                        if (!isInvalidatedByForce && !isValidityUnknown) {
+                    case VIEW_INVALIDATE, BASE_UPDATE, BASE_ATTACH_PARTITION -> {
+                        // a forced invalidation, of a VIEW_INVALIDATE or after an UPDATE or ATTACH; the bare-name guard's
+                        // marker leaves the view valid when the last FULL refresh covers it, which this does not follow,
+                        // so it counts for none
+                        final boolean isForced = op.kind == MatViewFuzzOpGenerator.Kind.VIEW_INVALIDATE
+                                ? op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_GUARD_MARKER
+                                : op.invalidationShape == MatViewFuzzOpGenerator.INVALIDATE_MARKER_FIRST;
+                        if (isForced && !isInvalidatedByForce && !isValidityUnknown) {
                             isInvalidationQueued = true;
                             isStateTaskQueued = true;
                         }
@@ -974,6 +1060,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             case VIEW_DROP_PARTITION_LIST, VIEW_DROP_PARTITION_WHERE -> isViewColumnAdded;
             case VIEW_SET_EXPIRE -> op.isProbed;
             case VIEW_ADD_COLUMN, VIEW_ALTER_AS, RESTART -> wasDefinitionPending;
+            // an invalidation that publishes the marker first applies the WAL before
+            case BASE_UPDATE, BASE_ATTACH_PARTITION -> op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_NONE;
+            case VIEW_INVALIDATE -> op.invalidationShape != MatViewFuzzOpGenerator.INVALIDATE_TASK;
             default -> false;
         };
     }
