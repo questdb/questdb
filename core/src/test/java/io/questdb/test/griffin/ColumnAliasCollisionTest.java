@@ -43,8 +43,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\n" +
-                        "100\t1\n" +
-                        "200\t2\n"
+                                "100\t1\n" +
+                                "200\t2\n"
                 );
     }
 
@@ -55,8 +55,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\n" +
-                        "100\t2024-01-01T00:00:00.000000Z\n" +
-                        "200\t2024-01-01T00:01:00.000000Z\n"
+                                "100\t2024-01-01T00:00:00.000000Z\n" +
+                                "200\t2024-01-01T00:01:00.000000Z\n"
                 );
     }
 
@@ -66,8 +66,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\tcount\n" +
-                        "11\t1\t1\n" +
-                        "21\t2\t1\n"
+                                "11\t1\t1\n" +
+                                "21\t2\t1\n"
                 );
     }
 
@@ -77,8 +77,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "n\tid\n" +
-                        "2\t10\n" +
-                        "null\t20\n"
+                                "2\t10\n" +
+                                "null\t20\n"
                 );
     }
 
@@ -89,8 +89,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "qty\tf\n" +
-                        "2024-01-01T00:00:00.000000Z\t100\n" +
-                        "2024-01-01T00:01:00.000000Z\t200\n"
+                                "2024-01-01T00:00:00.000000Z\t100\n" +
+                                "2024-01-01T00:01:00.000000Z\t200\n"
                 );
     }
 
@@ -100,8 +100,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "qty\n" +
-                        "1\n" +
-                        "2\n"
+                                "1\n" +
+                                "2\n"
                 );
     }
 
@@ -123,8 +123,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\tqty1\n" +
-                        "100\t1\t10\n" +
-                        "200\t2\t20\n"
+                                "100\t1\t10\n" +
+                                "200\t2\t20\n"
                 );
     }
 
@@ -135,8 +135,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tg\tqty\tid\n" +
-                        "100\t2\t1\t2024-01-01T00:00:00.000000Z\n" +
-                        "200\t4\t2\t2024-01-01T00:01:00.000000Z\n"
+                                "100\t2\t1\t2024-01-01T00:00:00.000000Z\n" +
+                                "200\t4\t2\t2024-01-01T00:01:00.000000Z\n"
                 );
     }
 
@@ -147,8 +147,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "id\tqty\tts\tqty1\n" +
-                        "1\t10\t2024-01-01T00:00:00.000000Z\t1\n" +
-                        "2\t20\t2024-01-01T00:01:00.000000Z\t2\n"
+                                "1\t10\t2024-01-01T00:00:00.000000Z\t1\n" +
+                                "2\t20\t2024-01-01T00:01:00.000000Z\t2\n"
                 );
     }
 
@@ -159,8 +159,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\tid\tqty1\tts\n" +
-                        "100\t1\t1\t10\t2024-01-01T00:00:00.000000Z\n" +
-                        "200\t2\t2\t20\t2024-01-01T00:01:00.000000Z\n"
+                                "100\t1\t1\t10\t2024-01-01T00:00:00.000000Z\n" +
+                                "200\t2\t2\t20\t2024-01-01T00:01:00.000000Z\n"
                 );
     }
 
@@ -170,8 +170,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\n" +
-                        "100\t1\n" +
-                        "200\t2\n"
+                                "100\t1\n" +
+                                "200\t2\n"
                 );
     }
 
@@ -181,8 +181,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\tcount\n" +
-                        "100\t1\t1\n" +
-                        "200\t2\t1\n"
+                                "100\t1\t1\n" +
+                                "200\t2\t1\n"
                 );
     }
 
@@ -193,8 +193,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "rn\tf\tqty\n" +
-                        "1\t100\t1\n" +
-                        "2\t200\t2\n"
+                                "1\t100\t1\n" +
+                                "2\t200\t2\n"
                 );
     }
 
@@ -205,8 +205,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "rn\tf\tqty\n" +
-                        "1\t100\t1\n" +
-                        "1\t200\t2\n"
+                                "1\t100\t1\n" +
+                                "1\t200\t2\n"
                 );
     }
 
@@ -216,8 +216,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tqty\tg\n" +
-                        "100\t1\t15\n" +
-                        "200\t2\t25\n"
+                                "100\t1\t15\n" +
+                                "200\t2\t25\n"
                 );
     }
 
@@ -227,8 +227,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "f\tid\n" +
-                        "2\t10\n" +
-                        "3\t20\n"
+                                "2\t10\n" +
+                                "3\t20\n"
                 );
     }
 
@@ -239,8 +239,8 @@ public class ColumnAliasCollisionTest extends AbstractCairoTest {
                 .expectSize()
                 .returns(
                         "qty\tts\tid\n" +
-                        "2024-01-01T00:00:00.000000Z\t100\t1\n" +
-                        "2024-01-01T00:01:00.000000Z\t200\t2\n"
+                                "2024-01-01T00:00:00.000000Z\t100\t1\n" +
+                                "2024-01-01T00:01:00.000000Z\t200\t2\n"
                 );
     }
 }
