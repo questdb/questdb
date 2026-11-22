@@ -787,6 +787,15 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // True when the model, or the sub-query it wraps, exposes the column, directly or through a wildcard.
+    private static boolean isColumnExposed(IQueryModel model, CharSequence name) {
+        if (model.getAliasToColumnMap().contains(name) || isWildcardColumn(model, name)) {
+            return true;
+        }
+        final IQueryModel nested = model.getNestedModel();
+        return nested != null && model.getColumns().size() == 0 && isColumnExposed(nested, name);
+    }
+
     // Returns true when every leaf in the expression tree is a literal constant
     // (no function calls, bind variables, or column references). Used to decide
     // whether a constWhereClause can be evaluated at compile time by the code
@@ -932,6 +941,38 @@ public class SqlOptimiser implements Mutable {
      */
     private static boolean isWherePushableBelowJoin(int joinType, ExpressionNode node) {
         return joinBarriers.excludes(joinType) || (joinType == IQueryModel.JOIN_RIGHT_OUTER && !node.innerPredicate);
+    }
+
+    // True when a wildcard of the model selects the column, as "SELECT * FROM t" does for the columns of t.
+    private static boolean isWildcardColumn(IQueryModel model, CharSequence name) {
+        final IQueryModel from = model.getNestedModel();
+        if (from == null) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast.type != LITERAL || !Chars.endsWith(ast.token, '*')) {
+                continue;
+            }
+            final ObjList<IQueryModel> joinModels = from.getJoinModels();
+            int lo = 0;
+            int hi = joinModels.size();
+            final int dot = Chars.indexOfLastUnquoted(ast.token, '.');
+            if (dot > -1) {
+                lo = from.getModelAliasIndex(ast.token, 0, dot);
+                if (lo == -1) {
+                    continue;
+                }
+                hi = lo + 1;
+            }
+            for (int j = lo; j < hi; j++) {
+                if (isColumnExposed(joinModels.getQuick(j), name)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static void linkDependencies(IQueryModel model, int parent, int child) {
@@ -15128,7 +15169,7 @@ public class SqlOptimiser implements Mutable {
                     final QueryColumn qc = columns.getQuick(i);
                     final ExpressionNode node = qc.getAst();
                     if (node.type == LITERAL) {
-                        if (nested.getAliasToColumnMap().contains(node.token)) {
+                        if (isColumnExposed(nested, node.token)) {
                             continue;
                         }
 

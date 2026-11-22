@@ -18470,6 +18470,48 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRowNumberColumnFromSubQuery() throws Exception {
+        // A sub-query column named row_number is a column, not a call to the window function row_number().
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id LONG, row_number LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (3, 300, '2024-01-01T00:00:00.000000Z'),
+                        (1, 100, '2024-01-01T00:01:00.000000Z'),
+                        (4, 200, '2024-01-01T00:02:00.000000Z')
+                    """);
+
+            assertQuery("SELECT row_number FROM (SELECT * FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            row_number
+                            300
+                            100
+                            200
+                            """);
+            assertQuery("SELECT row_number, lead(ts) OVER () AS rn FROM (SELECT * FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            row_number\trn
+                            300\t2024-01-01T00:01:00.000000Z
+                            100\t2024-01-01T00:02:00.000000Z
+                            200\t
+                            """);
+            assertQuery("SELECT row_number AS r, lead(ts) OVER () AS rn FROM (SELECT * FROM t)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            r\trn
+                            300\t2024-01-01T00:01:00.000000Z
+                            100\t2024-01-01T00:02:00.000000Z
+                            200\t
+                            """);
+        });
+    }
+
+    @Test
     public void testRowNumberFailsInNonWindowContext() throws Exception {
         assertQuery("select row_number(), * from trades")
                 .ddl("create table trades as " +
