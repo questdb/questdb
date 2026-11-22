@@ -37,6 +37,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.File;
+import java.lang.foreign.Arena;
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
 import java.lang.foreign.MemorySegment;
@@ -488,6 +489,8 @@ public final class Files {
      * memory, as mincore(2) reports it: for a file mapping, whether reading the range reads
      * nothing from storage. Returns false for an empty range, when mincore(2) fails, and on
      * every platform but Linux, the only one where {@link #madviseWillNeed} reads ahead.
+     * Linux takes the mmap lock of the process for the check, so the check waits while other
+     * threads map, remap or unmap memory.
      */
     public static boolean isPageCacheResident(long address, long len) {
         return len > 0 && isMadviseWillNeedSupported() && Mincore.isResident(address, len);
@@ -1108,16 +1111,20 @@ public final class Files {
         private static final int CHUNK_PAGES = 512;
         // int mincore(void *addr, size_t length, unsigned char *vec). The address goes as a
         // long, which the 64-bit ABIs QuestDB runs on pass the same way as a pointer, so the
-        // call allocates no segment for it. mincore(2) never waits for IO, so the binding is
-        // critical, and may fill a heap array.
+        // call allocates no segment for it. Linux takes the mmap lock of the process for each
+        // call, so the call sleeps while other threads map, remap or unmap memory. The binding
+        // takes no critical option, not even critical(false), see Os.SLEEP_MILLIS: the VM
+        // reaches a safepoint without waiting for the call. Only a critical downcall can fill
+        // a heap array, so the vector is native memory.
         private static final MethodHandle MINCORE;
         // One vector per carrier, the OS thread that makes the call, see CarrierLocal. Query
         // fibers call isResident(), and a ThreadLocal is unsafe there: compiled code can carry
         // the Thread of the carrier a fiber yielded on over to the one it resumes on, see
         // CARRIER_LOCAL.md. isResident() fills and reads the vector within one call, which
-        // cannot yield, so no two calls use it at once.
+        // cannot yield, so no two calls use it at once. The GC frees a vector once no carrier
+        // holds it.
         private static final CarrierLocal<MemorySegment> VECTOR = new CarrierLocal<>(
-                () -> MemorySegment.ofArray(new byte[CHUNK_PAGES])
+                () -> Arena.ofAuto().allocate(CHUNK_PAGES)
         );
 
         static boolean isResident(long address, long len) {
@@ -1157,8 +1164,7 @@ public final class Files {
             MINCORE = linker.downcallHandle(
                     linker.defaultLookup().find("mincore").orElseThrow(
                             () -> new FatalError("Internal error: symbol mincore not found in the C library")),
-                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS),
-                    Linker.Option.critical(true)
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG, ValueLayout.ADDRESS)
             );
         }
     }
