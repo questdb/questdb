@@ -147,7 +147,7 @@ public class QwpBackwardReadAhead implements Mutable {
      * ahead, or read itself; bytes already in memory do not count.
      */
     public long advise(long lo) {
-        // nothing left to read: no frame, a parquet or empty frame, or every row is advised
+        // nothing left to read: no frame, a parquet, custom or empty frame, or every row is advised
         if (advisedLo == 0) {
             return 0;
         }
@@ -224,8 +224,11 @@ public class QwpBackwardReadAhead implements Mutable {
         this.frameRows = frameRows;
         frameStreamLo = streamRows;
         streamRows += Math.max(0, frameRows);
-        // the stream decodes a parquet frame into memory when it navigates to it
-        final long rowBytes = frame.getFormat() == PartitionFormat.NATIVE ? fixedRowBytes(frame) : 0;
+        // The stream decodes a parquet frame into memory when it navigates to it, and
+        // materializes a custom (Delta) frame, whose addresses point at its base, not at its rows.
+        final long rowBytes = frame.getFormat() == PartitionFormat.NATIVE && frame.getPartitionFrameState() == 0
+                ? fixedRowBytes(frame)
+                : 0;
         if (frameRows <= 0 || rowBytes == 0) {
             advisedLo = 0;
             return;

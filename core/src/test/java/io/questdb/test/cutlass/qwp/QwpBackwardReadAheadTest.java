@@ -438,6 +438,14 @@ public class QwpBackwardReadAheadTest {
                     Assert.assertEquals(0, readAhead.advise(3_000 - SLICE_ROWS));
                     frame.format = PartitionFormat.NATIVE;
 
+                    // A custom (Delta) frame reports NATIVE, but its addresses point at its
+                    // base, not at its rows: the stream materializes it into memory when it
+                    // navigates to it, as it decodes a parquet frame.
+                    frame.partitionFrameState = 1;
+                    readAhead.ofFrame(frame, 3_000);
+                    Assert.assertEquals(0, readAhead.advise(3_000 - SLICE_ROWS));
+                    frame.partitionFrameState = 0;
+
                     // a frame without rows
                     readAhead.ofFrame(frame, 0);
                     Assert.assertEquals(0, readAhead.advise(0));
@@ -1380,6 +1388,7 @@ public class QwpBackwardReadAheadTest {
         private final long[] pageSizes;
         private final long rowCount;
         byte format = PartitionFormat.NATIVE;
+        long partitionFrameState;
 
         AddressedFrame(int columnCount, long rowCount) {
             this.rowCount = rowCount;
@@ -1437,6 +1446,11 @@ public class QwpBackwardReadAheadTest {
         @Override
         public int getParquetRowGroupLo() {
             return -1;
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return partitionFrameState;
         }
 
         @Override
