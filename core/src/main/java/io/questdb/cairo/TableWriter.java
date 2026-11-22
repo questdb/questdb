@@ -6962,6 +6962,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        assert !isLastPartitionReadOnly() : "LAG applied to a read-only partition";
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
@@ -12750,6 +12751,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
     }
 
+    private boolean isLastPartitionReadOnly() {
+        final int partitionCount = txWriter.getPartitionCount();
+        return partitionCount > 0 && txWriter.isPartitionReadOnly(partitionCount - 1);
+    }
+
     /**
      * Whether the partition at {@code partitionTimestamp} is composite. Tolerates a timestamp no partition
      * carries - a caller opening a partition the table does not record yet gets {@code false}.
@@ -15579,6 +15585,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
         final long maxTimestamp = txWriter.getMaxTimestamp();
+        final long initialMinTimestamp = txWriter.getMinTimestamp();
         final long transientRowCount = txWriter.transientRowCount;
 
         o3DoneLatch.reset();
@@ -15589,6 +15596,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int pCount = 0;
         int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
         long replaceMaxTimestamp = Long.MIN_VALUE;
+        boolean isBatchHeadDropped = false;
+        boolean isBatchTailDropped = false;
         long partitionTimestamp = o3TimestampMin;
         final long minO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin);
         long maxO3PartitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3TimestampMax);
@@ -15769,6 +15778,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
+                        isBatchHeadDropped |= srcOooLo == rowLo;
+                        isBatchTailDropped = srcOooHi == srcOooMax - 1;
                         partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
                         pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
@@ -15991,7 +16002,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // at this point we should know the last partition row count
             if (!isCommitReplaceMode()) {
                 partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
-                long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+                // The rows written before a dropped tail precede its partition, so they cannot raise the max
+                long committedMaxTimestamp = isBatchTailDropped
+                        ? txWriter.getMaxTimestamp()
+                        : Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
                 // Committed data left on disk outside the O3 batch may have a higher timestamp than the
                 // O3 batch commit boundary; keep the writer's maxTimestamp consistent with what is on disk.
                 committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
@@ -16029,6 +16043,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     );
                 }
                 o3ConsumePartitionUpdateSink();
+                if (isBatchHeadDropped && !isCommitReplaceMode()) {
+                    // The partition tasks report the batch min, here a dropped row's. The rows they wrote follow
+                    // that row's partition, so they cannot lower the min.
+                    txWriter.setMinTimestamp(initialMinTimestamp);
+                }
             }
             o3DoneLatch.await(latchCount);
 
@@ -16244,6 +16263,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean noLag = lastPartitionBlocksAppend
                         || isParquetTableEmptyPlaceholder
                         || isMergeAppendTable()
+                        // LAG is written into the last partition's files, O3 drops or rejects such rows
+                        || isLastPartitionReadOnly()
                         || timestampRangeOverlapsDeltaActivePartition(o3TimestampMin, o3TimestampMax);
                 boolean needFullCommit = forceFullCommit
                         // No LAG available (parquet partition or parquet table)
@@ -20015,6 +20036,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || lastPartitionTimestamp == Long.MIN_VALUE
                 // Composite as well as parquet: this parks the block in the file region a relocated piece owns.
                 || isLastPartitionAppendBlocked()
+                || isLastPartitionReadOnly()
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
