@@ -158,7 +158,7 @@ public interface FilesFacade {
     /**
      * Asks the OS to read {@code [address, address + len)} of a file mapping into the page
      * cache without waiting for it, see {@link Files#madviseWillNeed(long, long)}. Returns
-     * how many requests it sent.
+     * how many requests the OS accepted.
      */
     default int madviseWillNeed(long address, long len) {
         return Files.madviseWillNeed(address, len);

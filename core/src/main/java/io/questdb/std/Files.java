@@ -522,7 +522,9 @@ public final class Files {
         }
     }
 
-    public static native void madvise0(long address, long len, int advise);
+    // madvise(2), which libquestdb binds on Linux only: returns 0 on success, or -1 with
+    // errno set when the kernel rejects the advice
+    public static native int madvise0(long address, long len, int advise);
 
     /**
      * Asks the kernel to read the file pages behind {@code [address, address + len)} of a
@@ -530,8 +532,9 @@ public final class Files {
      * {@link #madvise}, this changes no state of the mapping, so it applies to mappings that
      * other readers share as well. Linux caps each request, see
      * {@link #MADV_WILLNEED_REQUEST_SIZE}, so the range goes out as page-aligned requests of at
-     * most that size. Returns how many requests it sent: none for an empty range, or where
-     * {@link #isMadviseWillNeedSupported()} is false.
+     * most that size. Returns how many of them the kernel accepted: none for an empty range,
+     * or where {@link #isMadviseWillNeedSupported()} is false. A request the kernel rejects,
+     * such as one over memory that no mapping holds, does not count.
      */
     public static int madviseWillNeed(long address, long len) {
         if (len <= 0 || !isMadviseWillNeedSupported()) {
@@ -540,12 +543,13 @@ public final class Files {
         final long hi = address + len;
         // the request size is a multiple of the page size, so every request starts page-aligned
         final long requestSize = Math.max(MADV_WILLNEED_REQUEST_SIZE, PAGE_SIZE);
-        int requests = 0;
+        int acceptedRequests = 0;
         for (long lo = address & -PAGE_SIZE; lo < hi; lo += requestSize) {
-            madvise0(lo, Math.min(requestSize, hi - lo), MADV_WILLNEED_LINUX);
-            requests++;
+            if (madvise0(lo, Math.min(requestSize, hi - lo), MADV_WILLNEED_LINUX) == 0) {
+                acceptedRequests++;
+            }
         }
-        return requests;
+        return acceptedRequests;
     }
 
     public static int mkdir(LPSZ path, int mode) {

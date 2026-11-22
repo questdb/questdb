@@ -1152,10 +1152,23 @@ public class FilesTest {
     }
 
     @Test
+    public void testMadviseWillNeedCountsOnlyAcceptedRequests() {
+        // no mapping holds the first page of the address space, so madvise(2) fails the
+        // request with ENOMEM, and madviseWillNeed() does not count it. Other platforms
+        // send nothing.
+        final int errnoNoMemory = 12;
+        Assert.assertEquals(0, Files.madviseWillNeed(0, Files.PAGE_SIZE));
+        if (Os.isLinux()) {
+            Assert.assertEquals(errnoNoMemory, Os.errno());
+        }
+        Assert.assertEquals(0, FilesFacadeImpl.INSTANCE.madviseWillNeed(0, Files.PAGE_SIZE));
+    }
+
+    @Test
     public void testMadviseWillNeedSplitsTheRangeIntoRequests() throws Exception {
         // Linux reads at most its readahead size of one MADV_WILLNEED request and drops the
         // rest, so madviseWillNeed() sends a range as page-aligned requests of at most
-        // 128 KiB. Other platforms send nothing.
+        // 128 KiB, and counts the ones the kernel accepts. Other platforms send nothing.
         assertMemoryLeak(() -> {
             final long fileSize = 1024 * 1024;
             final File temp = temporaryFolder.newFile();
@@ -1183,8 +1196,7 @@ public class FilesTest {
                         Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 300 * 1024));
                         // madvise(2) rejects a start that is not page-aligned, so the requests of a
                         // range that starts inside a page start at that page: 256 KiB from 100 bytes
-                        // into the page end 100 bytes past the second request and take a third,
-                        // where requests that started at the range would take only 2
+                        // into the page end 100 bytes past the second request and take a third
                         Assert.assertEquals(isLinux ? 3 : 0, Files.madviseWillNeed(address + 100, 2 * requestSize));
                         // a range that ends on a request boundary
                         Assert.assertEquals(isLinux ? 2 : 0, Files.madviseWillNeed(address, 2 * requestSize));
