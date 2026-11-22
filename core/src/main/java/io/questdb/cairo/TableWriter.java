@@ -260,8 +260,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final Runnable NOOP = () -> {
     };
     private static final Row NOOP_ROW = new NoOpRow();
-    // Zero symbol counts, for a _txn record published before the symbol maps are emptied (see truncate0()) or before
-    // the symbol map writers open (see repairTruncate()). Never modified.
+    // Zero symbol counts, for a _txn record published before the symbol maps are emptied, see truncate0(). Never
+    // modified.
     private static final ObjList<SymbolCountProvider> NO_SYMBOL_COUNTS = new ObjList<>();
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
@@ -839,10 +839,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // an entry that a TRUNCATE of an earlier build armed, see repairTruncate().
             switch (todo) {
                 case TODO_TRUNCATE:
-                    repairTruncate(false);
-                    break;
-                case TODO_TRUNCATE_KEEP_SYMBOL_MAPS:
-                    repairTruncate(true);
+                    repairTruncate();
                     break;
                 case TODO_RESTORE_META:
                 case -1:
@@ -13538,7 +13535,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Moves every column of a non-partitioned table to a new file version for {@link #repairTruncate(boolean)}, the
+     * Moves every column of a non-partitioned table to a new file version for {@link #repairTruncate()}, the
      * way UPDATE moves the columns it changes. TRUNCATE empties the files of the default partition in place, which it
      * may do only while no query reads them. A query of the old rows may still map them during the repair, so the rows
      * written after it go to new files, and the column purge removes the old files once no reader of the old rows is
@@ -20026,10 +20023,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Completes a TRUNCATE of an earlier build that stopped after it armed its {@code _todo_} entry and before it
      * published the empty {@code _txn}, as {@link #truncate0(boolean)} would have: no partitions, no rows, no column
-     * tops. Without KEEP SYMBOL MAPS, that TRUNCATE emptied the symbol maps before it armed the entry, and of a
-     * non-partitioned table it may have cut column files before it stopped. TRUNCATE no longer arms the entry: it
-     * publishes the empty {@code _txn} before it empties anything. The constructor calls the repair before it opens
-     * the columns and the symbol map writers.
+     * tops. Of a non-partitioned table, that TRUNCATE may have cut column files before it stopped. TRUNCATE no longer
+     * arms the entry: it publishes the empty {@code _txn} before it empties anything. The constructor calls the repair
+     * before it opens the columns and the symbol map writers, which open with the symbol counts it publishes.
+     * <p>
+     * Those builds armed the same entry with and without KEEP SYMBOL MAPS, and only the symbol maps tell which ran.
+     * Without it, the TRUNCATE emptied every map before it armed the entry. With it, the maps hold the symbols
+     * {@code _txn} counts, and a query of the old rows, or a partition detached before the TRUNCATE and attached after
+     * it, resolves its keys in them. Each SYMBOL column keeps its count when its map holds that many symbols, see
+     * {@link SymbolMapWriter#hasSymbolCount}, and starts from none otherwise, so that a new symbol takes no key of an
+     * old one. The repair reads the maps before it changes anything: a map it cannot read fails the writer open and
+     * leaves the table as the TRUNCATE did.
      * <p>
      * The repair runs in whichever writer open comes first, without {@link CairoEngine#lockReaders(TableToken)}, and a
      * query that opened the table after the TRUNCATE stopped still reads the old rows, so the rows written after the
@@ -20037,9 +20041,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * partition purge and writes new rows to new partition versions. A non-partitioned table has a single partition
      * directory, so its columns move to new file versions, see {@link #moveColumnsToNewVersionForTruncateRepair()}.
      */
-    private void repairTruncate(boolean isKeepSymbolMaps) {
-        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path)
-                .$(" [keepSymbolMaps=").$(isKeepSymbolMaps).I$();
+    private void repairTruncate() {
+        LOG.info().$("repairing abnormally terminated truncate on ").$substr(pathRootSize, path).$();
+        final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))) {
+                // the symbol map writers take the _txn counts in column order, see configureColumnMemory()
+                final int txnSymbolCount = txWriter.getSymbolValueCount(symbolCounts.size());
+                final String columnName = metadata.getColumnName(i);
+                final int symbolCount = SymbolMapWriter.hasSymbolCount(
+                        ff,
+                        path.trimTo(pathSize),
+                        columnName,
+                        columnVersionWriter.getSymbolTableNameTxn(i),
+                        txnSymbolCount,
+                        tempMem16b
+                ) ? txnSymbolCount : 0;
+                LOG.info().$("truncate repair symbol count [column=").$safe(columnName)
+                        .$(", count=").$(symbolCount)
+                        .$(", txnCount=").$(txnSymbolCount)
+                        .I$();
+                symbolCounts.add(() -> symbolCount);
+            }
+        }
+        assert symbolCounts.size() == txWriter.getSymbolColumnCount() : "symbol columns do not match _txn [columns="
+                + symbolCounts.size() + ", txnSymbolColumns=" + txWriter.getSymbolColumnCount() + ']';
         final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
         if (isPartitioned) {
             scheduleRemoveAllPartitions();
@@ -20047,20 +20073,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             moveColumnsToNewVersionForTruncateRepair();
         }
         columnVersionWriter.truncate();
-        if (isKeepSymbolMaps) {
-            // TRUNCATE ... KEEP SYMBOL MAPS leaves the symbol maps as _txn counts them, and a reader of the old rows
-            // may still resolve their keys: the record keeps those counts, so new symbols do not overwrite them.
-            final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
-            for (int i = 0, n = txWriter.getSymbolColumnCount(); i < n; i++) {
-                final int symbolCount = txWriter.getSymbolValueCount(i);
-                symbolCounts.add(() -> symbolCount);
-            }
-            txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
-        } else {
-            // A TRUNCATE without KEEP SYMBOL MAPS empties the symbol maps before it arms _todo_, so their files may
-            // hold fewer symbols than _txn counts. Zero counts are valid for the files in either state.
-            txWriter.truncate(columnVersionWriter.getVersion(), NO_SYMBOL_COUNTS);
-        }
+        txWriter.truncate(columnVersionWriter.getVersion(), symbolCounts);
         // The symbol map writers open with the counts txWriter loaded, so it loads the record it just published
         txWriter.unsafeLoadAll();
         resetCompositePartitionTracking();

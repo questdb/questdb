@@ -28,13 +28,19 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolMapReader;
+import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.crash.LegacyTruncateTodo.SymbolMapState;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -220,8 +226,398 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testRepairAtOffsetFilePageBoundary() throws Exception {
+        // A writer close cuts the offset file of a symbol map to whole pages. With as many symbols as fill its first
+        // page, the end offset of their chars is the last long of the file: the map holds them. An emptied map that
+        // _txn counts one symbol more for has its offset file end where that end offset would start: it holds none, and
+        // the repair does not read past the end of the file.
+        assertMemoryLeak(() -> {
+            // the end offset of the chars of this many symbols is the last long of the first page of the offset file
+            final int pageSymbolCount = (int) ((Files.PAGE_SIZE - SymbolMapWriter.HEADER_SIZE) / Long.BYTES) - 1;
+
+            createSymbolTable("t_intact", pageSymbolCount);
+            final long intactNameTxn = getSymbolTableNameTxn("t_intact", "s");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            Assert.assertEquals(
+                    SymbolMapWriter.keyToOffset(pageSymbolCount) + Long.BYTES,
+                    offsetFileLength("t_intact", "s", intactNameTxn)
+            );
+            LegacyTruncateTodo.arm(engine, "t_intact", PartitionBy.NONE, SymbolMapState.INTACT);
+            execute("INSERT INTO t_intact VALUES ('s1', 1), ('new', 2)");
+            assertSymbolCount("t_intact", "s", pageSymbolCount + 1);
+            try (TableReader reader = getReader("t_intact")) {
+                final SymbolMapReader symbols = reader.getSymbolMapReader(0);
+                Assert.assertEquals(0, symbols.keyOf("s1"));
+                TestUtils.assertEquals("s" + pageSymbolCount, symbols.valueOf(pageSymbolCount - 1));
+                Assert.assertEquals(pageSymbolCount, symbols.keyOf("new"));
+            }
+
+            createSymbolTable("t_emptied", pageSymbolCount + 1);
+            final long emptiedNameTxn = getSymbolTableNameTxn("t_emptied", "s");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t_emptied", PartitionBy.NONE, SymbolMapState.EMPTIED_CLOSED);
+            Assert.assertEquals(
+                    SymbolMapWriter.keyToOffset(pageSymbolCount + 1),
+                    offsetFileLength("t_emptied", "s", emptiedNameTxn)
+            );
+            execute("INSERT INTO t_emptied VALUES ('s1', 1), ('new', 2)");
+            assertSymbolCount("t_emptied", "s", 2);
+            assertQuery("SELECT * FROM t_emptied")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tx
+                            s1\t1
+                            new\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testRepairFailsBeforeChangeWhenSymbolMapUnreadable() throws Exception {
+        // The repair reads every symbol map before it changes anything. A map it cannot read fails the writer open and
+        // leaves the table as the interrupted TRUNCATE ... KEEP SYMBOL MAPS did, rather than drop the symbols of a map
+        // it takes for emptied: the next open completes the repair, and keeps them.
+        final UnreadableSymbolMapFacade ff = new UnreadableSymbolMapFacade();
+        assertMemoryLeak(ff, () -> {
+            final String table = "t";
+            createPartitioned(table);
+            ff.offsetFile = offsetFilePath(table, "s", getSymbolTableNameTxn(table, "s"));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long txnBefore = LegacyTruncateTodo.arm(engine, table, PartitionBy.DAY, SymbolMapState.INTACT);
+
+            for (SymbolMapFault fault : SymbolMapFault.values()) {
+                ff.fault = fault;
+                try {
+                    execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+                    Assert.fail("the repair must fail [fault=" + fault + ']');
+                } catch (CairoException e) {
+                    switch (fault) {
+                        case OPEN -> {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                            TestUtils.assertContains(e.getFlyweightMessage(), ff.offsetFile);
+                        }
+                        case LENGTH -> TestUtils.assertContains(e.getFlyweightMessage(), "Checking file size failed");
+                        case READ -> TestUtils.assertContains(
+                                e.getFlyweightMessage(),
+                                "could not read long [path=" + ff.offsetFile + ", fd="
+                        );
+                    }
+                }
+                Assert.assertNull("the fault was not injected [fault=" + fault + ']', ff.fault);
+                try (TableReader reader = getReader(table)) {
+                    Assert.assertEquals("the failed repair published _txn, fault " + fault, txnBefore, reader.getTxn());
+                }
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(PARTITIONED_COMMITTED_ROWS);
+                engine.releaseAllReaders();
+            }
+
+            execute(String.format(PARTITIONED_INSERT_AFTER_REPAIR, table));
+            assertPartitionedTable(table, PARTITIONED_EXPECTED_AFTER_INSERT);
+            // KEEP SYMBOL MAPS kept the three values of each symbol column
+            assertSymbolCounts(table, 4);
+        });
+    }
+
+    @Test
     public void testRepairKeepSymbolMapsSurvivesEveryKillPoint() throws Exception {
         assertRepairSurvivesEveryKillPoint(true, true);
+    }
+
+    @Test
+    public void testRepairKeepsEmptyStringSymbol() throws Exception {
+        // The empty string is a symbol, and the shortest one: a map of '' alone, or of '' and symbols of one char,
+        // holds the least chars a writer opening with its count accepts. The repair keeps their counts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, s2 SYMBOL, x LONG)");
+            execute("INSERT INTO t VALUES ('', '', 1), ('', 'a', 2), ('', 'b', 3)");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.INTACT);
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
+            }
+            assertSymbolCount("t", "s", 1);
+            assertSymbolCount("t", "s2", 3);
+
+            execute("INSERT INTO t VALUES ('', 'b', 4)");
+            assertSymbolCount("t", "s", 1);
+            assertSymbolCount("t", "s2", 3);
+            assertQuery("SELECT count() FROM t WHERE s = ''")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT x FROM t WHERE s2 = 'b'")
+                    .noLeakCheck()
+                    .returns("x\n4\n");
+        });
+    }
+
+    @Test
+    public void testRepairKeepsSymbolCountOfEachIntactMap() throws Exception {
+        // Each symbol map tells on its own whether it holds what _txn counts. Only s was emptied, a state that only a
+        // power loss during the TRUNCATE leaves: s starts over, si keeps its symbols and their keys.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, si SYMBOL INDEX, x LONG)");
+            execute("INSERT INTO t VALUES ('a', 'k1', 1), ('b', 'k2', 2), ('c', 'k3', 3)");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.EMPTIED_KILLED, "s");
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
+            }
+            assertSymbolCount("t", "s", 0);
+            assertSymbolCount("t", "si", 3);
+
+            execute("INSERT INTO t VALUES ('z', 'k9', 9), ('a', 'k1', 1)");
+            assertSymbolCount("t", "s", 2);
+            assertSymbolCount("t", "si", 4);
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tsi\tx
+                            z\tk9\t9
+                            a\tk1\t1
+                            """);
+            assertQuery("SELECT s, x FROM t WHERE si = 'k1'")
+                    .noLeakCheck()
+                    .returns("s\tx\na\t1\n");
+            assertQuery("SELECT s, x FROM t WHERE si = 'k9'")
+                    .noLeakCheck()
+                    .returns("s\tx\nz\t9\n");
+            assertQuery("SELECT count() FROM t WHERE si = 'k2'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testRepairKeepsZeroCountOfNullOnlySymbolColumn() throws Exception {
+        // A SYMBOL column that holds only NULL has no symbols in its map, and neither has one added after the rows: the
+        // repair keeps their zero counts, and the count of the column beside them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sn SYMBOL, s SYMBOL, x LONG)");
+            execute("INSERT INTO t VALUES (NULL, 'a', 1), (NULL, 'b', 2), (NULL, 'c', 3)");
+            execute("ALTER TABLE t ADD COLUMN sa SYMBOL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.NONE, SymbolMapState.INTACT);
+            try (TableWriter writer = getWriter("t")) {
+                Assert.assertEquals(0, writer.size());
+            }
+            assertSymbolCount("t", "sn", 0);
+            assertSymbolCount("t", "s", 3);
+            assertSymbolCount("t", "sa", 0);
+
+            execute("INSERT INTO t VALUES ('q', 'd', 4, 'q')");
+            assertSymbolCount("t", "sn", 1);
+            assertSymbolCount("t", "s", 4);
+            assertSymbolCount("t", "sa", 1);
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("sn\ts\tx\tsa\nq\td\t4\tq\n");
+        });
+    }
+
+    @Test
+    public void testRepairOfKeepSymbolMapsTruncateAttachesDetachedPartition() throws Exception {
+        // The workflow KEEP SYMBOL MAPS is for: a partition detached before the TRUNCATE attaches after it with its
+        // symbols, which the maps keep. An earlier build armed the same _todo_ entry for it as for a TRUNCATE without
+        // KEEP SYMBOL MAPS, and the writer open that completes the TRUNCATE keeps the maps it finds intact, whether
+        // new symbols arrive before the ATTACH or not. The same workflow with a TRUNCATE that ran to the end is the
+        // reference.
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 2; i++) {
+                final boolean isInsertBeforeAttach = i == 1;
+                final String table = "t_" + i;
+                final String ref = "ref_" + i;
+                createTableWithDetachedPartition(table);
+                createTableWithDetachedPartition(ref);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.DAY, SymbolMapState.INTACT);
+                execute("TRUNCATE TABLE " + ref + " KEEP SYMBOL MAPS");
+                for (String name : new String[]{table, ref}) {
+                    makeDetachedPartitionAttachable(name, "2024-01-01");
+                    if (isInsertBeforeAttach) {
+                        execute("INSERT INTO " + name + " VALUES ('2024-01-03T00:00:00.000000Z', 'x', 'k9', 'n9')");
+                    }
+                    execute("ALTER TABLE " + name + " ATTACH PARTITION LIST '2024-01-01'");
+                }
+
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(
+                                """
+                                        ts\ts\tsi\tsn
+                                        2024-01-01T00:00:00.000000Z\ta\tk1\t\u00e9
+                                        2024-01-01T01:00:00.000000Z\tb\tk2\t\u20ac
+                                        """
+                                        + (isInsertBeforeAttach ? "2024-01-03T00:00:00.000000Z\tx\tk9\tn9\n" : "")
+                        );
+                assertSqlCursors("SELECT * FROM " + ref, "SELECT * FROM " + table);
+                assertQuery("SELECT ts FROM " + table + " WHERE si = 'k1'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n");
+                assertQuery("SELECT ts FROM " + table + " WHERE si = 'k9'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n" + (isInsertBeforeAttach ? "2024-01-03T00:00:00.000000Z\n" : ""));
+                assertQuery("SELECT ts FROM " + table + " WHERE s = 'a'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T00:00:00.000000Z\n");
+                assertQuery("SELECT ts FROM " + table + " WHERE sn = '\u20ac'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\n2024-01-01T01:00:00.000000Z\n");
+                for (String column : new String[]{"s", "si", "sn"}) {
+                    // a, b and c, and x with the INSERT; likewise in si and sn
+                    assertSymbolCount(table, column, isInsertBeforeAttach ? 4 : 3);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRepairOfKeepSymbolMapsTruncateOfTableConvertedToWal() throws Exception {
+        // A table converts to WAL with the entry of an interrupted TRUNCATE ... KEEP SYMBOL MAPS armed: the conversion
+        // needs only a reader, and keeps the _txn txn the entry is stamped with. The WAL writer resolves the symbols of
+        // its rows in the maps the TRUNCATE kept, before the writer open of the apply job completes the TRUNCATE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                        ('2024-01-01T01:00:00.000000Z', 'b', 2),
+                        ('2024-01-02T00:00:00.000000Z', 'c', 3)""");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            LegacyTruncateTodo.arm(engine, "t", PartitionBy.DAY, SymbolMapState.INTACT);
+            execute("ALTER TABLE t SET TYPE WAL");
+            // the restart converts the table
+            engine.releaseInactive();
+            engine.load();
+            Assert.assertTrue(engine.verifyTableName("t").isWal());
+
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-03T00:00:00.000000Z', 'a', 4),
+                        ('2024-01-03T01:00:00.000000Z', 'x', 5)""");
+            drainWalQueue();
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts\tx
+                            2024-01-03T00:00:00.000000Z\ta\t4
+                            2024-01-03T01:00:00.000000Z\tx\t5
+                            """);
+            assertQuery("SELECT x FROM t WHERE s = 'a'")
+                    .noLeakCheck()
+                    .returns("x\n4\n");
+            // a, b, c and x
+            assertSymbolCount("t", "s", 4);
+        });
+    }
+
+    @Test
+    public void testRepairOfLargeSymbolMaps() throws Exception {
+        // 10_000 symbols span pages of the offset file. The map emptied with its writer open keeps the size the empty
+        // map was given, and the closed one a single page: in both the offset file ends before the end offset of
+        // 10_000 symbols.
+        assertMemoryLeak(() -> {
+            for (SymbolMapState state : SymbolMapState.values()) {
+                final boolean isIntact = state == SymbolMapState.INTACT;
+                final String table = "t_" + state.ordinal();
+                createSymbolTable(table, 10_000);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, state);
+                try (TableWriter writer = getWriter(table)) {
+                    Assert.assertEquals(state.name(), 0, writer.size());
+                }
+                assertSymbolCount(table, "s", isIntact ? 10_000 : 0);
+
+                execute("INSERT INTO " + table + " VALUES ('s5', 5), ('new', 10_001)");
+                assertSymbolCount(table, "s", isIntact ? 10_001 : 2);
+                try (TableReader reader = getReader(table)) {
+                    final SymbolMapReader symbols = reader.getSymbolMapReader(0);
+                    Assert.assertEquals(state.name(), isIntact ? 4 : 0, symbols.keyOf("s5"));
+                    Assert.assertEquals(state.name(), isIntact ? 10_000 : 1, symbols.keyOf("new"));
+                    if (isIntact) {
+                        TestUtils.assertEquals("s10000", symbols.valueOf(9_999));
+                    }
+                }
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s\tx
+                                s5\t5
+                                new\t10001
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testRepairReadsSymbolMapsUnderTheirNameTxn() throws Exception {
+        // The maps of a renamed column and of one whose capacity changed live under a name txn, and a dropped SYMBOL
+        // column leaves no _txn count: the repair reads each map that the writer then opens, with its count. The
+        // columns hold 1, 2 and 3 symbols, so that a count read for the wrong column shows.
+        assertMemoryLeak(() -> {
+            for (SymbolMapState state : new SymbolMapState[]{SymbolMapState.INTACT, SymbolMapState.EMPTIED_KILLED}) {
+                final boolean isIntact = state == SymbolMapState.INTACT;
+                final String table = "t_" + state.ordinal();
+                execute("CREATE TABLE " + table + " (s0 SYMBOL, s1 SYMBOL, s2 SYMBOL INDEX, x LONG)");
+                execute("""
+                        INSERT INTO %s VALUES
+                            ('a', 'b1', 'c1', 1),
+                            ('a', 'b2', 'c2', 2),
+                            ('a', 'b1', 'c3', 3)""".formatted(table));
+                execute("ALTER TABLE " + table + " DROP COLUMN s0");
+                execute("ALTER TABLE " + table + " RENAME COLUMN s1 TO s1r");
+                execute("ALTER TABLE " + table + " ALTER COLUMN s2 SYMBOL CAPACITY 512");
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, getSymbolTableNameTxn(table, "s1r"));
+                Assert.assertNotEquals(TableUtils.COLUMN_NAME_TXN_NONE, getSymbolTableNameTxn(table, "s2"));
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, state);
+                try (TableWriter writer = getWriter(table)) {
+                    Assert.assertEquals(state.name(), 0, writer.size());
+                }
+                assertSymbolCount(table, "s1r", isIntact ? 2 : 0);
+                assertSymbolCount(table, "s2", isIntact ? 3 : 0);
+
+                execute("INSERT INTO " + table + " VALUES ('b2', 'c9', 9)");
+                assertSymbolCount(table, "s1r", isIntact ? 2 : 1);
+                assertSymbolCount(table, "s2", isIntact ? 4 : 1);
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("s1r\ts2\tx\nb2\tc9\t9\n");
+                assertQuery("SELECT s1r, x FROM " + table + " WHERE s2 = 'c9'")
+                        .noLeakCheck()
+                        .returns("s1r\tx\nb2\t9\n");
+            }
+        });
     }
 
     @Test
@@ -283,7 +679,7 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
             execute(String.format(NONE_SETUP_INSERT_2, table));
             engine.releaseAllWriters();
             engine.releaseAllReaders();
-            LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, false);
+            LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, SymbolMapState.EMPTIED_KILLED);
 
             execute(String.format(NONE_INSERT_AFTER_REPAIR, table));
             assertSymbolCounts(table, 2);
@@ -293,13 +689,26 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
 
     /**
      * Creates a table and arms the _todo_ entry of a TRUNCATE that an earlier build interrupted before it published
-     * _txn. Returns the _txn txn the entry is stamped with.
+     * _txn. Without KEEP SYMBOL MAPS, the process died with the symbol maps emptied. Returns the _txn txn the entry is
+     * stamped with.
      */
     private static long armInterruptedTruncate(String table, boolean isPartitioned, boolean isKeepSymbolMaps) throws Exception {
         createTable(table, isPartitioned);
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        return LegacyTruncateTodo.arm(engine, table, isPartitioned ? PartitionBy.DAY : PartitionBy.NONE, isKeepSymbolMaps);
+        return LegacyTruncateTodo.arm(
+                engine,
+                table,
+                isPartitioned ? PartitionBy.DAY : PartitionBy.NONE,
+                isKeepSymbolMaps ? SymbolMapState.INTACT : SymbolMapState.EMPTIED_KILLED
+        );
+    }
+
+    private static void assertSymbolCount(String table, String column, int expected) {
+        try (TableReader reader = getReader(table)) {
+            final int columnIndex = reader.getMetadata().getColumnIndex(column);
+            Assert.assertEquals(column, expected, reader.getSymbolMapReader(columnIndex).getSymbolCount());
+        }
     }
 
     // every SYMBOL column of the test tables holds the same number of distinct values
@@ -337,11 +746,60 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
         execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
+    // the SYMBOL column s holds the symbols s1 to s<symbolCount>, in this order
+    private static void createSymbolTable(String table, int symbolCount) throws Exception {
+        execute("CREATE TABLE " + table + " (s SYMBOL, x LONG)");
+        execute("INSERT INTO " + table + " SELECT 's' || x, x FROM long_sequence(" + symbolCount + ")");
+    }
+
     private static void createTable(String table, boolean isPartitioned) throws Exception {
         if (isPartitioned) {
             createPartitioned(table);
         } else {
             createNonPartitioned(table);
+        }
+    }
+
+    // a cached, an indexed and an uncached SYMBOL column, and the partition 2024-01-01 detached
+    private static void createTableWithDetachedPartition(String table) throws Exception {
+        execute("""
+                CREATE TABLE %s (ts TIMESTAMP, s SYMBOL, si SYMBOL INDEX, sn SYMBOL NOCACHE)
+                TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""".formatted(table));
+        execute("""
+                INSERT INTO %s VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 'k1', '\u00e9'),
+                    ('2024-01-01T01:00:00.000000Z', 'b', 'k2', '\u20ac'),
+                    ('2024-01-02T00:00:00.000000Z', 'c', 'k3', '\ud83d\ude00')""".formatted(table));
+        execute("ALTER TABLE " + table + " DETACH PARTITION LIST '2024-01-01'");
+    }
+
+    private static long getSymbolTableNameTxn(String table, String column) {
+        try (TableReader reader = getReader(table)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(column));
+            return reader.getColumnVersionReader().getSymbolTableNameTxn(writerIndex);
+        }
+    }
+
+    private static void makeDetachedPartitionAttachable(String table, String partition) {
+        final TableToken token = engine.verifyTableName(table);
+        try (Path detached = new Path(); Path attachable = new Path()) {
+            detached.of(root).concat(token).concat(partition).put(TableUtils.DETACHED_DIR_MARKER);
+            attachable.of(root).concat(token).concat(partition).put(configuration.getAttachPartitionSuffix());
+            final int result = TestFilesFacadeImpl.INSTANCE.rename(detached.$(), attachable.$());
+            Assert.assertEquals(Files.FILES_RENAME_OK, result);
+        }
+    }
+
+    private static long offsetFileLength(String table, String column, long symbolTableNameTxn) {
+        try (Path path = new Path().of(root).concat(engine.verifyTableName(table))) {
+            return TestFilesFacadeImpl.INSTANCE.length(TableUtils.offsetFileName(path, column, symbolTableNameTxn));
+        }
+    }
+
+    private static String offsetFilePath(String table, String column, long symbolTableNameTxn) {
+        try (Path path = new Path().of(root).concat(engine.verifyTableName(table))) {
+            TableUtils.offsetFileName(path, column, symbolTableNameTxn);
+            return path.toString();
         }
     }
 
@@ -547,6 +1005,11 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
         engine.getTxnScoreboardPool().remove(engine.verifyTableName(table));
     }
 
+    // a failure of the truncate repair to read the offset file of a symbol map
+    private enum SymbolMapFault {
+        OPEN, LENGTH, READ
+    }
+
     /**
      * Fails truncate() of the data file of column x while armed: TRUNCATE of a non-partitioned table fails after it
      * published the empty _txn.
@@ -572,6 +1035,49 @@ public class TruncateRepairTest extends AbstractCrashConsistencyTest {
                 return false;
             }
             return super.truncate(fd, size);
+        }
+    }
+
+    /**
+     * Fails, once armed, the next read-only open of the offset file of one symbol map, or the length or the read of the
+     * fd that open returns, and disarms. While armed, only the truncate repair of a writer open opens the file
+     * read-only.
+     */
+    private static class UnreadableSymbolMapFacade extends TestFilesFacadeImpl {
+        volatile SymbolMapFault fault;
+        volatile String offsetFile;
+        private long offsetFd = -1;
+
+        @Override
+        public long length(long fd) {
+            if (fault == SymbolMapFault.LENGTH && fd == offsetFd) {
+                fault = null;
+                // what FilesFacadeImpl.length() throws when fstat fails
+                throw CairoException.critical(5).put("Checking file size failed");
+            }
+            return super.length(fd);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (fault != null && Utf8s.equalsAscii(offsetFile, name)) {
+                if (fault == SymbolMapFault.OPEN) {
+                    fault = null;
+                    return -1;
+                }
+                offsetFd = super.openRO(name);
+                return offsetFd;
+            }
+            return super.openRO(name);
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (fault == SymbolMapFault.READ && fd == offsetFd) {
+                fault = null;
+                return -1;
+            }
+            return super.read(fd, buf, len, offset);
         }
     }
 }

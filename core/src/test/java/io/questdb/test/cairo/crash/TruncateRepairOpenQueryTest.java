@@ -46,6 +46,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import io.questdb.test.cairo.crash.LegacyTruncateTodo.SymbolMapState;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -529,12 +530,18 @@ public class TruncateRepairOpenQueryTest extends AbstractCrashConsistencyTest {
 
     /**
      * Arms the _todo_ entry of a TRUNCATE of the table that an earlier build interrupted before it published _txn, and
-     * lets the engine go of the table, as on a restart. Returns the _txn txn the entry is stamped with.
+     * lets the engine go of the table, as on a restart. Without KEEP SYMBOL MAPS, the process died with the symbol maps
+     * emptied. Returns the _txn txn the entry is stamped with.
      */
     private static long interruptTruncate(String table, boolean isKeepSymbolMaps) {
         engine.releaseAllReaders();
         engine.releaseAllWriters();
-        return LegacyTruncateTodo.arm(engine, table, PartitionBy.NONE, isKeepSymbolMaps);
+        return LegacyTruncateTodo.arm(
+                engine,
+                table,
+                PartitionBy.NONE,
+                isKeepSymbolMaps ? SymbolMapState.INTACT : SymbolMapState.EMPTIED_KILLED
+        );
     }
 
     private static Path partitionPath(String table) {
