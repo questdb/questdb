@@ -3796,14 +3796,9 @@ public class SqlOptimiser implements Mutable {
             }
         } else {
             // the column is not referenced by the translating model
-            final CharSequence innerAlias;
-            if (groupByModel.getAliasToColumnMap().contains(columnName)) {
-                // the column is not yet translated, but another column is referenced via the same name
-                innerAlias = createColumnAlias(columnName, groupByModel);
-            } else {
-                innerAlias = createColumnAlias(columnName, translatingModel);
-            }
-            QueryColumn translatingColumn = queryColumnPool.next().of(innerAlias, columnAst, includeIntoWildcard);
+            final CharSequence innerAlias = createColumnAlias(columnName, groupByModel);
+            final CharSequence translatingAlias = createColumnAlias(innerAlias, translatingModel);
+            QueryColumn translatingColumn = queryColumnPool.next().of(translatingAlias, columnAst, includeIntoWildcard);
             translatingColumn.setGenerated(isGenerated);
             addColumnToTranslatingModel(
                     translatingColumn,
@@ -3813,17 +3808,31 @@ public class SqlOptimiser implements Mutable {
             );
 
             // create column that references inner alias we just created
-            final QueryColumn translatedColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
+            final QueryColumn translatedColumn = Chars.equals(translatingAlias, innerAlias)
+                    ? nextColumn(innerAlias, includeIntoWildcard, columnAst.position)
+                    : nextColumn(innerAlias, translatingAlias, includeIntoWildcard, columnAst.position);
             translatedColumn.setGenerated(isGenerated);
-            innerVirtualModel.addBottomUpColumn(translatedColumn);
+            innerVirtualModel.addBottomUpColumn(columnAst.position, translatedColumn, true);
             groupByModel.addBottomUpColumn(translatedColumn);
-            windowModel.addBottomUpColumn(translatedColumn);
+            if (Chars.equals(translatingAlias, innerAlias)) {
+                windowModel.addBottomUpColumn(translatedColumn);
+            } else {
+                final QueryColumn windowColumn = nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
+                windowColumn.setGenerated(isGenerated);
+                windowModel.addBottomUpColumn(windowColumn);
+                innerAliasWindowLiterals.add(windowColumn.getAst());
+                innerAliasWindowLiteralNames.add(translatingAlias);
+            }
 
             // expose the column in the outer models
-            translatedColumn.setIncludeIntoWildcard(includeIntoWildcard);
-            outerVirtualModel.addBottomUpColumn(translatedColumn);
+            final QueryColumn outerColumn = Chars.equals(translatingAlias, innerAlias)
+                    ? translatedColumn
+                    : nextColumn(innerAlias, includeIntoWildcard, columnAst.position);
+            outerColumn.setGenerated(isGenerated);
+            outerColumn.setIncludeIntoWildcard(includeIntoWildcard);
+            outerVirtualModel.addBottomUpColumn(outerColumn);
             if (distinctModel != null) {
-                distinctModel.addBottomUpColumn(translatedColumn);
+                distinctModel.addBottomUpColumn(outerColumn);
             }
         }
     }
@@ -7867,7 +7876,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     private QueryColumn nextColumn(CharSequence alias, CharSequence column, boolean includeIntoWildcard) {
-        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, includeIntoWildcard, 0);
+        return nextColumn(alias, column, includeIntoWildcard, 0);
+    }
+
+    private QueryColumn nextColumn(CharSequence alias, CharSequence column, boolean includeIntoWildcard, int position) {
+        return SqlUtil.nextColumn(queryColumnPool, expressionNodePool, alias, column, includeIntoWildcard, position);
     }
 
     private ExpressionNode nextLiteral(CharSequence token, int position) {
