@@ -21525,6 +21525,32 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionOrderByColumnNameTakenOverJoin() throws Exception {
+        // Over a join, the projection names b.qty after the window ORDER BY column ts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id INT, grp SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (3, 'a', 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1, 'b', 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (4, 'a', 5.0, '2024-01-01T00:02:00.000000Z'),
+                        (2, 'b', 35.0, '2024-01-01T00:03:00.000000Z')
+                    """);
+
+            assertQuery("SELECT b.qty, sum(a.id) OVER (ORDER BY a.ts) AS s, b.qty AS ts FROM trades a JOIN trades b ON a.ts = b.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            qty\ts\tts
+                            15.0\t3.0\t15.0
+                            25.0\t4.0\t25.0
+                            5.0\t8.0\t5.0
+                            35.0\t10.0\t35.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowFunctionOrderByColumnSelectedTwice() throws Exception {
         // The window ORDER BY names a column that the projection also selects under a second name. The
         // optimiser removes the trivial inner virtual model, so the window must read the column under a

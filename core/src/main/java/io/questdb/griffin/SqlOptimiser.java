@@ -4488,7 +4488,14 @@ public class SqlOptimiser implements Mutable {
                 QueryColumn column = queryColumnPool.next().of(alias, columnAst);
                 innerVirtualModel.addBottomUpColumn(column);
                 if (alias != n.token) {
-                    translatingModel.addBottomUpColumnIfNotExists(column);
+                    // The translating model reads the model below it, where the name may be missing or ambiguous,
+                    // as "ts" for a.ts over a join. Read the column that the translating model names so.
+                    final QueryColumn translatingColumn = translatingModel.getAliasToColumnMap().get(n.token);
+                    translatingModel.addBottomUpColumnIfNotExists(
+                            resolvedColumnAst == null && translatingColumn != null
+                                    ? queryColumnPool.next().of(alias, ExpressionNode.deepClone(expressionNodePool, translatingColumn.getAst()))
+                                    : column
+                    );
                     return nextLiteral(alias);
                 } else {
                     return n;
