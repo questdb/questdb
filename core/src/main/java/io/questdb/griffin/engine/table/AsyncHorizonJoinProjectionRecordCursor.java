@@ -366,7 +366,6 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                         slaveFrameCursor,
                         slaveFactories.getQuick(s).getMetadata(),
                         slaveFrameCursor.getColumnMapping(),
-                        slaveFrameCursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
                         executionContext.getSharedQueryWorkerCount(),
