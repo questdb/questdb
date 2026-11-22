@@ -3671,6 +3671,26 @@ public class SqlOptimiser implements Mutable {
     }
 
     // order hash is used to determine redundant order when parsing window function definition
+    // Names a window function nested in the argument of another one. The inner window models pass the
+    // table columns and the projection's columns through under their own names, next to the window
+    // functions they compute, so the name must differ from those as well as from the names that the
+    // translating model holds so far, which it does not until the projection reads the columns. In
+    // "sum(row_number() OVER ()) OVER (), row_number", the function name would name the table column too.
+    private CharSequence createNestedWindowAlias(
+            ExpressionNode node,
+            IQueryModel translatingModel,
+            IQueryModel innerVirtualModel,
+            IQueryModel baseModel
+    ) {
+        CharSequence alias = createColumnAlias(node, translatingModel);
+        for (int i = 1; baseModelHasColumn(baseModel, alias) || innerVirtualModel.getAliasToColumnMap().contains(alias); i++) {
+            final CharacterStoreEntry entry = characterStore.newEntry();
+            entry.put(node.token).put(i);
+            alias = createColumnAlias(entry.toImmutable(), translatingModel);
+        }
+        return alias;
+    }
+
     private void createOrderHash(IQueryModel model) {
         if (!model.isOptimisable()) {
             return;
@@ -5363,7 +5383,7 @@ public class SqlOptimiser implements Mutable {
             if (alias == null) {
                 // Use translatingModel for alias uniqueness to ensure inner window columns
                 // get unique aliases across multiple inner window models
-                alias = createColumnAlias(node, translatingModel);
+                alias = createNestedWindowAlias(node, translatingModel, innerVirtualModel, baseModel);
                 wc.of(alias, node);
                 // Register the alias immediately so subsequent calls see it for uniqueness
                 translatingModel.getAliasToColumnMap().putIfAbsent(alias, wc);

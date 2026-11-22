@@ -21437,6 +21437,91 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionNestedNameTakenByColumn() throws Exception {
+        // A nested window function must not take the name of a column that the projection selects,
+        // or the column returns the window function's values. The table columns are named like the
+        // window functions, and their values do not follow the scan order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u (lead DOUBLE, row_number LONG, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u VALUES
+                        (3.0, 300, 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1.0, 100, 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (2.0, 200, 5.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, row_number FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\trow_number
+                            6.0\t300
+                            6.0\t100
+                            6.0\t200
+                            """);
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, row_number AS r2 FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tr2
+                            6.0\t300
+                            6.0\t100
+                            6.0\t200
+                            """);
+            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS s, lead FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tlead
+                            30.0\t3.0
+                            30.0\t1.0
+                            30.0\t2.0
+                            """);
+            assertQuery("SELECT sum(lead(qty) OVER ()) OVER () AS s, lead * 2 AS x, lead AS l2 FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\tx\tl2
+                            30.0\t6.0\t3.0
+                            30.0\t2.0\t1.0
+                            30.0\t4.0\t2.0
+                            """);
+            // the table is a sub-query
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, row_number FROM (SELECT row_number, qty FROM u)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\trow_number
+                            6.0\t300
+                            6.0\t100
+                            6.0\t200
+                            """);
+            // the column comes from one side of a join
+            assertQuery("SELECT sum(row_number() OVER ()) OVER () AS s, a.row_number FROM u a JOIN u b ON a.ts = b.ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s\trow_number
+                            6.0\t300
+                            6.0\t100
+                            6.0\t200
+                            """);
+            // an expression of the projection takes the window function's name
+            createColumnSelectedTwiceTable();
+            assertQuery("SELECT qty * 2 AS lead, sum(lead(qty) OVER ()) OVER () AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            lead\ts
+                            30.0\t65.0
+                            50.0\t65.0
+                            10.0\t65.0
+                            70.0\t65.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowFunctionNestedParenthesesWithCast() throws Exception {
         // Deeply nested parentheses with cast
         assertQuery("SELECT (((row_number() OVER (ORDER BY ts))))::int AS rn FROM x")
