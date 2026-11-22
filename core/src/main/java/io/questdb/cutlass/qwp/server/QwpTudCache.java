@@ -1055,7 +1055,10 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     // needs no owner from this connection, so this method returns it. A table another operation is still
     // creating gets a retriable refusal instead of a wait: nothing bounds how long the operation holds the
     // name, and a wait would pin this I/O thread for all that time. The client replays the frame, which then
-    // finds the table. Returns null when this connection may create the table.
+    // finds the table. A name another operation holds while it drops, renames or rebases the table gets the
+    // same retriable refusal: a DROP or a RENAME frees the name, where the refusal stands at the replay, but
+    // REBASE WAL hands it to the rebased table, see TableNameRegistryRW.swapTable(), which the replay finds.
+    // Returns null when this connection may create the table.
     private TableToken authorizeOwnerOrGetTable(SecurityContext securityContext, CharSequence tableName) {
         try {
             securityContext.authorizeAutoCreateOwner();
@@ -1070,7 +1073,13 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
                         .put(tableName)
                         .put(']');
             }
-            if (tableToken == null || tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+            if (tableToken == TableNameRegistry.LOCKED_DROP_TOKEN) {
+                throw CairoException.nonCritical()
+                        .put("table is being dropped, renamed or rebased, cannot ingest [table=")
+                        .put(tableName)
+                        .put(']');
+            }
+            if (tableToken == null) {
                 throw e;
             }
             return tableToken;

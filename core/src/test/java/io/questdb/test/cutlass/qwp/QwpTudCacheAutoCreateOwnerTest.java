@@ -24,10 +24,13 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DefaultDdlListener;
+import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
@@ -39,6 +42,7 @@ import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -99,6 +103,68 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
                 release.countDown();
                 creator.join();
                 engine.setDdlListener(DefaultDdlListener.INSTANCE);
+            }
+        });
+    }
+
+    @Test
+    public void testOwnerRefusalIsRetriableWhileRebaseSwapsTable() throws Exception {
+        // REBASE WAL holds the name of the table while it swaps in the rebased directory, and then hands the name to
+        // the rebased table. A refused lookup in that window must not stand, as the table exists before and after it:
+        // it fails with an error the client retries, and the retry writes into the rebased table, which needs no
+        // owner from this connection.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
+            execute("INSERT INTO tab VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            drainWalQueue();
+            // REBASE WAL takes a hard-suspended table
+            execute("ALTER TABLE tab SUSPEND WAL");
+            final TableToken suspendedToken = engine.verifyTableName("tab");
+            final AtomicReference<Throwable> rebaseError = new AtomicReference<>();
+            final Thread rebase = new Thread(() -> {
+                try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("ALTER TABLE tab REBASE WAL", executionContext);
+                } catch (Throwable th) {
+                    rebaseError.set(th);
+                } finally {
+                    // release the native path memory the rebase used
+                    Path.clearThreadLocals();
+                }
+            });
+            try (QwpTudCache cache = newCache()) {
+                final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(null);
+                // TableNameRegistryRW.swapTable() takes the metadata cache's write lock while it holds the name, so
+                // holding the lock parks the rebase right there.
+                try (MetadataCacheWriter ignore = engine.getMetadataCache().writeLock()) {
+                    rebase.start();
+                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                    while (engine.getTableNameRegistry().getTableToken("tab") != TableNameRegistry.LOCKED_DROP_TOKEN) {
+                        Assert.assertTrue("the rebase did not reach the swap of the table's name", System.nanoTime() < deadline);
+                        Assert.assertNull(rebaseError.get());
+                        Os.pause();
+                    }
+                    try {
+                        cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                        Assert.fail("the refusal must not stand while the rebase holds the name");
+                    } catch (CairoException e) {
+                        // neither an authorization error nor a schema mismatch, so the client retries it
+                        Assert.assertFalse(e.isAuthorizationError());
+                        Assert.assertFalse(e.isSchemaMismatch());
+                        Assert.assertFalse(e.isCritical());
+                        TestUtils.assertEquals("table is being dropped, renamed or rebased, cannot ingest [table=tab]", e.getFlyweightMessage());
+                    }
+                }
+                rebase.join();
+                Assert.assertNull(rebaseError.get());
+                final TableToken rebasedToken = engine.verifyTableName("tab");
+                Assert.assertNotEquals(suspendedToken.getDirName(), rebasedToken.getDirName());
+                // the retry writes into the rebased table
+                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(rebasedToken, tud.getTableToken());
+            } finally {
+                rebase.join();
             }
         });
     }
