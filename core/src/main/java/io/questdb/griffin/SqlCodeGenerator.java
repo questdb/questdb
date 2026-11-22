@@ -12572,11 +12572,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ));
                 } else { // column
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
-                    if (columnIndex < 0) {
-                        // No known query gets here: SqlOptimiser passes every column the window
-                        // model reads through the model below. Fail instead of reading index -1.
-                        throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
-                    }
+                    // SqlOptimiser passes every column the window model reads through the model below
+                    assert columnIndex > -1 : "window model column is missing below it: " + qc.getAst().token;
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
 
                     Function function = functionParser.parseFunction(
@@ -12737,11 +12734,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final QueryColumn qc = columns.getQuick(i);
                 if (!qc.isWindowExpression()) {
                     final int columnIndex = SqlUtil.getColumnIndexQuiet(baseMetadata, qc.getAst().token);
-                    if (columnIndex < 0) {
-                        // No known query gets here: SqlOptimiser passes every column the window
-                        // model reads through the model below. Fail instead of reading index -1.
-                        throw SqlException.invalidColumn(qc.getAst().position, qc.getAst().token);
-                    }
+                    // SqlOptimiser passes every column the window model reads through the model below
+                    assert columnIndex > -1 : "window model column is missing below it: " + qc.getAst().token;
                     final TableColumnMetadata m = baseMetadata.getColumnMetadata(columnIndex);
                     chainMetadata.addIfNotExists(i, m);
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {

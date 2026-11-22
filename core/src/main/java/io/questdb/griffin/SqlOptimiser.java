@@ -330,6 +330,8 @@ public class SqlOptimiser implements Mutable {
     // True while optimise() runs on a sub-query that belongs to the SQL of a regular view inlined into the
     // query, rather than to the query's own text; see optimiseExpressionModels().
     private boolean optimisingViewText;
+    // The model whose projection rewriteSelectClause0() rewrites. Nested window functions avoid its aliases.
+    private IQueryModel rewrittenModel;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -488,6 +490,7 @@ public class SqlOptimiser implements Mutable {
         innerWindowModels.clear();
         lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
+        rewrittenModel = null;
         tempColumnAlias = null;
         tempQueryModel = null;
         tempIntHashSet.clear();
@@ -3670,11 +3673,13 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // order hash is used to determine redundant order when parsing window function definition
     // Names a window function nested in another one's argument. The inner window model that computes it
     // also passes table and projection columns through under their own names, so the name must not be
     // one of those. The translating model holds a table column only once the projection reads it: in
     // "sum(row_number() OVER ()) OVER (), row_number", createColumnAlias() alone returns row_number.
+    // The name must not be the alias of a projection column either: the translating model holds the name,
+    // and createSelectColumn() would rename a later column with that alias, as in
+    // "sum(lead(x) OVER ()) OVER (), y AS lead1" over a table with a lead column.
     private CharSequence createNestedWindowAlias(
             ExpressionNode node,
             IQueryModel translatingModel,
@@ -3682,7 +3687,13 @@ public class SqlOptimiser implements Mutable {
             IQueryModel baseModel
     ) {
         CharSequence alias = createColumnAlias(node, translatingModel);
-        for (int i = 1; baseModelHasColumn(baseModel, alias) || innerVirtualModel.getAliasToColumnMap().contains(alias); i++) {
+        for (
+                int i = 1;
+                baseModelHasColumn(baseModel, alias)
+                        || innerVirtualModel.getAliasToColumnMap().contains(alias)
+                        || isColumnProjectionAlias(alias);
+                i++
+        ) {
             final CharacterStoreEntry entry = characterStore.newEntry();
             entry.put(node.token).put(i);
             alias = createColumnAlias(entry.toImmutable(), translatingModel);
@@ -3690,6 +3701,7 @@ public class SqlOptimiser implements Mutable {
         return alias;
     }
 
+    // order hash is used to determine redundant order when parsing window function definition
     private void createOrderHash(IQueryModel model) {
         if (!model.isOptimisable()) {
             return;
@@ -3726,6 +3738,24 @@ public class SqlOptimiser implements Mutable {
         if (union != null) {
             createOrderHash(union);
         }
+    }
+
+    // Names a column that the inner virtual model passes through: its own name while that is free in the
+    // inner virtual model, otherwise a name that is also free in the translating model, which gets the
+    // column under that name as well. Another column of the translating model may already have the first
+    // name createColumnAlias() returns, as id1 names b.id in a join of two tables with an id column.
+    // Adding the column under that name would replace the other one.
+    private CharSequence createPassThroughAlias(
+            CharSequence name,
+            IQueryModel innerVirtualModel,
+            IQueryModel translatingModel
+    ) {
+        CharSequence alias = createColumnAlias(name, innerVirtualModel);
+        while (alias != name && translatingModel.getAliasToColumnMap().contains(alias)) {
+            // createColumnAlias() continues the sequence where the previous call left off
+            alias = createColumnAlias(name, innerVirtualModel);
+        }
+        return alias;
     }
 
     // add the existing group by column to outer and distinct models
@@ -4559,7 +4589,7 @@ public class SqlOptimiser implements Mutable {
             if (index > -1) {
                 // Column not yet referenced by inner model - validate and add it
                 ExpressionNode resolvedColumnAst = validateWindowColumnReference(node, n.token, translatingModel, innerVirtualModel, baseModel);
-                CharSequence alias = createColumnAlias(n.token, innerVirtualModel);
+                CharSequence alias = createPassThroughAlias(n.token, innerVirtualModel, translatingModel);
                 ExpressionNode columnAst = resolvedColumnAst != null
                         ? ExpressionNode.deepClone(expressionNodePool, resolvedColumnAst)
                         : n;
@@ -6385,6 +6415,12 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    // True when the projection that rewriteSelectClause0() rewrites selects a column under the alias.
+    private boolean isColumnProjectionAlias(CharSequence alias) {
+        final QueryColumn qc = rewrittenModel.getAliasToColumnMap().get(alias);
+        return qc != null && qc.getAst().type == LITERAL;
     }
 
     /**
@@ -8592,21 +8628,14 @@ public class SqlOptimiser implements Mutable {
         copyColumnsFromMetadata(model, model.getTableNameFunction().getMetadata());
     }
 
-    /**
-     * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
-     * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
-     * turns it into a CROSS_RIGHT/CROSS_FULL that {@code reorderTables} appends last, NULL-extending
-     * every table joined before it. Runs before processJoinConditions, while the join types are still
-     * RIGHT/FULL OUTER and no context has been built, so it predicts the homogenization by inspecting
-     * the raw criteria instead of reading the (not-yet-built) context.
-     */
     // Returns the name under which the inner virtual model exposes the translating model column,
     // adding a pass-through when there is none. The name is translatedColumnName, unless another
     // column of the inner virtual model has it:
     // - an expression, as in "qty * 10 AS qty": the inner virtual model cannot be cancelled then,
     //   so the renamed column itself serves, if the inner virtual model holds it.
-    // - a renamed column, as in "id AS qty": rewriteSelectClause0() may cancel the inner virtual
-    //   model, so the pass-through gets a fresh name that the translating model exposes too.
+    // - otherwise, as for a renamed column in "id AS qty", the pass-through gets a fresh name. The
+    //   translating model exposes it too, for when rewriteSelectClause0() cancels the inner virtual
+    //   model.
     private CharSequence passThroughTranslatedColumn(
             CharSequence translatedColumnName,
             @Nullable CharSequence renamedColumnName,
@@ -8625,7 +8654,7 @@ public class SqlOptimiser implements Mutable {
         if (renamedColumnName != null && innerColumn.getAst().type != LITERAL) {
             return renamedColumnName;
         }
-        final CharSequence innerName = createColumnAlias(translatedColumnName, innerVirtualModel);
+        final CharSequence innerName = createPassThroughAlias(translatedColumnName, innerVirtualModel, translatingModel);
         innerVirtualModel.addBottomUpColumn(SqlUtil.nextColumn(
                 queryColumnPool,
                 expressionNodePool,
@@ -8635,12 +8664,20 @@ public class SqlOptimiser implements Mutable {
                 position
         ));
         final QueryColumn translatingColumn = translatingModel.getAliasToColumnMap().get(translatedColumnName);
-        translatingModel.addBottomUpColumnIfNotExists(
+        translatingModel.addBottomUpColumn(
                 queryColumnPool.next().of(innerName, deepClone(expressionNodePool, translatingColumn.getAst()))
         );
         return innerName;
     }
 
+    /**
+     * Sets {@link #hasNonEquiNullingJoin} for the current level. A RIGHT/FULL OUTER join whose ON
+     * clause carries no plain cross-table equality gets no join context, so {@code homogenizeCrossJoins}
+     * turns it into a CROSS_RIGHT/CROSS_FULL that {@code reorderTables} appends last, NULL-extending
+     * every table joined before it. Runs before processJoinConditions, while the join types are still
+     * RIGHT/FULL OUTER and no context has been built, so it predicts the homogenization by inspecting
+     * the raw criteria instead of reading the (not-yet-built) context.
+     */
     private void precomputeHasNonEquiNullingJoin(IQueryModel parent) throws SqlException {
         hasNonEquiNullingJoin = false;
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -13970,6 +14007,7 @@ public class SqlOptimiser implements Mutable {
         innerAliasWindowLiterals.clear();
         innerWindowModels.clear();
         isWindowProjection = false;
+        rewrittenModel = model;
         clearWindowFunctionHashMap();
 
         final IQueryModel groupByModel = queryModelPool.next();
