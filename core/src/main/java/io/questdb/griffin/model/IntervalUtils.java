@@ -1180,6 +1180,11 @@ public final class IntervalUtils {
                 applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                         semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
             }
+            // The tick calendar pass can make intervals overlap, e.g. with a duration longer than a
+            // lunch break, and interval scans need a sorted, disjoint list.
+            if (applyEncoded && (tzMarkerPos >= 0 || exchangeSchedule != null)) {
+                sortAndUnionInPlace(out, outSize);
+            }
             return;
         }
 

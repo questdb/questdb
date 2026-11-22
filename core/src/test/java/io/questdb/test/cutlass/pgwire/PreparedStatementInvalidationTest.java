@@ -554,6 +554,61 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     }
 
     @Test
+    public void testSelectPreparedStatementAfterCoveringIndexReAddedWithoutInclude() throws Exception {
+        // The statement compiles to a covering index scan. After DROP INDEX and ADD INDEX of the same
+        // type without INCLUDE, the server recompiles it over the reloaded pooled reader, which must
+        // not plan a covering scan over sidecars the new index never wrote.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("CREATE TABLE t (c2 SYMBOL, ts TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                    statement.execute("""
+                            INSERT INTO t SELECT
+                                CASE WHEN x % 3 = 0 THEN NULL ELSE 'k' || (x % 5) END,
+                                dateadd('m', x::INT * 7, '2022-02-26T00:00:00Z'::TIMESTAMP),
+                                'S' || (x % 11)
+                            FROM long_sequence(400)
+                            """);
+                    statement.execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (sym2)");
+                }
+                drainWalQueue();
+                // c2 = 'k1' holds the rows x % 5 = 1 and x % 3 != 0: sym2 = 'S' || (x % 11), ts = 7 min * x
+                final String expected = """
+                        c2[VARCHAR],sym2[VARCHAR],ts[TIMESTAMP]
+                        k1,S1,2022-02-26 00:07:00.0
+                        k1,S0,2022-02-26 01:17:00.0
+                        k1,S5,2022-02-26 01:52:00.0
+                        k1,S4,2022-02-26 03:02:00.0
+                        """;
+                try (PreparedStatement ps = connection.prepareStatement("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 4")) {
+                    for (int i = 0; i < 2; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
+
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                        statement.execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+                    }
+                    drainWalQueue();
+
+                    for (int i = 0; i < 2; i++) {
+                        try (ResultSet rs = ps.executeQuery()) {
+                            sink.clear();
+                            assertResultSet(expected, sink, rs);
+                        }
+                    }
+                }
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute("DROP TABLE t");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSelectPreparedStatement_columnWithBindVariableDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             connection.prepareStatement("create table x as" +

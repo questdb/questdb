@@ -280,6 +280,10 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         return parquetMetaReader;
     }
 
+    public boolean isSamePageFrameBinding(ParquetPartitionDecoder other) {
+        return parquetMetaAddr == other.parquetMetaAddr && parquetMetaSize == other.parquetMetaSize;
+    }
+
     /**
      * Hot-path-only initialization. Use when the parquet file is mmapped
      * locally (write/restore/index/O3 callers).
@@ -303,6 +307,13 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
     }
 
     public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, int memoryTag) {
+        of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, table, partitionBy, timestampType, timestamp, memoryTag, 0);
+    }
+
+    /**
+     * Borrows the pinned partition state for the same lifetime as the metadata mapping.
+     */
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, int memoryTag, long partitionState) {
         of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, memoryTag);
     }
 

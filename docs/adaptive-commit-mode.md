@@ -193,18 +193,27 @@ These hold for WAL tables on an instance in `adaptive` mode. On QuestDB Enterpri
 
 ### 7.1 Downgrade, write with the older release, then upgrade again
 
-Not supported. Running this version, going back to an older release, writing with it, and then running this
-version again has undefined results: the older release does not maintain the checksums and save points this
-version relies on.
+Every mode, `nosync` included, stores a checksum after each `_cv` area, and an older release does not maintain it:
+it rewrites the area in place and leaves the checksum next to data it never covered, which this version would then
+read as damage. So every table this version writes is **locked against an older release**: its `_meta` carries a
+storage version the older release refuses on open (`metadata version does not match runtime version`), for reading
+and for writing. The lock costs one write of `_meta` the first time a writer opens the table, and nothing after.
 
-**The safe way back to an older release:**
+**The way back to an older release:**
 
-1. Set `cairo.commit.mode=nosync` (the default) and restart this version once. Let the start finish: it makes
-   every enrolled table durable and removes its save point files.
+1. Set `cairo.commit.mode.adaptive.downgrade=true` and `cairo.commit.mode=nosync` (the default; the server
+   refuses to start with the setting in any other mode). Restart this version once. Let the start finish: it makes
+   every enrolled table durable, removes its save point files, removes the `_cv` checksums of every locked table
+   and unlocks it (`table unlocked for downgrade, its _cv checksums are removed [table=...]` in the log). While
+   the setting is on, no new checksum is written and no table is locked, so the database stays in this shape.
 2. Stop QuestDB cleanly.
 3. Install the older release.
 
-Do not come back to this version after the older release has written to the database.
+After these steps the older release may write to the database, and this version may be installed again later: a
+table it finds without checksums reads as unverified, as any table from an older release does. Remove
+`cairo.commit.mode.adaptive.downgrade` when this version is installed again, or it keeps writing no checksums.
+Installing the older release without step 1 is safe too, it refuses the locked tables rather than damaging them;
+run step 1 with this version to get them back.
 
 ### 7.2 The old UDP line protocol receiver into WAL tables
 
@@ -823,6 +832,7 @@ structural change in flight, a busy pin slot; a failure is an I/O error on the s
 | Key | Default | Meaning |
 |---|---|---|
 | `cairo.commit.mode` | `nosync` | `nosync`, `async`, `sync` or `adaptive`, for the whole instance. QuestDB Enterprise defaults to `nosync` when replication is configured; an explicit value wins. |
+| `cairo.commit.mode.adaptive.downgrade` | `false` | `true` prepares the database for an older release (section 7.1): the start removes the `_cv` checksums and the lock from every table, and the instance writes neither. Requires `cairo.commit.mode=nosync`; the server does not start with it in another mode. |
 | `cairo.adaptive.commit.group.window` | `50ms` | The group-commit window (section 4). `0`: every acknowledged commit is on stable storage. Negative counts as 0. |
 | `cairo.adaptive.epoch.interval` | `60s` | The periodic time trigger. `0`: a save point after every apply pass. Negative disables the periodic, row-count and idle triggers, not enrolment, required completion or retry of owed save points. DETACH, RESUME and direct logical changes still require complete coverage. WAL retention and replay can grow without a time bound. Not for production. |
 | `cairo.adaptive.epoch.max.rows` | `5000000` | A periodic save point once this many rows were applied since the last one, while the interval is nonnegative. `0` or negative disables the row trigger. |

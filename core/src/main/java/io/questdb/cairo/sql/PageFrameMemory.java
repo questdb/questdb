@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 
@@ -33,6 +34,10 @@ import io.questdb.std.IntHashSet;
  * For Parquet partitions, it's a deserialized in-memory native format.
  */
 public interface PageFrameMemory {
+    /**
+     * Longs per column in {@link #getColumnTopRows()}.
+     */
+    int COLUMN_TOP_ROWS_STRIDE = 3;
 
     /**
      * Populates remaining columns (those not in filterColumnIndexes) for filtered rows.
@@ -70,12 +75,14 @@ public interface PageFrameMemory {
     int getColumnOffset();
 
     /**
-     * Returns the per-column leading column-top count for this frame, or {@code null} when
-     * the frame has none (e.g. native frames). Used by {@link PageFrameMemoryRecord} to
-     * surface NULL for column-top rows during a lazy fixed-&gt;var conversion, where the
-     * decoded source value is an in-band 0 indistinguishable from a real 0.
+     * Returns the column-top rows of each column of this frame, or {@code null} when the frame
+     * has none (e.g. native frames): {@link #COLUMN_TOP_ROWS_STRIDE} longs per column, the
+     * address and count of its runs ({@code RowGroupBuffers.getChunkTopRowsPtr}) and the frame
+     * row of their buffer row 0. Used by {@link PageFrameMemoryRecord} to surface NULL for
+     * column-top rows during a lazy fixed-&gt;var conversion, where the decoded source value is an
+     * in-band 0 indistinguishable from a real 0.
      */
-    default DirectLongList getColumnTops() {
+    default DirectLongList getColumnTopRows() {
         return null;
     }
 
@@ -121,6 +128,13 @@ public interface PageFrameMemory {
      * Returns row ID offset used to compute real row IDs.
      */
     long getRowIdOffset();
+
+    /**
+     * Returns the source-row resolver for the current decoded frame.
+     */
+    default IndexReader.SourceRowResolver getSourceRowResolver() {
+        return IndexReader.SourceRowResolver.NONE;
+    }
 
     /**
      * Returns the source column type tag for a type-cast column, or -1 if

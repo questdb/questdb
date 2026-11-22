@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -51,6 +52,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.mp.SCSequence;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -1329,6 +1331,43 @@ public class UpdateTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testUpdateDoesNotRegisterPageFrameSequences() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE up AS (
+                        SELECT x, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            final ObjList<PageFrameSequence<?>> registered = new ObjList<>();
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 2) {
+                        @Override
+                        public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+                            registered.add(frameSequence);
+                            super.registerPageFrameSequence(frameSequence);
+                        }
+                    }.with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                TestUtils.printSql(engine, context, "EXPLAIN UPDATE up SET x = 0 WHERE x % 2 = 0", sink);
+                TestUtils.assertContains(sink, "Async Filter");
+                Assert.assertEquals(1, registered.size());
+                registered.clear();
+
+                execute("UPDATE up SET x = 0 WHERE x % 2 = 0", context);
+                Assert.assertEquals(0, registered.size());
+            }
+            assertQuery("SELECT count() FROM up WHERE x = 0")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count
+                            50
+                            """);
         });
     }
 

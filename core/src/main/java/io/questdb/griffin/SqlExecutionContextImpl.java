@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowContextImpl;
@@ -82,6 +83,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
     private final NanosecondClock nanoClock;
+    private final ObjList<PageFrameSequence<?>> pageFrameSequences = new ObjList<>();
     private final int sharedQueryWorkerCount;
     private final AtomicBooleanCircuitBreaker simpleCircuitBreaker;
     private final Telemetry<TelemetryTask> telemetry;
@@ -104,6 +106,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private boolean isMetadataProbe;
+    private boolean isViewCompile;
+    private boolean isViewMetadataSubquery;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -175,6 +179,13 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean allowNonDeterministicFunctions() {
         return allowNonDeterministicFunction;
+    }
+
+    @Override
+    public void awaitPageFrameSequences() {
+        for (int i = 0, n = pageFrameSequences.size(); i < n; i++) {
+            pageFrameSequences.getQuick(i).awaitReduced();
+        }
     }
 
     @Override
@@ -548,6 +559,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isViewCompile() {
+        return isViewCompile;
+    }
+
+    @Override
+    public boolean isViewMetadataSubquery() {
+        return isViewMetadataSubquery;
+    }
+
+    @Override
     public boolean isWalApplication() {
         return false;
     }
@@ -615,6 +636,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         assert next.isEmpty();
         windowContext = next;
         windowContextDepth = depth;
+    }
+
+    @Override
+    public void registerPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.add(frameSequence);
     }
 
     @Override
@@ -817,6 +843,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setViewCompile(boolean value) {
+        isViewCompile = value;
+    }
+
+    @Override
+    public void setViewMetadataSubquery(boolean value) {
+        isViewMetadataSubquery = value;
+    }
+
+    @Override
     public boolean shouldLogSql() {
         // Validation only compiles the SQL to check it; suppress query progress logging
         // so the validation endpoint does not pollute the log with every validated statement.
@@ -842,6 +878,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("principal=").put(securityContext.getPrincipal()).putAscii(", cache=").put(isCacheHit());
+    }
+
+    @Override
+    public void unregisterPageFrameSequence(PageFrameSequence<?> frameSequence) {
+        pageFrameSequences.remove(frameSequence);
     }
 
     public SqlExecutionContextImpl with(@NotNull SecurityContext securityContext, @Nullable BindVariableService bindVariableService, @Nullable Rnd rnd) {
@@ -930,6 +971,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         setLiveViewCompile(false);
         this.tableFunctionView = null;
         isMetadataProbe = false;
+        isViewCompile = false;
+        isViewMetadataSubquery = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;

@@ -6,7 +6,7 @@ jobs:
     pool:
       name: "hetzner-incus-arm"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -35,7 +35,7 @@ jobs:
     pool:
       name: "hetzner-incus-zfs"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -64,7 +64,7 @@ jobs:
     pool:
       name: "hetzner-incus"
     timeoutInMinutes: 60
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]

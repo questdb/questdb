@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
@@ -324,6 +325,10 @@ public class BitmapIndexWriter implements IndexWriter {
             boolean init = indexBlockCapacity > 0;
             LPSZ keyFile = BitmapIndexUtils.keyFileName(path, name, columnNameTxn);
             if (init) {
+                // A new index: never truncate files an older partition version may share through a hard link
+                TableUtils.removeExistingOrFail(ff, keyFile);
+                TableUtils.removeExistingOrFail(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), name, columnNameTxn));
+                keyFile = BitmapIndexUtils.keyFileName(path.trimTo(plen), name, columnNameTxn);
                 keyMem.of(ff, keyFile, configuration.getDataIndexKeyAppendPageSize(), 0L, MemoryTag.MMAP_INDEX_WRITER);
                 initKeyMemory(keyMem, indexBlockCapacity);
             } else {

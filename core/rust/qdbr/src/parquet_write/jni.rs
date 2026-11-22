@@ -1,4 +1,5 @@
-use crate::parquet::error::{fmt_err, ParquetError, ParquetErrorExt, ParquetResult};
+use super::{compression_from_i64, version_from_i32};
+use crate::parquet::error::{fmt_err, ParquetErrorExt, ParquetResult};
 use crate::parquet_metadata::types::SeqTxn;
 use crate::parquet_write::file::{
     ChunkedWriter, ParquetWriter, DEFAULT_BLOOM_FILTER_FPP, DEFAULT_ROW_GROUP_SIZE,
@@ -18,9 +19,7 @@ use crate::parquet::io::FromRawFdI32Ext;
 use jni::objects::JClass;
 use jni::sys::{jboolean, jdouble, jint, jlong};
 use jni::JNIEnv;
-use parquet2::compression::{BrotliLevel, CompressionOptions, GzipLevel, ZstdLevel};
 use parquet2::metadata::{KeyValue, SortingColumn};
-use parquet2::write::Version;
 
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_copyRowGroup(
@@ -414,6 +413,83 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     }
 }
 
+fn row_offset_from(row_offset: jlong) -> ParquetResult<usize> {
+    usize::try_from(row_offset)
+        .map_err(|_| fmt_err!(InvalidLayout, "negative row_offset: {}", row_offset))
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_isRowGroupRewriteUnchanged(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *const ParquetUpdater,
+    row_group_lo: jint,
+    row_group_hi: jint,
+    row_offset: jlong,
+) -> jboolean {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+        return err.into_cairo_exception().throw(env);
+    }
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &*updater };
+    let is_unchanged = usize::try_from(row_group_lo)
+        .ok()
+        .zip(usize::try_from(row_group_hi).ok())
+        .ok_or_else(|| {
+            fmt_err!(
+                InvalidLayout,
+                "negative row group index: [{},{}]",
+                row_group_lo,
+                row_group_hi
+            )
+        })
+        .and_then(|(rg_lo, rg_hi)| {
+            parquet_updater.is_row_group_rewrite_unchanged(
+                rg_lo,
+                rg_hi,
+                row_offset_from(row_offset)?,
+            )
+        });
+    match is_unchanged {
+        Ok(is_unchanged) => is_unchanged as jboolean,
+        Err(mut err) => {
+            err.add_context("error in PartitionUpdater.isRowGroupRewriteUnchanged");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_setColumnTopRowLimit(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+    limit: jlong,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+        return err.into_cairo_exception().throw(env);
+    }
+    match usize::try_from(limit) {
+        Ok(limit) => {
+            // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+            // Single-threaded JNI access guarantees no aliasing.
+            unsafe { &mut *updater }.set_column_top_row_limit(limit);
+        }
+        Err(_) => {
+            let mut err = fmt_err!(InvalidLayout, "negative column top row limit: {}", limit);
+            err.add_context("error in PartitionUpdater.setColumnTopRowLimit");
+            err.into_cairo_exception().throw(env)
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateRowGroup(
     mut env: JNIEnv,
@@ -422,6 +498,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     row_group_id: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -453,7 +530,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.replace_row_group(&partition, row_group_id)
+        parquet_updater.replace_row_group(&partition, row_group_id, row_offset_from(row_offset)?)
     };
 
     match update() {
@@ -482,6 +559,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
     table_name_len: u32,
     table_name_ptr: *const u8,
     position: jint,
+    row_offset: jlong,
     col_count: jint,
     col_names_ptr: *const u8,
     col_names_len: jint,
@@ -510,7 +588,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
             row_count,
             timestamp_index,
         )?;
-        parquet_updater.insert_row_group(&partition, position)
+        parquet_updater.insert_row_group(&partition, position, row_offset_from(row_offset)?)
     };
 
     match insert() {
@@ -991,43 +1069,6 @@ fn build_bloom_filter_set(
         out.insert(i as usize);
     }
     Ok(out)
-}
-
-fn version_from_i32(value: i32) -> Result<Version, ParquetError> {
-    match value {
-        1 => Ok(Version::V1),
-        2 => Ok(Version::V2),
-        _ => Err(fmt_err!(Unsupported, "unsupported parquet version {value}")),
-    }
-}
-
-/// The `i64` value is expected to encode two `i32` values:
-/// - The higher 32 bits represent the `level_id`.
-/// - The lower 32 bits represent the optional `codec_id`.
-///   `let value: i64 = (3 << 32) | 2;` Gzip with level 3.
-fn compression_from_i64(value: i64) -> Result<CompressionOptions, ParquetError> {
-    let codec_id = value as i32;
-    let level_id = (value >> 32) as i32;
-    match codec_id {
-        0 => Ok(CompressionOptions::Uncompressed),
-        1 => Ok(CompressionOptions::Snappy),
-        2 => Ok(CompressionOptions::Gzip(Some(GzipLevel::try_new(
-            level_id as u8,
-        )?))),
-        3 => Ok(CompressionOptions::Lzo),
-        4 => Ok(CompressionOptions::Brotli(Some(BrotliLevel::try_new(
-            level_id as u32,
-        )?))),
-        5 => Ok(CompressionOptions::Lz4),
-        6 => Ok(CompressionOptions::Zstd(Some(ZstdLevel::try_new(
-            level_id,
-        )?))),
-        7 => Ok(CompressionOptions::Lz4Raw),
-        _ => Err(fmt_err!(
-            Unsupported,
-            "unsupported compression codec id: {codec_id}"
-        )),
-    }
 }
 
 struct BufferWriter {
@@ -2043,14 +2084,16 @@ fn convert_row_group_buffers_to_partition(
                 column_bufs.len()
             )
         })?;
-        if col_buf.column_top > row_count {
-            return Err(fmt_err!(
-                InvalidLayout,
-                "decoded column top {} exceeds row count {}, column index: {}",
-                col_buf.column_top,
-                row_count,
-                i
-            ));
+        if let Some(&[_, top_rows_hi]) = col_buf.top_rows().last() {
+            if top_rows_hi > row_count as u64 {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "decoded column top rows end {} past row count {}, column index: {}",
+                    top_rows_hi,
+                    row_count,
+                    i
+                ));
+            }
         }
         let mut column = *column_template;
         column.row_count = row_count;
@@ -2203,13 +2246,18 @@ mod validation_tests {
     fn decoded_partition_rejects_column_top_past_row_count() {
         let allocator_state = TestAllocatorState::new();
         let mut column_bufs = vec![ColumnChunkBuffers::new(allocator_state.allocator())];
-        column_bufs[0].column_top = 2;
+        column_bufs[0].add_top_rows(0, 2).unwrap();
         let partition = one_column_partition(ColumnTypeTag::Int.into_type());
 
         assert_error_contains(
             convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0),
-            "decoded column top 2 exceeds row count 1, column index: 0",
+            "decoded column top rows end 2 past row count 1, column index: 0",
         );
+
+        // top rows up to the row count are of the decoded rows
+        column_bufs[0].reset();
+        column_bufs[0].add_top_rows(0, 1).unwrap();
+        assert!(convert_row_group_buffers_to_partition(&partition, &column_bufs, 1, 0).is_ok());
     }
 
     #[test]
@@ -2481,6 +2529,13 @@ mod validation_tests {
             ),
             "column count must not be negative",
         );
+    }
+
+    #[test]
+    fn negative_row_offset_is_rejected() {
+        assert_eq!(row_offset_from(0).unwrap(), 0);
+        assert_eq!(row_offset_from(i64::MAX).unwrap(), i64::MAX as usize);
+        assert_error_contains(row_offset_from(-1), "negative row_offset: -1");
     }
 }
 

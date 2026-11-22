@@ -194,7 +194,7 @@ public class ParquetTest extends AbstractCairoTest {
     // Coverage for the filtered / late-materialization read of a column ABSENT from
     // the parquet file (added with ALTER TABLE ADD COLUMN after conversion). A query
     // that filters on a present column and groups by the absent column reads it
-    // through PageFrameFilteredMemoryRecord and ParquetBuffers.decodeRemainingColumns
+    // through PageFrameFilteredMemoryRecord and DecodedFrameBuffers.decodeRemainingColumns
     // -- a different code path from the record-scan one covered by
     // testSelectOnlyAddedColumnAbsentFromParquetPartition. The plan is an Async JIT
     // Group By (filter null!=c1, keys [s]) over a PARQUET PageFrame; the result must
@@ -460,7 +460,7 @@ public class ParquetTest extends AbstractCairoTest {
     // trips the assert. The hoist makes remapColumns() always run, which is what
     // exposes the zero-column case.
     //
-    // PageFrameMemoryPool.ParquetBuffers.decode() now always calls remapColumns() to
+    // PageFrameMemoryPool.DecodedFrameBuffers.decode() now always calls remapColumns() to
     // size and zero the per-column page-address lists. When the projection has no
     // columns, addressCache.getColumnCount() is 0, so remapColumns() would size the
     // lists to 0 and trip DirectLongList.setCapacity()'s assert capacity > 0 (or,
@@ -1093,6 +1093,16 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupKeysAddedToParquetPartitionSkip() throws Exception {
+        testDedupKeysAddedToParquetPartition(true);
+    }
+
+    @Test
+    public void testDedupKeysAddedToParquetPartitionUpsert() throws Exception {
+        testDedupKeysAddedToParquetPartition(false);
+    }
+
+    @Test
     public void testDedupTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
@@ -1213,7 +1223,7 @@ public class ParquetTest extends AbstractCairoTest {
 
     @Test
     public void testDuplicateColumnProjectionMidFrameOffset() throws Exception {
-        // openParquet dedups decode slots when the same parquet column is projected
+        // prepareDecode dedups decode slots when the same parquet column is projected
         // twice; remapColumns fans one decoded slot out to both query columns, so a
         // mid-frame offset must rebase the shared addresses for each copy.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 16);
@@ -2888,7 +2898,7 @@ public class ParquetTest extends AbstractCairoTest {
         // Projection pruning leaves a column in the underlying scan after the WHERE
         // that referenced it has been constant-folded away. The projected metadata
         // lists fewer columns than the cursor's column mapping, which broke the
-        // PageFrameMemoryPool.openParquet loop and caused an async reduce-job assertion.
+        // PageFrameMemoryPool.prepareDecode loop and caused an async reduce-job assertion.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (k DOUBLE, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x VALUES (1.0, 'a', '2024-01-01T00:00:00.000000Z'), (2.0, 'b', '2024-01-02T00:00:00.000000Z')");
@@ -3474,6 +3484,58 @@ public class ParquetTest extends AbstractCairoTest {
         });
     }
 
+    // The Parquet file of the last partition has more than one row group and lacks the dedup key columns added
+    // after it was written. The merge of a row group reads them as NULL: their column top is the row count of the
+    // whole partition, which exceeds the row count of the row group.
+    private void testDedupKeysAddedToParquetPartition(boolean isSkipMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("""
+                    INSERT INTO x (v, ts) VALUES
+                    (1, '2020-01-01T00:00:00.000000Z'),
+                    (2, '2020-01-01T01:00:00.000000Z'),
+                    (3, '2020-01-01T02:00:00.000000Z'),
+                    (4, '2020-01-01T03:00:00.000000Z'),
+                    (5, '2020-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tisParquet
+                            2020-01-01\ttrue
+                            """);
+
+            execute("ALTER TABLE x ADD COLUMN k INT");
+            execute("ALTER TABLE x ADD COLUMN s VARCHAR");
+            execute("ALTER TABLE x DEDUP ENABLE " + (isSkipMode ? "SKIP" : "UPSERT") + " KEYS(ts, k, s)");
+            // the first row matches the row of v=4 on all keys, the second one matches no row
+            execute("""
+                    INSERT INTO x (v, ts, k, s) VALUES
+                    (10, '2020-01-01T03:00:00.000000Z', null, null),
+                    (11, '2020-01-01T04:00:00.000000Z', 7, 'a')
+                    """);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\tk\ts
+                            1\t2020-01-01T00:00:00.000000Z\tnull\t
+                            2\t2020-01-01T01:00:00.000000Z\tnull\t
+                            3\t2020-01-01T02:00:00.000000Z\tnull\t
+                            %d\t2020-01-01T03:00:00.000000Z\tnull\t
+                            5\t2020-01-01T04:00:00.000000Z\tnull\t
+                            11\t2020-01-01T04:00:00.000000Z\t7\ta
+                            """.formatted(isSkipMode ? 4 : 10));
+        });
+    }
+
     private void testNdArray(int dims, String arr, boolean rawArrayEncoding) throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_RAW_ARRAY_ENCODING_ENABLED, String.valueOf(rawArrayEncoding));
 
@@ -3530,7 +3592,7 @@ public class ParquetTest extends AbstractCairoTest {
     //
     // When a query projects ONLY column(s) absent from a parquet file (added via
     // ALTER TABLE ADD COLUMN after the partition was converted to parquet),
-    // PageFrameMemoryPool.ParquetBuffers.decode() sees an empty parquetColumns
+    // PageFrameMemoryPool.DecodedFrameBuffers.decode() sees an empty decodeColumns
     // list and skips remapColumns() - the only place that sizes and zeroes the
     // page-address lists. The lists keep stale/uninitialized native memory, so the
     // record reads a wild page address for the absent column instead of 0 (NULL).
@@ -3544,7 +3606,7 @@ public class ParquetTest extends AbstractCairoTest {
     //   - days 1..cacheCap: 's' present in parquet -> cacheCap frames that fill the
     //     cache, each leaving a valid 's' pointer in its buffer's slot.
     //   - day cacheCap+1: 's' ABSENT (converted before ADD COLUMN) -> the
-    //     (cacheCap+1)th frame, empty parquetColumns -> remapColumns() skipped ->
+    //     (cacheCap+1)th frame, empty decodeColumns -> remapColumns() skipped ->
     //     reuses an evicted buffer -> slot still points at that partition's 's'.
     //   - day cacheCap+2: native (active), 's' is a column-top -> always NULL.
     // With the bug, day cacheCap+1 reads a prior partition's 's' and returns 'AA'

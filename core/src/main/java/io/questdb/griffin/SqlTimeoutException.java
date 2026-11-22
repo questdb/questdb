@@ -31,6 +31,7 @@ public class SqlTimeoutException extends SqlException {
 
     public static SqlTimeoutException timeout(CharSequence message) {
         SqlTimeoutException ex = tlException.get();
+        ex.reset(0);
         ex.put(message);
         return ex;
     }

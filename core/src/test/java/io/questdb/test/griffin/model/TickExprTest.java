@@ -728,6 +728,28 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledRangeEqual() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        final String expression = "$now..$now";
+        final long now = driver.parseFloorLiteral("2026-03-15T12:00:00.000000Z");
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                driver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+            Assert.assertEquals(2, out.size());
+            Assert.assertEquals(now, out.getQuick(0));
+            Assert.assertEquals(now, out.getQuick(1));
+        }
+    }
+
+    @Test
+    public void testCompiledRangeReversed() throws SqlException {
+        // A range between two points in time that starts after it ends fails in a user's query, in
+        // the compiled form as in the parser. An engine job adds no interval for it, and keeps the
+        // intervals already in the output, see TickExprEngineJobTest#testInvertedRangeAddsNoInterval.
+        assertParsedAndCompiledErrorWithNow("$now..$now-1h", "2026-03-15T12:00:00.000000Z", "Invalid date range: start is after end");
+    }
+
+    @Test
     public void testCompiledTickExprAllSuffixesCombined() throws SqlException {
         assertCompiledTickExpr("$today..$today + 5dT09:30@+02:00;1h");
     }
@@ -6968,6 +6990,22 @@ public class TickExprTest {
         // in dynamic mode, the minute after the dropped one carries the operation
         assertEncodedInterval("[{lo=2024-03-10T07:30:00.000000Z, hi=2024-03-10T07:30:59.999999Z}]", "2024-03-10T[02:30,03:30]@America/New_York");
         assertEncodedOperations(1);
+    }
+
+    @Test
+    public void testTimezoneDstGapOverlappingIntervals() throws SqlException {
+        // On March 31, 2024, London clocks spring forward from 01:00 GMT to 02:00 BST, at 01:00 UTC.
+        // Shifting the local times in the gap forward used to make the first three of these 50-minute
+        // intervals overlap in UTC. Local times from 01:00 to 01:59:59.999999 do not exist, so the
+        // first interval, 00:30 to 01:19:59.999999 local time, ends right before the transition, and
+        // the second, 01:30 to 02:19:59.999999, starts at it. The intervals stay sorted and disjoint.
+        assertBracketInterval(
+                "[{lo=2024-03-31T00:30:00.000000Z, hi=2024-03-31T00:59:59.999999Z}," +
+                        "{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:19:59.999999Z}," +
+                        "{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T02:19:59.999999Z}," +
+                        "{lo=2024-03-31T02:30:00.000000Z, hi=2024-03-31T03:19:59.999999Z}]",
+                "2024-03-31T00:30@Europe/London;50m;1h;4"
+        );
     }
 
     @Test

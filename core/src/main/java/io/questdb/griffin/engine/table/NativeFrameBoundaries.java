@@ -55,7 +55,8 @@ final class NativeFrameBoundaries {
             final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
             rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
         }
-        return rowsPerFrame;
+        // Tail balancing must respect the cap: batched GROUP BY packs frame-relative row indexes.
+        return Math.min(pageFrameMaxRows, rowsPerFrame);
     }
 
     public long getQuick(int index) {

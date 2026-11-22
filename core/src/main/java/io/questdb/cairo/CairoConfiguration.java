@@ -32,6 +32,8 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.PartitionFrameDecoder;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
@@ -57,11 +59,13 @@ import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClockImpl;
 import io.questdb.std.datetime.nanotime.NanosecondClockImpl;
 import io.questdb.std.str.CharSink;
+import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
 import java.util.function.LongSupplier;
+import java.util.function.ObjIntConsumer;
 
 public interface CairoConfiguration {
 
@@ -200,6 +204,19 @@ public interface CairoConfiguration {
     double getColumnPurgeRetryDelayMultiplier();
 
     int getColumnPurgeTaskPoolCapacity();
+
+    /**
+     * Receives the task and the offset in {@link ColumnPurgeTask#getUpdatedColumnInfo()} of each entry
+     * whose files the column purge job leaves in place because DROP PARTITION, ATTACH, DETACH or
+     * TRUNCATE changed the truncate version of the table after the purge was queued. The purge log
+     * marks such an entry completed, as it marks a purged one, so tests read the refusals here.
+     *
+     * @return the listener, or null when nothing listens
+     */
+    @Nullable
+    default ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return null;
+    }
 
     long getCommitLatency();
 
@@ -1537,6 +1554,16 @@ public interface CairoConfiguration {
      */
     boolean isColumnAliasExpressionEnabled();
 
+    /**
+     * Whether this start prepares the database for an older release
+     * ({@code cairo.commit.mode.adaptive.downgrade}); the server accepts it under {@link CommitMode#NOSYNC} only.
+     * When {@code true}, the start removes the {@code _cv} checksum trailers and the downgrade lock from every
+     * table ({@code RecoveryCoordinator.unlockTablesForDowngrade}), and the instance writes neither while it
+     * runs. When {@code false}, the default, every commit mode stores the trailers and locks the tables it
+     * writes in {@code _meta} ({@link ColumnType#DOWNGRADE_LOCKED_STORAGE_VERSION}).
+     */
+    boolean isCommitModeAdaptiveDowngrade();
+
     boolean isCopierChunkedEnabled();
 
     /**
@@ -1746,8 +1773,32 @@ public interface CairoConfiguration {
 
     int maxArrayElementCount();
 
+    default DeltaCheckpoint newDeltaCheckpoint() {
+        return new UnsupportedDeltaCheckpoint(this);
+    }
+
     default ParquetPartitionDecoder newParquetPartitionDecoder() {
         return new ParquetPartitionDecoder();
+    }
+
+    @Nullable
+    default PartitionFrameDecoder newPartitionFrameDecoder() {
+        return null;
+    }
+
+    @Nullable
+    default PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return null;
+    }
+
+    @Nullable
+    default PartitionDeltaWriter newPartitionDeltaWriter() {
+        return null;
+    }
+
+    @Nullable
+    default AbstractTimestampFinder newTimestampFinder() {
+        return null;
     }
 
     boolean useWithinLatestByOptimisation();

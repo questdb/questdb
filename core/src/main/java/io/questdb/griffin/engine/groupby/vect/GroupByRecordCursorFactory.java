@@ -68,7 +68,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
-import io.questdb.std.Os;
 import io.questdb.std.Rosti;
 import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.Transient;
@@ -360,10 +359,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     }
                     reclaimed++;
                 } else {
-                    Os.pause();
+                    ownerLoop.pause();
                 }
             } else if (!ownerLoop.awaitProgressWhileDraining(isOwnerTripped)) {
-                Os.pause();
+                ownerLoop.pause();
             }
             mergedCount = -doneLatch.getCount();
         }
@@ -528,7 +527,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor);
             for (int i = 0; i < workerCount; i++) {
                 final PageFrameMemoryPool pool = frameMemoryPools.getQuick(i);
                 pool.setMemoryTracker(memoryTracker);
@@ -642,13 +641,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
 
                         while (true) {
+                            ownerLoop.observeProgress();
                             if (aggregateError.hasError()) {
                                 break dispatch;
                             }
-                            ownerLoop.observeProgress();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                mergedCount = -doneLatch.getCount();
+                                if (mergedCount == queuedCount || workStealingStrategy.shouldSteal(mergedCount)) {
                                     ownerLoop.checkBeforeHelping();
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
@@ -670,9 +670,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                     break;
                                 }
                                 if (!ownerLoop.awaitProgress()) {
-                                    Os.pause();
+                                    ownerLoop.pause();
                                 }
-                                mergedCount = -doneLatch.getCount();
                             } else {
                                 final VectorAggregateEntry entry = entryPool.next();
                                 entry.of(

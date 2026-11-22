@@ -74,6 +74,21 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private int fuzzNotParsedCount;
     private int fuzzRangeOrderCount;
 
+    /**
+     * A context for SQL that the engine runs on its own, such as WAL apply: a tick expression
+     * evaluates in it without the checks that depend on "now", see the class comment.
+     */
+    public static SqlExecutionContextImpl newEngineJobContext() {
+        final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
+            @Override
+            public boolean isBackgroundJob() {
+                return true;
+            }
+        };
+        context.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), new BindVariableServiceImpl(configuration));
+        return context;
+    }
+
     @Test
     public void testEngineContextsTreatRowValueThatDoesNotParseAsNull() throws Exception {
         // The live view refresh and the view compiler run SQL on the engine's behalf too, as WAL
@@ -308,6 +323,18 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     assertEngineJobIntervals(driver, engineJob, now, "[$now..$now - 1h]");
                     assertEngineJobIntervals(driver, engineJob, now, "[$tomorrow..$today, $tomorrow]", tomorrow, driver.endOfDay(tomorrow));
                     assertEngineJobIntervals(driver, engineJob, now, "[$today + 570m..$now, $tomorrow]T09:00", nineAm, nineAm + minute);
+                    // the intervals that the caller appended before stay, as when an interval scan
+                    // evaluates the expression after another condition
+                    try (CompiledTickExpression compiled = compile(driver, "$now..$now-1h")) {
+                        engineJob.setNowAndFixClock(now, driver.getTimestampType());
+                        compiled.init(null, engineJob);
+                        intervals.clear();
+                        intervals.add(1L, 2L);
+                        compiled.evaluate(intervals);
+                        Assert.assertEquals(2, intervals.size());
+                        Assert.assertEquals(1, intervals.getQuick(0));
+                        Assert.assertEquals(2, intervals.getQuick(1));
+                    }
                     // the form that parses on every evaluation
                     assertEngineJobIntervals(
                             driver,
@@ -370,17 +397,6 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
 
     private static boolean isError(String result) {
         return result.startsWith("error: ");
-    }
-
-    private static SqlExecutionContextImpl newEngineJobContext() {
-        final SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
-            @Override
-            public boolean isBackgroundJob() {
-                return true;
-            }
-        };
-        context.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), new BindVariableServiceImpl(configuration));
-        return context;
     }
 
     /**
