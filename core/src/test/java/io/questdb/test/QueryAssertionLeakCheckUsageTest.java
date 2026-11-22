@@ -99,7 +99,7 @@ public class QueryAssertionLeakCheckUsageTest {
                             assertQuery("SELECT 1 -- assertQuery(").noLeakCheck().assertBinds(cases);
                         });
                     }
-
+                
                     @Test
                     public void nested() throws Exception {
                         assertMemoryLeak(() -> {
@@ -107,7 +107,7 @@ public class QueryAssertionLeakCheckUsageTest {
                             assertQuery("SELECT 1").returns("1\\n");
                         });
                     }
-
+                
                     @Test
                     public void unwrapped() throws Exception {
                         execute("CREATE TABLE t (x INT)");
@@ -116,7 +116,7 @@ public class QueryAssertionLeakCheckUsageTest {
                         assertRows("x");
                         assertQuery("SELECT 2").returns("2\\n");
                     }
-
+                
                     @Test
                     public void shared() throws Exception {
                         assertMemoryLeak(() -> {
@@ -125,7 +125,7 @@ public class QueryAssertionLeakCheckUsageTest {
                         });
                         assertMemoryLeak(ff, () -> assertQuery("b").noLeakCheck().returns("b"));
                     }
-
+                
                     @Test
                     public void wrappedLoop() throws Exception {
                         assertMemoryLeak(() -> {
@@ -134,7 +134,7 @@ public class QueryAssertionLeakCheckUsageTest {
                             }
                         });
                     }
-
+                
                     @Test
                     public void wrappedCursor() throws Exception {
                         assertMemoryLeak(() -> {
@@ -145,11 +145,11 @@ public class QueryAssertionLeakCheckUsageTest {
                             assertQuery("b").noLeakCheck().returns("}");
                         });
                     }
-
+                
                     private void assertRows(String sql) throws Exception {
                         assertCount(sql);
                     }
-
+                
                     private void assertCount(String sql) throws Exception {
                         assertQuery(sql).noLeakCheck().returns("count\\n1\\n");
                     }
