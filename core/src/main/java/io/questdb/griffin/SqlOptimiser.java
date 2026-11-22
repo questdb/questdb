@@ -5290,7 +5290,7 @@ public class SqlOptimiser implements Mutable {
             int hash = ExpressionNode.deepHashCode(node);
 
             // Check if an identical window function already exists (O(1) hash lookup + O(k) comparison where k is collision count)
-            CharSequence existingAlias = findDuplicateWindowFunction(node, hash);
+            CharSequence existingAlias = findDuplicateNestedWindowFunction(node, hash, innerWindowModel);
             if (existingAlias != null) {
                 return nextLiteral(existingAlias);
             }
@@ -5352,6 +5352,21 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return -1;
+    }
+
+    // Like findDuplicateWindowFunction(), but returns only a window function that an inner window model computes.
+    // The window model of the projection sits above the inner window models, so they cannot read its columns.
+    private CharSequence findDuplicateNestedWindowFunction(ExpressionNode node, int hash, IQueryModel innerWindowModel) {
+        ObjList<QueryColumn> candidates = windowFunctionHashMap.get(hash);
+        if (candidates != null) {
+            for (int i = 0, n = candidates.size(); i < n; i++) {
+                QueryColumn existing = candidates.getQuick(i);
+                if (ExpressionNode.compareNodesExact(node, existing.getAst()) && isInnerWindowColumn(existing, innerWindowModel)) {
+                    return existing.getAlias();
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -6576,6 +6591,19 @@ public class SqlOptimiser implements Mutable {
         }
         return isGroupingSetsPushdownSafe(model, node.lhs, aliases)
                 && isGroupingSetsPushdownSafe(model, node.rhs, aliases);
+    }
+
+    private boolean isInnerWindowColumn(QueryColumn column, IQueryModel innerWindowModel) {
+        final CharSequence alias = column.getAlias();
+        if (innerWindowModel.getAliasToColumnMap().get(alias) == column) {
+            return true;
+        }
+        for (int i = 0, n = innerWindowModels.size(); i < n; i++) {
+            if (innerWindowModels.getQuick(i).getAliasToColumnMap().get(alias) == column) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
@@ -14715,6 +14743,20 @@ public class SqlOptimiser implements Mutable {
                             innerWm.addBottomUpColumn(col);
                         }
                     }
+                } else if (col instanceof WindowExpression wc) {
+                    // Pass the columns that this window function reads through the inner window models
+                    final int nInner = innerWindowModels.size();
+                    addLiteralPassThroughToInnerWindowModels(wc.getAst(), innerWindowModels, nInner);
+                    final ObjList<ExpressionNode> partitionBy = wc.getPartitionBy();
+                    for (int j = 0, m = partitionBy.size(); j < m; j++) {
+                        addLiteralPassThroughToInnerWindowModels(partitionBy.getQuick(j), innerWindowModels, nInner);
+                    }
+                    final ObjList<ExpressionNode> orderBy = wc.getOrderBy();
+                    for (int j = 0, m = orderBy.size(); j < m; j++) {
+                        addLiteralPassThroughToInnerWindowModels(orderBy.getQuick(j), innerWindowModels, nInner);
+                    }
+                    addLiteralPassThroughToInnerWindowModels(wc.getRowsLoExpr(), innerWindowModels, nInner);
+                    addLiteralPassThroughToInnerWindowModels(wc.getRowsHiExpr(), innerWindowModels, nInner);
                 }
             }
 

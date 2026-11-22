@@ -10763,6 +10763,106 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNestedWindowFunctionNextToWindowFunctionReadingOtherColumn() throws Exception {
+        // A window function outside the nested one reads a column that the select list does not hold on its own.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (3, 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1, 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (4, 5.0, '2024-01-01T00:02:00.000000Z')
+                    """);
+
+            assertQuery("SELECT lead(id) OVER () AS n, sum(row_number() OVER ()) OVER () AS s FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            n	s
+                            1	6.0
+                            4	6.0
+                            null	6.0
+                            """);
+            // ORDER BY qty visits qty 5, 15, 25, whose row numbers are 3, 1, 2, so the running sums are 3, 4, 6.
+            assertQuery("SELECT sum(row_number() OVER ()) OVER (ORDER BY qty) AS s FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            4.0
+                            6.0
+                            3.0
+                            """);
+            assertQuery("SELECT sum(lead(id) OVER ()) OVER () AS s, lead(qty) OVER () AS m FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s	m
+                            5.0	25.0
+                            5.0	5.0
+                            5.0	null
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedWindowFunctionRepeatsProjectionWindowFunction() throws Exception {
+        // The nested window function repeats a window function that the projection selects on its own.
+        // lead(id) OVER () is 1, 4, 2, null, so its sum is 7. row_number() OVER () is 1..4, so its sum is 10.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id INT, grp SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (3, 'a', 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1, 'b', 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (4, 'a', 5.0, '2024-01-01T00:02:00.000000Z'),
+                        (2, 'b', 35.0, '2024-01-01T00:03:00.000000Z')
+                    """);
+
+            assertQuery("SELECT lead(id) OVER () AS qty, sum(lead(id) OVER ()) OVER () AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            qty\ts
+                            1\t7.0
+                            4\t7.0
+                            2\t7.0
+                            null\t7.0
+                            """);
+            assertQuery("SELECT row_number() OVER (), sum(row_number() OVER ()) OVER () FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            row_number\tsum
+                            1\t10.0
+                            2\t10.0
+                            3\t10.0
+                            4\t10.0
+                            """);
+            assertQuery("SELECT row_number() OVER () AS rn, sum(row_number() OVER ()) OVER () AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            rn\ts
+                            1\t10.0
+                            2\t10.0
+                            3\t10.0
+                            4\t10.0
+                            """);
+            assertQuery("SELECT sum(qty) OVER () AS t, sum(sum(qty) OVER ()) OVER () AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            t\ts
+                            80.0\t320.0
+                            80.0\t320.0
+                            80.0\t320.0
+                            80.0\t320.0
+                            """);
+        });
+    }
+
+    @Test
     public void testNestedWindowFunctionWithColumnAliasReference() throws Exception {
         // Test nested window function where inner function references an output column alias.
         // SELECT x as x0, sum(sum(x0) OVER ()) OVER () FROM x
