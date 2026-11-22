@@ -65,7 +65,7 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                 PropertyKey.PG_ENABLED.getPropertyPath() + "=false"
         ));
         dbPath.parent().$();
-        // setUpFragmentationChunks (superclass @Before) draws sendChunk/recvChunk from
+        // setUpRandom (superclass @Before) draws sendChunk/recvChunk from
         // [1, 500]. A 1-byte draw streams this class's multi-MB payloads one byte per
         // dispatcher round-trip - millions of them, blowing the global timeout on slow
         // CI (the mac-other hang). Floor it: still fragments every batch, and credit

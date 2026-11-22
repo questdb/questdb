@@ -46,6 +46,12 @@ import org.junit.Before;
  * of a backward stream ahead, see {@link ReadAheadFilesFacade}, so the fuzzers cover
  * both ways on every platform, and whether its frames look cold, so they cover both the
  * frames a stream asks for and the frames in memory it checks and trusts.
+ * <p>
+ * Subclasses draw their own random choices from {@link #random}, the Rnd that draws the
+ * chunks and the read-ahead mode, not from a Rnd of their own. A test then logs one pair of
+ * seeds, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} pass back to replay every draw of a
+ * failing run. The override seeds every Rnd alike, so it cannot replay a run that drew from
+ * two Rnds.
  */
 public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
 
@@ -54,15 +60,17 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
     protected boolean isReadAheadCold;
     // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads the windows itself
     protected boolean isReadAheadWillNeed;
+    // draws the chunks and the read-ahead mode, then every random choice the test makes
+    protected Rnd random;
     protected int recvChunk;
     protected int sendChunk;
 
     @Before
-    public void setUpFragmentationChunks() {
-        Rnd rnd = TestUtils.generateRandom(LOG);
+    public void setUpRandom() {
+        random = TestUtils.generateRandom(LOG);
         // recvChunk drives the incremental request parser, which is offset
         // sensitive, and requests are small -- keep the 1-byte draw.
-        recvChunk = 1 + rnd.nextInt(500);
+        recvChunk = 1 + random.nextInt(500);
         // sendChunk is floored. HttpResponseSink#sendBuffer ships at most
         // sendChunk bytes per event-loop pass and parks in between, so egress
         // pays one dispatcher round trip per chunk. A 1-byte draw made a
@@ -73,9 +81,9 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
         // (ChunkUtf8Sink#onRead) rather than driving an offset-sensitive state
         // machine, so a finer split adds no coverage. Tests that need a
         // specific 1-byte split pin sendChunk themselves.
-        sendChunk = 64 + rnd.nextInt(437);
-        isReadAheadWillNeed = rnd.nextBoolean();
-        isReadAheadCold = rnd.nextBoolean();
+        sendChunk = 64 + random.nextInt(437);
+        isReadAheadWillNeed = random.nextBoolean();
+        isReadAheadCold = random.nextBoolean();
     }
 
     protected long firstBatchTimeoutMs(long baseMs) {
