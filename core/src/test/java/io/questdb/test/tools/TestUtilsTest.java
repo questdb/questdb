@@ -154,6 +154,38 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGenerateRandomCountsTheRndsItSeeds() {
+        // generateRandom(Log) counts the Rnds it seeds from the clock or from -Dfuzz.s0 and
+        // -Dfuzz.s1; a Rnd of the caller's seeds replays as it is and does not count, nor does
+        // a Rnd an invalid override keeps from being made
+        final long count = TestUtils.getGeneratedRandomCount();
+        TestUtils.generateRandom(null);
+        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+        TestUtils.generateRandom(null, 42, 4_242);
+        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+
+        final String s0 = System.getProperty("fuzz.s0");
+        System.setProperty("fuzz.s0", "not a seed");
+        try {
+            final IllegalArgumentException e = Assert.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> TestUtils.generateRandom(null)
+            );
+            Assert.assertEquals("invalid seed override [fuzz.s0=not a seed]", e.getMessage());
+        } finally {
+            if (s0 != null) {
+                System.setProperty("fuzz.s0", s0);
+            } else {
+                System.clearProperty("fuzz.s0");
+            }
+        }
+        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+
+        TestUtils.generateRandom(null);
+        Assert.assertEquals(count + 2, TestUtils.getGeneratedRandomCount());
+    }
+
+    @Test
     public void testJoinThreadsInterruptsTimedOutWorker() throws Exception {
         final CountDownLatch started = new CountDownLatch(1);
         final AtomicBoolean interrupted = new AtomicBoolean();

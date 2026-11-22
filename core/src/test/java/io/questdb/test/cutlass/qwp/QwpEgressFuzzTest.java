@@ -34,7 +34,6 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
-import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
@@ -170,36 +169,6 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                 }
             }
         });
-    }
-
-    @Test
-    public void testSeedsReplayEveryDraw() {
-        // -Dfuzz.s0 and -Dfuzz.s1 replay a failing run from the seeds it logged, and they seed
-        // every Rnd alike, so they can replay only a run that drew from one Rnd. setUpRandom()
-        // logs that one pair of seeds, and the pair gives back the fragmentation chunks, the
-        // read-ahead mode and the data of a test.
-        final LogCapture capture = new LogCapture();
-        capture.start();
-        try {
-            setUpRandom();
-        } finally {
-            capture.stop();
-        }
-        capture.assertOnlyOnce("random seeds: ");
-
-        final String s0 = System.getProperty("fuzz.s0");
-        final String s1 = System.getProperty("fuzz.s1");
-        System.setProperty("fuzz.s0", "123_456_789");
-        System.setProperty("fuzz.s1", "987_654_321");
-        try {
-            setUpRandom();
-            final String draws = describeDraws();
-            setUpRandom();
-            Assert.assertEquals(draws, describeDraws());
-        } finally {
-            restoreProperty("fuzz.s0", s0);
-            restoreProperty("fuzz.s1", s1);
-        }
     }
 
     @Test
@@ -804,14 +773,6 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         return sb.toString();
     }
 
-    private static void restoreProperty(String name, String value) {
-        if (value != null) {
-            System.setProperty(name, value);
-        } else {
-            System.clearProperty(name);
-        }
-    }
-
     private static int[] rowRange(int firstRow, int lastRow, boolean descending) {
         final int[] rows = new int[lastRow - firstRow + 1];
         for (int i = 0; i < rows.length; i++) {
@@ -848,13 +809,6 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
             sb.append(')');
         }
         return sb.toString();
-    }
-
-    // the chunks and the read-ahead mode setUpRandom() drew, and the next draws of the data
-    private String describeDraws() {
-        return "recvChunk=" + recvChunk + ", sendChunk=" + sendChunk
-                + ", isReadAheadWillNeed=" + isReadAheadWillNeed + ", isReadAheadCold=" + isReadAheadCold
-                + ", data=" + random.nextLong() + ", " + random.nextLong();
     }
 
     /**

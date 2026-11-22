@@ -180,6 +180,8 @@ public final class TestUtils {
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
     private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
+    // the Rnds generateRandom(Log) seeded from the clock or from -Dfuzz.s0 and -Dfuzz.s1
+    private static final AtomicLong generatedRandomCount = new AtomicLong();
     private static final Object threadAllocationLock = new Object();
     private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
@@ -1895,7 +1897,9 @@ public final class TestUtils {
 
     @NotNull
     public static Rnd generateRandom(Log log) {
-        return generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
+        final Rnd rnd = generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
+        generatedRandomCount.incrementAndGet();
+        return rnd;
     }
 
     @NotNull
@@ -1914,6 +1918,16 @@ public final class TestUtils {
 
     public static String getCsvRoot() {
         return getTestResourcePath("/csv");
+    }
+
+    /**
+     * Returns how many Rnds {@link #generateRandom(Log)} has seeded in this JVM. Each of them logs
+     * seeds of its own, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} replace with one pair for
+     * all, so a test that must replay from the one pair it logged checks that it seeded one Rnd.
+     * {@link #generateRandom(Log, long, long)} takes its seeds from the caller and does not count.
+     */
+    public static long getGeneratedRandomCount() {
+        return generatedRandomCount.get();
     }
 
     public static int getJavaVersion() {
