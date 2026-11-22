@@ -161,7 +161,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
      * {@link #pageFrameOrder} of a query that streams through its RecordCursor.
      */
     public static final int NO_PAGE_FRAMES = -1;
-    private static final Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
+    // Tests swap this logger via reflection through LogFactory.enableGuaranteedLogging().
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(QwpEgressUpgradeProcessor.class);
     private static final LocalValue<QwpEgressProcessorState> LV = new LocalValue<>();
     private static final NoOpAssociativeCache<RecordCursorFactory> NO_OP_SELECT_CACHE = new NoOpAssociativeCache<>();
     // Carries the byte count of a 4xx upgrade rejection staged in the raw
