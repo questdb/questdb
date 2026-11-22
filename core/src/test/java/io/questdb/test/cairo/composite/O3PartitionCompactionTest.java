@@ -1130,6 +1130,46 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitRemovalRepeatedOverAReadOnlyParentKeepsItsRows() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            for (boolean isMergeAppend : new boolean[]{false, true}) {
+                for (boolean isSingleTimestampParent : new boolean[]{false, true}) {
+                    for (boolean isLastPartition : new boolean[]{false, true}) {
+                        for (boolean isSameRange : new boolean[]{false, true}) {
+                            createClassicSplitDay("", isSingleTimestampParent, isLastPartition, false);
+                            setMergeAppend(isMergeAppend);
+                            setFirstPartitionOfSplitDayReadOnly();
+                            final long siblingMinTs = siblingMinTimestamp();
+                            removeSibling(siblingMinTs);
+                            drainWalQueue();
+                            assertNotSuspended();
+
+                            // either the same range again, or the one of the directory that now ends the day
+                            removeSibling(isSameRange ? siblingMinTs : siblingMinTimestamp());
+                            drainWalQueue();
+                            assertNotSuspended();
+                            assertSplitDayReadOnly("the repeated removal");
+                            // 1 + 2 + ... + 300
+                            assertQuery("select count() c, sum(i) s from x where ts in '" + SPLIT_DAY + "'")
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\ts\n300\t45150\n");
+
+                            execute("insert into x values (7, 's2', '2024-01-09T00:00:00')");
+                            drainWalQueue();
+                            assertNotSuspended();
+                            assertQuery("select count() c, sum(i) s from x where ts in '2024-01-09'")
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\ts\n1\t7\n");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSplitRemovalRewriteKeepsReadOnlyAndStampsTheSeqTxn() throws Exception {
         assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
             final int retiredGeneration = makeFrontPlainNextToMoveTailSibling();

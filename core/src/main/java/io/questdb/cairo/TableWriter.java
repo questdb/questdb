@@ -15769,6 +15769,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
                                 .$(", numRows=").$(srcOooBatchRowSize)
                                 .$();
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
                         continue;
                     }
                     final O3Basket o3Basket = o3BasketPool.next();
@@ -16498,10 +16500,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // maxTimestamp = Long.MIN_VALUE, and the "outside the range" clauses degenerate once the
             // range spans the whole timeline - which is what [Long.MIN_VALUE, +inf) is, the range a
             // live view declared START FROM BEGINNING emits for a pure-delete full rebuild.
-            // Min timestamp is either outside of replace range or equals to the min timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs;
-            // Max timestamp is either outside of replace range or equals to the max timestamp of the transaction
-            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs;
+            // Min timestamp is either outside of replace range, or equals to the min timestamp of the transaction,
+            // or lies in a read-only partition, which the replace leaves as it was
+            assert txWriter.getRowCount() == 0 || txWriter.getMinTimestamp() < replaceRangeTsLo || txWriter.getMinTimestamp() >= replaceRangeTsHi || txWriter.getMinTimestamp() == txnMinTs
+                    || txWriter.isPartitionReadOnly(0);
+            // Max timestamp is either outside of replace range, or equals to the max timestamp of the transaction,
+            // or lies in a read-only partition
+            assert txWriter.getRowCount() == 0 || txWriter.getMaxTimestamp() < replaceRangeTsLo || txWriter.getMaxTimestamp() >= replaceRangeTsHi || txWriter.getMaxTimestamp() == txnMaxTs
+                    || txWriter.isPartitionReadOnly(txWriter.getPartitionCount() - 1);
 
             return true;
         } else {
