@@ -37,8 +37,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
@@ -859,6 +861,127 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSplitRemovalIndexesOnlyTheRowsOfTheNewDirectory() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            for (String include : new String[]{"", " include (i)"}) {
+                for (boolean isMergeAppend : new boolean[]{false, true}) {
+                    for (boolean isSingleTimestampParent : new boolean[]{false, true}) {
+                        for (boolean isLastPartition : new boolean[]{false, true}) {
+                            final String shape = "include=" + include + ", mergeAppend=" + isMergeAppend
+                                    + ", singleTimestampParent=" + isSingleTimestampParent + ", last=" + isLastPartition;
+                            createClassicSplitDay(include, isSingleTimestampParent, isLastPartition, false);
+                            setMergeAppend(isMergeAppend);
+
+                            removeSibling(siblingMinTimestamp());
+                            drainWalQueue();
+                            assertNotSuspended();
+                            assertPostingIndexMatchesLastDirectoryOfSplitDay(shape);
+                            // i = 1, 6, .., 296
+                            assertQuery("select count() c, sum(i) total from x where s = 's1' and ts in '" + SPLIT_DAY + "'")
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\ttotal\n60\t8910\n");
+
+                            execute("insert into x select 1_000, 's1', timestamp_sequence('2024-01-01T12:00:00', 1_000_000L) from long_sequence(5)");
+                            drainWalQueue();
+                            engine.releaseAllReaders();
+                            engine.releaseAllWriters();
+                            assertNotSuspended();
+                            assertPostingIndexMatchesLastDirectoryOfSplitDay(shape);
+                            assertQuery("select count() c, sum(i) total from x where s = 's1' and ts in '" + SPLIT_DAY + "'")
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\ttotal\n65\t13910\n");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSplitRemovalKeepsTheRowsOfAReadOnlyCompositeParentReadOnly() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            buildCompositeFrontNextToMoveTailSibling();
+            final long siblingMinTs = siblingMinTimestamp();
+            setFirstPartitionOfSplitDayReadOnly();
+
+            removeSibling(siblingMinTs);
+            drainWalQueueHoldingOffMakePlain();
+            assertNotSuspended();
+            Assert.assertEquals("the carve left no split", 2, partitionCountOfDay("x", SPLIT_DAY));
+            assertSplitDayReadOnly("composite parent");
+
+            insertIntoFront();
+            assertNotSuspended();
+            assertRowsOfSplitDay(siblingMinTs, false);
+        });
+    }
+
+    @Test
+    public void testSplitRemovalKeepsTheRowsOfAReadOnlyParentReadOnly() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            for (boolean isDedup : new boolean[]{false, true}) {
+                for (boolean isMergeAppend : new boolean[]{false, true}) {
+                    for (boolean isSingleTimestampParent : new boolean[]{false, true}) {
+                        for (boolean isLastPartition : new boolean[]{false, true}) {
+                            final String shape = "dedup=" + isDedup + ", mergeAppend=" + isMergeAppend
+                                    + ", singleTimestampParent=" + isSingleTimestampParent + ", last=" + isLastPartition;
+                            createClassicSplitDay("", isSingleTimestampParent, isLastPartition, isDedup);
+                            setMergeAppend(isMergeAppend);
+                            setFirstPartitionOfSplitDayReadOnly();
+                            final long siblingMinTs = siblingMinTimestamp();
+                            final String snapshotBefore = snapshot("select count() c, sum(i) s from x");
+                            // nothing in the day can precede a single timestamp at its start
+                            final boolean hasOutOfOrderWrite = !isSingleTimestampParent || !isLastPartition;
+                            final boolean isSuspendedByTheWrite = hasOutOfOrderWrite && isDedup;
+
+                            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                                removeSibling(siblingMinTs);
+                                drainWalQueue();
+                                assertNotSuspended();
+                                Assert.assertEquals(shape, isSingleTimestampParent ? 1 : 2, partitionCountOfDay("x", SPLIT_DAY));
+                                assertSplitDayReadOnly(shape);
+                                if (isSingleTimestampParent) {
+                                    assertFrontStampedWithTheLastSeqTxn(shape);
+                                }
+
+                                if (hasOutOfOrderWrite) {
+                                    // inside the range of the directory that a carve of the parent creates
+                                    execute("insert into x values (1_000, 's1', '2024-01-01T00:04:58.500000Z')");
+                                    drainWalQueue();
+                                }
+                                if (isSuspendedByTheWrite) {
+                                    assertSuspended("cannot insert into read-only partition");
+                                } else {
+                                    assertNotSuspended();
+                                    execute("insert into x values (7, 's2', '2024-01-09T00:00:00')");
+                                    drainWalQueue();
+                                    assertNotSuspended();
+                                }
+                                Assert.assertEquals(shape, snapshotBefore, countAndSum(pinned));
+                            }
+                            engine.releaseAllReaders();
+                            engine.releaseAllWriters();
+                            if (!isSuspendedByTheWrite) {
+                                assertQuery("select count() c, sum(i) s from x where ts in '2024-01-09'")
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("c\ts\n1\t7\n");
+                            }
+                            // 1 + 2 + ... + 300
+                            assertQuery("select count() c, sum(i) s from x where ts in '" + SPLIT_DAY + "'")
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("c\ts\n300\t45150\n");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSplitRemovalOfACompositeParentKeepsItsCommittedGenerationWhenItFails() throws Exception {
         final DirectoryRefusingFacade facade = new DirectoryRefusingFacade(SPLIT_DAY + "T");
         assertMemoryLeak(facade, () -> {
@@ -922,6 +1045,10 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             Assert.assertNotEquals("the parent kept its directory", frontNameTxn, frontNameTxnOfDay("x", SPLIT_DAY));
             Assert.assertFalse("the parent became composite", isComposite("x", SPLIT_DAY));
             Assert.assertFalse("a geometry record was published", hasFrontGeometryFile(0));
+            assertFrontStampedWithTheLastSeqTxn("writable parent");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertFalse("a writable parent became read-only", reader.getTxFile().isPartitionReadOnly(0));
+            }
             // 1 + 2 + ... + 8000
             assertQuery("select count() c, sum(i) s from x where ts in '" + SPLIT_DAY + "'")
                     .noRandomAccess()
@@ -961,6 +1088,45 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     @Test
     public void testSplitRemovalRewritePreservesEveryColumnTypeOfTheLastPartition() throws Exception {
         assertSplitRemovalPreservesTypedFront("timestamp", true, true);
+    }
+
+    @Test
+    public void testSplitRemovalRecoversFromAFailedReseal() throws Exception {
+        final SymbolReadRefusingFacade facade = new SymbolReadRefusingFacade(SPLIT_DAY + "T000458");
+        assertMemoryLeak(facade, () -> {
+            for (String include : new String[]{"", " include (i)"}) {
+                for (boolean isMergeAppend : new boolean[]{false, true}) {
+                    for (boolean isLastPartition : new boolean[]{false, true}) {
+                        final String shape = "include=" + include + ", mergeAppend=" + isMergeAppend + ", last=" + isLastPartition;
+                        createClassicSplitDay(include, false, isLastPartition, false);
+                        setMergeAppend(isMergeAppend);
+
+                        facade.refusedCount.set(0);
+                        facade.isArmed = true;
+                        removeSibling(siblingMinTimestamp());
+                        drainWalQueue();
+                        facade.isArmed = false;
+                        Assert.assertEquals(shape + ": the reseal did not read the symbol once", 1, facade.refusedCount.get());
+                        assertSuspended("could not open");
+                        // the parent's 300 rows and the split's 400
+                        assertQuery("select count() c, sum(i) total from x where ts in '" + SPLIT_DAY + "'")
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("c\ttotal\n700\t1571650\n");
+
+                        execute("alter table x resume wal");
+                        drainWalQueue();
+                        assertNotSuspended();
+                        assertPostingIndexMatchesLastDirectoryOfSplitDay(shape);
+                        // 1 + 2 + ... + 300
+                        assertQuery("select count() c, sum(i) total from x where ts in '" + SPLIT_DAY + "'")
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("c\ttotal\n300\t45150\n");
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -2080,6 +2246,14 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertFrontStampedWithTheLastSeqTxn(String shape) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(dayTimestamp(reader, SPLIT_DAY));
+            Assert.assertEquals(shape, txReader.getSeqTxn(), txReader.getNativePartitionSeqTxn(partitionIndex));
+        }
+    }
+
     private static void assertMakePlainCompletesAfterCheckpoint(String table, String day, String before, long diskBefore) throws Exception {
         // Checkpoint gone: the same partition must now go all the way - plain AND trimmed.
         setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
@@ -2204,10 +2378,48 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         Assert.assertFalse("the table is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
     }
 
+    // Only the day's last directory: the one a carve shrinks keeps the entries of the rows that moved out.
+    private static void assertPostingIndexMatchesLastDirectoryOfSplitDay(String shape) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            final TxReader txReader = reader.getTxFile();
+            final long dayTs = dayTimestamp(reader, SPLIT_DAY);
+            int partitionIndex = reader.getPartitionCount() - 1;
+            while (txReader.getPartitionFloor(txReader.getPartitionTimestampByIndex(partitionIndex)) != dayTs) {
+                partitionIndex--;
+            }
+            final long rowCount = reader.openPartition(partitionIndex);
+            final int columnIndex = reader.getMetadata().getColumnIndex("s");
+            final IndexReader indexReader = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD);
+            long indexedRows = 0;
+            for (int key = 0, keys = reader.getSymbolMapReader(columnIndex).getSymbolCount(); key <= keys; key++) {
+                try (RowCursor cursor = indexReader.getCursor(key, 0, 100_000)) {
+                    while (cursor.hasNext()) {
+                        final long row = cursor.next();
+                        Assert.assertTrue(shape + ": the index names row " + row + " of " + rowCount, row < rowCount);
+                        indexedRows++;
+                    }
+                }
+            }
+            Assert.assertEquals(shape + ": the index holds the wrong rows", rowCount, indexedRows);
+        }
+    }
+
     private static void assertPurgeRemovesTheRetiredGeneration(int retiredGeneration, int liveGeneration) throws Exception {
         runColumnPurgeJob();
         Assert.assertFalse("the purge kept the retired generation", hasFrontGeometryFile(retiredGeneration));
         Assert.assertTrue("the purge deleted the live generation", hasFrontGeometryFile(liveGeneration));
+    }
+
+    private static void assertSplitDayReadOnly(String shape) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+            final TxReader txReader = reader.getTxFile();
+            final long dayTs = dayTimestamp(reader, SPLIT_DAY);
+            for (int p = 0, n = txReader.getPartitionCount(); p < n; p++) {
+                if (txReader.getPartitionFloor(txReader.getPartitionTimestampByIndex(p)) == dayTs) {
+                    Assert.assertTrue(shape + ": partition " + p + " became writable", txReader.isPartitionReadOnly(p));
+                }
+            }
+        }
     }
 
     private static void assertSplitRemovalPreservesTypedFront(String timestampType, boolean isLastPartition, boolean isRewrite) throws Exception {
@@ -2348,6 +2560,41 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             }
         }
         return "c\ts\n" + count + '\t' + sum + '\n';
+    }
+
+    /**
+     * Leaves SPLIT_DAY as a parent of 300 rows, i = 1..300, next to a classic split of 400.
+     */
+    private static void createClassicSplitDay(
+            String include,
+            boolean isSingleTimestampParent,
+            boolean isLastPartition,
+            boolean isDedup
+    ) throws Exception {
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        execute("drop table if exists x");
+        drainWalQueue();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+        execute("create table x (i int, s symbol index type posting" + include + ", ts timestamp) timestamp(ts) partition by DAY WAL"
+                + (isDedup ? " dedup upsert keys(ts, i)" : ""));
+        final String parentTs = isSingleTimestampParent
+                ? "'" + SPLIT_DAY + "'::timestamp"
+                : "timestamp_sequence('" + SPLIT_DAY + "', 1_000_000L)";
+        execute("insert into x select x::int, 's' || (x % 5), " + parentTs + " from long_sequence(300)");
+        execute("insert into x select (2_000 + x)::int, 's1', timestamp_sequence('2024-01-01T03:00:00', 1_000_000L) from long_sequence(60)");
+        if (!isLastPartition) {
+            execute("insert into x select x::int, 's3', timestamp_sequence('2024-01-05', 1_000_000L) from long_sequence(2)");
+        }
+        drainWalQueue();
+        execute("insert into x select (3_000 + x)::int, 's1', timestamp_sequence('2024-01-01T03:00:00', 1_000_000L) from long_sequence(10)");
+        drainWalQueue();
+        execute("insert into x select (4_000 + x)::int, 's1', timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) from long_sequence(330)");
+        drainWalQueue();
+        Assert.assertEquals("fixture did not split the day", 2, partitionCountOfDay("x", SPLIT_DAY));
     }
 
     private static void createDayTable(String table, String day, int rows) throws Exception {
@@ -2816,6 +3063,19 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return path;
     }
 
+    private static void setFirstPartitionOfSplitDayReadOnly() throws Exception {
+        try (TableWriter writer = getWriter(engine.verifyTableName("x"))) {
+            final int partitionIndex = writer.getTxWriter().getPartitionIndex(parseMicros(SPLIT_DAY + "T00:00:00.000000Z"));
+            writer.getTxWriter().setPartitionReadOnly(partitionIndex, true);
+            writer.bumpPartitionTableVersion();
+        }
+    }
+
+    private static void setMergeAppend(boolean isEnabled) {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, Boolean.toString(isEnabled));
+        engine.releaseAllWriters();
+    }
+
     private static long siblingMinTimestamp() throws Exception {
         return scalar("select minTimestamp from table_partitions('x')" +
                 " where name like '" + SPLIT_DAY + "%' order by minTimestamp desc limit 1");
@@ -2905,6 +3165,25 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         public long write(long fd, long address, long len, long offset) {
             final long written = super.write(fd, address, len, offset);
             return isArmed && fd == geometryFd ? -1 : written;
+        }
+    }
+
+    private static class SymbolReadRefusingFacade extends WindowsMappedTruncateFacade {
+        private final String refusedDirectory;
+        private final AtomicInteger refusedCount = new AtomicInteger();
+        private volatile boolean isArmed;
+
+        private SymbolReadRefusingFacade(String refusedDirectory) {
+            this.refusedDirectory = refusedDirectory;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isArmed && Utf8s.containsAscii(name, refusedDirectory) && Utf8s.endsWithAscii(name, Files.SEPARATOR + "s.d")) {
+                refusedCount.incrementAndGet();
+                return -1;
+            }
+            return super.openRO(name);
         }
     }
 }

@@ -14561,6 +14561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the branches below remove or resize it. A composite parent addresses the tail through
                         // its pieces and its files reach E, so the source frame has to span E, not the live rows.
                         final boolean prevPartitionComposite = txWriter.isPartitionComposite(i - 1);
+                        final boolean isPrevPartitionReadOnly = txWriter.isPartitionReadOnly(i - 1);
                         final long sourceFrameRows;
                         splitTailFileRanges.clear();
                         if (prevPartitionComposite) {
@@ -14587,6 +14588,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
+                            txWriter.setPartitionReadOnly(insertPartitionIndex, isPrevPartitionReadOnly);
+                            if (newPrevPartitionSize == 0) {
+                                txWriter.setPartitionSeqTxn(insertPartitionIndex, getCompositePartitionSeqTxn());
+                            }
                             setStateForTimestamp(other, newSplitPartitionTimestamp);
                             ff.mkdir(other.$(), configuration.getMkDirMode());
                             // Self-tracking (no external ColumnTopSink): safe here the same way
@@ -14619,20 +14624,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
 
-                        // Now it's safe to remove the empty split partition
-                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
-                        removeAttachedPartitionsTracked(partitionTimestamp);
-
                         // FrameAlgebra.append indexed the copied rows without their covered values, and the
                         // new split has no block in the partition update sink, so the O3 seal sweep never
                         // reaches it. Reseal it here, as compaction and squash do after their frame copies.
                         path.trimTo(pathSize);
                         try {
-                            if (sealPostingIndexForPartition(newSplitPartitionTimestamp, false)) {
+                            final boolean isResealed = sealPostingIndexForPartition(newSplitPartitionTimestamp, false);
+                            // Not before the seal: transientRowCount still counts this split's rows
+                            partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
+                            removeAttachedPartitionsTracked(partitionTimestamp);
+                            if (isResealed) {
                                 restorePostingIndexersToLastPartition();
                             }
                         } catch (Throwable th) {
-                            LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
+                            LOG.critical().$("split partition carved but posting-index reseal failed `").$(th).$('`').$();
                             distressed = true;
                             throw th;
                         }
