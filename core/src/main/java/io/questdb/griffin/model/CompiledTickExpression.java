@@ -68,6 +68,14 @@ import io.questdb.std.str.StringSink;
  * An expression that the IR cannot represent exactly has no IR: {@link #evaluate} parses it with
  * {@link IntervalUtils#parseTickExpr} instead, the way a bind variable is parsed, so that a
  * literal and a bind variable with the same expression always produce the same intervals.
+ * <p>
+ * A query that a user runs fails on a range that starts after it ends, on more intervals than
+ * the limit, and on an expression without IR that does not parse. The SQL that the engine runs on
+ * its own, see {@link SqlExecutionContext#isBackgroundJob()}, has no caller to report a failure
+ * to: WAL apply would suspend the table on an UPDATE that the client was told succeeded. There
+ * such a range adds no interval, the limit does not apply, as {@link #validate} checked it when
+ * the SQL compiled, and an expression that does not parse resolves to no interval, see
+ * {@link #evaluate(LongList)}.
  */
 public class CompiledTickExpression extends UntypedFunction {
     // ---- Element tag (bits 63-62) ----
@@ -117,6 +125,10 @@ public class CompiledTickExpression extends UntypedFunction {
     private final TimestampDriver timestampDriver;
     private final int toOff;
     private final TimeZoneRules tzRules;
+    // the checks that evaluate() runs, see IntervalUtils.TICK_CHECK_ALL
+    private int checks = IntervalUtils.TICK_CHECK_ALL;
+    // set in an engine job, where an expression that does not parse resolves to no interval instead of failing
+    private boolean isLenient;
     private long now;
 
     CompiledTickExpression(
@@ -202,6 +214,10 @@ public class CompiledTickExpression extends UntypedFunction {
      * Evaluates the tick expression using the captured "now" timestamp and appends
      * the resulting [lo, hi] interval pairs to outIntervals. With IR this is pure long
      * arithmetic, without IR it parses the expression.
+     * <p>
+     * In an engine job, an expression without IR that does not parse appends nothing, as an
+     * expression that resolves to no interval does, which IN matches no row with, and NOT IN every
+     * row, the same as a null value. A query that a user runs fails on it instead.
      */
     public void evaluate(LongList outIntervals) {
         if (ir == null) {
@@ -254,6 +270,8 @@ public class CompiledTickExpression extends UntypedFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         now = executionContext.getNow(timestampDriver.getTimestampType());
+        isLenient = executionContext.isBackgroundJob();
+        checks = isLenient ? 0 : IntervalUtils.TICK_CHECK_ALL;
     }
 
     @Override
@@ -269,6 +287,30 @@ public class CompiledTickExpression extends UntypedFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("tick('").val(expression).val("')");
+    }
+
+    /**
+     * Checks the expression as its SQL compiles, against the given "now": an expression that does
+     * not parse, and one with more intervals than the limit, fail with the error that evaluating
+     * it would raise. A range that starts after it ends does not fail here, because whether it
+     * does depends on the "now" the query runs at, which a prepared statement does not know yet.
+     * <p>
+     * SQL that the engine runs on its own evaluates without the limit, so this is what keeps an
+     * expression with too many intervals out of a WAL UPDATE: the client sees the error before
+     * the UPDATE is acknowledged.
+     */
+    public void validate(long now) throws SqlException {
+        final LongList intervals = new LongList();
+        this.now = now;
+        isLenient = false;
+        checks = IntervalUtils.TICK_CHECK_INTERVAL_LIMIT;
+        try {
+            evaluate(intervals);
+        } catch (CairoException e) {
+            throw SqlException.$(e.getPosition(), e.getFlyweightMessage());
+        } finally {
+            checks = IntervalUtils.TICK_CHECK_ALL;
+        }
     }
 
     private long addBusinessDays(long timestamp, int businessDays) {
@@ -408,11 +450,15 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean isStartDay = DateVariableExpr.isDayLevel(startEncoded);
         boolean isEndDay = DateVariableExpr.isDayLevel(endEncoded);
         // As in the parser, a whole-day endpoint starts the range at the start of its day, and
-        // ends it at the end of its day, and a range that starts after it ends fails
+        // ends it at the end of its day, and a range that starts after it ends fails, or adds no
+        // interval without the range order check
         final long rangeLo = isStartDay ? timestampDriver.startOfDay(start, 0) : start;
         final long rangeHi = isEndDay ? timestampDriver.endOfDay(timestampDriver.startOfDay(end, 0)) : end;
         if (rangeLo > rangeHi) {
-            throw CairoException.nonCritical().position(position).put("Invalid date range: start is after end");
+            if ((checks & IntervalUtils.TICK_CHECK_RANGE_ORDER) != 0) {
+                throw CairoException.nonCritical().position(position).put("Invalid date range: start is after end");
+            }
+            return;
         }
 
         if (!isStartDay && !isEndDay) {
@@ -470,9 +516,10 @@ public class CompiledTickExpression extends UntypedFunction {
 
     /**
      * Parses the expression the same way as a bind variable, against the captured "now", and fails
-     * with the parser's error.
+     * with the parser's error, or, in an engine job, appends nothing.
      */
     private void parse(LongList outIntervals) {
+        final int outStart = outIntervals.size();
         try {
             IntervalUtils.parseTickExpr(
                     timestampDriver,
@@ -485,10 +532,30 @@ public class CompiledTickExpression extends UntypedFunction {
                     IntervalOperation.INTERSECT,
                     parseSink,
                     true,
-                    now
+                    now,
+                    checks
             );
         } catch (SqlException e) {
+            if (isLenient) {
+                outIntervals.setPos(outStart);
+                return;
+            }
             throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
+        }
+    }
+
+    /**
+     * Sorts and merges the intervals from {@code outStart} on, and fails when more of them remain
+     * than the limit, as the parser does after each day of a date variable range, and at the end.
+     * Without the interval limit check, it only merges.
+     */
+    private void unionAndCheckLimit(LongList out, int outStart, String expansion) {
+        IntervalUtils.unionBracketExpandedIntervals(out, outStart);
+        final int maxIntervals = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+        if ((checks & IntervalUtils.TICK_CHECK_INTERVAL_LIMIT) != 0 && (out.size() - outStart) / 2 > maxIntervals) {
+            out.setPos(outStart);
+            throw CairoException.nonCritical().position(position)
+                    .put(expansion).put(" produces too many intervals (max ").put(maxIntervals).put(')');
         }
     }
 
@@ -497,20 +564,6 @@ public class CompiledTickExpression extends UntypedFunction {
      * so that Phase 3 (applyTimezone) can convert it back to UTC correctly.
      * Used for per-element timezone entries that are already in UTC.
      */
-    /**
-     * Sorts and merges the intervals from {@code outStart} on, and fails when more of them remain
-     * than the limit, as the parser does after each day of a date variable range, and at the end.
-     */
-    private void unionAndCheckLimit(LongList out, int outStart, String expansion) {
-        IntervalUtils.unionBracketExpandedIntervals(out, outStart);
-        final int maxIntervals = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-        if ((out.size() - outStart) / 2 > maxIntervals) {
-            out.setPos(outStart);
-            throw CairoException.nonCritical().position(position)
-                    .put(expansion).put(" produces too many intervals (max ").put(maxIntervals).put(')');
-        }
-    }
-
     private long utcToGlobalLocal(long utc) {
         long numericTzOffset = ir.getQuick(1);
         if (numericTzOffset != Long.MIN_VALUE) {

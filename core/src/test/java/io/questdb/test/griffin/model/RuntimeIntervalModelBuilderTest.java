@@ -30,6 +30,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
@@ -46,6 +47,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1106,6 +1108,47 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTickExprValidatedOnlyForUserSql() throws Exception {
+        // The builder validates a tick expression with a date variable as the SQL of a user compiles,
+        // and does not as the engine compiles SQL on its own, which the user's statement validated
+        // already, and which must not fail on a "now" that has moved on since
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+        final String malformed = "[$today,garbage]T[09:00,10:00]";
+        final String overLimit = "[$today..$today + 2000d]T09:00";
+        final String inverted = "$today + 570m..$now";
+        final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        try {
+            for (int operation = 0; operation < 3; operation++) {
+                builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration, true);
+                assertTickExprRejected(builder, operation, malformed, "Invalid date: garbage");
+                builder.clear();
+                builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration, true);
+                assertTickExprRejected(builder, operation, overLimit, "Date range expansion produces too many intervals (max 1024)");
+                builder.clear();
+                // whether a range starts after it ends depends on the time the query runs
+                builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration, true);
+                addTickExpr(builder, operation, inverted);
+                try (RuntimeIntrinsicIntervalModel model = builder.build()) {
+                    Assert.assertFalse(model.isStatic());
+                }
+                builder.clear();
+                // engine SQL compiles all of them
+                for (String expression : new String[]{malformed, overLimit, inverted}) {
+                    builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, configuration, false);
+                    addTickExpr(builder, operation, expression);
+                    try (RuntimeIntrinsicIntervalModel model = builder.build()) {
+                        Assert.assertFalse(expression, model.isStatic());
+                    }
+                    builder.clear();
+                }
+            }
+        } finally {
+            builder.clear();
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
     public void testWindowJoinMergeIgnoresDynamicMasterIntervals() throws Exception {
         final IntrinsicModel master = new IntrinsicModel();
         master.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -1198,6 +1241,14 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         }
     }
 
+    private static void addTickExpr(RuntimeIntervalModelBuilder builder, int operation, String expression) throws SqlException {
+        switch (operation) {
+            case 0 -> builder.intersectIntervals(expression, 0, expression.length(), 42);
+            case 1 -> builder.subtractIntervals(expression, 0, expression.length(), 42);
+            default -> builder.unionIntervals(expression, 0, expression.length(), 42);
+        }
+    }
+
     private static void assertBuildFailure(BuildFailingBuilder builder, BuildFailureStage stage) {
         builder.failAt = stage;
         try {
@@ -1205,6 +1256,16 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
             Assert.fail("injected failure expected at " + stage);
         } catch (RuntimeException e) {
             Assert.assertEquals("injected build failure at " + stage, e.getMessage());
+        }
+    }
+
+    private static void assertTickExprRejected(RuntimeIntervalModelBuilder builder, int operation, String expression, String expectedError) {
+        try {
+            addTickExpr(builder, operation, expression);
+            Assert.fail("compiled: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+            Assert.assertEquals(42, e.getPosition());
         }
     }
 

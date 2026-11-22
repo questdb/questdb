@@ -60,12 +60,8 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
-    private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
-    private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
-    // time parts that the grammar rejects
-    private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
     // "now" on different days, weekdays and times of day, and on days when the clocks change
-    private static final String[] FUZZ_NOWS = {
+    static final String[] FUZZ_NOWS = {
             "2024-01-02T10:00:00.000000Z", // a Tuesday
             "2024-01-02T15:00:00.000000Z",
             "2024-01-03T10:00:00.000000Z", // a Wednesday
@@ -74,6 +70,10 @@ public class TickExprTest {
             "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
             "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
     };
+    private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
+    private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // time parts that the grammar rejects
+    private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
     private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
     private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
     private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
@@ -1553,6 +1553,43 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprUppercaseVariable() throws SqlException {
         assertCompiledTickExpr("$TODAY");
+    }
+
+    @Test
+    public void testCompiledTickExprValidate() throws SqlException {
+        // validate() runs as user SQL compiles, against the time it compiles at: it fails on an
+        // expression that does not parse, and on one over the interval limit, with the error and at
+        // the position that evaluating it would give
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        // the compiled form
+        assertValidateFails("[$today..$today + 2000d]T09:00", now, "Date range expansion produces too many intervals (max 1024)");
+        assertValidateFails("$today..$today + 600dT[09:00,15:00]", now, "Date range expansion produces too many intervals (max 1024)");
+        // the form that parses on every evaluation
+        assertValidateFails("[$today,garbage]T[09:00,10:00]", now, "Invalid date: garbage");
+        assertValidateFails("$todayT[09,14]:[00,99]", now, "Invalid date: 2024-01-02T09:99");
+        assertValidateFails("[$today..$today + 600d, 2024-01-01]T[09:00,10:00]", now, "produces too many intervals (max 1024)");
+        // An expression within the limit passes, and so does a range that starts after it ends:
+        // whether it does depends on the time the query runs. Such an expression still fails when
+        // it evaluates, so validate() leaves the checks of evaluate() as they were.
+        for (String expression : new String[]{
+                "[$today..$today + 500d]T[09:00,15:00]",
+                "[$tomorrow..$today]",
+                "$today + 570m..$now",
+                "[$tomorrow..$today, 2024-01-03]T[09:00,10:00]"
+        }) {
+            try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+                compiled.validate(now);
+                out.clear();
+                try {
+                    compiled.evaluate(out, now);
+                    Assert.assertTrue(expression, expression.startsWith("[$today.."));
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid date range: start is after end");
+                }
+            }
+        }
     }
 
     @Test
@@ -6205,6 +6242,97 @@ public class TickExprTest {
     }
 
     @Test
+    public void testParseTickExprChecksLeaveOtherExpressionsAlone() {
+        // The checks change nothing for an expression without a range that starts after it ends,
+        // and within the interval limit, whichever path of the parser it takes
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        for (String expression : new String[]{
+                // a year, a month that does not exist, and a month before a time list, also out of
+                // a bracket expansion or a date list
+                "2024T[09:00,10:00]",
+                "2024-13T[09:00]",
+                "2024-01T[09:00,10:00]",
+                "202[3,4]T[09:00,10:00]",
+                "2024-1[2,3]T[09:00]",
+                "[2024]T[09:00,10:00]",
+                "[2024-13]T[09:00]",
+                // neither a month nor a day before a time list
+                "garbageT[09:00,10:00]",
+                // date variables, a time zone, a duration, a day filter and a bad duration unit
+                "[2024-01, $today]T[09:00,10:00]",
+                "2024-01-0[1..3]T09:00",
+                "[$today, $tomorrow]T[09:00@Europe/London]",
+                "$now - 2h..$now;1h",
+                "[$today..$tomorrow]T09:00#Tue",
+                "[2024-01-05, $today]T09:30",
+                "$today;1x"
+        }) {
+            final String withAllChecks = parseWithChecks(timestampDriver, expression, now, IntervalUtils.TICK_CHECK_ALL);
+            for (int checks : new int[]{0, IntervalUtils.TICK_CHECK_RANGE_ORDER, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT}) {
+                Assert.assertEquals(expression, withAllChecks, parseWithChecks(timestampDriver, expression, now, checks));
+            }
+        }
+    }
+
+    @Test
+    public void testParseTickExprWithoutIntervalLimitCheck() throws SqlException {
+        // Without the interval limit check, nothing bounds the number of intervals. WAL apply
+        // evaluates a literal this way, as the limit held when its SQL compiled.
+        final String now = "2024-01-02T03:00:00.000000Z";
+        // a date variable range: 2,001 days
+        assertParsedIntervalCount(2001, "[$today..$today + 2000d]T09:00", now, IntervalUtils.TICK_CHECK_RANGE_ORDER);
+        assertParsedWithChecksFails("[$today..$today + 2000d]T09:00", now, IntervalUtils.TICK_CHECK_ALL, "Date range expansion produces too many intervals (max 1024)");
+        // a bracket expansion, which merges as it goes and at the end: 31 days of 24 hours of 2 minutes
+        assertParsedIntervalCount(1488, "2024-01-[01..31]T[00..23]:[00,30]", now, 0);
+        assertParsedWithChecksFails("2024-01-[01..31]T[00..23]:[00,30]", now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, "Bracket expansion produces too many intervals (max 1024)");
+        // a date list with a time list: 601 days and one more of 2 slots
+        assertParsedIntervalCount(1204, "[$today..$today + 600d, 2024-01-01]T[09:00,10:00]", now, 0);
+        assertParsedWithChecksFails("[$today..$today + 600d, 2024-01-01]T[09:00,10:00]", now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, "produces too many intervals (max 1024)");
+        // a time list of 1,100 separate seconds, which reaches the limit only in the final result
+        final StringBuilder timeList = new StringBuilder("2024-01-01T[");
+        for (int i = 0; i < 1100; i++) {
+            final int second = 2 * i;
+            if (i > 0) {
+                timeList.append(',');
+            }
+            timeList.append(String.format("%02d:%02d:%02d", second / 3600, second / 60 % 60, second % 60));
+        }
+        final String seconds = timeList.append(']').toString();
+        assertParsedIntervalCount(1100, seconds, now, IntervalUtils.TICK_CHECK_RANGE_ORDER);
+        assertParsedWithChecksFails(seconds, now, IntervalUtils.TICK_CHECK_ALL, "Bracket expansion produces too many intervals (max 1024)");
+    }
+
+    @Test
+    public void testParseTickExprWithoutRangeOrderCheck() throws SqlException {
+        // Without the range order check, a date variable range that starts after it ends adds no
+        // interval, and the other elements of the expression keep theirs. At 03:00 a range from
+        // 09:30 to now starts after it ends.
+        final String now = "2024-01-02T03:00:00.000000Z";
+        final int checks = IntervalUtils.TICK_CHECK_INTERVAL_LIMIT;
+        assertParsedWithChecks("[]", "[$tomorrow..$today]", now, checks);
+        assertParsedWithChecks("[]", "$tomorrow..$today", now, checks);
+        assertParsedWithChecks("[]", "$today + 570m..$now", now, checks);
+        assertParsedWithChecks("[]", "[$now..$now - 1h]", now, checks);
+        assertParsedWithChecks("[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]", "[$tomorrow..$today, $yesterday]", now, checks);
+        assertParsedWithChecks("[{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}]", "[$today + 570m..$now, $tomorrow]T09:00", now, checks);
+        assertParsedWithChecks(
+                "[{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z},{lo=2024-01-03T10:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z}]",
+                "[$tomorrow..$today, 2024-01-03]T[09:00,10:00]",
+                now,
+                checks
+        );
+        // a range that does not start after it ends is unchanged
+        assertParsedWithChecks("[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]", "[$today..$tomorrow]", now, checks);
+        assertParsedWithChecks("[{lo=2024-01-02T02:00:00.000000Z, hi=2024-01-02T03:00:00.000000Z}]", "$now - 1h..$now", now, checks);
+        // the check fails on such a range
+        assertParsedWithChecksFails("[$tomorrow..$today, $yesterday]", now, IntervalUtils.TICK_CHECK_RANGE_ORDER, "Invalid date range: start is after end");
+        assertParsedWithChecksFails("$today + 570m..$now", now, IntervalUtils.TICK_CHECK_ALL, "Invalid date range: start is after end");
+        // and an expression that does not parse fails without any check
+        assertParsedWithChecksFails("[$tomorrow..$today, garbage]", now, 0, "Invalid date");
+    }
+
+    @Test
     public void testParseZeroDuration() throws Exception {
         // 0d produces an inverted interval (hi < lo) — effectively empty
         assertShortInterval(
@@ -7164,7 +7292,7 @@ public class TickExprTest {
      * Appends a random tick expression with date variables, either bare or in a date list, and
      * returns whether the expression holds a part that the grammar rejects.
      */
-    private static boolean appendRandomTickExpr(Rnd rnd, StringSink sink) {
+    static boolean appendRandomTickExpr(Rnd rnd, StringSink sink) {
         boolean isMalformed = false;
         if (rnd.nextInt(8) == 0) {
             sink.put("  ");
@@ -7274,6 +7402,16 @@ public class TickExprTest {
                 (int) encoded,
                 (encoded & (1L << 57)) != 0
         );
+    }
+
+    private static String parseWithChecks(TimestampDriver timestampDriver, String expression, long now, int checks) {
+        final LongList intervals = new LongList();
+        try {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, intervals, IntervalOperation.INTERSECT, new StringSink(), true, now, checks);
+            return intervalToString(timestampDriver, intervals).toString();
+        } catch (SqlException e) {
+            return "error: " + e.getFlyweightMessage();
+        }
     }
 
     private static String pick(Rnd rnd, String[] values) {
@@ -7661,6 +7799,42 @@ public class TickExprTest {
         );
     }
 
+    private void assertParsedIntervalCount(int expectedCount, String expression, String nowTimestamp, int checks) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+        Assert.assertEquals(expression, expectedCount, out.size() / 2);
+    }
+
+    private void assertParsedWithChecks(String expected, String expression, String nowTimestamp, int checks) throws SqlException {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+        TestUtils.assertEquals(
+                expression,
+                ColumnType.isTimestampNano(timestampType.getTimestampType())
+                        ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                        : expected,
+                intervalToString(timestampDriver, out)
+        );
+    }
+
+    private void assertParsedWithChecksFails(String expression, String nowTimestamp, int checks, String expectedError) {
+        out.clear();
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        try {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+            Assert.fail("parse should fail: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+        // the parser unwinds what it appended
+        Assert.assertEquals(0, out.size());
+    }
+
     private void assertShortInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -7671,6 +7845,17 @@ public class TickExprTest {
                         : expected,
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    private void assertValidateFails(String expression, long now, String expectedError) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampType.getDriver(), configuration, expression, 0, expression.length(), 7)) {
+            compiled.validate(now);
+            Assert.fail("validate should fail: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+            Assert.assertEquals(expression, 7, e.getPosition());
+        }
     }
 
     @FunctionalInterface

@@ -57,6 +57,17 @@ public final class IntervalUtils {
     public static final int OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX = 2;
     public static final int PERIOD_COUNT_INDEX = 3;
     public static final int STATIC_LONGS_PER_DYNAMIC_INTERVAL = 4;
+    /**
+     * Makes {@link #parseTickExpr} fail on an expansion with more intervals than
+     * {@code cairo.sql.interval.max.intervals.after.merge} after merging.
+     */
+    public static final int TICK_CHECK_INTERVAL_LIMIT = 1 << 1;
+    /**
+     * Makes {@link #parseTickExpr} fail on a date variable range that starts after it ends.
+     * Without it, such a range adds no interval.
+     */
+    public static final int TICK_CHECK_RANGE_ORDER = 1;
+    public static final int TICK_CHECK_ALL = TICK_CHECK_RANGE_ORDER | TICK_CHECK_INTERVAL_LIMIT;
 
     private static final int FRIDAY = 5;
     // Day of week constants (Monday=1, Sunday=7, matching TimestampDriver.getDayOfWeek())
@@ -143,9 +154,10 @@ public final class IntervalUtils {
      * <p>
      * When the IR cannot represent the expression exactly, see {@link #isCompilable},
      * the returned expression parses it with {@link #parseTickExpr} at every evaluation
-     * instead, the same way as a bind variable. This method then validates the
-     * expression by parsing it with the current timestamp, so that structural errors
-     * are caught at compile time either way.
+     * instead, the same way as a bind variable. This method rejects only the errors that
+     * building the IR finds. SQL that a user compiles also calls
+     * {@link CompiledTickExpression#validate}, which rejects an expression without IR that does
+     * not parse, and one with too many intervals, either form.
      *
      * @param timestampDriver the timestamp driver determining precision
      * @param configuration   the Cairo configuration
@@ -272,7 +284,8 @@ public final class IntervalUtils {
         if (!isCompilable(effectiveSeq, elemListLo, elemListHi, isBareVar, timeLo, timeHi, durationSemicolon)) {
             // The expression parses when it evaluates, against the "now" of the query: whether a
             // range starts after it ends, or expands to too many intervals, can depend on "now",
-            // which the clock at compile time does not stand for
+            // which the clock at compile time does not stand for. CompiledTickExpression.validate()
+            // parses it once as user SQL compiles, without the range order check.
             return new CompiledTickExpression(timestampDriver, configuration, seq.subSequence(lo, lim), position);
         }
 
@@ -810,6 +823,36 @@ public final class IntervalUtils {
             boolean applyEncoded,
             long nowTimestamp
     ) throws SqlException {
+        parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, out, operation, sink, applyEncoded, nowTimestamp, TICK_CHECK_ALL);
+    }
+
+    /**
+     * Parses a TICK interval expression against the given "now", running only the given checks of
+     * the two that can depend on "now": {@link #TICK_CHECK_RANGE_ORDER} and
+     * {@link #TICK_CHECK_INTERVAL_LIMIT}. A malformed expression fails whatever the checks.
+     * Without the range order check, which only static mode supports, a date variable range that
+     * starts after it ends adds no interval. Without the interval limit check, nothing bounds the
+     * number of intervals, so leave it off only for an expression that passed it when its SQL
+     * compiled.
+     *
+     * @param checks a combination of {@link #TICK_CHECK_RANGE_ORDER} and
+     *               {@link #TICK_CHECK_INTERVAL_LIMIT}, or {@link #TICK_CHECK_ALL}
+     */
+    public static void parseTickExpr(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int lo,
+            int lim,
+            int position,
+            LongList out,
+            short operation,
+            StringSink sink,
+            boolean applyEncoded,
+            long nowTimestamp,
+            int checks
+    ) throws SqlException {
+        assert applyEncoded || (checks & TICK_CHECK_RANGE_ORDER) != 0 : "dynamic mode cannot drop a range";
         assert configuration.getSqlIntervalMaxIntervalsAfterMerge() > configuration.getSqlIntervalIncrementalMergeThreshold()
                 : "sqlIntervalMaxIntervalsAfterMerge must be greater than sqlIntervalIncrementalMergeThreshold";
         // Skip leading whitespace
@@ -884,6 +927,7 @@ public final class IntervalUtils {
                 expandDateList(
                         timestampDriver,
                         configuration,
+                        checks,
                         effectiveSeq,
                         effectiveSeqLo,
                         expandDateListLim,
@@ -903,7 +947,7 @@ public final class IntervalUtils {
                 }
                 // In static mode, union all bracket-expanded intervals and validate count
                 if (applyEncoded) {
-                    mergeAndValidateIntervals(configuration, out, outSize, position);
+                    mergeAndValidateIntervals(configuration, checks, out, outSize, position);
                 }
             } catch (SqlException e) {
                 out.setPos(outSize);
@@ -958,6 +1002,7 @@ public final class IntervalUtils {
                 expandDateList(
                         timestampDriver,
                         configuration,
+                        checks,
                         wrappedSink,
                         0,
                         wrappedSink.length(),
@@ -977,7 +1022,7 @@ public final class IntervalUtils {
                             semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                 }
                 if (applyEncoded) {
-                    mergeAndValidateIntervals(configuration, out, outSize, position);
+                    mergeAndValidateIntervals(configuration, checks, out, outSize, position);
                 }
             } catch (SqlException e) {
                 out.setPos(outSize);
@@ -1018,7 +1063,7 @@ public final class IntervalUtils {
                 wrappedSink.put(effectiveSeq, suffixSplitPos, effectiveSeqLim);
                 try {
                     expandDateList(
-                            timestampDriver, configuration, wrappedSink, 0, wrappedSink.length(),
+                            timestampDriver, configuration, checks, wrappedSink, 0, wrappedSink.length(),
                             position, out, operation, dateSink, applyEncoded, outSize,
                             dayFilterMask, nowTimestamp
                     );
@@ -1028,7 +1073,7 @@ public final class IntervalUtils {
                                 semicolon >= 0 ? semicolon + 1 : -1, wrappedSink.length(), position);
                     }
                     if (applyEncoded) {
-                        mergeAndValidateIntervals(configuration, out, outSize, position);
+                        mergeAndValidateIntervals(configuration, checks, out, outSize, position);
                     }
                 } catch (SqlException e) {
                     out.setPos(outSize);
@@ -1189,6 +1234,7 @@ public final class IntervalUtils {
             boolean hadTimeListBracket = expandBracketsRecursive(
                     timestampDriver,
                     configuration,
+                    checks,
                     parseSeq,
                     parseLo,
                     parseDateLim,
@@ -1218,7 +1264,7 @@ public final class IntervalUtils {
                 // Check final interval count against limit
                 int intervalCount = (out.size() - outSize) / 2;
                 int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                if (intervalCount > maxIntervalsAfterMerge) {
+                if ((checks & TICK_CHECK_INTERVAL_LIMIT) != 0 && intervalCount > maxIntervalsAfterMerge) {
                     throw SqlException.$(position, "Bracket expansion produces too many intervals (max ")
                             .put(maxIntervalsAfterMerge).put(')');
                 }
@@ -1241,8 +1287,28 @@ public final class IntervalUtils {
             StringSink sink,
             boolean applyEncoded
     ) throws SqlException {
+        parseTickExprAndIntersect(timestampDriver, configuration, seq, out, position, sink, applyEncoded, timestampDriver.getTicks(), TICK_CHECK_ALL);
+    }
+
+    /**
+     * Parses a tick expression that SQL receives when the query runs, in a bind variable or a
+     * value of each row, against the "now" of the query, so that it resolves its date variables the
+     * way a literal does. See {@link #parseTickExpr(TimestampDriver, CairoConfiguration, CharSequence, int, int, int, LongList, short, StringSink, boolean, long, int)}
+     * for the checks.
+     */
+    public static void parseTickExprAndIntersect(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            @Nullable CharSequence seq,
+            LongList out,
+            int position,
+            StringSink sink,
+            boolean applyEncoded,
+            long nowTimestamp,
+            int checks
+    ) throws SqlException {
         if (seq != null) {
-            parseTickExpr(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, applyEncoded);
+            parseTickExpr(timestampDriver, configuration, seq, 0, seq.length(), position, out, IntervalOperation.INTERSECT, sink, applyEncoded, nowTimestamp, checks);
         } else {
             // null expression
             encodeInterval(Numbers.LONG_NULL, Numbers.LONG_NULL, IntervalOperation.INTERSECT, out);
@@ -2281,7 +2347,7 @@ public final class IntervalUtils {
             StringSink expansionSink = tlCompileSink3.get();
             expansionSink.clear();
             expandBracketsRecursive(
-                    timestampDriver, configuration, parseSink,
+                    timestampDriver, configuration, TICK_CHECK_ALL, parseSink,
                     0, parseSink.length(), parseSink.length(),
                     position, tmp, IntervalOperation.INTERSECT,
                     expansionSink, 0, true, 0, null,
@@ -2507,7 +2573,7 @@ public final class IntervalUtils {
                 StringSink expansionSink = tlCompileSink3.get();
                 expansionSink.clear();
                 expandBracketsRecursive(
-                        timestampDriver, configuration, parseSink,
+                        timestampDriver, configuration, TICK_CHECK_ALL, parseSink,
                         0, dateLimInSink, parseSink.length(),
                         position, tmp, IntervalOperation.INTERSECT,
                         expansionSink, 0, true, 0, elementSteps,
@@ -2809,6 +2875,7 @@ public final class IntervalUtils {
     private static boolean expandBracketsRecursive(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
+            int checks,
             CharSequence seq,
             // start of interval in seq (for pad width calculation)
             int pos,        // current position in seq (within date part)
@@ -2886,7 +2953,7 @@ public final class IntervalUtils {
                     && sink.charAt(afterPrefixLen - 1) == 'T'
                     && !hasDatePrecision(sink, 0, afterPrefixLen - 1)) {
                 expandImpreciseDateWithTimeListBracket(
-                        timestampDriver, configuration, seq,
+                        timestampDriver, configuration, checks, seq,
                         bracketStart, bracketEnd, fullLim, errorPos, out, operation,
                         sink, startLen, afterPrefixLen,
                         applyEncoded, outSizeBeforeExpansion, pendingSteps,
@@ -2898,6 +2965,7 @@ public final class IntervalUtils {
             expandTimeListBracket(
                     timestampDriver,
                     configuration,
+                    checks,
                     seq,
                     bracketStart,
                     bracketEnd,
@@ -2995,7 +3063,7 @@ public final class IntervalUtils {
             for (int v = value; v <= rangeEnd; v++) {
                 appendPaddedInt(sink, v, padWidth);
                 if (expandBracketsRecursive(
-                        timestampDriver, configuration, seq, bracketEnd + 1, dateLim, fullLim,
+                        timestampDriver, configuration, checks, seq, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
                         pendingSteps, globalTzSeq, globalTzLo, globalTzHi
                 )) {
@@ -3015,7 +3083,7 @@ public final class IntervalUtils {
                         }
                         // mergeAndValidateIntervals() checks the limit after merging, and skips the union when
                         // the steps left fewer than two intervals
-                        mergeAndValidateIntervals(configuration, out, outSizeBeforeExpansion, errorPos);
+                        mergeAndValidateIntervals(configuration, checks, out, outSizeBeforeExpansion, errorPos);
                         // the intervals expanded from now on still need the steps
                         for (PendingSteps steps = pendingSteps; steps != null; steps = steps.parent) {
                             steps.lo = out.size();
@@ -3056,6 +3124,7 @@ public final class IntervalUtils {
      * The suffix (like T09:30;1h) is appended to each date.
      *
      * @param timestampDriver        timestamp driver for parsing
+     * @param checks                 the checks to run, see {@link #TICK_CHECK_ALL}
      * @param seq                    input string starting with '['
      * @param lo                     position of the opening '['
      * @param lim                    end of string
@@ -3071,6 +3140,7 @@ public final class IntervalUtils {
     private static void expandDateList(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
+            int checks,
             CharSequence seq,
             int lo,
             int lim,
@@ -3182,6 +3252,7 @@ public final class IntervalUtils {
                         expandDateVariableRange(
                                 timestampDriver,
                                 configuration,
+                                checks,
                                 seq,
                                 elementStart,
                                 elementEnd,
@@ -3472,6 +3543,7 @@ public final class IntervalUtils {
                             hadTimeListBracket = expandBracketsRecursive(
                                     timestampDriver,
                                     configuration,
+                                    checks,
                                     sink,
                                     0,
                                     dateLim,
@@ -3531,6 +3603,7 @@ public final class IntervalUtils {
     private static void expandDateVariableRange(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
+            int checks,
             CharSequence seq,
             int elementStart,
             int elementEnd,
@@ -3607,11 +3680,14 @@ public final class IntervalUtils {
         long endDay = timestampDriver.startOfDay(endTimestamp, 0);
 
         // Validate start <= end. A whole-day endpoint starts the range at the start of its day,
-        // and ends it at the end of its day.
+        // and ends it at the end of its day. Without the check, such a range adds no interval.
         final long rangeLo = isStartDay ? startDay : startTimestamp;
         final long rangeHi = isEndDay ? timestampDriver.endOfDay(endDay) : endTimestamp;
         if (rangeLo > rangeHi) {
-            throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
+            if ((checks & TICK_CHECK_RANGE_ORDER) != 0) {
+                throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
+            }
+            return;
         }
 
         if (!isStartDay && !isEndDay) {
@@ -3827,6 +3903,7 @@ public final class IntervalUtils {
                         hadTimeListBracket = expandBracketsRecursive(
                                 timestampDriver,
                                 configuration,
+                                checks,
                                 sink,
                                 0,
                                 dateLim,
@@ -3867,7 +3944,7 @@ public final class IntervalUtils {
                     // Check if we still exceed max limit after merging
                     intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
                     int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                    if (intervalCount > maxIntervalsAfterMerge) {
+                    if ((checks & TICK_CHECK_INTERVAL_LIMIT) != 0 && intervalCount > maxIntervalsAfterMerge) {
                         throw SqlException.$(errorPos, "Date range expansion produces too many intervals (max ")
                                 .put(maxIntervalsAfterMerge).put(')');
                     }
@@ -3934,6 +4011,7 @@ public final class IntervalUtils {
     private static void expandImpreciseDateWithTimeListBracket(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
+            int checks,
             CharSequence seq,
             int bracketStart,
             int bracketEnd,
@@ -3956,7 +4034,7 @@ public final class IntervalUtils {
         long packed = parseMonthLevelDate(sink, 0, dateEnd);
         if (packed < 0) {
             // Not a recognized month-level date — fall back to normal expansion
-            expandTimeListBracket(timestampDriver, configuration, seq,
+            expandTimeListBracket(timestampDriver, configuration, checks, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
                     sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion, pendingSteps,
                     globalTzSeq, globalTzLo, globalTzHi);
@@ -3975,7 +4053,7 @@ public final class IntervalUtils {
             appendPaddedInt(sink, d, 2);
             sink.put('T');
             int newPrefixLen = sink.length();
-            expandTimeListBracket(timestampDriver, configuration, seq,
+            expandTimeListBracket(timestampDriver, configuration, checks, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
                     sink, newPrefixLen, applyEncoded, outSizeBeforeExpansion, pendingSteps,
                     globalTzSeq, globalTzLo, globalTzHi);
@@ -4015,6 +4093,7 @@ public final class IntervalUtils {
     private static void expandTimeListBracket(
             TimestampDriver timestampDriver,
             CairoConfiguration configuration,
+            int checks,
             CharSequence seq,
             int bracketStart,
             int bracketEnd,
@@ -4168,6 +4247,7 @@ public final class IntervalUtils {
                         expandBracketsRecursive(
                                 timestampDriver,
                                 configuration,
+                                checks,
                                 sink,
                                 // intervalStart
                                 0,              // pos
@@ -4570,12 +4650,12 @@ public final class IntervalUtils {
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
      * This operates in-place without allocations.
      */
-    private static void mergeAndValidateIntervals(CairoConfiguration configuration, LongList out, int startIndex, int errorPos) throws SqlException {
+    private static void mergeAndValidateIntervals(CairoConfiguration configuration, int checks, LongList out, int startIndex, int errorPos) throws SqlException {
         if (out.size() > startIndex + 2) {
             unionBracketExpandedIntervals(out, startIndex);
             int intervalCount = (out.size() - startIndex) / 2;
             int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-            if (intervalCount > maxIntervalsAfterMerge) {
+            if ((checks & TICK_CHECK_INTERVAL_LIMIT) != 0 && intervalCount > maxIntervalsAfterMerge) {
                 throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
                         .put(maxIntervalsAfterMerge).put(')');
             }

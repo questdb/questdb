@@ -219,6 +219,13 @@ public class IntrinsicModel implements Mutable {
         this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration);
     }
 
+    /**
+     * @param isTickExprValidated see {@link RuntimeIntervalModelBuilder#of(int, int, CairoConfiguration, boolean)}
+     */
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration, boolean isTickExprValidated) {
+        this.runtimeIntervalBuilder.of(timestampType, partitionBy, configuration, isTickExprValidated);
+    }
+
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
         if (runtimeIntervalBuilder.isEmptySet()) {

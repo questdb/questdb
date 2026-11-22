@@ -94,6 +94,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     // shift loop, which declines the whole pushdown when it sees it.
     private boolean isOffsetOutOfRange;
     private boolean isOwnershipTransferred;
+    // whether a date variable expression is validated as it compiles, see CompiledTickExpression.validate()
+    private boolean isTickExprValidated;
     private int partitionBy;
     private TimestampDriver timestampDriver;
 
@@ -228,12 +230,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        // compileTickExpr() validates the expression at compile time and returns
-        // a CompiledTickExpression that re-evaluates on each query execution.
+        // compileTickExpr() returns a CompiledTickExpression that re-evaluates on each query
+        // execution, after checking the parts of the expression that do not depend on "now".
         if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
-                    timestampDriver, configuration, seq, lo, lim, position);
-            intersectCompiledTickExpr(compiled);
+            intersectCompiledTickExpr(compileTickExpr(seq, lo, lim, position));
             return;
         }
 
@@ -444,9 +444,21 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
+        of(timestampType, partitionBy, configuration, false);
+    }
+
+    /**
+     * @param isTickExprValidated whether to validate a tick expression with a date variable as it
+     *                            compiles, see {@link CompiledTickExpression#validate}: true for the
+     *                            SQL that a user runs, false for the SQL that the engine runs on its
+     *                            own, which the user's statement already validated, and which must
+     *                            not fail on a "now" that has moved on since
+     */
+    public void of(int timestampType, int partitionBy, CairoConfiguration configuration, boolean isTickExprValidated) {
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
         this.partitionBy = partitionBy;
         this.configuration = configuration;
+        this.isTickExprValidated = isTickExprValidated;
     }
 
     public void setBetweenBoundary(long timestamp) {
@@ -605,9 +617,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
-                    timestampDriver, configuration, seq, lo, lim, position);
-            subtractCompiledTickExpr(compiled);
+            subtractCompiledTickExpr(compileTickExpr(seq, lo, lim, position));
             return;
         }
 
@@ -677,9 +687,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
-            CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
-                    timestampDriver, configuration, seq, lo, lim, position);
-            unionCompiledTickExpr(compiled);
+            unionCompiledTickExpr(compileTickExpr(seq, lo, lim, position));
             return;
         }
 
@@ -886,6 +894,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return Numbers.LONG_NULL;
         }
         return result;
+    }
+
+    private CompiledTickExpression compileTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        final CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, seq, lo, lim, position);
+        if (isTickExprValidated) {
+            try {
+                compiled.validate(timestampDriver.getTicks());
+            } catch (Throwable th) {
+                Misc.free(compiled);
+                throw th;
+            }
+        }
+        return compiled;
     }
 
     private Throwable freeAndClearBestEffort() {

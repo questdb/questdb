@@ -44,6 +44,7 @@ import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -110,6 +111,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
+                    if (!sqlExecutionContext.isBackgroundJob()) {
+                        // the SQL that the engine runs on its own was validated when its user compiled it
+                        try {
+                            compiled.validate(driver.getTicks());
+                        } catch (Throwable th) {
+                            Misc.free(compiled);
+                            throw th;
+                        }
+                    }
                     return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
                 }
                 return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
@@ -293,6 +303,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final int rightPosition;
         private final TimestampDriver timestampDriver;
         private final StringSink sink = new StringSink();
+        private int checks = IntervalUtils.TICK_CHECK_ALL;
+        // set in an engine job, where a value that does not parse acts as null instead of failing
+        private boolean isLenient;
+        private long now;
 
         public EqTimestampStrFunction(Function left, Function right, int timestampType, int rightPosition, CairoConfiguration configuration) {
             this.left = left;
@@ -314,8 +328,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             intervals.clear();
             try {
-                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, true);
+                IntervalUtils.parseTickExprAndIntersect(timestampDriver, configuration, timestampAsString, intervals, rightPosition, sink, true, now, checks);
             } catch (SqlException e) {
+                if (isLenient) {
+                    // An engine job has no caller to report to, and WAL apply would suspend the table
+                    // on an UPDATE that the client was told succeeded: the value acts as null, as
+                    // NOT IN, which negates IN, then agrees with a null value too.
+                    return negated;
+                }
                 // A value that does not parse fails the query, the way a literal does. The parser can
                 // point into the value, which is not part of the SQL text.
                 throw CairoException.nonCritical().position(rightPosition).put(e.getFlyweightMessage());
@@ -331,6 +351,16 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         @Override
         public Function getRight() {
             return right;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            BinaryFunction.super.init(symbolTableSource, executionContext);
+            // a value resolves its date variables against the "now" of the query, as a literal does
+            now = executionContext.getNow(timestampDriver.getTimestampType());
+            isLenient = executionContext.isBackgroundJob();
+            // the interval limit still applies, as nothing checked the value before
+            checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
         }
 
         @Override
@@ -484,9 +514,23 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             switch (intervalFunc.getType()) {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
+                    // The value resolves its date variables against the "now" of the query, as a
+                    // literal does. In an engine job, a range that starts after it ends adds no
+                    // interval, and a value that does not parse acts as null rather than failing:
+                    // WAL apply would otherwise suspend the table on an UPDATE that the client was
+                    // told succeeded. The interval limit still applies, as nothing checked the value.
+                    final boolean isLenient = executionContext.isBackgroundJob();
+                    final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+                    final long now = executionContext.getNow(driver.getTimestampType());
+                    final int checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
                     try {
-                        IntervalUtils.parseTickExprAndIntersect(driver, executionContext.getCairoEngine().getConfiguration(), intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, true);
+                        IntervalUtils.parseTickExprAndIntersect(driver, configuration, intervalFunc.getStrA(null), intervals, intervalFuncPos, sink, true, now, checks);
                     } catch (SqlException e) {
+                        if (isLenient) {
+                            intervals.clear();
+                            IntervalUtils.parseTickExprAndIntersect(driver, configuration, null, intervals, intervalFuncPos, sink, true, now, checks);
+                            break;
+                        }
                         // the parser can point into the value, which is not part of the SQL text
                         e.setPosition(intervalFuncPos);
                         throw e;

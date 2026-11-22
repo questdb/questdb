@@ -35,6 +35,7 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -123,6 +124,32 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         assertQuery("test where ts in ($1,$2,$3)")
                 .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
                 .assertBinds(cases);
+    }
+
+    @Test
+    public void testBindVariableDateVariableResolvesAgainstQueryClock() throws Exception {
+        // A date variable in a bind variable resolves against the time the query started, as one in
+        // a literal does, even when the clock moves on to the next day before the query parses the
+        // bind variable. WAL apply relies on it: it fixes that time to the commit time.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T23:30:00.000000Z"));
+            try {
+                // the clock moves on, the query keeps the time it started at
+                currentMicros = MicrosFormatUtils.parseTimestamp("2024-01-03T00:30:00.000000Z");
+                final String day = "24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "$today");
+                // the interval scan and the row filter
+                assertIntrinsicRows("ts IN $1", day);
+                assertIntrinsicRows("ts IN $1 OR ts > '2030-01-01'", day);
+                // and the literal
+                assertIntrinsicRows("ts IN '$today'", day);
+                assertIntrinsicRows("ts IN '$today' OR ts > '2030-01-01'", day);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -647,6 +674,47 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvertedRangeLiteralCompilesAndFailsWhenQueryRuns() throws Exception {
+        // Whether a range starts after it ends depends on the time the query runs, so it fails then,
+        // and not when the query compiles: a statement prepared at 03:00, when the range runs from
+        // 09:30 to 03:00, runs at 12:00. With the JIT on, compiling the residual filter of a function
+        // of the designated timestamp opens its interval scan, which evaluates the range as the query
+        // compiles, so this checks the Java filter.
+        final int jitMode = sqlExecutionContext.getJitMode();
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                for (String condition : new String[]{
+                        "ts IN '$today + 570m..$now'",
+                        "ts IN '$today + 570m..$now' OR ts = 0",
+                        "dateadd('h', 1, ts) IN '$today + 570m..$now'"
+                }) {
+                    final String sql = "SELECT count(), min(ts), max(ts) FROM t WHERE " + condition;
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'$today"), "Invalid date range: start is after end");
+                    try (RecordCursorFactory factory = select(sql)) {
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+                        assertFactory(factory)
+                                .withContext(sqlExecutionContext)
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns(condition.startsWith("dateadd")
+                                        // 08:30 to 11:00, an hour earlier
+                                        ? "count\tmin\tmax\n3\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z\n"
+                                        : "count\tmin\tmax\n3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z\n"
+                                );
+                    }
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testListOfTimestamps() throws Exception {
         assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)")
                 .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
@@ -672,6 +740,24 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
         assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', true)")
                 .fails(49, "cannot compare TIMESTAMP with type BOOLEAN");
+    }
+
+    @Test
+    public void testMalformedLiteralFailsWhenQueryCompiles() throws Exception {
+        // SQL parses a literal that the compiled form cannot represent every time the query runs, and
+        // once as the query compiles, so a malformed one fails before a prepared statement or a WAL
+        // UPDATE is acknowledged, as it did before such literals were parsed at every execution
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                assertLiteralFailsWhenQueryCompiles("[$today,garbage]T[09:00,10:00]", "Invalid date: garbage");
+                assertLiteralFailsWhenQueryCompiles("$todayT[09,14]:[00,99]", "Invalid date: 2024-01-02T09:99");
+                assertLiteralFailsWhenQueryCompiles("[$today]T[09,14]:[00,99]", "Invalid date: 2024-01-02T09:99");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -738,6 +824,48 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOffsetTimestampTickExprLiteral() throws Exception {
+        // The optimiser pushes a static tick expression on a dateadd() of the designated timestamp
+        // below the dateadd() as an offset of the interval scan, and keeps one with a date variable
+        // in the row filter, which SQL validates as it compiles. Both select the same rows.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // the rows from 01:00 on 2024-01-02 to midnight, an hour later
+                final String expected = "count\tmin\tmax\n24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z\n";
+                for (String tickExpr : new String[]{"2024-01-02", "$today"}) {
+                    assertQuery("SELECT count(), min(tt), max(tt) FROM (SELECT dateadd('h', -1, ts) tt FROM t) WHERE tt IN '" + tickExpr + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns(expected);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testOverIntervalLimitLiteralFailsWhenQueryCompiles() throws Exception {
+        // SQL checks the interval limit once as the query compiles, against the time it compiles at,
+        // as a WAL apply does not, and again every time the query runs
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // the compiled form
+                assertLiteralFailsWhenQueryCompiles("[$today..$today + 2000d]T09:00", "Date range expansion produces too many intervals (max 1024)");
+                // the form that SQL parses on every evaluation
+                assertLiteralFailsWhenQueryCompiles("[$today..$today + 600d, 2024-01-01]T[09:00,10:00]", "produces too many intervals (max 1024)");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testPointInTimeRangeWithMalformedDurationFailsAsLiteralAndAsBindVariable() throws Exception {
         // a range between points in time ignores the duration, which still has to be well-formed,
         // and the day filter goes before it: the bind variable selected the range
@@ -749,6 +877,28 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // a point in time ignores the time part, which still has to be well-formed: the bind variable
         // selected the row at $now
         assertMalformedTickExprFails("[$now]T[25:00]", "25:00");
+    }
+
+    @Test
+    public void testRowValueDateVariableResolvesAgainstQueryClock() throws Exception {
+        // a date variable in a value of a row resolves against the time the query started, as one in
+        // a literal does, even when the clock moves on to the next day while the query runs
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts, '$today' s, '$today'::varchar vc
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T23:30:00.000000Z"));
+            try {
+                currentMicros = MicrosFormatUtils.parseTimestamp("2024-01-03T00:30:00.000000Z");
+                assertIntrinsicRows("ts IN s", "24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
+                assertIntrinsicRows("ts IN vc", "24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     @Test
@@ -1136,6 +1286,30 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
      * than select rows on one of them. The table has a row every hour from 2024-01-01 to 2024-01-04,
      * and "now" is 2024-01-02T10:00Z.
      */
+    /**
+     * Asserts that a query with the tick expression fails when it compiles, before it runs, at the
+     * position of the expression: in the interval scan, under NOT IN, in the row filter, on another
+     * timestamp column, through a function of the designated timestamp, and below a dateadd() of it.
+     */
+    private void assertLiteralFailsWhenQueryCompiles(String tickExpr, String expectedError) {
+        for (String sql : new String[]{
+                "SELECT count() FROM t WHERE ts IN '" + tickExpr + "'",
+                "SELECT count() FROM t WHERE ts NOT IN '" + tickExpr + "'",
+                "SELECT count() FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0",
+                "SELECT count() FROM t WHERE ts2 IN '" + tickExpr + "'",
+                "SELECT count() FROM t WHERE dateadd('h', 1, ts) IN '" + tickExpr + "'",
+                // the optimiser pushes the condition below the dateadd() as an offset of the scan
+                "SELECT count() FROM (SELECT dateadd('h', -1, ts) tt FROM t) WHERE tt IN '" + tickExpr + "'"
+        }) {
+            try (RecordCursorFactory ignore = select(sql)) {
+                Assert.fail("compiled: " + sql);
+            } catch (SqlException e) {
+                TestUtils.assertContains(sql, e.getFlyweightMessage(), expectedError);
+                Assert.assertEquals(sql, sql.indexOf("'" + tickExpr), e.getPosition());
+            }
+        }
+    }
+
     private void assertMalformedTickExprFails(String tickExpr, String expectedError) throws Exception {
         assertMemoryLeak(() -> {
             createHourlyTable();
