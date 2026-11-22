@@ -24,10 +24,66 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MetadataCacheWriter;
 import org.junit.Test;
 
 public class ViewsFunctionTest extends AbstractViewTest {
+
+    @Test
+    public void testMaterializedViewsExpireRowsBeforeStartupHydration() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) " +
+                    "EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            drainWalAndMatViewQueues();
+
+            // Simulate the startup window: the registry and materialized-view graph are populated, but the
+            // asynchronous metadata-cache hydrator has not run yet.
+            try (MetadataCacheWriter w = engine.getMetadataCache().writeLock()) {
+                w.clearCache();
+            }
+
+            assertQuery("SELECT expire_clause, expire_cleanup_every FROM materialized_views() WHERE view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            expire_clause\texpire_cleanup_every
+                            v < 2.0\t30m
+                            """);
+        });
+    }
+
+    @Test
+    public void testMaterializedViewsExpireRowsColumns() throws Exception {
+        // Mat views are gated behind dev mode, exactly as MatViewTest enables them.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            drainWalAndMatViewQueues();
+
+            // Mat view with a row-expiry policy: the predicate and cleanup cadence must be surfaced.
+            execute("create materialized view mv as (select * from base) EXPIRE ROWS WHEN v < 2.0 CLEANUP EVERY 30m");
+            // Mat view with no policy: both columns must be null.
+            execute("create materialized view mv_no_policy as (select * from base)");
+            drainWalAndMatViewQueues();
+
+            // A clock-free scalar predicate is monotonic, so the cleanup job frees disk for this policy.
+            assertQuery("select expire_clause, expire_cleanup_every, expire_enforcement from materialized_views() where view_name = 'mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\texpire_cleanup_every\texpire_enforcement\n" +
+                            "v < 2.0\t30m\tFILTER_AND_RECLAIM\n");
+
+            assertQuery("select expire_clause, expire_cleanup_every, expire_enforcement from materialized_views() where view_name = 'mv_no_policy'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("expire_clause\texpire_cleanup_every\texpire_enforcement\n" +
+                            "\t\t\n");
+        });
+    }
 
     @Test
     public void testShowColumnsView() throws Exception {
@@ -149,6 +205,11 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
     public void testViewsConsistentWithMatViewsAndTablesCommands() throws Exception {
+        // deterministic: adaptive populates durableEpochSeqTxn/localDurableSeqTxn/lastEpochTs in every
+        // wal_tables() row, and lastEpochTs is wall-clock. This test asserts that views(), tables() and
+        // wal_tables() agree with each other, which is mode-independent. Same treatment as
+        // WalTableSqlTest#testEmptyTruncate.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);
 
@@ -240,13 +301,13 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     """
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            table1\tfalse\t9\t0\t9\t\t\t0
-                            table2\tfalse\t9\t0\t9\t\t\t0
-                            view1\tfalse\t0\t0\t0\t\t\t0
-                            view2\tfalse\t0\t0\t0\t\t\t0
-                            view3\tfalse\t1\t0\t1\t\t\t0
-                            view4\tfalse\t1\t0\t1\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            table1\tfalse\t9\t0\t9\t\t\t0\t0\t0\t-1\t
+                            table2\tfalse\t9\t0\t9\t\t\t0\t0\t0\t-1\t
+                            view1\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            view2\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            view3\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
+                            view4\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
                             """,
                     "wal_tables() order by 1",
                     null,

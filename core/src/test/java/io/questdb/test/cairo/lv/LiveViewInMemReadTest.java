@@ -499,12 +499,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             buildSymbolFlushedPlusLead();
             sqlExecutionContext.changePageFrameSizes(2, 2);
             try {
-                // The seam skips every disk frame here (leadStart == the disk scan's size),
-                // so the whole 5-row slot is served from RAM; calculatePageFrameRowLimit
-                // then rounds its 1-row trailing frame away, making the split [0, 3) +
-                // [3, 5) whatever the shared worker count is. Assert it: the filters below
-                // pass unchanged over an un-split slot, so without this the arm silently
-                // stops testing anything the moment the split stops happening.
+                // The seam skips every disk frame, so RAM serves all five slot rows.
+                // The two-row maximum requires [0, 2), [2, 4), [4, 5), even after
+                // trailing-frame rounding. Assert the split because the filters below
+                // also pass when the cursor emits a single frame.
                 try (
                         RecordCursorFactory factory = select("SELECT * FROM lv");
                         PageFrameCursor cursor = unwrapLvFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
@@ -516,10 +514,10 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
                         ranges.add(frame.getPartitionLo());
                         ranges.add(frame.getPartitionHi());
                     }
-                    Assert.assertEquals("slot frame ranges", "[0,3,3,5]", ranges.toString());
+                    Assert.assertEquals("slot frame ranges", "[0,2,2,4,4,5]", ranges.toString());
                 }
 
-                // rn=2 sits in the first slot frame and rn=5 in the second, so a filter
+                // rn=2 sits in the first slot frame and rn=5 in the third, so a filter
                 // matching both proves a worker read past the one frame the whole-slot case
                 // handed it. rn=5 exists only in the tier.
                 assertLvQuery("SELECT * FROM lv WHERE g = 'bb'",
@@ -2694,6 +2692,55 @@ public class LiveViewInMemReadTest extends AbstractLiveViewTest {
             Assert.assertEquals("the two lead rows plus the retained tie row", 3, slot.rowCount());
             Assert.assertEquals("only the batch is un-flushed", 2, slot.leadRowCount());
             assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testNestedLatestByIncludesUnflushedLead() throws Exception {
+        assertMemoryLeak(() -> {
+            buildMixedFlushedPlusLead();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(2, instance.getLeadRowCount());
+            try (TableReader reader = engine.getReader(instance.getLiveViewToken())) {
+                Assert.assertEquals(3, reader.size());
+            }
+
+            final String sql = "SELECT g, x FROM (SELECT * FROM lv) LATEST ON ts PARTITION BY g ORDER BY g";
+            final String expected = """
+                    g\tx
+                    aa\t3
+                    bb\t5
+                    cc\t4
+                    """;
+            assertQuery(sql).expectSize().noLeakCheck().returns(expected);
+
+            // Advancing the test clock flushes the lead; the same query must still return the same rows.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(1_000_000L);
+                drainJob(job);
+            }
+            drainWalQueue();
+            Assert.assertEquals(0, instance.getLeadRowCount());
+            assertQuery(sql).expectSize().noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testNestedLatestByIncludesUnflushedNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            buildTwoSymbolFlushedPlusNullLead();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertEquals(2, instance.getLeadRowCount());
+            assertQuery("SELECT g, rn FROM (SELECT * FROM lv) LATEST ON ts PARTITION BY g ORDER BY g")
+                    .expectSize().noLeakCheck().returns("""
+                            g\trn
+                            \t4
+                            aa\t3
+                            bb\t2
+                            cc\t5
+                            """);
         });
     }
 

@@ -36,11 +36,13 @@ import io.questdb.test.griffin.HashJoinPayloadLayout;
 public final class FuzzConfig {
     public static final String DIFF_FUSED_PROP = "questdb.fuzz.diff.fused";
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
+    public static final String DIFF_MAP_PAGE_PROP = "questdb.fuzz.diff.mappage";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
     public static final String FAULT_PCT_PROP = "questdb.fuzz.fault.pct";
+    public static final String GROUPING_SETS_PROP = "questdb.fuzz.groupingsets";
     public static final String HASH_JOIN_BUILD_PROP = "questdb.fuzz.hashjoin.build";
     public static final String HASH_JOIN_PAYLOAD_PROP = "questdb.fuzz.hashjoin.payload";
     public static final String HASH_JOIN_PROP = "questdb.fuzz.hashjoin";
@@ -50,8 +52,9 @@ public final class FuzzConfig {
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
+    private static final int CONCURRENT_NUM_QUERIES = 50;
     // Queries per run when nothing overrides it, i.e. what CI executes. Sized so that every query
-    // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzTest) and the
+    // shape the run can draw clears MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (QueryFuzzDriver) and the
     // "this generator has stopped compiling" guard actually holds it. Measured queries per shape,
     // on one seed that drew a posting-indexed SYMBOL:
     //
@@ -69,14 +72,20 @@ public final class FuzzConfig {
     // run's random schema draw put a posting-indexed SYMBOL on some table, which
     // FuzzTableFactory.assignIndexes decides per SYMBOL column. On a run that drew none - 7 of the
     // 40 measured - no budget lifts POSTING off zero and it reports 0/0 whatever the budget.
-    // QueryFuzzTest checks that precondition before it asserts a shape generated anything, so those
+    // QueryFuzzDriver checks that precondition before it asserts a shape generated anything, so those
     // runs stay green instead of failing a working generator.
     private static final int DEFAULT_NUM_QUERIES = 1_000;
+    // A SAMPLE BY FILL over a join, keyed on a column from each side, emits one row per pair
+    // of joined rows and bucket. On forConcurrency's tables that reaches tens of millions of
+    // rows, more than the sort budget and QueryRunner's text copies of the result can take.
+    private static final long MAX_JOIN_FILL_ROWS = 3_000_000;
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
+    private final boolean isDiffMapPageEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isFaultInjectionEnabled;
+    private final boolean isGroupingSetsEnabled;
     private final boolean isHashJoinEnabled;
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
@@ -98,22 +107,30 @@ public final class FuzzConfig {
     private final String tsStart;
 
     public FuzzConfig(Rnd rnd) {
+        this(rnd, DEFAULT_NUM_QUERIES);
+    }
+
+    public FuzzConfig(Rnd rnd, int defaultNumQueries) {
+        // 30 minutes: 60..150 rows cover 30..75 hours, so 2-4 DAY partitions.
+        this(rnd, 60, 90, 30L * 60L * 1_000_000L, defaultNumQueries);
+    }
+
+    private FuzzConfig(Rnd rnd, int minRowsPerTable, int rowsPerTableRange, long stepMicros, int defaultNumQueries) {
         // At least two: QueryGenerator gates every join shape (TEMPORAL, HORIZON, WINDOW JOIN) on
         // tables.size() >= 2, so a single-table run generated none of them at all - whatever the
         // query budget - and one run in three drew exactly one table. No shape needs a lone table
         // (the others just pick one at random), so the floor costs nothing and keeps the join
         // generators in every run.
         this.numTables = 2 + rnd.nextInt(2);
-        this.rowsPerTable = 60 + rnd.nextInt(90);
+        this.rowsPerTable = minRowsPerTable + rnd.nextInt(rowsPerTableRange);
         // Wide enough that one table takes a real slice off the shuffled type
         // deck FuzzTableFactory deals from, so a run covers a good part of the
         // type registry even when it builds a single table.
         this.minColumnsPerTable = 5;
         this.maxColumnsPerTable = 12;
-        // 30 minutes: rowsPerTable * 30min covers 30..75 hours, so 2-4 DAY partitions.
-        this.stepMicros = 30L * 60L * 1_000_000L;
+        this.stepMicros = stepMicros;
         this.tsStart = "2024-01-01";
-        this.numQueries = Integer.getInteger(QUERIES_PROP, DEFAULT_NUM_QUERIES);
+        this.numQueries = Integer.getInteger(QUERIES_PROP, defaultNumQueries);
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
@@ -121,6 +138,10 @@ public final class FuzzConfig {
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.fused=false to drop
         // the comparison and keep the shape.
         this.isDiffFusedEnabled = Boolean.parseBoolean(System.getProperty(DIFF_FUSED_PROP, "true"));
+        // Reruns every differential query with a map page of a few hundred bytes at most and
+        // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.mappage=false
+        // to drop the comparison.
+        this.isDiffMapPageEnabled = Boolean.parseBoolean(System.getProperty(DIFF_MAP_PAGE_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
@@ -150,6 +171,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.hashjoin=false to drop them, for example while investigating a failure,
         // and give the band back to GROUP BY.
         this.isHashJoinEnabled = Boolean.parseBoolean(System.getProperty(HASH_JOIN_PROP, "true"));
+        // ROLLUP, CUBE and GROUPING SETS shapes also carve a band out of the GROUP BY range (see
+        // QueryGenerator), and QueryRunner checks each against its UNION ALL rewrite. On by
+        // default; pass -Dquestdb.fuzz.groupingsets=false to drop them.
+        this.isGroupingSetsEnabled = Boolean.parseBoolean(System.getProperty(GROUPING_SETS_PROP, "true"));
         // The fuzz tables share one row count, so the default rule copies a build's payload unless
         // a probe interval leaves the probe under half the build. Pass
         // -Dquestdb.fuzz.hashjoin.payload=row_ids or =copied to force every fused query onto one
@@ -169,6 +194,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
         // SIMPLE.
         this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));
+    }
+
+    public static FuzzConfig forConcurrency(Rnd rnd) {
+        return new FuzzConfig(rnd, 600, 1_200, 3L * 60L * 1_000_000L, CONCURRENT_NUM_QUERIES);
     }
 
     public String getDumpPath() {
@@ -223,6 +252,10 @@ public final class FuzzConfig {
         return isDiffJitEnabled;
     }
 
+    public boolean isDiffMapPageEnabled() {
+        return isDiffMapPageEnabled;
+    }
+
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
     }
@@ -231,12 +264,29 @@ public final class FuzzConfig {
         return isFaultInjectionEnabled;
     }
 
+    public boolean isGroupingSetsEnabled() {
+        return isGroupingSetsEnabled;
+    }
+
     public boolean isHashJoinEnabled() {
         return isHashJoinEnabled;
     }
 
     public boolean isHorizonJoinEnabled() {
         return isHorizonJoinEnabled;
+    }
+
+    /**
+     * Whether a SAMPLE BY FILL at this interval over a join of two of this config's tables,
+     * keyed on a column from each side, can emit more than {@link #MAX_JOIN_FILL_ROWS} rows.
+     * The join keys sym and vk draw 8 values plus NULL with equal probability, and NULL keys
+     * match, so about a ninth of all row pairs join; an eighth leaves margin.
+     */
+    public boolean isJoinFillTooLarge(long intervalMicros) {
+        final long joinedRows = (long) rowsPerTable * rowsPerTable / 8;
+        // +2 for the partial buckets at both ends
+        final long buckets = (long) rowsPerTable * stepMicros / intervalMicros + 2;
+        return joinedRows * buckets > MAX_JOIN_FILL_ROWS;
     }
 
     public boolean isLatestOnEnabled() {

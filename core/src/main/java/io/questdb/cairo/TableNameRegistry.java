@@ -171,6 +171,21 @@ public interface TableNameRegistry extends Closeable {
     void registerName(TableToken tableToken);
 
     /**
+     * Replaces {@code oldToken} with a new token for the same name that points at
+     * {@code newDirName}/{@code newTableId}, persisting the drop and the registration in one durable step
+     * (see {@link GrowOnlyTableNameRegistryStore#logSwapTable}), so a crash cannot leave the old table dropped
+     * and the new one unregistered. REBASE WAL uses it: the old and new tables share a name but live in
+     * different directories. Reserves the name for the swap, like {@link #lockTableName}/{@link #registerName}.
+     * <p>
+     * {@code type} carries the table kind across the swap; pass {@code oldToken.getType()}. A swap repoints a
+     * table at a new directory and never changes what the table is.
+     *
+     * @return the new live token, or {@code null} if the name is no longer bound to {@code oldToken}
+     * (lost a concurrent race); the caller must abort the swap.
+     */
+    TableToken swapTable(TableToken oldToken, String tableName, String newDirName, int newTableId, TableToken.Type type, boolean isWal);
+
+    /**
      * Reloads table name registry from storage.
      */
     default void reload() {

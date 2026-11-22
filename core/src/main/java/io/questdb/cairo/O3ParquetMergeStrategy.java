@@ -140,8 +140,9 @@ public class O3ParquetMergeStrategy {
      *                               timestamp that the O3 batch also lands on are merged as a single
      *                               unit, so a dedup key at the shared timestamp is compared against
      *                               every existing copy. Pass false for non-deduplicating commits:
-     *                               the tie is then harmless and coalescing (which forces a
-     *                               full-partition rewrite) is unnecessary.
+     *                               the O3 rows at the shared timestamp merge into the last row group
+     *                               that holds it, after every stored row of that timestamp, and
+     *                               coalescing (which forces a full-partition rewrite) is unnecessary.
      * @return the number of actions written into actionsBuf
      */
     public static int computeMergeActions(
@@ -206,11 +207,15 @@ public class O3ParquetMergeStrategy {
                     o3Cursor = gapHi + 1;
                 }
             } else if (o3Ts <= rgMax) {
-                // O3 data overlaps with this row group
-                // Find all O3 data that overlaps (timestamps <= rgMax)
+                // O3 data overlaps with this row group. When the next row group starts at this
+                // row group's max, the O3 rows at that timestamp go to the next row group: an O3
+                // row lands after every stored row of its timestamp, as in a native partition, and
+                // the last row group that holds the timestamp takes it.
+                final boolean isMaxTiedWithNext = currentRg + 1 < rowGroupCount
+                        && getRowGroupMin(rowGroupBounds, currentRg + 1) == rgMax;
                 long overlapHi = Vect.boundedBinarySearchIndexT(
                         sortedTimestampsAddr,
-                        rgMax,
+                        isMaxTiedWithNext ? rgMax - 1 : rgMax,
                         o3Cursor,
                         srcOooHi,
                         Vect.BIN_SEARCH_SCAN_DOWN
@@ -285,8 +290,10 @@ public class O3ParquetMergeStrategy {
             // is only needed when O3 actually has a row at the shared timestamp;
             // otherwise the tie is harmless and the groups stay independent. It is
             // also skipped entirely for non-deduplicating commits (coalesceBoundaryTies
-            // is false): without dedup the tie causes no incorrectness, so the groups
-            // stay independent and avoid the rewrite a coalesced run would force.
+            // is false): the assignment above already gives the O3 rows at the shared
+            // timestamp to the last group of the run, after every stored row of that
+            // timestamp, so the groups stay independent and avoid the rewrite a
+            // coalesced run would force.
             int runEnd = rg;
             while (coalesceBoundaryTies
                     && runEnd + 1 < rowGroupCount

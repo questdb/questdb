@@ -240,6 +240,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
+    private final boolean commitModeAdaptiveDowngrade;
+    private final long adaptiveEpochIntervalMs;
+    private final long adaptiveEpochMaxRows;
+    private final long adaptiveCommitGroupWindowUs;
+    private final boolean adaptiveEpochFlushOnClose;
+    private final boolean adaptiveEpochColumnSyncBatched;
+    private final boolean walCommitWritebackDrain;
     private final String confRoot;
     private final boolean configReloadEnabled;
     private final boolean copierChunkedEnabled;
@@ -410,6 +417,9 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final WorkerPoolMode matViewRefreshWorkerPoolMode;
     private final long matViewRefreshWorkerSleepThreshold;
     private final long matViewRefreshWorkerYieldThreshold;
+    private final boolean matViewRowExpiryCleanupEnabled;
+    private final int matViewRowExpiryCleanupMaxCachedPartitions;
+    private final double matViewRowExpiryCleanupMinExpiredFraction;
     private final long matViewRowsPerQueryEstimate;
     private final int maxFileNameLength;
     private final long maxHttpQueryResponseRowLimit;
@@ -528,6 +538,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
+    private final long qwpMinIdleMsBeforeWriterRelease;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -613,6 +624,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlMapMaxPages;
     private final int sqlMapMaxResizes;
     private final int sqlMaxArrayElementCount;
+    private final int sqlMaxGroupingSets;
     private final int sqlMaxNegativeLimit;
     private final int sqlMaxSymbolNotEqualsCount;
     private final int sqlModelPoolCapacity;
@@ -1541,6 +1553,9 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.publicDirectory = new File(installRoot, publicDirectory).getAbsolutePath();
             }
 
+            // 0 keeps the V1 sequencer log. V2 splits the log across a header file and part files, so a
+            // crash can leave the header naming txns whose part never landed, and the apply path then
+            // suspends the table. V1 is a single file and cannot do that.
             this.defaultSeqPartTxnCount = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
             this.httpNetConnectionHint = getBoolean(properties, env, PropertyKey.HTTP_NET_CONNECTION_HINT, false);
             // deprecated
@@ -1732,6 +1747,15 @@ public class PropServerConfiguration implements ServerConfiguration {
 
             // reuse wal-apply defaults for mat view workers
             this.matViewEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ENABLED, true);
+            this.matViewRowExpiryCleanupEnabled = getBoolean(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_ENABLED, true);
+            this.matViewRowExpiryCleanupMaxCachedPartitions = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS, 16_384);
+            if (matViewRowExpiryCleanupMaxCachedPartitions < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MAX_CACHED_PARTITIONS.getPropertyPath() + " must not be negative");
+            }
+            this.matViewRowExpiryCleanupMinExpiredFraction = getDouble(properties, env, PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION, "0.5");
+            if (!(matViewRowExpiryCleanupMinExpiredFraction >= 0 && matViewRowExpiryCleanupMinExpiredFraction <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_MAT_VIEW_ROW_EXPIRY_CLEANUP_MIN_EXPIRED_FRACTION.getPropertyPath() + " must be between 0 and 1");
+            }
             this.matViewMaxRefreshRetries = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_MAX_REFRESH_RETRIES, 10);
             this.matViewRefreshBusyRetryTimeout = getMillis(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_TIMEOUT, 1000);
             this.matViewRefreshBusyRetryLimit = getInt(properties, env, PropertyKey.CAIRO_MAT_VIEW_REFRESH_BUSY_RETRY_LIMIT, 10);
@@ -1768,7 +1792,27 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE);
+            // Enterprise overrides this default when replication is configured, but an explicit cairo.commit.mode wins over both.
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
+            this.commitModeAdaptiveDowngrade = getBoolean(properties, env, PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE, false);
+            if (commitModeAdaptiveDowngrade && commitMode != CommitMode.NOSYNC) {
+                // The downgrade start unlocks every table for an older release, so it runs NOSYNC only, the
+                // mode that leaves nothing else behind: an adaptive table keeps a save point that release
+                // ignores, and only a start under another mode takes the table out of adaptive.
+                throw new ServerConfigurationException(
+                        PropertyKey.CAIRO_COMMIT_MODE_ADAPTIVE_DOWNGRADE.getPropertyPath() + "=true requires "
+                                + PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=nosync [mode="
+                                + CommitMode.toString(commitMode) + ']'
+                );
+            }
+            this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
+            this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
+            // 0 fdatasyncs every commit before it returns. A negative value clamps to 0, so a
+            // misconfiguration never weakens durability.
+            this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
+            this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
+            this.adaptiveEpochColumnSyncBatched = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
+            this.walCommitWritebackDrain = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, true);
             this.createAsSelectRetryCount = getInt(properties, env, PropertyKey.CAIRO_CREATE_AS_SELECT_RETRY_COUNT, 5);
             this.defaultSymbolCacheFlag = getBoolean(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CACHE_FLAG, true);
             this.defaultSymbolCapacity = getInt(properties, env, PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 256);
@@ -1823,6 +1867,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlViewLexerPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_VIEW_LEXER_POOL_CAPACITY, 8);
             this.sqlExplainModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_SQL_EXPLAIN_MODEL_POOL_CAPACITY, 32);
             this.sqlModelPoolCapacity = getInt(properties, env, PropertyKey.CAIRO_MODEL_POOL_CAPACITY, 1024);
+            this.sqlMaxGroupingSets = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_GROUPING_SETS, 4096);
             this.sqlMaxNegativeLimit = getInt(properties, env, PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 10_000);
             // Heap-backed page sizes (sort.key, sort.light.value, window.*) must hold one fixed-size
             // block, so validatePageSizeAtLeast rejects a sub-block value at startup rather than let a
@@ -2217,7 +2262,9 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.lineUdpOwnThreadAffinity = getInt(properties, env, PropertyKey.LINE_UDP_OWN_THREAD_AFFINITY, -1);
             this.lineUdpOwnThread = getBoolean(properties, env, PropertyKey.LINE_UDP_OWN_THREAD, false);
             this.lineUdpUnicast = getBoolean(properties, env, PropertyKey.LINE_UDP_UNICAST, false);
-            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE);
+            // Line UDP keeps its own default, nosync: the adaptive durable epoch covers WAL apply, not the
+            // line-UDP commit path.
+            this.lineUdpCommitMode = getCommitMode(properties, env, PropertyKey.LINE_UDP_COMMIT_MODE, "nosync");
             this.lineUdpTimestampUnit = getLineTimestampUnit(properties, env, PropertyKey.LINE_UDP_TIMESTAMP);
             String defaultUdpPartitionByProperty = getString(properties, env, PropertyKey.LINE_DEFAULT_PARTITION_BY, "DAY");
             this.lineUdpDefaultPartitionBy = PartitionBy.fromString(defaultUdpPartitionByProperty);
@@ -2282,6 +2329,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
+            this.qwpMinIdleMsBeforeWriterRelease = getMillis(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE,
+                    QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE
+            );
             long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
             if (qwpUdpCommitInterval < 1L) {
                 throw new ServerConfigurationException(
@@ -3075,24 +3128,25 @@ public class PropServerConfiguration implements ServerConfiguration {
         return Long.MAX_VALUE;
     }
 
-    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key) {
-        final String commitMode = getString(properties, env, key, "nosync");
+    private int getCommitMode(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, String defaultMode) throws ServerConfigurationException {
+        final String commitMode = getString(properties, env, key, defaultMode);
 
         // must not be null because we provided non-null default value
         assert commitMode != null;
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "nosync")) {
-            return CommitMode.NOSYNC;
+        final int mode = CommitMode.fromString(commitMode);
+        if (mode != CommitMode.UNKNOWN) {
+            return mode;
         }
 
-        if (Chars.equalsLowerCaseAscii(commitMode, "async")) {
-            return CommitMode.ASYNC;
+        if (key == PropertyKey.CAIRO_COMMIT_MODE) {
+            // The database-wide mode is a durability contract. A typo such as "syncc" must not silently fall
+            // back to NOSYNC.
+            throw new ServerConfigurationException("invalid configuration value [key="
+                    + key.getPropertyPath() + ", value=" + commitMode
+                    + ", expected=nosync|async|sync|adaptive]");
         }
-
-        if (Chars.equalsLowerCaseAscii(commitMode, "sync")) {
-            return CommitMode.SYNC;
-        }
-
+        // line.udp.commit.mode falls back to NOSYNC on an unrecognized value.
         return CommitMode.NOSYNC;
     }
 
@@ -3255,7 +3309,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             @Nullable Map<String, String> env,
             ConfigPropertyKey key,
             boolean isFiberHostByDefault
-    ) {
+    ) throws ServerConfigurationException {
         return getBoolean(properties, env, key, isFiberHostByDefault)
                 ? WorkerPoolMode.FIBER_HOST
                 : WorkerPoolMode.LEGACY;
@@ -3374,8 +3428,14 @@ public class PropServerConfiguration implements ServerConfiguration {
         return result;
     }
 
-    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) {
-        return Boolean.parseBoolean(getString(properties, env, key, Boolean.toString(defaultValue)));
+    protected boolean getBoolean(Properties properties, @Nullable Map<String, String> env, ConfigPropertyKey key, boolean defaultValue) throws ServerConfigurationException {
+        final String value = getString(properties, env, key, Boolean.toString(defaultValue));
+        // Strict validation rejects a value other than true or false; otherwise it reads as false.
+        if (!"true".equalsIgnoreCase(value) && !"false".equalsIgnoreCase(value)
+                && Boolean.parseBoolean(getString(properties, env, PropertyKey.CONFIG_VALIDATION_STRICT, "false"))) {
+            throw ServerConfigurationException.forInvalidKey(key.getPropertyPath(), value + ", expected true or false");
+        }
+        return Boolean.parseBoolean(value);
     }
 
     String getCanonicalPath(String path) throws ServerConfigurationException {
@@ -4433,6 +4493,26 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public long getAdaptiveEpochIntervalMs() {
+            return adaptiveEpochIntervalMs;
+        }
+
+        @Override
+        public long getAdaptiveEpochMaxRows() {
+            return adaptiveEpochMaxRows;
+        }
+
+        @Override
+        public long getAdaptiveCommitGroupWindowUs() {
+            return adaptiveCommitGroupWindowUs;
+        }
+
+        @Override
+        public boolean isAdaptiveEpochFlushOnClose() {
+            return adaptiveEpochFlushOnClose;
+        }
+
+        @Override
         public int getCompileViewModelPoolCapacity() {
             return sqlCompileViewModelPoolCapacity;
         }
@@ -4873,6 +4953,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getMatViewRefreshMemoryLimitBytes() {
             return matViewRefreshMemoryLimitBytes;
+        }
+
+        @Override
+        public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+            return matViewRowExpiryCleanupMaxCachedPartitions;
+        }
+
+        @Override
+        public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+            return matViewRowExpiryCleanupMinExpiredFraction;
         }
 
         @Override
@@ -5631,6 +5721,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlMaxGroupingSets() {
+            return sqlMaxGroupingSets;
+        }
+
+        @Override
         public int getSqlMaxNegativeLimit() {
             return sqlMaxNegativeLimit;
         }
@@ -6102,8 +6197,18 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public boolean isAdaptiveEpochColumnSyncBatched() {
+            return adaptiveEpochColumnSyncBatched;
+        }
+
+        @Override
         public boolean isAllPartitionOperationsAllowed() {
             return sqlAllPartitionOperationsAllowed;
+        }
+
+        @Override
+        public boolean isWalCommitWritebackDrainEnabled() {
+            return walCommitWritebackDrain;
         }
 
         @Override
@@ -6124,6 +6229,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isColumnAliasExpressionEnabled() {
             return cairoSqlColumnAliasExpressionEnabled;
+        }
+
+        @Override
+        public boolean isCommitModeAdaptiveDowngrade() {
+            return commitModeAdaptiveDowngrade;
         }
 
         @Override
@@ -6179,6 +6289,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public boolean isMatViewRefreshMissingWalFilesFatal() {
             return matViewRefreshMissingWalFilesFatal;
+        }
+
+        @Override
+        public boolean isMatViewRowExpiryCleanupEnabled() {
+            return matViewRowExpiryCleanupEnabled;
         }
 
         @Override
@@ -7056,6 +7171,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQwpMaxUncommittedRows() {
             return qwpMaxUncommittedRows;
+        }
+
+        @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return qwpMinIdleMsBeforeWriterRelease;
         }
 
         @Override

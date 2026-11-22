@@ -25,36 +25,49 @@
 package io.questdb.test.cairo.o3;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDeltaWriter;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.MPSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
-import org.junit.AfterClass;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -70,22 +83,15 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
-    private static O3PartitionPurgeJob purgeJob;
+    private static final int DELTA_PURGE_DONE = 2;
+    private static final int DELTA_PURGE_PENDING = 0;
+    private static final int DELTA_PURGE_THROWS = 1;
+    private static volatile PartitionDeltaWriter injectedDeltaWriter;
     private final TestTimestampType timestampType;
+    private O3PartitionPurgeJob purgeJob;
 
     public O3PartitionPurgeTest(TestTimestampType timestampType) {
         this.timestampType = timestampType;
-    }
-
-    @AfterClass
-    public static void end() {
-        purgeJob = Misc.free(purgeJob);
-    }
-
-    @BeforeClass
-    public static void setUpStatic() throws Exception {
-        AbstractCairoTest.setUpStatic();
-        purgeJob = new O3PartitionPurgeJob(engine, 1);
     }
 
     @Parameterized.Parameters(name = "timestamp={0}")
@@ -94,6 +100,36 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 {TestTimestampType.MICRO},
                 {TestTimestampType.NANO},
         });
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Only a purge job built while a writer is injected gets it; table writers get none.
+        configurationFactory = (root, telemetry, overrides) -> new CairoTestConfiguration(root, telemetry, overrides) {
+            @Override
+            public PartitionDeltaWriter newPartitionDeltaWriter() {
+                return injectedDeltaWriter;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        super.setUp();
+        // Keep timed retries within the test that scheduled them.
+        purgeJob = new O3PartitionPurgeJob(engine, 1);
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        try {
+            purgeJob = Misc.free(purgeJob);
+        } finally {
+            super.tearDown();
+        }
     }
 
     @Test
@@ -135,6 +171,297 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 }
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testAdaptiveDropLeavesPurgeToSavePoint() throws Exception {
+        // While only the save points hold the dropped versions, no purge task can delete them before the next save
+        // point, so the DROP queues none and the save points after it queue the purge. A task per dropped
+        // partition would fill the purge queue (128 in production) and log an error for every partition past it.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the DROP's apply batch: the test takes them.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setProperty(PropertyKey.CAIRO_O3_PURGE_DISCOVERY_QUEUE_CAPACITY, 128);
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            // The message bus sizes the purge queue when it is built, so the production capacity needs its own engine.
+            engine.closeNameRegistry();
+            final LogCapture capture = new LogCapture();
+            try (
+                    CairoEngine e = new CairoEngine(configuration);
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(e);
+                    O3PartitionPurgeJob job = new O3PartitionPurgeJob(e, 1)
+            ) {
+                capture.start();
+                e.execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL", ctx);
+                e.execute("INSERT INTO t SELECT timestamp_sequence('2020-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(1_000)", ctx);
+                TestUtils.drainWalQueue(e);
+                final TableToken tt = e.verifyTableName("t");
+                final long nowMs = configuration.getMicrosecondClock().getTicks() / 1000;
+                // Two save points that both name the partitions the DROP removes.
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs);
+                    w.advanceDurableEpoch(nowMs + 1);
+                }
+                final ObjList<String> dropped = partitionDirsBefore(tt, "2021-05-15");
+                Assert.assertEquals(500, dropped.size());
+
+                final MPSequence purgePubSeq = e.getMessageBus().getO3PurgeDiscoveryPubSeq();
+                final long queuedBefore = purgePubSeq.current();
+                e.execute("ALTER TABLE t DROP PARTITION WHERE ts < '2021-05-15'", ctx);
+                TestUtils.drainWalQueue(e);
+                Assert.assertEquals("purge tasks the DROP queued", 0, purgePubSeq.current() - queuedBefore);
+                capture.drain();
+                capture.assertNotLogged("could not queue for purge, queue is full");
+                final StringSink failures = new StringSink();
+                checkOnDisk(failures, "after the DROP", tt, dropped, true);
+
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs + 2);
+                }
+                job.drain(0);
+                checkOnDisk(failures, "the older save point names them", tt, dropped, true);
+
+                try (TableWriter w = e.getWriter(tt, "test")) {
+                    w.advanceDurableEpoch(nowMs + 3);
+                }
+                job.drain(0);
+                checkOnDisk(failures, "no save point names them", tt, dropped, false);
+                Assert.assertEquals("", failures.toString());
+                assertQuery("SELECT count() FROM t").withEngine(e).withContext(ctx).noLeakCheck().expectSize().noRandomAccess().returns("count\n500\n");
+            } finally {
+                capture.stop();
+                engine.reloadTableNames();
+            }
+        });
+    }
+
+    @Test
+    public void testAdaptiveDropReadsEachSavePointOncePerPurgeTask() throws Exception {
+        // The save point after a DROP of K partitions queues a purge task, which checks all K dropped versions against
+        // the save points. A task reads each save point's _txn copy at most once, so it opens at most two files per
+        // generation (header, then section), whatever K is.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        final AtomicInteger manifestOpens = new AtomicInteger();
+        final FilesFacade countingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                    manifestOpens.incrementAndGet();
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(countingFf, () -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2020-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(300)");
+            drainWalQueue();
+            // A second save point that names the same partitions.
+            execute("INSERT INTO t VALUES ('2020-10-26T01:00:00.000000Z', 0)");
+            drainWalQueue();
+            purgeJob.drain(0);
+            final TableToken tt = engine.verifyTableName("t");
+            final ObjList<String> dropped = new ObjList<>();
+            try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+                s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2020-") && n.compareTo("2020-04-10") < 0).forEach(dropped::add);
+            }
+            Assert.assertEquals(100, dropped.size());
+
+            execute("ALTER TABLE t DROP PARTITION WHERE ts < '2020-04-10'");
+            drainWalQueue();
+            final StringSink failures = new StringSink();
+            int tasks = 0;
+            int maxOpens = 0;
+            manifestOpens.set(0);
+            while (purgeJob.run()) {
+                tasks++;
+                maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
+            }
+            // Only the save point of the DROP's apply batch queues one: the DROP leaves the purge to it.
+            Assert.assertEquals("purge tasks after the DROP", 1, tasks);
+            Assert.assertTrue("no task read a save point", maxOpens > 0);
+            Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
+            checkOnDisk(failures, "the older save point names them", tt, dropped, true);
+
+            // Neither save point on disk names the dropped versions now.
+            execute("INSERT INTO t VALUES ('2020-10-26T02:00:00.000000Z', 0)");
+            drainWalQueue();
+            maxOpens = 0;
+            manifestOpens.set(0);
+            while (purgeJob.run()) {
+                maxOpens = Math.max(maxOpens, manifestOpens.getAndSet(0));
+            }
+            Assert.assertTrue("no task read a save point", maxOpens > 0);
+            Assert.assertTrue("manifest opens in one task: " + maxOpens, maxOpens <= 4);
+            checkOnDisk(failures, "no save point names them", tt, dropped, false);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").noLeakCheck().expectSize().noRandomAccess().returns("count\n202\n");
+        });
+    }
+
+    @Test
+    public void testAdaptiveDropWithReaderQueuesPurgeTaskPerPartition() throws Exception {
+        // A reader that holds an older txn can let go at any time, so a DROP under a reader queues a purge task per
+        // partition even while a save point also holds the dropped versions.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the DROP's apply batch: the test takes it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(5)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            try (TableWriter w = getWriter(tt)) {
+                w.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000);
+            }
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            try (TableReader ignore = getReader(tt)) {
+                final long queuedBefore = purgePubSeq.current();
+                execute("ALTER TABLE t DROP PARTITION WHERE ts < '2024-01-04'");
+                drainWalQueue();
+                Assert.assertEquals("purge tasks the DROP queued", 3, purgePubSeq.current() - queuedBefore);
+            }
+            engine.releaseAllReaders();
+            purgeJob.drain(0);
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testAdaptiveLeftVersionGoesAfterNextSavePoint() throws Exception {
+        // A partition version that leaves an adaptive table, by DROP PARTITION, a TTL eviction or an O3 rewrite,
+        // stays while the older save point names it, because recovery can fall back to that save point. It goes
+        // by itself once the next save point no longer names it, with the writer kept open.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        // The O3 change below must leave a partition version behind, which only a whole-partition rewrite does;
+        // merge-append (which the test harness turns on) keeps the version and appends a piece. Pin the production
+        // default.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            final String[] changes = {
+                    "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
+                    "ALTER TABLE %s DROP PARTITION WHERE ts < '2024-01-02'",
+                    "INSERT INTO %s VALUES ('2024-01-04T12:00:00.000000Z', 4)",
+                    "INSERT INTO %s VALUES ('2024-01-01T01:00:00.000000Z', 4)"
+            };
+            final StringSink failures = new StringSink();
+            for (int i = 0; i < changes.length; i++) {
+                final String change = String.format(changes[i], "t" + i);
+                final TableToken tt = createAdaptiveDays("t" + i, i == 2);
+                final ObjList<String> left = versionDirs(tt);
+                execute(change);
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", the older save point names it", tt, left, true);
+                execute("INSERT INTO t" + i + " VALUES ('2024-01-04T13:00:00.000000Z', 5)");
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", no save point names it", tt, left, false);
+            }
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
+    public void testAdaptiveLeftVersionGoesAfterRestart() throws Exception {
+        // A kill right after the change leaves the version on disk while the older save point names it. Recovery
+        // pins both save points, so it stays through the restart and VACUUM TABLE, and goes after the restarted
+        // writer's next save point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        // As in testAdaptiveLeftVersionGoesAfterNextSavePoint: the O3 change must leave a partition version behind.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            final String[] changes = {
+                    "ALTER TABLE %s DROP PARTITION LIST '2024-01-01'",
+                    "INSERT INTO %s VALUES ('2024-01-04T12:00:00.000000Z', 4)",
+                    "INSERT INTO %s VALUES ('2024-01-01T01:00:00.000000Z', 4)"
+            };
+            final StringSink failures = new StringSink();
+            for (int i = 0; i < changes.length; i++) {
+                final String change = String.format(changes[i], "t" + i);
+                final TableToken tt = createAdaptiveDays("t" + i, i == 1);
+                final ObjList<String> left = versionDirs(tt);
+                execute(change);
+                drainWalQueue();
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                execute("VACUUM TABLE t" + i);
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", the older save point names it", tt, left, true);
+                execute("INSERT INTO t" + i + " VALUES ('2024-01-04T13:00:00.000000Z', 5)");
+                drainWalQueue();
+                purgeJob.drain(0);
+                checkOnDisk(failures, change + ", no save point names it", tt, left, false);
+            }
+            Assert.assertEquals("", failures.toString());
+        });
+    }
+
+    @Test
+    public void testAdaptiveO3RewriteQueuesPurgeTaskUnderSavePoint() throws Exception {
+        // Only a DROP leaves the purge to the next save point. An O3 rewrite still queues a purge task at its commit
+        // while a save point holds the old version, so versions that repeated rewrites leave do not pile up on disk
+        // until the next save point.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // No save point inside the rewrite's apply batch: the test takes it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        // As in testAdaptiveLeftVersionGoesAfterNextSavePoint: the O3 insert must rewrite the partition.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            final TableToken tt = createAdaptiveDays("t", false);
+            try (TableWriter w = getWriter(tt)) {
+                w.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000);
+            }
+            final ObjList<String> left = versionDirs(tt);
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            final long queuedBefore = purgePubSeq.current();
+            execute("INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals("purge tasks the O3 rewrite queued", 1, purgePubSeq.current() - queuedBefore);
+            final StringSink failures = new StringSink();
+            checkOnDisk(failures, "the save point names it", tt, left, true);
+            purgeJob.drain(0);
+            checkOnDisk(failures, "the purge task ran, the save point names it", tt, left, true);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n6\n");
+        });
+    }
+
+    @Test
+    public void testAdaptiveVacuumRemovesDroppedPartitionAfterSavePoints() throws Exception {
+        // A reader keeps the dropped partition through the save points that stop naming it; once it is closed,
+        // VACUUM TABLE removes the partition.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            final StringSink failures = new StringSink();
+            final TableToken tt = createAdaptiveDays("t", false);
+            final ObjList<String> left = versionDirs(tt);
+            try (TableReader ignore = getReader("t")) {
+                execute("ALTER TABLE t DROP PARTITION LIST '2024-01-01'");
+                drainWalQueue();
+                for (int i = 0; i < 2; i++) {
+                    execute("INSERT INTO t VALUES ('2024-01-04T1" + i + ":00:00.000000Z', 5)");
+                    drainWalQueue();
+                    purgeJob.drain(0);
+                }
+                checkOnDisk(failures, "a reader holds it", tt, left, true);
+            }
+            engine.releaseAllReaders();
+            execute("VACUUM TABLE t");
+            purgeJob.drain(0);
+            checkOnDisk(failures, "after VACUUM TABLE", tt, left, false);
+            Assert.assertEquals("", failures.toString());
         });
     }
 
@@ -700,6 +1027,31 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNosyncDropRemovesPartitionsAtOnce() throws Exception {
+        // Outside adaptive no save point holds a partition version, so a DROP without readers removes the dropped
+        // versions at once and queues no purge task.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01', 86_400_000_000L)::" + timestampType.getTypeName() + ", x FROM long_sequence(5)");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("t");
+            final ObjList<String> dropped = partitionDirsBefore(tt, "2024-01-04");
+            Assert.assertEquals(3, dropped.size());
+            engine.releaseAllReaders();
+            final MPSequence purgePubSeq = engine.getMessageBus().getO3PurgeDiscoveryPubSeq();
+            final long queuedBefore = purgePubSeq.current();
+            execute("ALTER TABLE t DROP PARTITION WHERE ts < '2024-01-04'");
+            drainWalQueue();
+            Assert.assertEquals("purge tasks the DROP queued", 0, purgePubSeq.current() - queuedBefore);
+            final StringSink failures = new StringSink();
+            checkOnDisk(failures, "after the DROP", tt, dropped, false);
+            Assert.assertEquals("", failures.toString());
+            assertQuery("SELECT count() FROM t").expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
     public void testPartitionDeletedAsyncAfterDroppedBySql() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path()) {
@@ -973,6 +1325,399 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
             }
             Assert.assertEquals("0 partition purge errors expected", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesUntilSuccess() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicInteger deleteAttempts = new AtomicInteger();
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            AtomicBoolean hasScanFailure = new AtomicBoolean();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    if (hasScanFailure.get()) {
+                        throw CairoException.critical(CairoException.ERRNO_EACCES_LINUX).put("test: table directory is inaccessible");
+                    }
+                    return super.findFirst(path);
+                }
+
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        deleteAttempts.incrementAndGet();
+                        if (hasDeleteFailure.get()) {
+                            return false;
+                        }
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken tableToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                // Duplicate notifications must not multiply periodic retries.
+                Assert.assertTrue(TableUtils.schedulePurgeO3Partitions(engine.getMessageBus(), tableToken, timestampType.getTimestampType(), PartitionBy.DAY));
+                purge.drain(0);
+                int attempts = deleteAttempts.get();
+                Assert.assertTrue(attempts > 0);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10").$();
+                Assert.assertTrue(Files.exists(path.$()));
+
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertEquals(++attempts, deleteAttempts.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // A failed directory scan must also keep the retry pending.
+                hasScanFailure.set(true);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+                hasScanFailure.set(false);
+
+                hasDeleteFailure.set(false);
+                Assert.assertFalse(purge.run());
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertEquals(++attempts, deleteAttempts.get());
+                Assert.assertFalse(Files.exists(path.$()));
+
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(attempts, deleteAttempts.get());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryAfterNonCairoFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger mode = new AtomicInteger(DELTA_PURGE_PENDING);
+            final AtomicInteger purges = new AtomicInteger();
+            final AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            // The failed removal on the drop leaves the directory to the purge job.
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken tableToken = engine.verifyTableName("tbl");
+
+            injectedDeltaWriter = new PartitionDeltaWriter() {
+                @Override
+                public void initialize(TableWriter writer, int partitionIndex) {
+                }
+
+                @Override
+                public boolean purge(Path partitionDir) {
+                    purges.incrementAndGet();
+                    return switch (mode.get()) {
+                        case DELTA_PURGE_PENDING -> false;
+                        case DELTA_PURGE_THROWS -> throw new RuntimeException("test delta purge failure");
+                        default -> true;
+                    };
+                }
+
+                @Override
+                public void readTimestampBounds(TableWriter writer, int partitionIndex, long boundsAddr) {
+                }
+
+                @Override
+                public boolean rollback(TableWriter writer, int partitionIndex, long seqTxn) {
+                    return false;
+                }
+
+                @Override
+                public void writeCommit(
+                        TableWriter writer,
+                        long partitionTimestamp,
+                        long partitionNameTxn,
+                        ReadOnlyObjList<? extends MemoryCR> o3Columns,
+                        long sortedTimestampsAddr,
+                        long srcOooLo,
+                        long srcOooHi,
+                        long seqTxn,
+                        long commitTimestamp
+                ) {
+                }
+            };
+            final O3PartitionPurgeJob purge;
+            try {
+                purge = new O3PartitionPurgeJob(engine);
+            } finally {
+                injectedDeltaWriter = null;
+            }
+            try (purge; Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                hasDeleteFailure.set(false);
+                purge.drain(0);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10").$();
+                Assert.assertEquals(1, purges.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // The retry throws out of the Delta purge: the table must stay queued for another retry.
+                mode.set(DELTA_PURGE_THROWS);
+                currentMicros += 60_000_000L;
+                try {
+                    purge.run();
+                    Assert.fail();
+                } catch (RuntimeException e) {
+                    TestUtils.assertContains(e.getMessage(), "test delta purge failure");
+                }
+                Assert.assertEquals(2, purges.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Queued with a delay, not hot looping.
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(2, purges.get());
+
+                mode.set(DELTA_PURGE_DONE);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(3, purges.get());
+                Assert.assertFalse(Files.exists(path.$()));
+
+                // The entry is gone with the finished retry: nothing is left to run.
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(3, purges.get());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryAfterTableDrop() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            AtomicInteger scans = new AtomicInteger();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    scans.incrementAndGet();
+                    return super.findFirst(path);
+                }
+
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken oldToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine)) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                hasDeleteFailure.set(false);
+                engine.releaseInactive();
+                execute("DROP TABLE tbl");
+                execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY MONTH");
+                execute("INSERT INTO tbl VALUES (3, '1970-01-10')");
+                TableToken newToken = engine.verifyTableName("tbl");
+                Assert.assertEquals(oldToken.getDirName(), newToken.getDirName());
+                Assert.assertNotEquals(oldToken.getTableId(), newToken.getTableId());
+
+                int scansBeforeRetry = scans.get();
+                Assert.assertTrue(scansBeforeRetry > 0);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(scansBeforeRetry, scans.get());
+                Assert.assertFalse(purge.run());
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n3\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryBacksOffWhilePinned() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger scans = new AtomicInteger();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findFirst(LPSZ path) {
+                    // The table directory only: a purge also lists the partition it removes.
+                    if (Utf8s.containsAscii(path, "tbl~") && !Utf8s.containsAscii(path, "1970-01-10")) {
+                        scans.incrementAndGet();
+                    }
+                    return super.findFirst(path);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl AS (SELECT x, CAST('1970-01-10T10' AS " + timestampType.getTypeName() + ") ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl SELECT 4, '1970-01-10T09'");
+            final TableToken tableToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                purge.drain(0);
+                final int scansBeforeRetries;
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10.1").$();
+                Assert.assertTrue("fixture: the version the reader pins", Files.exists(path.$()));
+
+                try (TableReader rdr = getReader("tbl")) {
+                    // The rewrite leaves the reader's version to the purge job.
+                    execute("INSERT INTO tbl SELECT 5, '1970-01-10T08'");
+                    purge.drain(0);
+                    Assert.assertTrue(rdr.size() > 0);
+                    scansBeforeRetries = scans.get();
+
+                    // An hour pinned, in 5 s clock ticks: 5 s, then doubling to the 5 min cap.
+                    for (int i = 0; i < 720; i++) {
+                        currentMicros += 5_000_000L;
+                        purge.run();
+                    }
+                    Assert.assertEquals("scans in the pinned hour", 16, scans.get() - scansBeforeRetries);
+                    Assert.assertTrue("the pin keeps the version", Files.exists(path.$()));
+                }
+
+                // Drop the reader's notification, as a full queue would: the retry alone must free the version.
+                final MCSequence subSeq = engine.getMessageBus().getO3PurgeDiscoverySubSeq();
+                long cursor;
+                while ((cursor = subSeq.next()) > -1) {
+                    subSeq.done(cursor);
+                }
+
+                // The next retry after the release frees the version and ends the retries.
+                currentMicros += 300_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(17, scans.get() - scansBeforeRetries);
+                Assert.assertFalse("the release frees the version", Files.exists(path.$()));
+
+                currentMicros += 300_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(17, scans.get() - scansBeforeRetries);
+            }
+            assertQuery("SELECT x FROM tbl ORDER BY x").noLeakCheck().expectSize().returns("x\n1\n4\n5\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryIsolation() throws Exception {
+        setCurrentMicros(0);
+        testPurgeFailed();
+
+        // A failed purge must not leave a timed retry in the next test.
+        tearDown();
+        setUp();
+        setCurrentMicros(60_000_000L);
+        testPurgeFailed();
+    }
+
+    @Test
+    public void testPurgeRetryRecreatedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            String ddl = "CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY";
+            execute(ddl);
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken oldToken = engine.verifyTableName("tbl");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                hasDeleteFailure.set(false);
+                engine.releaseInactive();
+                execute("DROP TABLE tbl");
+                execute(ddl);
+                execute("INSERT INTO tbl VALUES (3, '1970-01-10'), (4, '1970-01-11')");
+                TableToken newToken = engine.verifyTableName("tbl");
+                Assert.assertEquals(oldToken.getDirName(), newToken.getDirName());
+
+                // The old retry is still pending when the replacement table needs cleanup.
+                hasDeleteFailure.set(true);
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                path.of(configuration.getDbRoot()).concat(newToken).concat("1970-01-10").$();
+                Assert.assertTrue(Files.exists(path.$()));
+
+                hasDeleteFailure.set(false);
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertFalse(Files.exists(path.$()));
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n4\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryWithSharedId() throws Exception {
+        assertMemoryLeak(() -> {
+            AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl_a (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            TableToken tokenA = engine.verifyTableName("tbl_a");
+            TableModel model = new TableModel(configuration, "tbl_b", PartitionBy.DAY)
+                    .col("x", ColumnType.LONG)
+                    .timestamp("ts", timestampType.getTimestampType());
+            TableToken tokenB = TestUtils.createTable(engine, model, tokenA.getTableId());
+            Assert.assertEquals(tokenA.getTableId(), tokenB.getTableId());
+            Assert.assertNotEquals(tokenA.getDirName(), tokenB.getDirName());
+            execute("INSERT INTO tbl_a VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            execute("INSERT INTO tbl_b VALUES (3, '1970-01-10'), (4, '1970-01-11')");
+
+            try (O3PartitionPurgeJob purge = new O3PartitionPurgeJob(engine); Path path = new Path()) {
+                execute("ALTER TABLE tbl_a DROP PARTITION LIST '1970-01-10'");
+                execute("ALTER TABLE tbl_b DROP PARTITION LIST '1970-01-10'");
+                purge.drain(0);
+                Assert.assertTrue(Files.exists(path.of(configuration.getDbRoot()).concat(tokenA).concat("1970-01-10").$()));
+                Assert.assertTrue(Files.exists(path.of(configuration.getDbRoot()).concat(tokenB).concat("1970-01-10").$()));
+
+                hasDeleteFailure.set(false);
+                currentMicros += 60_000_000L;
+                purge.drain(0);
+                Assert.assertFalse(Files.exists(path.of(configuration.getDbRoot()).concat(tokenA).concat("1970-01-10").$()));
+                Assert.assertFalse(Files.exists(path.of(configuration.getDbRoot()).concat(tokenB).concat("1970-01-10").$()));
+
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+            }
+            assertQuery("SELECT x FROM tbl_a").noLeakCheck().expectSize().returns("x\n2\n");
+            assertQuery("SELECT x FROM tbl_b").noLeakCheck().expectSize().returns("x\n4\n");
         });
     }
 
@@ -1292,11 +2037,49 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
         });
     }
 
+    private static void checkOnDisk(StringSink failures, String context, TableToken tt, ObjList<String> dirs, boolean expected) {
+        for (int i = 0, n = dirs.size(); i < n; i++) {
+            if (java.nio.file.Files.exists(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName(), dirs.getQuick(i))) != expected) {
+                failures.put(context).put(": ").put(dirs.getQuick(i)).put(expected ? " is gone" : " is still on disk").put('\n');
+            }
+        }
+    }
+
+    // The partition directories on disk now whose names sort before the given partition.
+    private static ObjList<String> partitionDirsBefore(TableToken tt, String partitionName) throws Exception {
+        final ObjList<String> dirs = new ObjList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+            s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("20") && n.compareTo(partitionName) < 0).forEach(dirs::add);
+        }
+        return dirs;
+    }
+
     private static void testPartitionExist(Path path, int len, boolean... existence) {
         for (int i = 0, n = existence.length; i < n; i++) {
             path.trimTo(len).put(".").put(Integer.toString(i + 1)).concat("x.d").$();
             Assert.assertEquals(Utf8s.toString(path), existence[i], Files.exists(path.$()));
         }
+    }
+
+    // The 2024-01-01 directories on disk now.
+    private static ObjList<String> versionDirs(TableToken tt) throws Exception {
+        final ObjList<String> dirs = new ObjList<>();
+        try (java.util.stream.Stream<java.nio.file.Path> s = java.nio.file.Files.list(java.nio.file.Path.of(configuration.getDbRoot(), tt.getDirName()))) {
+            s.map(p -> p.getFileName().toString()).filter(n -> n.startsWith("2024-01-01")).forEach(dirs::add);
+        }
+        Assert.assertTrue(dirs.size() > 0);
+        return dirs;
+    }
+
+    // Three days in two batches, so the table has two save points that both name 2024-01-01.
+    private TableToken createAdaptiveDays(String table, boolean ttl) throws Exception {
+        execute("CREATE TABLE " + table + " (ts " + timestampType.getTypeName() + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                + (ttl ? " TTL 2 DAYS" : "") + " WAL");
+        execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-01T02:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2), ('2024-01-03T00:00:00.000000Z', 3)");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " VALUES ('2024-01-03T01:00:00.000000Z', 3)");
+        drainWalQueue();
+        return engine.verifyTableName(table);
     }
 
     private void runPartitionPurgeJobs() {

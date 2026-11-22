@@ -31,8 +31,8 @@ pub use footer::{Footer, FooterBuilder};
 pub use header::{ColumnDescriptorRaw, FileHeader, FileHeaderBuilder};
 pub use infer::infer_column_type;
 pub use qdb_meta::{
-    extract_qdb_meta, ParquetFieldId, QdbMeta, QdbMetaCol, QdbMetaColFormat, QdbMetaSchema,
-    QdbMetaV1, QDB_META_KEY,
+    column_top_evidence, extract_qdb_meta, ColumnTopEvidence, ParquetFieldId, QdbMeta, QdbMetaCol,
+    QdbMetaColFormat, QdbMetaSchema, QdbMetaV1, QDB_META_KEY,
 };
 pub use reader::ParquetMetaReader;
 pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};

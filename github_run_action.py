@@ -8,7 +8,6 @@ import argparse
 
 
 VALID_ACTIONS = [
-    "rebuild_rust",
     "rebuild_native_libs",
     "rebuild_rust_test"
 ]

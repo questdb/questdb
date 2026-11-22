@@ -108,6 +108,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
     @Override
     public void clear() {
+        betweenNegated = false;
         if (isOwnershipTransferred) {
             // build() handed the dynamic functions to a RuntimeIntervalModel, which now owns them.
             // An unpaired boundary function never reached that list, so it is still ours to free.

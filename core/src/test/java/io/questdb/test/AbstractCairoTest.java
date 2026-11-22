@@ -31,11 +31,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -437,6 +439,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        // A fuzz test class runs under its own commit mode - see AbstractTest.fuzzCommitModeRule. Set for every
+        // test, since tearDown clears the overrides, and ahead of the test so a mode the test pins still wins.
+        final String fuzzCommitMode = Overrides.getFuzzCommitMode();
+        if (fuzzCommitMode != null) {
+            forEachNode(node -> {
+                if (!node.getConfigurationOverrides().isPropertySet(PropertyKey.CAIRO_COMMIT_MODE)) {
+                    node.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_COMMIT_MODE, fuzzCommitMode);
+                }
+            });
+        }
         previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         isCompositePartitionRandomisationEnabled = false;
@@ -707,8 +719,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
         final FilesFacade ffBefore = AbstractCairoTest.ff;
+        // The engine's pooled frame columns capture the FilesFacade they were built with and outlive the test, so a
+        // facade installed here must get a pool of its own, or a column built under an earlier test's facade flushes
+        // through that one: a crash model then never sees the flush and rolls the file back. The same the other way
+        // round once the facade is taken away, so no later test writes through this one.
+        final boolean swapsFilesFacade = ff2 != ffBefore;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
+            if (swapsFilesFacade) {
+                forEachNode(node -> node.getEngine().resetFrameFactory());
+            }
             Throwable th1 = null;
             try {
                 try {
@@ -738,6 +758,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     });
                     forEachNode(node -> node.getEngine().clear());
                     AbstractCairoTest.ff = ffBefore;
+                    if (swapsFilesFacade) {
+                        forEachNode(node -> node.getEngine().resetFrameFactory());
+                    }
                     if (!leakSink.isEmpty()) {
                         final AssertionError leakErr = new AssertionError(
                                 "test leaked unreleased resources " + leakSink
@@ -1059,6 +1082,30 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+    }
+
+    /**
+     * Lets partition housekeeping that deletes or shortens files (MAKE-PLAIN, a retired geometry generation's
+     * purge, a superseded directory's removal) run now, whatever commit mode the suite runs under. Under
+     * ADAPTIVE those steps wait until no save point names the files, a superseded directory until neither
+     * save-point generation lists it, so this takes two save points on the table and then drains the partition
+     * purge job, which is where an enrolled writer sends a directory it could not remove inline; under every
+     * other mode it does nothing, and the test asserts what master wrote it to assert. Call it before draining
+     * a purge job of your own or asserting that a compaction ran. A fold that only appends needs no save point.
+     * A table without WAL never enrols in ADAPTIVE and takes no save point, so for it this does nothing either.
+     */
+    protected static void releaseSavePointHolds(CharSequence tableName) {
+        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE || !engine.verifyTableName(tableName).isWal()) {
+            return;
+        }
+        try (TableWriter writer = getWriter(tableName)) {
+            for (int i = 0; i < 2; i++) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            purgeJob.drain(0);
+        }
     }
 
     protected static void replicate(String tableName, String wal, QuestDBTestNode srcNode, QuestDBTestNode dstNode) {

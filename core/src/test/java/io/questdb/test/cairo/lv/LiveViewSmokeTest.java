@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -281,10 +282,20 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // WAL resolves its clean symbol band through those files, so this is the artifact a symbol
     // capacity rebuild strands.
     private static String walDirHoldingSymbolDictionary(TableToken token, String columnName) {
-        for (int i = 1; i < 16; i++) {
-            final String walName = WalUtils.WAL_NAME_BASE + i;
-            if (walSymbolOffsetFileExists(token, walName, columnName)) {
-                return walName;
+        // Enumerate the table's actual wal* directories rather than checking walN for a small N. WAL ids are
+        // opaque: the sequencer's id generator hands them out in batches of 512 and takes a fresh batch
+        // whenever it reloads, so the second writer here is wal2 on one configuration and wal513 on another.
+        try (Path p = new Path()) {
+            p.of(engine.getConfiguration().getDbRoot()).concat(token);
+            final String[] entries = new java.io.File(p.toString()).list();
+            if (entries == null) {
+                return null;
+            }
+            java.util.Arrays.sort(entries);
+            for (String entry : entries) {
+                if (entry.startsWith(WalUtils.WAL_NAME_BASE) && walSymbolOffsetFileExists(token, entry, columnName)) {
+                    return entry;
+                }
             }
         }
         return null;
@@ -18954,6 +18965,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             execute("INSERT INTO base (ts, x) VALUES ('2026-06-01T00:00:40.000000Z', 40)");
             drainWalQueue();
             engine.releaseInactive();
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // The base table's own WAL purge floor is the older of its two save points (seqTxn 1 here), which
+                // would hide the view's floor; one more save point at the applied cut lifts it above the view's.
+                try (TableWriter writer = getWriter("base")) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
             drainPurgeJob();
 
             // The ring's oldest entry does not retain segments 0 or 1. Segment 2
@@ -21033,7 +21051,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
     @Test
     public void testWorkerYieldsAtTurnBudget() throws Exception {
-        // A single refresh turn is bounded by max commits (and max duration) so a
+        // A single refreshInstance call is bounded by max commits (and max duration) so a
         // long backlog cannot monopolise the worker. With budget = 3 commits per turn
         // and a six-commit backlog, one turn cannot drain it all - the budget forces a
         // yield with the lead only partially refreshed - and repeated turns complete
@@ -21066,10 +21084,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             Assert.assertNotNull(lv);
 
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // One turn makes progress but cannot drain the whole six-commit
-                // backlog: the per-turn budget forces a yield with the lead only
-                // partially refreshed.
-                job.run();
+                // Drive one refresh turn directly: job.run() can refresh the same view
+                // through both notification processing and the lag scan. One refresh
+                // must yield before draining the whole six-commit backlog.
+                job.refreshInstanceForTest(lv, 6L);
                 drainWalQueue();
                 long afterOneTurn = lv.getRefreshedUpToSeqTxn();
                 Assert.assertTrue(

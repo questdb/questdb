@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
-import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
@@ -43,6 +42,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
+import java.util.function.ObjIntConsumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
@@ -62,7 +62,14 @@ public class ColumnPurgeOperator implements Closeable {
      * so it leaves the file alone and retries the note later.
      */
     private static final long GEOMETRY_GENERATION_UNREADABLE = Long.MAX_VALUE;
+    private static final int INVALID_TABLE_ID = Integer.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    // openScoreboardAndTxn() results
+    private static final int TABLE_STATE_LIVE = 0;
+    private static final int TABLE_STATE_REFUSED = 1;
+    private static final int TABLE_STATE_RETRY = 2;
+    // DROP PARTITION, ATTACH, DETACH or TRUNCATE changed the truncate version after the purge was queued
+    private static final int TABLE_STATE_TRUNCATE_REFUSED = 3;
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -74,6 +81,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
+    private boolean isLastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
@@ -135,6 +143,14 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
+    /**
+     * True when the last purge left a version or a geometry generation because a save point still names it
+     * ({@link #isVersionHeldByEpoch}, {@link #isGeometryGenerationHeldByEpoch}).
+     */
+    public boolean isLastPurgeHeldByEpoch() {
+        return isLastPurgeHeldByEpoch;
+    }
+
     public boolean purge(@NotNull ColumnPurgeTask task) {
         assert task.getTableToken() != null;
         assert scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
@@ -168,10 +184,23 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    /**
+     * True when the table's save point still lies inside the superseded range, so recovery would restore a
+     * {@code _txn}/{@code _cv} that names these column files. Separate from the reader check because it holds
+     * when no reader does, notably at startup, where there are no readers but the save point is what the
+     * next recovery restores.
+     */
+    private boolean isVersionHeldByEpoch(long columnVersion, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
+                    || isVersionHeldByEpoch(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
@@ -246,30 +275,13 @@ public class ColumnPurgeOperator implements Closeable {
         }
     }
 
-    private boolean couldNotRemoveIndexFiles(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            if (IndexType.isPosting(indexType)) {
-                boolean sidecarRemovalFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                    return true;
-                }
-                if (sidecarRemovalFailed) {
-                    // .pci or one of the .pc<N>.*.* files survived. Tell the
-                    // caller the purge is incomplete so it retries instead
-                    // of marking the task done and leaking the sidecars.
-                    return true;
-                }
-            } else {
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                    return true;
-                }
-                path.trimTo(pathTrimToPartition);
-                if (couldNotRemove(ff, IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
-                    return true;
-                }
-            }
+    private boolean couldNotRemoveIndexFiles(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        // VACUUM and replayed purge tasks see the current metadata, not necessarily the retired index type.
+        // Remove both index families, but only for the column version that passed the reader/epoch checks.
+        final boolean hasSidecarRemovalFailure = PostingIndexUtils.removeAllSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion);
+        path.trimTo(pathTrimToPartition);
+        if (couldNotRemove(ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion)) || hasSidecarRemovalFailure) {
+            return true;
         }
         path.trimTo(pathTrimToPartition);
         if (couldNotRemove(ff, BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
@@ -279,46 +291,26 @@ public class ColumnPurgeOperator implements Closeable {
         return couldNotRemove(ff, BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
-    private boolean existsIndexFile(byte indexType, CharSequence columnName, long columnVersion, int pathTrimToPartition) {
-        if (IndexType.isIndexed(indexType) && indexType != IndexType.BITMAP) {
-            path.trimTo(pathTrimToPartition);
-            if (ff.exists(IndexFactory.keyFileName(indexType, path, columnName, columnVersion))) {
-                return true;
-            }
-            if (IndexType.isPosting(indexType)) {
-                path.trimTo(pathTrimToPartition);
-                long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
-                        ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
-                if (fromPk >= 0) {
-                    // .pk gave us the live sealTxn; probe the exact .pv path.
-                    path.trimTo(pathTrimToPartition);
-                    if (ff.exists(PostingIndexUtils.valueFileName(path, columnName, columnVersion, fromPk))) {
-                        return true;
-                    }
-                } else {
-                    // .pk is gone or unreadable -- cannot resolve the live
-                    // sealTxn, and the previous fallback to
-                    // sealTxn = columnVersion probed a path that almost
-                    // never matched. Scan the partition for any orphan
-                    // .pv.<columnVersion>.<sealTxn> or
-                    // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
-                    // the purge is not complete and must retry, otherwise
-                    // the caller's "files all gone" shortcut leaks them.
-                    sealedPostingFileScanProbe.of(columnVersion);
-                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
-                    if (sealedPostingFileScanProbe.hasMatch()) {
-                        return true;
-                    }
-                }
-            } else {
-                // BITMAP: valueFileName ignores the sealTxn arg.
-                path.trimTo(pathTrimToPartition);
-                if (ff.exists(IndexFactory.valueFileName(indexType, path, columnName, columnVersion, columnVersion))) {
-                    return true;
-                }
-            }
+    private boolean existsIndexFile(CharSequence columnName, long columnVersion, int pathTrimToPartition) {
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(PostingIndexUtils.keyFileName(path, columnName, columnVersion))) {
+            return true;
         }
-        // Always check legacy .k/.v
+        // removeAllSealedFiles() and its callers go on after the .pci fails to go, so the .pci
+        // can outlive the .pk and every sealed file of its instance
+        path.trimTo(pathTrimToPartition);
+        if (ff.exists(PostingIndexUtils.coverInfoFileName(path, columnName, columnVersion))) {
+            return true;
+        }
+        // A partial purge can leave value or cover files without a key file. Their seal txn is independent
+        // of the column name txn, so probe directory entries rather than guessing a sealed file name.
+        // With the .pci and .pk probes above, this covers every file removeAllSealedFiles() and the .pk
+        // removal take.
+        sealedPostingFileScanProbe.clear();
+        PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion, sealedPostingFileScanProbe);
+        if (sealedPostingFileScanProbe.hasMatch()) {
+            return true;
+        }
         path.trimTo(pathTrimToPartition);
         if (ff.exists(BitmapIndexUtils.keyFileName(path, columnName, columnVersion))) {
             return true;
@@ -327,7 +319,18 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
-    private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
+    /**
+     * True when a save point's _txn names the retired geometry generation: a tracker pin lies in
+     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like {@link #isVersionHeldByEpoch}, checked in
+     * every mode: a recovery that falls back to that save point reads this file.
+     */
+    private boolean isGeometryGenerationHeldByEpoch(long firstWriterTxn, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(firstWriterTxn, task.getUpdateTxn());
+    }
+
+    private int openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
                 txnScoreboard = Misc.free(txnScoreboard);
@@ -338,11 +341,19 @@ public class ColumnPurgeOperator implements Closeable {
                 boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
                 if (!tableChanged) {
                     int tableId = readTableId(path);
+                    if (tableId == INVALID_TABLE_ID) {
+                        // The registry still lists the table under the id of the task, so _meta is missing
+                        // only for now: TableWriter renames _meta to _meta.prev before it renames _meta.swp
+                        // to _meta, and non-WAL DROP and RENAME remove the directory before the registry
+                        // forgets the table. The next run reads the id again.
+                        LOG.info().$("cannot read table id, will retry [path=").$(path.trimTo(pathTableLen)).I$();
+                        return TABLE_STATE_RETRY;
+                    }
                     tableChanged = tableId != task.getTableId();
                 }
                 if (tableChanged) {
                     LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_REFUSED;
                 }
 
                 path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
@@ -350,15 +361,29 @@ public class ColumnPurgeOperator implements Closeable {
                 txReader.unsafeLoadAll();
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_TRUNCATE_REFUSED;
                 }
-                return true;
+                // A logged update past the committed txn did not survive the stop: a power loss outside adaptive,
+                // or a recovery rewind to a save point before it, dropped it. The version the row names is the
+                // one the table uses now. A WAL replay of the update, if any, queues its own purge; without one,
+                // as on a non-WAL table, the version stays live.
+                if (scoreboardUseMode == ScoreboardUseMode.STARTUP_ONLY && task.getUpdateTxn() > txReader.getTxn()) {
+                    LOG.info().$("cannot purge, update is past the committed txn [path=").$(path.trimTo(pathTableLen))
+                            .$(", updateTxn=").$(task.getUpdateTxn())
+                            .$(", txn=").$(txReader.getTxn())
+                            .I$();
+                    return TABLE_STATE_REFUSED;
+                }
+                return TABLE_STATE_LIVE;
             default:
-                return false;
+                // VACUUM_TABLE takes the scoreboard and the txn of its reader, and purge0() does not call here
+                assert false : "scoreboard use mode " + scoreboardUseMode;
+                return TABLE_STATE_REFUSED;
         }
     }
 
     private boolean purge0(ColumnPurgeTask task) {
+        isLastPurgeHeldByEpoch = false;
         try {
             setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -385,7 +410,14 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                         if (setupScoreboard) {
-                            if (!openScoreboardAndTxn(task)) {
+                            final int tableState = openScoreboardAndTxn(task);
+                            if (tableState == TABLE_STATE_RETRY) {
+                                // setupScoreboard stays true, so the next entry checks the table again
+                                allDone = false;
+                                continue;
+                            }
+                            if (tableState != TABLE_STATE_LIVE) {
+                                // the table changed or a truncate overlaps the purge: leave the file alone
                                 completedRowIds.add(updateRowId);
                                 continue;
                             }
@@ -422,11 +454,19 @@ public class ColumnPurgeOperator implements Closeable {
                             continue;
                         }
                         // When a backup checkpoint is in progress its copied _txn may still name this generation.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        // The save point is checked in every mode, STARTUP_ONLY included, as in the column branch:
+                        // it is not a reader, and a recovery that falls back to it restores a _txn naming this file.
+                        final boolean isCheckpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean isFirstRecordVerified = firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY;
+                        final boolean isHeldByEpoch = !isCheckpointInProgress && isFirstRecordVerified
+                                && isGeometryGenerationHeldByEpoch(firstWriterTxn, task);
+                        if (isCheckpointInProgress
+                                || isHeldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
-                                && firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY
+                                && isFirstRecordVerified
                                 && hasReadersOnGeometryGeneration(firstWriterTxn, task.getUpdateTxn()))) {
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= isHeldByEpoch;
                             LOG.debug().$("cannot purge, geometry generation is in use [path=").$(path).I$();
                             continue;
                         }
@@ -473,9 +513,8 @@ public class ColumnPurgeOperator implements Closeable {
                             // In the case of symbol root files, we need to check if .k and .v files exist in table root.
                             // In the case of symbol files in partition, we need to check if .k and .v files exist in partition
                             // that can be index files after index drop SQL.
-                            byte idxType = task.getIndexType();
                             if (!ff.exists(TableUtils.offsetFileName(path.trimTo(pathTrimToPartition), columnName, columnVersion))) {
-                                if (!existsIndexFile(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                                if (!existsIndexFile(columnName, columnVersion, pathTrimToPartition)) {
                                     completedRowIds.add(updateRowId);
                                     continue;
                                 }
@@ -492,9 +531,21 @@ public class ColumnPurgeOperator implements Closeable {
                         // may not exist, including the entire table. Setting up
                         // scoreboard ahead of checking file existence would fail in those
                         // cases.
-                        if (!openScoreboardAndTxn(task)) {
+                        final int tableState = openScoreboardAndTxn(task);
+                        if (tableState == TABLE_STATE_RETRY) {
+                            // setupScoreboard stays true, so the next entry checks the table again
+                            allDone = false;
+                            continue;
+                        }
+                        if (tableState == TABLE_STATE_REFUSED || tableState == TABLE_STATE_TRUNCATE_REFUSED) {
                             // the current table state precludes us from purging its columns
                             // nothing to do here
+                            if (tableState == TABLE_STATE_TRUNCATE_REFUSED) {
+                                final ObjIntConsumer<ColumnPurgeTask> listener = engine.getConfiguration().getColumnPurgeTruncateRefusalListener();
+                                if (listener != null) {
+                                    listener.accept(task, i);
+                                }
+                            }
                             completedRowIds.add(updateRowId);
                             continue;
                         }
@@ -511,8 +562,17 @@ public class ColumnPurgeOperator implements Closeable {
                             path.trimTo(pathTableLen);
                         }
                         pathTrimToPartition = path.size();
-                        TableUtils.dFile(path, columnName, columnVersion);
                         setupScoreboard = false;
+                    }
+
+                    // The existence probe, its index directory scans and openScoreboardAndTxn() move path off
+                    // the column file. Restore the data file before attempting its removal; otherwise a
+                    // sidecar-only purge can try to unlink the partition directory.
+                    path.trimTo(pathTrimToPartition);
+                    if (isSymbolRootFiles) {
+                        TableUtils.charFileName(path, columnName, columnVersion);
+                    } else {
+                        TableUtils.dFile(path, columnName, columnVersion);
                     }
 
                     if (txReader.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
@@ -528,10 +588,20 @@ public class ColumnPurgeOperator implements Closeable {
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        //
+                        // The save point is checked in every mode, STARTUP_ONLY included. That mode skips the
+                        // reader check because no readers exist at startup, but the save point is not a reader:
+                        // it is what the next recovery restores. Purging a version it names would leave
+                        // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
+                        // fail ("SymbolMap does not exist") and suspend the table.
+                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean heldByEpoch = !checkpointInProgress && isVersionHeldByEpoch(columnVersion, task);
+                        if (checkpointInProgress
+                                || heldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= heldByEpoch;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                             continue;
                         } else {
@@ -559,7 +629,6 @@ public class ColumnPurgeOperator implements Closeable {
 
                     // Check if it's a symbol, try to remove index files in the partition
                     if (ColumnType.isSymbol(columnType) || columnTypeRogue) {
-                        byte idxType = task.getIndexType();
                         if (isSymbolRootFiles) {
                             path.trimTo(pathTrimToPartition);
                             if (couldNotRemove(ff, TableUtils.charFileName(path, columnName, columnVersion))) {
@@ -587,10 +656,7 @@ public class ColumnPurgeOperator implements Closeable {
                                 continue;
                             }
                         } else {
-                            // Remove partition-level index files. Use IndexFactory for the known
-                            // type; always try legacy .k/.v as well (old index files may remain
-                            // after DROP INDEX when indexType is NONE).
-                            if (couldNotRemoveIndexFiles(idxType, columnName, columnVersion, pathTrimToPartition)) {
+                            if (couldNotRemoveIndexFiles(columnName, columnVersion, pathTrimToPartition)) {
                                 allDone = false;
                                 continue;
                             }
@@ -619,7 +685,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private int readTableId(Path path) {
-        final int INVALID_TABLE_ID = Integer.MIN_VALUE;
         long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;
@@ -704,37 +769,31 @@ public class ColumnPurgeOperator implements Closeable {
 
     /**
      * Reusable {@link PostingIndexUtils.SealedFileVisitor} that flags
-     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) for a target
-     * columnVersion exists in the scanned partition. Stateful but
-     * non-allocating: callers call {@link #of(long)} to reset state for
-     * a new probe, run {@link PostingIndexUtils#scanSealedFiles}, then
-     * read {@link #hasMatch()}.
+     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) of the column
+     * version {@link PostingIndexUtils#scanSealedFiles} scans exists in the
+     * scanned partition. Stateful but non-allocating: callers call
+     * {@link #clear()} to reset state for a new probe, run
+     * {@link PostingIndexUtils#scanSealedFiles}, then read {@link #hasMatch()}.
      */
     private static final class SealedPostingFileScanProbe implements PostingIndexUtils.SealedFileVisitor {
-        private long columnVersion;
         private boolean hasMatch;
+
+        public void clear() {
+            hasMatch = false;
+        }
 
         public boolean hasMatch() {
             return hasMatch;
         }
 
-        public void of(long columnVersion) {
-            this.columnVersion = columnVersion;
-            this.hasMatch = false;
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            hasMatch = true;
         }
 
         @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
+        public void onValueFile(long sealTxn) {
+            hasMatch = true;
         }
     }
 

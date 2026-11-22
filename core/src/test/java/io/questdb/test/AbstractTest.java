@@ -39,8 +39,10 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
 import io.questdb.std.Zip;
 import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -65,12 +67,57 @@ import java.util.concurrent.atomic.AtomicInteger;
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
     public static final Set<QuietCloseable> CLOSEABLE = Collections.newSetFromMap(new ConcurrentHashMap<>());
-
+    /**
+     * Records the thread the test class runs on. A test that runs on another thread runs under a timeout rule,
+     * on a thread of its own that ends with the test.
+     */
+    @ClassRule
+    public static final TestRule classThreadRule = (base, description) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            classThread = Thread.currentThread();
+            base.evaluate();
+        }
+    };
+    /**
+     * Gives every fuzz test class ({@link Overrides#isFuzzTest}) a commit mode of its own, drawn from all modes
+     * independently of {@code -Dquestdb.test.commit.mode}, so across runs each fuzz class meets every mode rather
+     * than the two the suite sweeps. A class rule, so the mode is in place for {@code @BeforeClass} as well; the
+     * configuration paths read it through {@link Overrides#getTestCommitMode()}, and a test that pins a mode still
+     * wins. {@code -Dquestdb.test.fuzz.commit.mode} reproduces a run.
+     */
+    @ClassRule
+    public static final TestRule fuzzCommitModeRule = (base, description) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            final Class<?> testClass = description.getTestClass();
+            if (!Overrides.isFuzzTest(testClass)) {
+                base.evaluate();
+                return;
+            }
+            final String mode = Overrides.pickFuzzCommitMode(new Rnd(System.nanoTime(), System.currentTimeMillis()));
+            Overrides.setFuzzCommitMode(mode);
+            LOG.advisory().$("fuzz test commit mode [class=").$safe(testClass.getSimpleName())
+                    .$(", mode=").$(mode)
+                    .$(", reproduce=-Dquestdb.test.fuzz.commit.mode=").$(mode)
+                    .I$();
+            try {
+                base.evaluate();
+            } finally {
+                Overrides.setFuzzCommitMode(null);
+            }
+        }
+    };
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     protected static final AtomicInteger OFF_POOL_READER_ID = new AtomicInteger();
+    private static final long TEST_THREAD_EXIT_GRACE_MILLIS = 2_000;
     protected static String root;
+    private static volatile Thread classThread;
+    private static volatile Thread reportedAbandonedThread;
+    private static volatile Thread testThread;
+    private static volatile String testThreadName;
     @Rule
     public final TestName testName = new TestName();
     /**
@@ -112,6 +159,12 @@ public class AbstractTest {
 
     @Before
     public void setUp() {
+        failIfAbandonedTestThreadRuns();
+        final Thread current = Thread.currentThread();
+        if (current != classThread) {
+            testThreadName = getClass().getSimpleName() + '#' + testName.getMethodName();
+            testThread = current;
+        }
         LOG.info().$("Starting test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         Metrics.ENABLED.clear();
@@ -124,6 +177,9 @@ public class AbstractTest {
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
+        if (testThread == Thread.currentThread()) {
+            testThread = null;
+        }
     }
 
     /**
@@ -227,5 +283,32 @@ public class AbstractTest {
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
         return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
+    }
+
+    /**
+     * Fails the test while the thread of an earlier test still runs. A timeout rule fails a test that runs too
+     * long but cannot stop its thread, which keeps writing under the shared test root and mapping memory, so every
+     * later test in this JVM would report what it does as its own failure: a memory leak, a table that already
+     * exists. Only the thread of a test that did not reach {@link #tearDown()} is suspect, and it gets a short grace
+     * to exit.
+     */
+    private static void failIfAbandonedTestThreadRuns() {
+        final Thread previous = testThread;
+        if (previous == null || previous == Thread.currentThread()) {
+            return;
+        }
+        if (previous != reportedAbandonedThread) {
+            try {
+                previous.join(TEST_THREAD_EXIT_GRACE_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (previous.isAlive()) {
+            reportedAbandonedThread = previous;
+            Assert.fail("test " + testThreadName + " timed out and its thread is still running; this test would share"
+                    + " the test root, its tables and the memory accounting with it");
+        }
+        testThread = null;
     }
 }

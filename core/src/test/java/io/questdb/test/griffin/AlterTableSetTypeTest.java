@@ -60,8 +60,15 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
             for (int i = 0; i < 30; i++) {
                 final boolean walEnabled = sqlExecutionContext.getRandom().nextBoolean();
                 execute("alter table " + tableName + " set type " + (walEnabled ? "wal" : "bypass wal"));
-                final Path convertFilePath1 = assertConvertFileExists(tableName);
-                assertConvertFileContent(convertFilePath1, walEnabled ? WAL : NON_WAL);
+                if (walEnabled) {
+                    final Path convertFilePath1 = assertConvertFileExists(tableName);
+                    assertConvertFileContent(convertFilePath1, WAL);
+                } else {
+                    // The table's own type converts nothing: it cancels a pending request.
+                    final TableToken token = engine.verifyTableName(tableName);
+                    final Path path = Path.PATH.get().of(configuration.getDbRoot()).concat(token).concat(WalUtils.CONVERT_FILE_NAME);
+                    Assert.assertFalse(Utf8s.toString(path), Files.exists(path.$()));
+                }
             }
         });
     }
@@ -86,6 +93,43 @@ public class AlterTableSetTypeTest extends AbstractCairoTest {
             execute("alter table " + tableName + " set type wal");
             final Path convertFilePath = assertConvertFileExists(tableName);
             assertConvertFileContent(convertFilePath, WAL);
+        });
+    }
+
+    /**
+     * The conversion resets {@code _meta}'s metadataVersion in place. That field is checksummed into the
+     * meta-format minor-version word, so rewriting it without re-stamping the checksum switches off the
+     * version gate and every gated tail field then reads as absent: TTL becomes 0 and the table format
+     * reads as NATIVE. Nothing fails; the table quietly loses those properties.
+     *
+     * <p>The ADD COLUMN lifts metadataVersion off 0, so resetting it to 0 changes the value the checksum
+     * covers. Without it the reset is a no-op and the test does not exercise the gate.
+     */
+    @Test
+    public void testConvertToWalPreservesVersionGatedMetadata() throws Exception {
+        final String tableName = "table_ttl_convert";
+        assertMemoryLeak(() -> {
+            execute("create table " + tableName + " (ts TIMESTAMP, x long) timestamp(ts) PARTITION BY DAY TTL 3 DAYS BYPASS WAL");
+            execute("alter table " + tableName + " add column y long");
+
+            final TableToken before = engine.verifyTableName(tableName);
+            try (io.questdb.cairo.TableReaderMetadata md = new io.questdb.cairo.TableReaderMetadata(configuration, before)) {
+                md.loadMetadata();
+                assertEquals("precondition: TTL is set before the conversion", 72, md.getTtlHoursOrMonths());
+                Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
+                        md.getMetadataVersion() > 0);
+            }
+
+            execute("alter table " + tableName + " set type wal");
+            engine.load();
+            engine.reconcileTableNameRegistryState();
+
+            final TableToken after = engine.verifyTableName(tableName);
+            Assert.assertTrue("precondition: the table must actually have converted", engine.isWalTable(after));
+            try (io.questdb.cairo.TableReaderMetadata md = new io.questdb.cairo.TableReaderMetadata(configuration, after)) {
+                md.loadMetadata();
+                assertEquals("converting to WAL must not silently drop TTL", 72, md.getTtlHoursOrMonths());
+            }
         });
     }
 

@@ -367,9 +367,50 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        final long monthsDiff = getMonthsBetween(micros, offset);
-        final long monthsToAdd = monthsDiff - (monthsDiff % stride);
-        return addMonths(offset, (int) monthsToAdd);
+        // Splits the offset into calendar fields once and counts calendar months from the offset to the value.
+        // The candidate bucket in the value's month starts after the value when the value lies earlier in its
+        // month, and the value then belongs to the previous bucket. Like addMonths(), this method and
+        // monthBucketStart() clamp the offset's day to the last day of shorter months. getMonthsBetween() lacks
+        // that clamping, so it can't be used here: for the offset 1969-12-31T23:00, it puts 2024-04-30T23:45
+        // before the bucket starting at 2024-04-30T23:00 (#7798). For the value's own month, the check compares
+        // positions within the month, so it never builds a bucket start after the value, which could overflow.
+        final int offsetYear = getYear(offset);
+        final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
+        final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
+        // inlined getDayOfMonth(), as in Nanos.floorMM(long, int, long), where the call measured slower in the
+        // TIMESTAMP_NS month floor benchmark
+        final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
+                - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
+        final long offsetTime = getTimeMicros(offset);
+        final int year = getYear(micros);
+        final boolean isLeap = CommonUtils.isLeapYear(year);
+        final long yearStart = yearMicros(year, isLeap);
+        final int month = getMonthOfYear(micros, year, isLeap);
+        final long months = 12L * (year - offsetYear) + month - offsetMonth;
+        final long monthsPastBucket = months % stride;
+        final long monthsToAdd = months - monthsPastBucket;
+        if (monthsToAdd == 0) {
+            return offset;
+        }
+        if (monthsPastBucket == 0) {
+            final long monthStart = yearStart + monthOfYearMicros(month, isLeap);
+            final long bucketInMonth = (Math.min(offsetDay, CommonUtils.getDaysPerMonth(month, isLeap)) - 1)
+                    * DAY_MICROS + offsetTime;
+            if (bucketInMonth <= micros - monthStart) {
+                return monthStart + bucketInMonth;
+            }
+        } else {
+            final long bucketStart = monthBucketStart(
+                    year, isLeap, yearStart, month - monthsPastBucket, offsetDay, offsetTime
+            );
+            if (bucketStart <= micros) {
+                return bucketStart;
+            }
+        }
+        if (monthsToAdd == stride) {
+            return offset;
+        }
+        return monthBucketStart(year, isLeap, yearStart, month - monthsPastBucket - stride, offsetDay, offsetTime);
     }
 
     public static long floorMM(long micros, int stride) {
@@ -530,9 +571,45 @@ public final class Micros {
         if (micros < offset) {
             return offset;
         }
-        final long yearsDiff = getYearsBetween(micros, offset);
-        final long yearsToAdd = yearsDiff - (yearsDiff % stride);
-        return addYears(offset, (int) yearsToAdd);
+        // Counts calendar years, as floorMM() counts months. Like addYears(), this method and yearBucketStart()
+        // clamp a Feb 29 offset to Feb 28 in non-leap years. getYearsBetween() lacks that clamping, so it can't be
+        // used here: it puts a value on Feb 28 after the clamped bucket start into the previous bucket. For the
+        // value's own year, the check compares positions within the year, so it never builds a bucket start after
+        // the value.
+        final int offsetYear = getYear(offset);
+        final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
+        final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
+        // inlined getDayOfMonth(), as in Nanos.floorMM(long, int, long), where the call measured slower in the
+        // TIMESTAMP_NS month floor benchmark
+        final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
+                - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
+        final long offsetTime = getTimeMicros(offset);
+        final int year = getYear(micros);
+        final int years = year - offsetYear;
+        final int yearsPastBucket = years % stride;
+        final int yearsToAdd = years - yearsPastBucket;
+        if (yearsToAdd == 0) {
+            return offset;
+        }
+        if (yearsPastBucket == 0) {
+            final boolean isLeap = CommonUtils.isLeapYear(year);
+            final long yearStart = yearMicros(year, isLeap);
+            final long bucketInYear = monthOfYearMicros(offsetMonth, isLeap)
+                    + (Math.min(offsetDay, CommonUtils.getDaysPerMonth(offsetMonth, isLeap)) - 1) * DAY_MICROS
+                    + offsetTime;
+            if (bucketInYear <= micros - yearStart) {
+                return yearStart + bucketInYear;
+            }
+        } else {
+            final long bucketStart = yearBucketStart(year - yearsPastBucket, offsetMonth, offsetDay, offsetTime);
+            if (bucketStart <= micros) {
+                return bucketStart;
+            }
+        }
+        if (yearsToAdd == stride) {
+            return offset;
+        }
+        return yearBucketStart(year - yearsPastBucket - stride, offsetMonth, offsetDay, offsetTime);
     }
 
     public static int getCentury(long micros) {
@@ -1109,6 +1186,32 @@ public final class Micros {
 
     private static long getTimeMicros(long micros, int strideDays, long offset) {
         return getRemainderMicros(micros - offset, strideDays * DAY_MICROS);
+    }
+
+    // Returns the bucket start in the given month of the year; a zero or negative monthOfYear refers to a month
+    // of an earlier year. The day is clamped to the last day of a shorter month.
+    private static long monthBucketStart(
+            int year,
+            boolean isLeap,
+            long yearStart,
+            long monthOfYear,
+            int day,
+            long time
+    ) {
+        if (monthOfYear > 0) {
+            final int month = (int) monthOfYear;
+            return yearStart + monthOfYearMicros(month, isLeap)
+                    + (Math.min(day, CommonUtils.getDaysPerMonth(month, isLeap)) - 1) * DAY_MICROS + time;
+        }
+        final long monthIndex = 12L * year + monthOfYear - 1;
+        final int bucketYear = (int) Math.floorDiv(monthIndex, 12);
+        final int bucketMonth = (int) Math.floorMod(monthIndex, 12) + 1;
+        return toMicros(bucketYear, CommonUtils.isLeapYear(bucketYear), bucketMonth, day) + time;
+    }
+
+    // Returns the start of the bucket in the given year, with the day clamped to the length of the month.
+    private static long yearBucketStart(int year, int month, int day, long time) {
+        return toMicros(year, CommonUtils.isLeapYear(year), month, day) + time;
     }
 
     static {

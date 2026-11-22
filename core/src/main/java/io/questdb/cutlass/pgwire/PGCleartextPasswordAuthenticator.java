@@ -418,7 +418,10 @@ public class PGCleartextPasswordAuthenticator implements SocketAuthenticator {
             return SocketAuthenticator.NEEDS_READ;
         }
         byte msgType = Unsafe.getByte(recvBufReadPos);
-        assert msgType == MESSAGE_TYPE_PASSWORD_MESSAGE;
+        if (msgType != MESSAGE_TYPE_PASSWORD_MESSAGE) {
+            LOG.error().$("unexpected password message type [msgType=").$(msgType & 0xFF).$(']').$();
+            throw PGMessageProcessingException.INSTANCE;
+        }
 
         int msgLen = getIntUnsafe(recvBufReadPos + 1);
         // msgLen includes itself (4 bytes) + at least a 1-byte null-terminated password.

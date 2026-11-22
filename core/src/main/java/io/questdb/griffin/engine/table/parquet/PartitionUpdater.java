@@ -38,7 +38,11 @@ public class PartitionUpdater implements QuietCloseable {
     public PartitionUpdater() {
     }
 
-    public void addRowGroup(int position, PartitionDescriptor descriptor) {
+    /**
+     * Inserts a row group at {@code position}; {@code rowOffset} is the output row where it starts,
+     * see {@link #setColumnTopRowLimit(long)}.
+     */
+    public void addRowGroup(int position, long rowOffset, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -49,6 +53,7 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.tableName.size(),
                     descriptor.tableName.ptr(),
                     position,
+                    rowOffset,
                     columnCount,
                     descriptor.getColumnNamesPtr(),
                     descriptor.getColumnNamesLen(),
@@ -101,6 +106,15 @@ public class PartitionUpdater implements QuietCloseable {
         copyRowGroupWithNullColumns(ptr, rowGroupIndex, nullColDescAddr, nullColCount);
     }
 
+    /**
+     * Keeps the identity index row map on an incremental {@code _pm} update, for a table without a symbol index: no
+     * index file refers to index rows, and an older binary rejects a footer that carries a map.
+     */
+    public void dropIndexRowMap() {
+        assert ptr != 0;
+        dropIndexRowMap(ptr);
+    }
+
     public long getResultParquetMetaFileSize() {
         assert ptr != 0;
         return getResultParquetMetaFileSize(ptr);
@@ -109,6 +123,18 @@ public class PartitionUpdater implements QuietCloseable {
     public long getResultUnusedBytes() {
         assert ptr != 0;
         return getResultUnusedBytes(ptr);
+    }
+
+    /**
+     * Returns whether the update can leave the row groups {@code [rowGroupLo, rowGroupHi]} of the source file as
+     * they are instead of re-encoding, from output row {@code rowOffset}, the rows they hold in one row group, as a
+     * merge that replaces their rows with identical rows does: the re-encode writes the same NULLs and keeps the
+     * same column tops, see {@link #setColumnTopRowLimit(long)}. Call after {@link #setColumnTopRowLimit(long)}
+     * and before the update writes a row group.
+     */
+    public boolean isRowGroupRewriteUnchanged(int rowGroupLo, int rowGroupHi, long rowOffset) {
+        assert ptr != 0;
+        return isRowGroupRewriteUnchanged(ptr, rowGroupLo, rowGroupHi, rowOffset);
     }
 
     /**
@@ -195,6 +221,18 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Sets the number of leading rows that keep their position and values in the output. The file
+     * keeps the column top of a column when the top is below this limit, and a row group written
+     * through {@link #updateRowGroup} or {@link #addRowGroup} that starts below a kept top encodes the
+     * top rows of a BOOLEAN, BYTE, SHORT or CHAR column, which have no NULL sentinel, as NULLs. The
+     * default, 0, zeroes every column top. Call after {@link #of}.
+     */
+    public void setColumnTopRowLimit(long limit) {
+        assert ptr != 0;
+        setColumnTopRowLimit(ptr, limit);
+    }
+
+    /**
      * Sets the target schema for the output file. Call this after {@link #of}
      * when the table schema differs from the source parquet file schema
      * (e.g., after ADD COLUMN or DROP COLUMN).
@@ -226,7 +264,11 @@ public class PartitionUpdater implements QuietCloseable {
         return updateFileMetadata(ptr);
     }
 
-    public void updateRowGroup(int rowGroupId, PartitionDescriptor descriptor) {
+    /**
+     * Replaces row group {@code rowGroupId}; {@code rowOffset} is the output row where the new row
+     * group starts, see {@link #setColumnTopRowLimit(long)}.
+     */
+    public void updateRowGroup(int rowGroupId, long rowOffset, PartitionDescriptor descriptor) {
         final int columnCount = descriptor.getColumnCount();
         final long rowCount = descriptor.getPartitionRowCount();
         final int timestampIndex = descriptor.getTimestampIndex();
@@ -237,6 +279,7 @@ public class PartitionUpdater implements QuietCloseable {
                     descriptor.tableName.size(),
                     descriptor.tableName.ptr(),
                     rowGroupId,
+                    rowOffset,
                     columnCount,
                     descriptor.getColumnNamesPtr(),
                     descriptor.getColumnNamesLen(),
@@ -289,6 +332,8 @@ public class PartitionUpdater implements QuietCloseable {
 
     private static native void destroy(long impl);
 
+    private static native void dropIndexRowMap(long impl) throws CairoException;
+
     private static native long getResultParquetMetaFileSize(long impl);
 
     private static native long getResultUnusedBytes(long impl);
@@ -298,6 +343,7 @@ public class PartitionUpdater implements QuietCloseable {
             int tableNameLen,
             long tableNamePtr,
             int position,
+            long rowOffset,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,
@@ -306,6 +352,8 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long rowCount
     ) throws CairoException;
+
+    private static native boolean isRowGroupRewriteUnchanged(long impl, int rowGroupLo, int rowGroupHi, long rowOffset) throws CairoException;
 
     private static native void rewriteRowGroupColumns(
             long impl,
@@ -320,6 +368,8 @@ public class PartitionUpdater implements QuietCloseable {
             int timestampIndex,
             long rowCount
     ) throws CairoException;
+
+    private static native void setColumnTopRowLimit(long impl, long limit) throws CairoException;
 
     private static native void setTargetSchema(
             long impl,
@@ -341,6 +391,7 @@ public class PartitionUpdater implements QuietCloseable {
             int tableNameLen,
             long tableNamePtr,
             int rowGroupId,
+            long rowOffset,
             int columnCount,
             long columnNamesPtr,
             int columnNamesSize,

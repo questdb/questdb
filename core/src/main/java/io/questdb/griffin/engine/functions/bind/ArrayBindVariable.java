@@ -73,6 +73,11 @@ public final class ArrayBindVariable extends ArrayFunction implements Mutable {
     }
 
     public void parseArray(CharSequence value) {
+        if (value == null) {
+            // NULL text sets a NULL value and keeps the defined type, as the scalar bind variables do
+            view = null;
+            return;
+        }
         short elementType = ColumnType.decodeArrayElementType(type);
         if (elementType == ColumnType.VARCHAR) {
             view = SqlUtil.implicitCastStringAsVarcharArray(value, varcharArrayParser, type);
