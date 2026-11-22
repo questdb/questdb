@@ -372,6 +372,45 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     }
 
     @Test
+    public void testOnHeadersReadyDoesNotCarryOwnedByAcrossConnections() throws Exception {
+        // One processor serves the upgrades of successive connections and keeps the owner it decodes in scratch
+        // sinks. A connection gets the owner and the echo it named itself, or none, never what an earlier one named.
+        assertMemoryLeak(() -> {
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, new DefaultHttpServerConfiguration(configuration));
+
+            OwnerRecordingSecurityContext securityContext = new OwnerRecordingSecurityContext(null);
+            String response = ownedByHandshake(processor, securityContext, "alice", null, true);
+            Assert.assertEquals("alice", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: alice\r\n"));
+
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(processor, securityContext, null, null, true);
+            Assert.assertNull("a connection that names no owner must not get the previous one's", securityContext.owner);
+            Assert.assertFalse("a connection that names no owner must not get an echo, got: " + response,
+                    response.contains("X-QWP-Owned-By"));
+
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(processor, securityContext, "bob", null, true);
+            Assert.assertEquals("bob", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: bob\r\n"));
+
+            securityContext = new OwnerRecordingSecurityContext(null);
+            response = ownedByHandshake(processor, securityContext, null, "carol", true);
+            Assert.assertEquals("carol", securityContext.owner);
+            Assert.assertTrue(response, response.contains("\r\nX-QWP-Owned-By: carol\r\n"));
+
+            // Without access control every owner is refused. The refused owner must not be named for the next
+            // connection, which names none, or it would be refused too.
+            response = ownedByHandshake(processor, AllowAllSecurityContext.INSTANCE, "dave", null, false);
+            assertTextReject(response, "403 Forbidden",
+                    "owned_by refused: the owner of auto-created tables and columns can only be set in QuestDB Enterprise");
+            response = ownedByHandshake(processor, AllowAllSecurityContext.INSTANCE, null, null, true);
+            Assert.assertTrue(response, response.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
+            Assert.assertFalse(response, response.contains("X-QWP-Owned-By"));
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyDoesNotConfirmSubprotocolForHeaderOnlyDurableAck() throws Exception {
         // A native client opts in through X-QWP-Request-Durable-Ack and offers
         // no subprotocol. RFC 6455 s4.1 makes a client fail the connection when
@@ -611,7 +650,10 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
                         "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
                 Assert.assertNull("malformed owner must not reach the security context: " + value, securityContext.owner);
             }
-            // the browser carrier arrives decoded, so only an empty name is malformed there
+            // The browser carrier arrives decoded, so only an empty name is malformed there. The HTTP parser keeps an
+            // empty value only when another parameter follows it, as QwpUpgradeRejectFragmentationTest drives: it
+            // drops a trailing "qwp_owned_by=" (HttpHeaderParserTest.testUrlParamsTrailingEmpty), which so names no
+            // owner.
             String response = ownedByHandshake(new OwnerRecordingSecurityContext(null), null, "", false);
             assertTextReject(response, "400 Bad Request",
                     "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
@@ -1234,8 +1276,25 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             @Nullable String urlParamValue,
             boolean isAcceptExpected
     ) throws Exception {
+        return ownedByHandshake(
+                new QwpIngressUpgradeProcessor(engine, new DefaultHttpServerConfiguration(configuration)),
+                securityContext,
+                headerValue,
+                urlParamValue,
+                isAcceptExpected
+        );
+    }
+
+    // Same as above, through the given processor, as the next upgrade that it serves: in production one processor
+    // serves the upgrades of successive connections.
+    private static String ownedByHandshake(
+            QwpIngressUpgradeProcessor processor,
+            SecurityContext securityContext,
+            @Nullable String headerValue,
+            @Nullable String urlParamValue,
+            boolean isAcceptExpected
+    ) throws Exception {
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
-        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
         LocalValue<QwpIngressProcessorState> lv = getLV();
 
         long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);

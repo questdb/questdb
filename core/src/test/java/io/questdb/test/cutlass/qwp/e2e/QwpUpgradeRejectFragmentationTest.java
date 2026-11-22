@@ -141,11 +141,14 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
 
     @Test
     public void test400MalformedOwnedByRejectIsFullyDeliveredUnderSendFragmentation() throws Exception {
-        runWithFragmentedSend(port -> assertFullRejectDelivered(
-                port,
-                ownedByUpgradeRequest(port, "/write/v4", "team%zz"),
-                textReject("400 Bad Request", "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)")
-        ));
+        final byte[] expected = textReject("400 Bad Request", "Invalid X-QWP-Owned-By (must be a non-empty, percent-encoded UTF-8 name)");
+        runWithFragmentedSend(port -> {
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4", "team%zz"), expected);
+            // An empty browser carrier, a URL parameter. The HTTP parser keeps the empty value because another
+            // parameter follows it; it drops a trailing one (HttpHeaderParserTest.testUrlParamsTrailingEmpty),
+            // which then names no owner.
+            assertFullRejectDelivered(port, ownedByUpgradeRequest(port, "/write/v4?qwp_owned_by=&x=1", null), expected);
+        });
     }
 
     @Test
