@@ -197,6 +197,7 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                             factory,
                             cursor,
                             false,
+                            null,
                             2,
                             0,
                             "SELECT * FROM qwp_timer_page",

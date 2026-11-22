@@ -116,6 +116,16 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * Returns true when a frame of this cursor can be custom: a frame with a non-zero
+     * {@link PageFrame#getPartitionFrameState()}. Such a frame has no readable raw page
+     * addresses; only {@link PageFrameMemoryPool} can materialize it. Zero-copy consumers,
+     * such as the parquet exporters, must read these cursors row by row.
+     */
+    default boolean hasCustomFrames() {
+        return false;
+    }
+
+    /**
      * Returns true if the cursor belongs to an external parquet file, false in case of table partition files.
      */
     boolean isExternal();

@@ -492,7 +492,7 @@ public class CoveringIndexFrameReleaseTest extends AbstractCairoTest {
 
         FrameRows(RecordMetadata metadata, PageFrameCursor cursor) {
             this.metadata = metadata;
-            addressCache.of(metadata, cursor.getColumnMapping(), cursor.isExternal());
+            addressCache.of(metadata, cursor);
             pool.of(addressCache);
             record.of(cursor);
             CursorPrinter.println(metadata, sink);

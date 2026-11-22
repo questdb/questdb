@@ -46,6 +46,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -65,6 +66,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             "2024-03-01T00:00:00.000000Z",
             "2022-05-01T00:00:00.000000Z"
     );
+    // Daylight saving time changes, in UTC, of the time zones in periodTimeZones: the clock moves forward at the first
+    // of each pair and back at the second. Australia/Lord_Howe moves its clock by half an hour.
+    private static final ObjList<String> periodDstChanges = new ObjList<>(
+            "2022-03-13T07:00:00.000000Z", "2022-11-06T06:00:00.000000Z",
+            "2022-03-27T01:00:00.000000Z", "2022-10-30T01:00:00.000000Z",
+            "2022-10-01T15:30:00.000000Z", "2022-04-02T15:00:00.000000Z"
+    );
+    private static final ObjList<String> periodTimeZones = new ObjList<>("America/New_York", "Europe/Berlin", "Australia/Lord_Howe");
     private static final String[] timestampTypes = new String[]{"timestamp", "timestamp_ns"};
     // None of these time zones changes its UTC offset within two weeks of the monthStarts.
     private static final ObjList<String> timeZones = new ObjList<>("Europe/Berlin", "Asia/Kolkata", "America/Sao_Paulo");
@@ -592,8 +601,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " as (" + viewSql + ") partition by DAY");
     }
 
-    private static void createPeriodMatView(String viewSql, String mvName, int interval, char intervalUnit, boolean deferred) throws SqlException {
-        execute("create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") + " period (length " + interval + intervalUnit + ") as (" + viewSql + ") partition by DAY");
+    private static void createPeriodMatView(
+            String viewSql,
+            String mvName,
+            int interval,
+            char intervalUnit,
+            @Nullable String timeZone,
+            boolean deferred
+    ) throws SqlException {
+        execute(
+                "create materialized view " + mvName + " refresh immediate " + (deferred ? "deferred" : "") +
+                        " period (length " + interval + intervalUnit + (timeZone != null ? " time zone '" + timeZone + "'" : "") +
+                        ") as (" + viewSql + ") partition by DAY"
+        );
     }
 
     private static void createTimerMatView(String viewSql, String mvName, long start, int interval, char intervalUnit, boolean deferred) throws SqlException {
@@ -675,12 +695,13 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             long start,
             long end,
             int interval,
-            char intervalUnit
+            char intervalUnit,
+            @Nullable String timeZone
     ) throws SqlException {
         // create empty initial table as we want the timestamps to be in the [start, end] interval
         fuzzer.createInitialTableWal(tableNameBase, 0);
         final boolean deferred = rnd.nextBoolean();
-        createPeriodMatView(viewSql, matViewName, interval, intervalUnit, deferred);
+        createPeriodMatView(viewSql, matViewName, interval, intervalUnit, timeZone, deferred);
 
         ObjList<FuzzTransaction> transactions = fuzzer.generateTransactions(tableNameBase, rnd, start, end);
 
@@ -797,8 +818,24 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             default -> throw new IllegalStateException("unexpected unit: " + lengthUnit);
         };
 
-        final long start = MicrosTimestampDriver.floor("2022-01-02T03");
-        final long end = start + (1 + rnd.nextInt(10)) * periodLengthMicros;
+        final long dataLength = (1 + rnd.nextInt(10)) * periodLengthMicros;
+        // Half of the runs put the periods in a time zone, and the base rows around one of its daylight saving time
+        // changes.
+        final String timeZone;
+        final long start;
+        if (rnd.nextBoolean()) {
+            final int change = rnd.nextInt(periodDstChanges.size());
+            timeZone = periodTimeZones.getQuick(change / 2);
+            start = MicrosTimestampDriver.floor(periodDstChanges.getQuick(change)) - rnd.nextLong(dataLength);
+        } else {
+            timeZone = null;
+            start = MicrosTimestampDriver.floor("2022-01-02T03");
+        }
+        LOG.info().$("period view fuzz [length=").$(length).$(lengthUnit)
+                .$(", timeZone=").$(timeZone)
+                .$(", start=").$ts(MicrosTimestampDriver.INSTANCE, start)
+                .I$();
+        final long end = start + dataLength;
         final long clockJumpLimit = Math.min(end, start + SPIN_LOCK_TIMEOUT);
         currentMicros = start;
 
@@ -819,7 +856,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 String tableNameBase = testTableName + "_" + i;
                 String tableNameMv = tableNameBase + "_mv";
                 String viewSql = "select min(c3), max(c3), ts from " + tableNameBase + " sample by " + sampleByInterval + lengthUnit;
-                ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit);
+                ObjList<FuzzTransaction> transactions = createTransactionsAndPeriodMv(rnd, tableNameBase, tableNameMv, viewSql, start, end, length, lengthUnit, timeZone);
                 fuzzTransactions.add(transactions);
                 viewSqls.add(viewSql);
             }
@@ -834,7 +871,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
         fuzzer.checkNoSuspendedTables();
 
-        currentMicros = Math.max(end, currentMicros) + periodLengthMicros;
+        // Where the clock moves back, a period in a time zone lasts up to an hour longer.
+        currentMicros = Math.max(end, currentMicros) + periodLengthMicros + (timeZone != null ? Micros.HOUR_MICROS : 0);
         drainMatViewTimerQueue(timerJob);
         drainWalAndMatViewQueues();
         fuzzer.checkNoSuspendedTables();

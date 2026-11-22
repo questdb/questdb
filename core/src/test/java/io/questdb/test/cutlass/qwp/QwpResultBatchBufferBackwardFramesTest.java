@@ -164,7 +164,7 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
             final QwpBackwardReadAheadTest.RecordingFacade willNeed = new QwpBackwardReadAheadTest.RecordingFacade(true);
             final QwpBackwardReadAhead adviseFrame = new QwpBackwardReadAhead(willNeed);
             adviseFrame.of(metadata);
-            addressCache.of(metadata, cursor.getColumnMapping(), cursor.isExternal());
+            addressCache.of(metadata, cursor);
             pool.of(addressCache);
             record.of(cursor);
             try {
