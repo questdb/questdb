@@ -1667,13 +1667,10 @@ public final class Chars {
     }
 
     // Same as Character.toLowerCase(c), which the case-insensitive hash maps and the case-insensitive comparisons
-    // depend on, but answers ASCII without the Unicode tables. Character.toLowerCase() maps 'A' to 'Z' and nothing
-    // else below 128.
+    // depend on, but answers ASCII without the Unicode tables. Below 128, Character.toLowerCase() changes only 'A'
+    // through 'Z', each to its lower-case letter, as toLowerCaseAscii() does.
     private static char toLowerCase(char c) {
-        if (c < 128) {
-            return c >= 'A' && c <= 'Z' ? (char) (c + 32) : c;
-        }
-        return Character.toLowerCase(c);
+        return c < 128 ? toLowerCaseAscii(c) : Character.toLowerCase(c);
     }
 
     static {
