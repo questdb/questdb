@@ -189,9 +189,12 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                     assertBackwardFrame(context, frame, record, rows, defs, null, backward, backwardTextDict, oracle, oracleTextDict);
 
                     // the whole-frame read and the MADV_WILLNEED windows cover the same bytes,
-                    // each once and inside the frame's published extents
+                    // each once and inside the frame's published extents; the read asks the OS
+                    // for nothing, so it counts none of them as read ahead
                     readFrame.ofFrame(frame, rows);
-                    final long frameBytes = readFrame.advise(Math.max(0, rows - 1_024));
+                    final long touchedBefore = readFrame.getTouchedBytes();
+                    Assert.assertEquals(context, 0, readFrame.advise(Math.max(0, rows - 1_024)));
+                    final long frameBytes = readFrame.getTouchedBytes() - touchedBefore;
                     willNeed.clear();
                     adviseFrame.ofFrame(frame, rows);
                     long advisedBytes = 0;

@@ -64,7 +64,7 @@ import java.util.function.LongUnaryOperator;
  * the first batch the stream checks whether a window is in memory, backs off checking while
  * windows are not, and trusts small frames after a streak in memory until its thread reads
  * from storage. Without MADV_WILLNEED the stream reads the whole frame once, before the
- * first slice.
+ * first slice, and asks the OS for nothing, so it counts none of those bytes as read ahead.
  */
 public class QwpBackwardReadAheadTest {
     // the egress walks a frame down in slices of at most this many rows
@@ -461,6 +461,8 @@ public class QwpBackwardReadAheadTest {
                     readAhead.clear();
                     Assert.assertEquals(0, readAhead.advise(3_000 - SLICE_ROWS));
                     Assert.assertEquals(0, ff.requestCount());
+                    // nor did the stream read any of the frames itself
+                    Assert.assertEquals(0, readAhead.getTouchedBytes());
                 }
             }
         });
@@ -569,6 +571,31 @@ public class QwpBackwardReadAheadTest {
     }
 
     @Test
+    public void testTouchPathCountsNothing() throws Exception {
+        // Without MADV_WILLNEED the stream reads each frame at once, in memory or not: it has
+        // nothing to check or trust, and asks the OS for nothing, so it counts none of the
+        // bytes it reads as read ahead.
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestFrame frame = smallFrame()) {
+                for (boolean isResident : new boolean[]{true, false}) {
+                    final RecordingFacade ff = new RecordingFacade(false);
+                    ff.isResident = isResident;
+                    final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
+                    readAhead.of(frame.metadata());
+                    for (int f = 1; f <= 50; f++) {
+                        Assert.assertEquals(0, walk(readAhead, frame));
+                        // the stream still reads each frame once, whole
+                        Assert.assertEquals(f * frame.frameBytes(), readAhead.getTouchedBytes());
+                    }
+                    Assert.assertEquals(0, ff.residencyChecks);
+                    Assert.assertEquals(0, ff.faultReads);
+                    Assert.assertEquals(0, ff.requestCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTouchPathCoversTheFrameBytesOnly() throws Exception {
         // Without MADV_WILLNEED the first slice reads the whole frame: exactly the frame's
         // rows of every column, aux and data alike, and nothing of a column top.
@@ -637,9 +664,12 @@ public class QwpBackwardReadAheadTest {
                 final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
                 readAhead.of(metadata(types));
                 readAhead.ofFrame(frame, hi - lo);
-                Assert.assertEquals(frameBytes, readAhead.advise(hi - lo - SLICE_ROWS / 4));
+                // the read asks the OS for nothing, so it counts no byte as read ahead
+                Assert.assertEquals(0, readAhead.advise(hi - lo - SLICE_ROWS / 4));
+                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
                 // once per frame, and without asking the OS
                 Assert.assertEquals(0, readAhead.advise(0));
+                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
                 Assert.assertEquals(0, ff.requestCount());
 
                 // the same frame through MADV_WILLNEED asks for the same bytes, each once
@@ -653,6 +683,7 @@ public class QwpBackwardReadAheadTest {
                 frame.format = PartitionFormat.PARQUET;
                 readAhead.ofFrame(frame, hi - lo);
                 Assert.assertEquals(0, readAhead.advise(0));
+                Assert.assertEquals(frameBytes, readAhead.getTouchedBytes());
             }
         });
     }
@@ -693,30 +724,11 @@ public class QwpBackwardReadAheadTest {
                 final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(new RecordingFacade(false));
                 readAhead.of(metadata(new int[]{ColumnType.LONG, ColumnType.LONG}));
                 readAhead.ofFrame(frame, rows);
-                Assert.assertEquals(2 * size, readAhead.advise(rows - SLICE_ROWS));
+                Assert.assertEquals(0, readAhead.advise(rows - SLICE_ROWS));
+                Assert.assertEquals(2 * size, readAhead.getTouchedBytes());
                 Assert.assertEquals(expectedSink, readAhead.getTouchSink());
             } finally {
                 Unsafe.free(alloc, allocSize, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testTouchPathNeverChecks() throws Exception {
-        // Without MADV_WILLNEED the stream reads each frame at once, in memory or not, and
-        // has nothing to check or trust.
-        TestUtils.assertMemoryLeak(() -> {
-            try (TestFrame frame = smallFrame()) {
-                final RecordingFacade ff = new RecordingFacade(false);
-                ff.isResident = true;
-                final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
-                readAhead.of(frame.metadata());
-                for (int f = 0; f < 50; f++) {
-                    Assert.assertEquals(frame.frameBytes(), walk(readAhead, frame));
-                }
-                Assert.assertEquals(0, ff.residencyChecks);
-                Assert.assertEquals(0, ff.faultReads);
-                Assert.assertEquals(0, ff.requestCount());
             }
         });
     }
@@ -763,8 +775,9 @@ public class QwpBackwardReadAheadTest {
                 final QwpBackwardReadAhead readAhead = new QwpBackwardReadAhead(ff);
                 readAhead.of(metadata(types));
                 readAhead.ofFrame(frame, 100);
-                // only the aux entries of columns 0 and 1
-                Assert.assertEquals(16L * 100 + 8L * 5, readAhead.advise(0));
+                // only the aux entries of columns 0 and 1, none of them counted as read ahead
+                Assert.assertEquals(0, readAhead.advise(0));
+                Assert.assertEquals(16L * 100 + 8L * 5, readAhead.getTouchedBytes());
 
                 // MADV_WILLNEED asks for the same aux entries, and for no data: the varchar
                 // data extent is empty, and the string aux entries stop before the window's

@@ -71,7 +71,8 @@ import org.jetbrains.annotations.TestOnly;
  * before it trusts again double each time.
  * <p>
  * Elsewhere it reads the whole frame forward once, before the first slice: the OS reads
- * it in large requests, and the walk down finds it in page cache.
+ * it in large requests, and the walk down finds it in page cache. The stream asks the OS
+ * for nothing then, so it counts none of these bytes as read ahead.
  */
 public class QwpBackwardReadAhead implements Mutable {
     // The rows of the first batch: the egress fills a batch with at most this many rows.
@@ -121,6 +122,8 @@ public class QwpBackwardReadAhead implements Mutable {
     private long probeAddress;
     // rows of the frames the stream has navigated to
     private long streamRows;
+    // bytes the whole-frame reads covered, which advise() does not count; only tests read it back
+    private long touchedBytes;
     // Sum of the bytes the whole-frame read loads. Storing it keeps the JIT from dropping
     // loads whose values nothing else reads; only tests read it back.
     private long touchSink;
@@ -144,7 +147,9 @@ public class QwpBackwardReadAhead implements Mutable {
      * Makes sure the rows the stream is about to read are on their way into memory: the
      * slice of the current frame that starts at row {@code lo} and every row above it. Call
      * it before each slice, top slice first. Returns how many bytes it asked the OS to read
-     * ahead, or read itself; bytes already in memory do not count.
+     * ahead; ranges it finds in memory, which it does not ask for, do not count. Where the OS
+     * does not read advised pages, the stream reads the whole frame itself, asks the OS for
+     * nothing, and returns 0.
      */
     public long advise(long lo) {
         // nothing left to read: no frame, a parquet, custom or empty frame, or every row is advised
@@ -153,7 +158,8 @@ public class QwpBackwardReadAhead implements Mutable {
         }
         if (!isWillNeedSupported) {
             advisedLo = 0;
-            return touchFrame();
+            touchFrame();
+            return 0;
         }
         // the marker is never below advisedLo, so the slice is advised when it holds no row below the marker
         if (lo >= marker) {
@@ -188,6 +194,15 @@ public class QwpBackwardReadAhead implements Mutable {
         varSizeColumns.clear();
         clearFrame();
         clearStream();
+    }
+
+    /**
+     * Returns how many bytes the whole-frame reads covered, none of which
+     * {@link #advise(long)} counts.
+     */
+    @TestOnly
+    public long getTouchedBytes() {
+        return touchedBytes;
     }
 
     /**
@@ -504,13 +519,13 @@ public class QwpBackwardReadAhead implements Mutable {
     }
 
     /**
-     * Reads the column pages of the frame once, first byte to last, and returns how many
-     * bytes that covered. Each column covers exactly the frame's own bytes: the page extent
-     * of a fixed-size column; for a var-size column its aux entries, and its data from where
-     * the frame's first row points to the end of the data extent. The page extents of the
-     * frame bound every read.
+     * Reads the column pages of the frame once, first byte to last, and adds the bytes that
+     * covered to touchedBytes. Each column covers exactly the frame's own bytes: the page
+     * extent of a fixed-size column; for a var-size column its aux entries, and its data from
+     * where the frame's first row points to the end of the data extent. The page extents of
+     * the frame bound every read.
      */
-    private long touchFrame() {
+    private void touchFrame() {
         long bytes = 0;
         long sink = 0;
         for (int ci = 0, n = columnTypes.size(); ci < n; ci++) {
@@ -541,7 +556,7 @@ public class QwpBackwardReadAhead implements Mutable {
             }
         }
         touchSink += sink;
-        return bytes;
+        touchedBytes += bytes;
     }
 
     // advises [address, address + len); when checking, only if any of its pages is not in memory
