@@ -14529,7 +14529,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 && !txWriter.isPartitionComposite(i - 1)
                                 && !getGeometry().hasGenerationForNextPublish(i - 1, 1)) {
                             LOG.info().$("no free geometry generation to carve the partition, rewriting it [table=").$(tableToken)
-                                    .$(", partition=").$ts(prevPartitionTimestamp)
+                                    .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
                                     .I$();
                             newPrevPartitionSize = 0;
                             newSplitPartitionTimestamp = prevPartitionTimestamp;
@@ -14539,7 +14539,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                         // This logging should be quite rare, we can afford info level.
                         LOG.info().$("splitting last line of the partition [table=").$(tableToken)
-                                .$(", partition=").$ts(prevPartitionTimestamp)
+                                .$(", partition=").$ts(timestampDriver, prevPartitionTimestamp)
                                 .$(", oldSize=").$(prevPartitionSize)
                                 .$(", newSize=").$(newPrevPartitionSize)
                                 .$(", splitPartition=").$ts(timestampDriver, newSplitPartitionTimestamp)
