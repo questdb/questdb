@@ -236,7 +236,11 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             "[$today, 2024-01-03]T[09:00@Bogus/Zone]",
                             // a range between two points in time, with a duration that does not parse
                             "[$now - 1h..$now@+00:00];1h#Tue",
-                            "[$now - 1h..$now@+00:00];1h;1d"
+                            "[$now - 1h..$now@+00:00];1h;1d",
+                            // a static element with a time part of its own that starts with a
+                            // bracket, under a time of the list
+                            "[2024-01T[09:00,10:00], $today]T10:00",
+                            "[2024-01-05T[09:00], $today]T10:00"
                     }) {
                         try (CompiledTickExpression compiled = compile(driver, expression)) {
                             engineJob.setNowAndFixClock(driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z"), driver.getTimestampType());

@@ -161,6 +161,90 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateListElementWithTimeListAndListTimeFailsInEveryContext() throws Exception {
+        // A static element with a time part of its own that starts with a bracket, under a time of
+        // the list, fails the query as it compiles, wherever the query holds the literal, at the
+        // position of the literal, with the error that a bind variable with the expression fails the
+        // query with as it runs. The literal selected 10:00 on every day of January.
+        assertMemoryLeak(() -> {
+            createContextTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                final String tickExpr = "[2024-01T[09:00,10:00], $today]T10:00";
+                final String error = "Invalid date: 2024-01-01T09:00T10:00";
+                assertTickExprFailsInEveryContext(tickExpr, error, tickExpr, error);
+                // NOT IN
+                final String notIn = "SELECT count() FROM t WHERE ts NOT IN ";
+                assertExceptionNoLeakCheck(notIn + "'" + tickExpr + "'", notIn.length(), error);
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertExceptionNoLeakCheck(notIn + "$1", notIn.length(), error);
+                bindVariableService.clear();
+                // a monotonic function of the designated timestamp, whose interval the scan inverts
+                // as it opens: the element on a month, and the one on days, which the IR rejected
+                for (String[] literal : new String[][]{
+                        {tickExpr, error},
+                        {"[2024-01-[01..03]T[09:00], $today]T10:00", "Invalid date: 2024-01-01T09:00T10:00"}
+                }) {
+                    final String sql = "SELECT count() FROM t WHERE to_timezone(ts, 'UTC') IN '" + literal[0] + "'";
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'" + literal[0]), literal[1]);
+                }
+                // the table keeps answering: 10:00 on each day of January, of which it has four
+                assertIntrinsicRows("ts IN '[2024-01, $today]T10:00'", "4\t2024-01-01T10:00:00.000000Z\t2024-01-04T10:00:00.000000Z");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateListElementWithTimeListAndListTimeFailsOnEveryTimestampType() throws Exception {
+        // A static element with a time part of its own that starts with a bracket, under a time of
+        // the list, fails the query on a designated nanosecond timestamp, a nullable timestamp, and a
+        // DATE, which IN compares as a microsecond timestamp: as a literal as the query compiles, and
+        // as a bind variable as it runs. A month element without a time part of its own selects the
+        // time of the list on each of its days.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, ts2 TIMESTAMP, d DATE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                    ('2024-01-02T10:00:00.000000000Z', '2024-01-02T10:00:00.000000Z', '2024-01-02T10:00:00.000Z'),
+                    ('2024-01-05T10:00:30.000000000Z', '2024-01-05T10:00:30.000000Z', '2024-01-05T10:00:30.000Z'),
+                    ('2024-01-05T11:00:00.000000000Z', NULL, NULL)
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                final String tickExpr = "[2024-01T[09:00,10:00], $today]T10:00";
+                final String error = "Invalid date: 2024-01-01T09:00T10:00";
+                // the minute of 10:00 holds the rows at 10:00 and at 10:00:30, and neither the row at
+                // 11:00 nor the NULL
+                for (String[] column : new String[][]{
+                        {"ts", "2\t2024-01-02T10:00:00.000000000Z\t2024-01-05T10:00:30.000000000Z"},
+                        {"ts2", "2\t2024-01-02T10:00:00.000000Z\t2024-01-05T10:00:30.000000Z"},
+                        {"d", "2\t2024-01-02T10:00:00.000Z\t2024-01-05T10:00:30.000Z"}
+                }) {
+                    final String query = "SELECT count(), min(" + column[0] + "), max(" + column[0] + ") FROM tn WHERE " + column[0] + " IN ";
+                    assertExceptionNoLeakCheck(query + "'" + tickExpr + "'", query.length(), error);
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable(tickExpr, isVarchar);
+                        assertExceptionNoLeakCheck(query + "$1", query.length(), error);
+                    }
+                    bindVariableService.clear();
+                    assertQuery(query + "'[2024-01, $today]T10:00'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + column[1] + "\n");
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDateListWithDenseTimeExpansionAndDayFilter() throws Exception {
         // The minute expansion emits 1440 intervals per date, past the incremental merge
         // threshold (256). 2024-01-03 is a Wednesday and 2024-01-04 a Thursday, so #Wed keeps
@@ -716,6 +800,30 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsoWeekElementWithBracketedTimeLiteralMatchesBindVariable() throws Exception {
+        // The parser takes an ISO week with a time part of its own that starts with a bracket, under
+        // a time of the list. A literal returns the rows of a bind variable with the expression, in
+        // the interval scan and in the row filter.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                final String tickExpr = "[2024-W01T[09:00], $today]T10:00";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertSqlCursors("SELECT * FROM t WHERE ts IN $1", "SELECT * FROM t WHERE ts IN '" + tickExpr + "'");
+                assertSqlCursors(
+                        "SELECT * FROM t WHERE ts IN $1 OR ts > '2030-01-01'",
+                        "SELECT * FROM t WHERE ts IN '" + tickExpr + "' OR ts > '2030-01-01'"
+                );
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testListOfTimestamps() throws Exception {
         assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)")
                 .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
@@ -880,55 +988,15 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // position of the literal. A bind variable with such an expression fails the query the
         // same way when it runs.
         assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
-                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
-                        FROM long_sequence(96)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO ti SELECT ts, s FROM t");
+            createContextTables();
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
             try {
-                // ? stands for the tick expression
-                for (String query : new String[]{
-                        "WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c",
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)",
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s",
-                        "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a LEFT JOIN t b ON a.s = b.s",
-                        "SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a ASOF JOIN t b",
-                        "SELECT count() FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ?) b",
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a CROSS JOIN t b",
-                        "SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ?) b",
-                        "SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t",
-                        "SELECT ts FROM t UNION SELECT ts FROM t WHERE ts IN ?",
-                        "SELECT ts FROM t WHERE ts IN ? EXCEPT SELECT ts FROM t",
-                        "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN ?",
-                        "SELECT ts FROM t WHERE ts IN ? INTERSECT SELECT ts FROM t",
-                        "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN ?",
-                        "SELECT s, count() FROM t WHERE ts IN ? GROUP BY s",
-                        "SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s",
-                        "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
-                        "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ?",
-                        "SELECT * FROM t WHERE ts IN ? ORDER BY ts LIMIT -1",
-                        // a symbol without an index, and one with an index
-                        "SELECT count() FROM t WHERE s = 'a' AND ts IN ?",
-                        "SELECT count() FROM ti WHERE s = 'a' AND ts IN ?"
-                }) {
-                    final String literal = query.replace("?", "'$now - 1h..$now;1x'");
-                    assertExceptionNoLeakCheck(literal, literal.indexOf("'$now"), "Invalid duration unit: x");
-                    final String bind = query.replace("?", "$1");
-                    bindVariableService.clear();
-                    bindVariableService.setStr(0, "$now - 1h..$now;1h#Tue");
-                    assertExceptionNoLeakCheck(bind, bind.indexOf("$1"), "Expected number before unit '#'");
-                    bindVariableService.clear();
-                }
-                // EXPLAIN compiles the query without running it
-                final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '$now - 1h..$now;1x'";
-                assertExceptionNoLeakCheck(explain, explain.indexOf('\''), "Invalid duration unit: x");
+                assertTickExprFailsInEveryContext(
+                        "$now - 1h..$now;1x",
+                        "Invalid duration unit: x",
+                        "$now - 1h..$now;1h#Tue",
+                        "Expected number before unit '#'"
+                );
             } finally {
                 bindVariableService.clear();
                 setCurrentMicros(-1);
@@ -1658,6 +1726,22 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         ));
     }
 
+    /**
+     * Creates table t with a row every hour from 2024-01-01T00:00 to 2024-01-04T23:00 and a symbol
+     * column, and table ti with the same rows and an indexed symbol column.
+     */
+    private static void createContextTables() throws SqlException {
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                           (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
+                    FROM long_sequence(96)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO ti SELECT ts, s FROM t");
+    }
+
     private static void createHourlyTable() throws SqlException {
         // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
         execute("""
@@ -1857,6 +1941,52 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining("Frame forward scan")
                 .returns(expected);
+    }
+
+    /**
+     * Asserts that a query fails at the position of the tick expression wherever it holds it: with
+     * the literal as it compiles, and with a bind variable of the bind value as it runs. It runs on
+     * the tables of {@link #createContextTables}.
+     */
+    private void assertTickExprFailsInEveryContext(String literal, String literalError, String bindValue, String bindError) throws Exception {
+        // ? stands for the tick expression
+        for (String query : new String[]{
+                "WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c",
+                "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)",
+                "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s",
+                "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a LEFT JOIN t b ON a.s = b.s",
+                "SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a ASOF JOIN t b",
+                "SELECT count() FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a CROSS JOIN t b",
+                "SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                "SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t",
+                "SELECT ts FROM t UNION SELECT ts FROM t WHERE ts IN ?",
+                "SELECT ts FROM t WHERE ts IN ? EXCEPT SELECT ts FROM t",
+                "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN ?",
+                "SELECT ts FROM t WHERE ts IN ? INTERSECT SELECT ts FROM t",
+                "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN ?",
+                "SELECT s, count() FROM t WHERE ts IN ? GROUP BY s",
+                "SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s",
+                "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
+                "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ?",
+                "SELECT * FROM t WHERE ts IN ? ORDER BY ts LIMIT -1",
+                // a symbol without an index, and one with an index
+                "SELECT count() FROM t WHERE s = 'a' AND ts IN ?",
+                "SELECT count() FROM ti WHERE s = 'a' AND ts IN ?"
+        }) {
+            final String literalSql = query.replace("?", "'" + literal + "'");
+            assertExceptionNoLeakCheck(literalSql, literalSql.indexOf("'" + literal), literalError);
+            final String bindSql = query.replace("?", "$1");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, bindValue);
+            assertExceptionNoLeakCheck(bindSql, bindSql.indexOf("$1"), bindError);
+            bindVariableService.clear();
+        }
+        // EXPLAIN compiles the query without running it
+        final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '" + literal + "'";
+        assertExceptionNoLeakCheck(explain, explain.indexOf('\''), literalError);
     }
 
     private void assertTickExprMatches(String tickExpr, String expectedRow) throws Exception {

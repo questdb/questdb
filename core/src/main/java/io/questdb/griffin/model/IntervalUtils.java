@@ -4495,9 +4495,11 @@ public final class IntervalUtils {
         return false;
     }
 
-    private static boolean hasTimeOfDay(CharSequence seq, int lo, int hi) {
+    // a 'T' that starts a time part, see DateExpressionEvaluator.isTimeSuffixStart(), as in
+    // 2024-01-05T09:00 or 2024-01T[09:00,10:00]
+    private static boolean hasTimePart(CharSequence seq, int lo, int hi) {
         for (int i = lo; i < hi - 1; i++) {
-            if (seq.charAt(i) == 'T' && Chars.isAsciiDigit(seq.charAt(i + 1))) {
+            if (seq.charAt(i) == 'T' && DateExpressionEvaluator.isTimeSuffixStart(seq, i + 1, hi)) {
                 return true;
             }
         }
@@ -4541,8 +4543,9 @@ public final class IntervalUtils {
      * in the time ({@code T[09..17]:30}), brackets after a time list ({@code T[09:00,10:00]:[15,45]})
      * or a time list slot with its own timezone ({@code T[09:00@Asia/Tokyo]}). It also cannot
      * represent an element with its own timezone or day filter ({@code [$today#Mon]}), a static
-     * element under a time list or with a time of its own under a time override, or a month or year
-     * element with a duration, which {@link #parseTickExpr} expands day by day.
+     * element under a time list or with a time part of its own, such as {@code T09:30} or
+     * {@code T[09:00,10:00]}, under a time override, or a month or year element with a duration,
+     * which {@link #parseTickExpr} expands day by day.
      */
     private static boolean isCompilable(
             CharSequence seq,
@@ -4615,7 +4618,7 @@ public final class IntervalUtils {
                         if (hasTimeList) {
                             return false;
                         }
-                        if (timeLo < timeHi && hasTimeOfDay(seq, es, ee)) {
+                        if (timeLo < timeHi && hasTimePart(seq, es, ee)) {
                             return false;
                         }
                         if (durationSemicolon >= 0 && !hasDatePrecision(seq, es, ee)) {

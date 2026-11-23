@@ -287,15 +287,17 @@ public class DateExpressionEvaluator {
     }
 
     /**
-     * Returns whether the character at {@code index}, right after a 'T' that follows a date variable
-     * expression, starts the time part of the expression: a time of day, as in {@code $todayT09:30},
-     * or a bracket, as in {@code $todayT[09:00,14:30]} or {@code $todayT[09..17]:30}. A variable name
-     * has neither after a 'T', so a 'T' inside a name, as in {@code $TOMORROW}, does not end it.
+     * Returns whether the character at {@code index}, right after a 'T' that follows a date or a date
+     * variable expression, starts the time part of the expression: a time of day, as in
+     * {@code $todayT09:30}, or a bracket, as in {@code $todayT[09:00,14:30]} or
+     * {@code $todayT[09..17]:30}. A variable name has neither after a 'T', so a 'T' inside a name, as
+     * in {@code $TOMORROW}, does not end it.
      * <p>
      * {@link IntervalUtils} splits a bare date variable expression from its time part at such a 'T',
      * both when it parses the expression and when it compiles it, and {@link #indexOfDateVariable}
      * ends a variable name there. All of them use this method, so that the detector finds a date
-     * variable in every expression that the parser resolves one in.
+     * variable in every expression that the parser resolves one in. IntervalUtils.isCompilable()
+     * finds the time part of a static date list element with it as well.
      */
     static boolean isTimeSuffixStart(CharSequence seq, int index, int lim) {
         if (index >= lim) {

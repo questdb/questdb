@@ -200,6 +200,19 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyLiteralWithElementTimePartUnderListTimeAppliesAsNull() throws Exception {
+        // A WAL that an older build wrote can hold an UPDATE with a literal that SQL now parses on
+        // every evaluation and rejects as it compiles: a static element with a time part of its own
+        // that starts with a bracket, under a time of the list. The apply keeps the table applying,
+        // and runs it as a null value. The literal selected 09:00 on every day of January, and of
+        // $today.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
+            assertLegacyLiteralAppliesAsNull("[2024-01T[09:00,10:00], $today]T09:00");
+        });
+    }
+
+    @Test
     public void testLegacyLiteralWithUnknownDurationUnitAppliesAsNull() throws Exception {
         // A WAL that an older build wrote can hold an UPDATE with a literal that SQL now rejects as
         // it compiles, such as one with a duration unit that the timestamp drivers do not add. The
@@ -210,13 +223,7 @@ public class WalTickExprTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
             for (String tickExpr : new String[]{"$today;1x", "[$today@+00:00];1x", "$now - 1d..$now;1x"}) {
-                assertLegacyUpdateApplied("ts IN '" + tickExpr + "'", "11111");
-                assertLegacyUpdateApplied("ts NOT IN '" + tickExpr + "'", "22222");
-                assertLegacyUpdateApplied("ts2 IN '" + tickExpr + "'", "11111");
-                assertLegacyUpdateApplied("ts2 NOT IN '" + tickExpr + "'", "22222");
-                assertLegacyUpdateApplied("dateadd('h', 1, ts) IN '" + tickExpr + "'", "11111");
-                // the other side of an OR still decides
-                assertLegacyUpdateApplied("ts IN '" + tickExpr + "' OR ts = '2024-01-03T09:00:00.000000Z'", "11121");
+                assertLegacyLiteralAppliesAsNull(tickExpr);
             }
         });
     }
@@ -271,6 +278,12 @@ public class WalTickExprTest extends AbstractCairoTest {
                 assertExceptionNoLeakCheck(sql[0], sql[0].indexOf("'$now"), sql[1]);
             }
             Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(token));
+            // a static element with a time part of its own that starts with a bracket, under a time
+            // of the list: the literal selected 09:00 on every day of January
+            final String elementTimePart = "'[2024-01T[09:00,10:00], $today]T09:00'";
+            assertUpdateRejected(token, "ts IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
+            assertUpdateRejected(token, "ts NOT IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
+            assertUpdateRejected(token, "ts2 IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
             assertApplied(token, "11111");
         });
     }
@@ -563,6 +576,21 @@ public class WalTickExprTest extends AbstractCairoTest {
         }
         setCurrentMicros(applyTime);
         assertApplied(token, values);
+    }
+
+    /**
+     * Asserts that the apply of UPDATEs with the literal, which an older build wrote to the WAL,
+     * runs it as a null value: IN matches no row, NOT IN every row, and the other side of an OR
+     * still decides.
+     */
+    private void assertLegacyLiteralAppliesAsNull(String tickExpr) throws Exception {
+        assertLegacyUpdateApplied("ts IN '" + tickExpr + "'", "11111");
+        assertLegacyUpdateApplied("ts NOT IN '" + tickExpr + "'", "22222");
+        assertLegacyUpdateApplied("ts2 IN '" + tickExpr + "'", "11111");
+        assertLegacyUpdateApplied("ts2 NOT IN '" + tickExpr + "'", "22222");
+        assertLegacyUpdateApplied("dateadd('h', 1, ts) IN '" + tickExpr + "'", "11111");
+        // the other side of an OR still decides
+        assertLegacyUpdateApplied("ts IN '" + tickExpr + "' OR ts = '2024-01-03T09:00:00.000000Z'", "11121");
     }
 
     /**
