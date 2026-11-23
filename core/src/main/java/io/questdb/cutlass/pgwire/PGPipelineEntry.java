@@ -54,6 +54,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionOwner;
+import io.questdb.griffin.SqlExecutionResources;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
@@ -213,6 +214,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private SqlExecutionResources queryExecutionResources;
     private MemoryTracker queryMemoryTracker;
     // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
     private CharSequence selectCacheScope = null;
@@ -284,10 +286,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
 
         if (tas != null) {
-            // close cursor in case it is open
-            cursor = Misc.free(cursor);
-            queryCancellation.clear();
-            queryMemoryTracker = null;
+            // Close the cursor in case it is open, and end the execution owner before the factory goes
+            // back to the shared cache. Ending the owner releases the execution's resources, which
+            // include state of the factory's functions, and another connection can take the factory
+            // from the cache as soon as it is there. A connection that closes with an open cursor
+            // gets here with its owner still running.
+            try {
+                closeSuspendedCursor();
+            } catch (Throwable th) {
+                // close() frees the factory, which tas holds too
+                LOG.error().$("could not end SQL execution, not caching its plan [error=").$(th).I$();
+                return;
+            }
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
@@ -370,6 +380,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         preparedStatementNameToDeallocate = null;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        queryExecutionResources = null;
         selectCacheScope = null;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
@@ -404,6 +415,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         outResendResumePoint = -1;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        queryExecutionResources = null;
         stateSuspended = false;
         endSqlExecutionOwner();
     }
@@ -975,6 +987,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     cursor = Misc.free(cursor);
                     queryCancellation.clear();
                     queryMemoryTracker = null;
+                    queryExecutionResources = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
@@ -1305,6 +1318,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 assert outResendCursorRecord;
                 sqlExecutionContext.setCancelledFlag(queryCancellation);
                 sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+                sqlExecutionContext.setExecutionResources(queryExecutionResources);
                 try {
                     outRecord(sqlExecutionContext, utf8Sink, cursor.getRecord(), factory.getMetadata().getColumnCount());
                 } catch (PGMessageProcessingException e) {
@@ -1958,8 +1972,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    // outCursor() re-installs queryCancellation and queryMemoryTracker on the context before every
-    // row batch, so every site that opens a cursor must capture them here.
+    // outCursor() re-installs queryCancellation, queryMemoryTracker and queryExecutionResources on the
+    // context before every row batch, so every site that opens a cursor must capture them here. Sibling
+    // portals share the context, and a cursor that initializes a function on its first read must register
+    // that function with its own execution, not with the portal opened after it.
     private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
         // An Execute's row limit is the rows that the client reads first: the portal sends them and
         // suspends, and the client may resume it with another Execute. See
@@ -1974,6 +1990,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
         queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
+        queryExecutionResources = sqlExecutionContext.getExecutionResources();
     }
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
@@ -2525,6 +2542,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
         sqlExecutionContext.setCancelledFlag(queryCancellation);
         sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
+        sqlExecutionContext.setExecutionResources(queryExecutionResources);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }

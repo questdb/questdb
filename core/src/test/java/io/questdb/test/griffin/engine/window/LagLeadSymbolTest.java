@@ -1344,7 +1344,7 @@ public class LagLeadSymbolTest extends AbstractCairoTest {
 
     @Test
     public void testNestedLagOverSymbolCastFromEachType() throws Exception {
-        // Every cast to SYMBOL that hands out a CastToSymbolTable takes the VARCHAR path of
+        // Every cast to SYMBOL other than STRING takes the VARCHAR path of
         // testNestedLagOverSymbolCast. Each column holds a, b, b, c: row 3 compares b against a
         // and must not match, row 4 compares b against b and must.
         assertMemoryLeak(() -> {
