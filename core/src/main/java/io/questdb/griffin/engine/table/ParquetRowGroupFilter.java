@@ -291,6 +291,16 @@ public final class ParquetRowGroupFilter {
                             for (int j = 0; j < valueCount; j++) {
                                 Function f = valueFunctions.getQuick(j);
                                 switch (f.getType()) {
+                                    case ColumnType.CHAR:
+                                        // Equality reads the digit via getShort(), but ranges compare
+                                        // as CHAR, including unsigned conversion of negative SHORTs.
+                                        // Signed SHORT statistics cannot safely prune those ranges.
+                                        if (opType != PushdownFilterExtractor.OP_EQ) {
+                                            supported = false;
+                                            break;
+                                        }
+                                        filterValues.putInt(f.getShort(null));
+                                        break;
                                     case ColumnType.INT:
                                         // INT precision (SHORT promotes to INT); getInt() wraps like
                                         // the native scan.
