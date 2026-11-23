@@ -8652,7 +8652,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                           END
                         FROM t1\s
                         ORDER BY col1,,col2;""", 77,
-                "'then' or 'end' expected"
+                "'then' expected"
         );
 
         // the same statement with THEN in place of the stray FILL
@@ -13813,7 +13813,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                         "a5 ON a4.timestamp = a5.timestamp LEFT OUTER JOIN t3 ON a4.col3 = t3.col3 LEFT col7 <= false " +
                         "OR a4.sym <> col2 GROUP BY a5.col4, col4, a5.col7, col10 ORDER BY col7 ASC NULLS FIRST, a5.col10 DESC," +
                         " a5.col3 DESC NULLS FIRST, 3 DESC LIMIT 194", 112,
-                "'then' or 'end' expected"
+                "'then' expected"
         );
         // the same statement with 'qocvwy' in place of the stray qocvwy
         assertSyntaxError("SELECT ts, col6 AS a1, CASE WHEN col5 <> '192.168.150.217' THEN 754326 WHEN col1 = false THEN '' " +

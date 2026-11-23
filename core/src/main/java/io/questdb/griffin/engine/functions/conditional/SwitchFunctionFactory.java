@@ -419,7 +419,13 @@ public class SwitchFunctionFactory implements FunctionFactory {
             throw SqlException.$(argPositions.getQuick(5), "too many branches");
         }
 
-        return CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        final Function caseFunction = CaseCommon.getCaseFunction(position, returnType, picker, argsToPoke);
+        if (n == 5) {
+            // WHEN true and WHEN false leave the ELSE nothing to match, and the CASE does not hold
+            // it. Free it once the CASE exists: on an earlier error the caller frees it with args.
+            Misc.free(elseBranch);
+        }
+        return caseFunction;
     }
 
     private Function getIntKeyedFunction(

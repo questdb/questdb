@@ -543,7 +543,9 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select case when x > 1 then 'a' from long_sequence(1)")
                 .fails(32, "'when', 'else' or 'end' expected");
         assertQuery("select case when x > 1 then 'a' else 'b' from long_sequence(1)")
-                .fails(41, "'then' or 'end' expected");
+                .fails(41, "'end' expected");
+        assertQuery("select case when x > 1 from long_sequence(1)")
+                .fails(23, "'then' expected");
         assertQuery("select case x when 1 then 'a' end k, case x when 2 then 'b' k from long_sequence(1)")
                 .fails(60, "'when', 'else' or 'end' expected");
     }
@@ -2038,6 +2040,26 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(37, "BOOLEAN expected, found INT");
+    }
+
+    @Test
+    public void testNullTimestampBranchInPlan() throws Exception {
+        // EXPLAIN prints a NULL TIMESTAMP branch as null, as it prints a NULL DATE or INT branch
+        assertQuery("""
+                SELECT
+                    CASE WHEN v < 3 THEN null ELSE ts END a,
+                    CASE WHEN v < 3 THEN ts ELSE null END b,
+                    CASE v WHEN 1 THEN null ELSE tn END c
+                FROM tt
+                """)
+                .ddl("CREATE TABLE tt (v INT, ts TIMESTAMP, tn TIMESTAMP_NS)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [case([v<3,null,ts]),case([v<3,ts,null]),case([null,tn,v])]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tt
+                        """);
     }
 
     @Test

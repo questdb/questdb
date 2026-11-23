@@ -164,17 +164,20 @@ public class ExpressionParser {
                 !moreCastTargetTypes.contains(targetTag);
     }
 
-    private static SqlException caseKeywordExpected(int position, int paramCount) {
+    private static SqlException caseKeywordExpected(int position, int paramCount, boolean isElseValue) {
         if (paramCount == 0) {
             // after the operand of 'case x'
             return SqlException.$(position, "'when' expected");
+        }
+        if (isElseValue) {
+            return SqlException.$(position, "'end' expected");
         }
         if ((paramCount % 2) != 0) {
             // in the value after THEN
             return SqlException.$(position, "'when', 'else' or 'end' expected");
         }
-        // in the condition after WHEN or the value after ELSE
-        return SqlException.$(position, "'then' or 'end' expected");
+        // in the condition after WHEN
+        return SqlException.$(position, "'then' expected");
     }
 
     private static boolean hasOffset(WindowExpression windowExpr) {
@@ -191,6 +194,10 @@ public class ExpressionParser {
 
     private static boolean isCaseControlKeyword(CharSequence tok) {
         return caseKeywords.get(tok) > -1 || SqlKeywords.isEndKeyword(tok);
+    }
+
+    private static boolean isCaseScope(Scope scope) {
+        return scope == Scope.CASE || scope == Scope.CASE_ELSE;
     }
 
     private static SqlException missingArgs(int position) {
@@ -2019,7 +2026,7 @@ public class ExpressionParser {
                                         // the CASE's.
                                         // The flush above finds no CASE at all after 'case.*', whose
                                         // wildcard replaces it.
-                                        if (node == null || scopeStack.pop() != Scope.CASE) {
+                                        if (node == null || !isCaseScope(scopeStack.pop())) {
                                             throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
                                         }
                                         node.paramCount = paramCount;
@@ -2095,9 +2102,12 @@ public class ExpressionParser {
                                         // and leave END, or the bracket itself, with nothing to close.
                                         // The flush finds no CASE at all after 'case.*', whose wildcard
                                         // replaces it, or once the AND of a BETWEEN has flushed it.
-                                        if (node == null || scopeStack.peek() != Scope.CASE) {
+                                        if (node == null || !isCaseScope(scopeStack.peek())) {
                                             throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
                                         }
+                                        // the scope records whether the value that follows is the ELSE value,
+                                        // so that a stray word after it asks for END
+                                        scopeStack.update(keywordIndex == IDX_ELSE ? Scope.CASE_ELSE : Scope.CASE);
                                         opStack.push(node);
 
                                         argStackDepth = 0;
@@ -2281,9 +2291,10 @@ public class ExpressionParser {
                         // literal can be at start of input, after a bracket or part of an operator
                         // all other cases are illegal and will be considered end-of-input
                         if (scopeStack.notEmpty()) {
-                            if (scopeStack.peek() == Scope.CASE) {
+                            final Scope scope = scopeStack.peek();
+                            if (isCaseScope(scope)) {
                                 // only an operator or a CASE keyword can follow an operand here
-                                throw caseKeywordExpected(lastPos, paramCount);
+                                throw caseKeywordExpected(lastPos, paramCount, scope == Scope.CASE_ELSE);
                             }
                             throw SqlException.$(lastPos, "dangling literal");
                         }
@@ -2588,7 +2599,8 @@ public class ExpressionParser {
     }
 
     private enum Scope {
-        CASE, CAST, CAST_AS, PAREN, BRACKET, ARRAY
+        // CASE_ELSE is a CASE past its ELSE
+        CASE, CASE_ELSE, CAST, CAST_AS, PAREN, BRACKET, ARRAY
     }
 
     /**

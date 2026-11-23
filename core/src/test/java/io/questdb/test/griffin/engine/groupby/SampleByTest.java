@@ -12455,7 +12455,7 @@ public class SampleByTest extends AbstractCairoTest {
                               keys: [ts,k]
                               values: [count(*),sum(v)]
                                 VirtualRecord
-                                  functions: [case([v<3,,ts]),k,v]
+                                  functions: [case([v<3,null,ts]),k,v]
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: e
@@ -13408,7 +13408,7 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("Sample By\n" +
                             "  fill: null\n" +
-                            "  range: (timestamp_floor('day',now()),)\n" +
+                            "  range: (timestamp_floor('day',now()),null)\n" +
                             "  values: [count(*)]\n" +
                             "    PageFrame\n" +
                             "        Row forward scan\n" +

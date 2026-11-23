@@ -2274,7 +2274,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Sample By Fill
-                              range: ('2024-01-01',)
+                              range: ('2024-01-01',null)
                               stride: '1h'
                               fill: null
                                 Encode sort light

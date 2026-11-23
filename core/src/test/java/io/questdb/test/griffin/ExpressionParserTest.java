@@ -515,7 +515,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 .fails(63, "missing arguments");
         // the stray 'x' is the first error
         assertQuery("select case when 1 x > 1 then case when (x = 1) then 'a' else () end when x > 2 then 'b' end from long_sequence(1)")
-                .fails(19, "'then' or 'end' expected");
+                .fails(19, "'then' expected");
     }
 
     @Test
@@ -745,11 +745,16 @@ public class ExpressionParserTest extends AbstractCairoTest {
         // a word after a completed operand inside CASE is not taken for a column; the error
         // names the keywords the CASE takes at that point
         assertFail("case x y when 1 then 2 end", 7, "'when' expected");
-        assertFail("case when x y then 1 end", 12, "'then' or 'end' expected");
-        assertFail("case when x from y then 1 end", 12, "'then' or 'end' expected");
+        assertFail("case when x y then 1 end", 12, "'then' expected");
+        assertFail("case when x from y then 1 end", 12, "'then' expected");
         assertFail("case when x then 1 y end", 19, "'when', 'else' or 'end' expected");
-        assertFail("case when x then 1 else 2 y", 26, "'then' or 'end' expected");
+        assertFail("case when x then 1 else 2 y", 26, "'end' expected");
         assertFail("case when x then case when y then 1 z end end", 36, "'when', 'else' or 'end' expected");
+        // a stray word after an ELSE value asks for END, after a nested CASE and inside one
+        assertFail("case when x then 1 else case when y then 2 end z end", 47, "'end' expected");
+        assertFail("case when x then case when y then 1 else 2 z end end", 43, "'end' expected");
+        // the parser reads ELSE followed by THEN as WHEN; a later WHEN condition asks for THEN
+        assertFail("case when x then 1 else y then 2 when z w end", 40, "'then' expected");
         // inside a bracket the bracket's own rule applies
         assertFail("case when f(x y) then 1 end", 14, "dangling literal");
     }

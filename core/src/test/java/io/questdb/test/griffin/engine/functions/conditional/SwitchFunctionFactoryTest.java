@@ -126,6 +126,20 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanIgnoredElseIsClosed() throws Exception {
+        // WHEN true and WHEN false leave the ELSE nothing to match, and switch() frees it
+        assertQuery("SELECT b, CASE b WHEN true THEN 'yes' WHEN false THEN 'no' ELSE trim(v) END k FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x % 2 = 0 b, (' v' || x)::VARCHAR v FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        b\tk
+                        false\tno
+                        true\tyes
+                        false\tno
+                        """);
+    }
+
+    @Test
     public void testBooleanToStrOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -851,8 +865,8 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         // more keys than switch() compares one by one, so it finds the earlier key by hash
         assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 5 THEN 5 WHEN 2.00000000005 THEN 6 END FROM long_sequence(1)")
                 .fails(97, "duplicate branch");
-        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 1073741824 THEN 5 WHEN 1073741824.0 THEN 6 END FROM long_sequence(1)")
-                .fails(106, "duplicate branch");
+        assertQuery("SELECT CASE x::DOUBLE WHEN 1 THEN 1 WHEN 2 THEN 2 WHEN 3 THEN 3 WHEN 4 THEN 4 WHEN 1_073_741_824 THEN 5 WHEN 1073741824.0 THEN 6 END FROM long_sequence(1)")
+                .fails(109, "duplicate branch");
     }
 
     @Test
@@ -923,7 +937,7 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("""
                 SELECT x, CASE d
                     WHEN 0 THEN 'zero' WHEN 1 THEN 'one' WHEN 2 THEN 'two' WHEN 3 THEN 'three'
-                    WHEN 1073741824 THEN '2^30' WHEN 1073741824.5 THEN '2^30 + 0.5' WHEN null THEN 'null'
+                    WHEN 1_073_741_824 THEN '2^30' WHEN 1073741824.5 THEN '2^30 + 0.5' WHEN null THEN 'null'
                     ELSE 'other'
                 END k
                 FROM t

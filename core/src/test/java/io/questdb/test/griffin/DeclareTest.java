@@ -4504,7 +4504,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                     DECLARE @x := CASE WHEN 1 v > 1 THEN CASE WHEN (v = 1) THEN 'x' ELSE () END WHEN v > 2 THEN 'x' END
                     SELECT @x FROM t
                     """)
-                    .fails(26, "'then' or 'end' expected");
+                    .fails(26, "'then' expected");
             assertQuery("""
                     DECLARE @x := CASE WHEN v > 1 THEN CASE WHEN (v = 2) THEN 'x' ELSE () END WHEN v > 0 THEN 'z' END
                     SELECT @x FROM t
