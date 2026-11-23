@@ -558,10 +558,10 @@ public class AsyncHashJoinRampTest extends AbstractCairoTest {
     public void testRingWindowBoundsTheRamp() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
-            // A ring budget of three frames of every probe row of the join, a tuple of two longs per
-            // row: the ring's window holds three frames, which the ramp reaches once the consumer
-            // took frame 1, and never passes.
-            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 3 * FRAME_ROWS * 2 * Long.BYTES);
+            // A ring budget of three frames of every probe row of the join, a tuple of two narrow
+            // slots per row: the ring's window holds three frames, which the ramp reaches once the
+            // consumer took frame 1, and never passes.
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 3 * FRAME_ROWS * 2 * Integer.BYTES);
             final String expected = ordinaryRows(JOIN_D1, sqlExecutionContext);
             try (RecordCursorFactory factory = select(JOIN_D1)) {
                 final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -571,6 +571,7 @@ public class AsyncHashJoinRampTest extends AbstractCairoTest {
                     final StringSink rows = new StringSink();
                     readFrames(cursor, factory.getMetadata(), join, 4, dispatched, rows);
                     TestUtils.assertEquals("[2,4,5,6,7]", dispatched.toString());
+                    Assert.assertTrue(join.getAtom().getRing().isNarrow());
                     Assert.assertEquals(3, join.getAtom().getRing().getDispatchLimit());
                     rows.put(printFromNextRow(cursor, factory.getMetadata()));
                     TestUtils.assertEquals(expected, rows);

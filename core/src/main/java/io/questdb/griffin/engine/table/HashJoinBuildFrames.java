@@ -173,6 +173,9 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     // True while the readers that newReader() creates read a parallel hash join's output, which take
     // the whole Parquet decode cache budget; see setOutputReaders().
     private boolean isOutputReaders;
+    // The bits of a locator that hold the row within its frame, as many as the largest frame of the
+    // execution needs; the frame index takes the bits above them. See Reader.locator().
+    private int locatorRowBits;
     @Nullable
     private MemoryTracker memoryTracker;
     // The copy that copyRows() fills until publishCopy() hands it to the readers; zero otherwise.
@@ -350,6 +353,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         payloadAuxSizes.clear();
         payloadSizes.clear();
         rowCount = 0;
+        locatorRowBits = 0;
         memoryTracker = null;
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -402,7 +406,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             if ((ordinal & (COPY_ROWS_PER_CHECK - 1)) == 0) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
-            copyReader.positionRow(build.getRowId(ordinal));
+            copyReader.positionRowId(build.getRowId(ordinal));
             copyRow(copyReader, row);
         }
     }
@@ -441,6 +445,33 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
      */
     public long getRowCount() {
         return rowCount;
+    }
+
+    /**
+     * The id of the build row that a locator of a reader that reads the payload where it lives
+     * names, see {@link HashJoinPayloadSource.Reader#locator()}: {@link Rows#toRowID(int, long)} of
+     * its frame and its row within the frame.
+     */
+    @TestOnly
+    public long getLocatorRowId(long locator) {
+        assert copyAddress == 0;
+        return Rows.toRowID((int) (locator >>> locatorRowBits), locator & ((1L << locatorRowBits) - 1));
+    }
+
+    /**
+     * A bound on the locators that the execution's readers may hand out, see
+     * {@link HashJoinPayloadSource.Reader#locator()}: the copy's last ordinal, or, while the readers
+     * read the payload where it lives, the frame count shifted past the row bits, less one, since
+     * every frame's rows fit the row bits, which the last row of a last frame as large as the largest
+     * reaches; -1 for a build scan without frames. A caller that keeps locators in fewer bits than a
+     * LONG's checks that this one fits. Call it once the frames are loaded and the copy, if any,
+     * published.
+     */
+    public long getMaxLocator() {
+        if (copyAddress != 0) {
+            return copyRowCount - 1;
+        }
+        return ((long) frameRowCounts.size() << locatorRowBits) - 1;
     }
 
     /**
@@ -488,12 +519,15 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
         assert frameCursor != null && frameRowCounts.size() == 0 && rowCount == 0;
         PageFrame frame;
         int frameIndex = 0;
+        long maxFrameRows = 1;
         while ((frame = frameCursor.next()) != null) {
             final long frameRows = frame.getPartitionHi() - frame.getPartitionLo();
             frameRowCounts.add(frameRows);
             addressCache.add(frameIndex++, frame);
             rowCount += frameRows;
+            maxFrameRows = Math.max(maxFrameRows, frameRows);
         }
+        locatorRowBits = Long.SIZE - Long.numberOfLeadingZeros(maxFrameRows - 1);
         final DirectLongList pageAddresses = addressCache.getPageAddresses();
         final DirectLongList auxPageAddresses = addressCache.getAuxPageAddresses();
         final DirectLongList pageSizes = addressCache.getPageSizes();
@@ -716,9 +750,10 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
     /**
      * One probe's view of the build rows: payload column {@code i} reads build scan column
      * {@code payloadColumns[i]} of the row that {@link #position(long, long)} or
-     * {@link #positionLocator(long)} selected. Its locator is the build row's id,
-     * {@link Rows#toRowID(int, long)}, while it reads the columns where they live, and the copied
-     * row's ordinal once the execution's copy is published.
+     * {@link #positionLocator(long)} selected. Its locator is the build row's frame index above its
+     * row within the frame, in as few bits as the execution's largest frame needs, see
+     * {@link #getMaxLocator()}, while it reads the columns where they live, and the copied row's
+     * ordinal once the execution's copy is published.
      */
     private final class Reader implements HashJoinPayloadSource.Reader {
         // The flyweights that the var-size getters return for a native frame, one per var-size
@@ -1252,7 +1287,7 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                 locator = ordinal;
                 return;
             }
-            positionRow(Unsafe.getLong(rowIdAddress));
+            positionRowId(Unsafe.getLong(rowIdAddress));
         }
 
         @Override
@@ -1264,9 +1299,12 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
                 this.locator = locator;
                 return;
             }
-            // A row id of a frame that loadFrames() walked for this execution.
-            assert locator >= 0 && Rows.toPartitionIndex(locator) < frameRowCounts.size() && Rows.toLocalRowID(locator) < frameRowCounts.getQuick(Rows.toPartitionIndex(locator));
-            positionRow(locator);
+            final int rowBits = locatorRowBits;
+            final int frameIndex = (int) (locator >>> rowBits);
+            final long row = locator & ((1L << rowBits) - 1);
+            // A row of a frame that loadFrames() walked for this execution.
+            assert locator >= 0 && frameIndex < frameRowCounts.size() && row < frameRowCounts.getQuick(frameIndex);
+            positionRow(frameIndex, row);
         }
 
         @Override
@@ -1293,17 +1331,21 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, Mutable
             return 0;
         }
 
-        // Positions the reader at the build row with this id, where its columns live.
-        private void positionRow(long rowId) {
-            final int frameIndex = Rows.toPartitionIndex(rowId);
+        // Positions the reader at a row of a frame, where its columns live.
+        private void positionRow(int frameIndex, long row) {
             if (frameIndex != this.frameIndex) {
                 this.frameIndex = frameIndex;
                 addressBase = frameIndex * payloadColumns.length;
                 isDirect = addressCache.getFrameFormat(frameIndex) == PartitionFormat.NATIVE
                         && addressCache.getPartitionFrameState(frameIndex) == 0;
             }
-            row = Rows.toLocalRowID(rowId);
-            locator = rowId;
+            this.row = row;
+            locator = ((long) frameIndex << locatorRowBits) | row;
+        }
+
+        // Positions the reader at the build row with this id, where its columns live.
+        private void positionRowId(long rowId) {
+            positionRow(Rows.toPartitionIndex(rowId), Rows.toLocalRowID(rowId));
         }
 
         // Rebinds the reader to the current execution without taking symbol tables: the copy pass

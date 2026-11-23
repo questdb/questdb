@@ -511,11 +511,11 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
     @Test
     public void testLimitOverAFanOutJoinStaysWithinTheWindowOfTheTaskCap() throws Exception {
         // Each probe row meets d2's two rows of its key, which the post-join filter keeps, so a cap
-        // of eight tuples holds a frame's four rows, and a ring budget of 256 bytes two such tasks'
-        // tuples of two longs, 128 bytes each, where the frames' rows, 64 bytes, would let four
-        // frames in.
+        // of eight tuples holds a frame's four rows, and a ring budget of 128 bytes two such tasks'
+        // tuples of two narrow slots, 64 bytes each, where the frames' rows, 32 bytes, would let
+        // four frames in.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 8);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 256);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 128);
         assertMemoryLeak(() -> {
             createTables();
             final String join = "SELECT t.v, d2.w2 FROM t JOIN d2 ON t.k = d2.k WHERE d2.w2 > t.v";
@@ -536,6 +536,7 @@ public class AsyncHashJoinLimitTest extends AbstractCairoTest {
                     Assert.assertNotNull(sql, fanOutJoin);
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(sql, cursor.hasNext());
+                        Assert.assertTrue(sql, fanOutJoin.getAtom().getRing().isNarrow());
                         Assert.assertEquals(sql, 2, fanOutJoin.getAtom().getRing().getDispatchLimit());
                         Assert.assertEquals(sql, dispatched, fanOutJoin.getDispatchedFrameCount());
                         if (dispatched == 1) {

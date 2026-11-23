@@ -75,7 +75,6 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     @Override
     long probeRows(AsyncHashJoinAtom.Slot slot, long rowCount, long from, long to, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
-        final DirectLongList tuples = slot.tuples;
         for (long i = from; i < to; i++) {
             if ((i & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
                 return CANCELLED;
@@ -86,7 +85,7 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
             if (!step(slot, 0)) {
                 return CANCELLED;
             }
-            if (tuples.size() >= tupleCap) {
+            if (slot.getTupleSizeBytes() >= tupleCap) {
                 return i + 1;
             }
         }
@@ -96,7 +95,6 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
     @Override
     long probeRows(AsyncHashJoinAtom.Slot slot, DirectLongList rows, long from, long to, boolean isDescending, long tupleCap) {
         final PageFrameMemoryRecord probeRecord = slot.probeRecord;
-        final DirectLongList tuples = slot.tuples;
         final long n = rows.size();
         for (long p = from; p < to; p++) {
             if ((p & CANCEL_CHECK_ROW_MASK) == 0 && slot.isCancelled()) {
@@ -108,7 +106,7 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
             if (!step(slot, 0)) {
                 return CANCELLED;
             }
-            if (tuples.size() >= tupleCap) {
+            if (slot.getTupleSizeBytes() >= tupleCap) {
                 return p + 1;
             }
         }
@@ -139,7 +137,7 @@ final class HashJoinStageStepperTemplate extends HashJoinStageStepper {
                 } else if (slot.isCountOnly) {
                     return emitChain(slot, stage, probe.chainLength(head));
                 } else {
-                    entry = -head;
+                    entry = HashJoinStageStepper.toChainEntry(head);
                 }
             }
         }

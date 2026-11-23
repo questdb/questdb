@@ -909,6 +909,34 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
     }
 
     /**
+     * The largest chain head that the execution's stages may hand on to the consumer in a tuple, 0
+     * when their builds have no rows; see {@link FrozenHashJoinBuild#getMaxChainHead()}. The owner
+     * calls it once the builds are done, before it binds the ring, see
+     * {@link HashJoinTupleRing#of(PageFrameSequence, boolean, boolean, long, long)}.
+     */
+    long getMaxTupleChainHead() {
+        long maxChainHead = 0;
+        for (int k = 0, n = executionStages.size(); k < n; k++) {
+            maxChainHead = Math.max(maxChainHead, executionStages.getQuick(k).getFrozenBuild().getMaxChainHead());
+        }
+        return maxChainHead;
+    }
+
+    /**
+     * The largest locator that the execution's stages may write into a tuple, -1 when their build
+     * scans have no rows; see {@link HashJoinBuildStage#getMaxLocator()}. The owner calls it once the
+     * builds are done and their payloads copied, if at all, before it binds the ring, see
+     * {@link HashJoinTupleRing#of(PageFrameSequence, boolean, boolean, long, long)}.
+     */
+    long getMaxTupleLocator() {
+        long maxLocator = -1;
+        for (int k = 0, n = executionStages.size(); k < n; k++) {
+            maxLocator = Math.max(maxLocator, executionStages.getQuick(k).getMaxLocator());
+        }
+        return maxLocator;
+    }
+
+    /**
      * Indexes the chain lengths of the builds of the stages that hand their chains on in the
      * execution, see {@link HashJoinStageStepper}, and whose builds repeat a key, for a count of the
      * join's rows: the count's tasks and the consumer then read a chain's length rather than walk the
@@ -1195,9 +1223,11 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
      */
     private long collectConsumerRows(PageFrameReduceTask task, @Nullable DirectLongList keptRows, @Nullable DirectLongList sink) {
         final int frameIndex = task.getFrameIndex();
-        final DirectLongList tuples = ring.getTuples(frameIndex);
-        final int stride = ring.getTupleStride();
-        final long tupleCount = tuples.size() / stride;
+        final HashJoinTupleList tuples = ring.getTuples(frameIndex);
+        final long tupleCount = tuples.size();
+        final long tupleBase = tuples.getAddress();
+        final int tupleBytes = tuples.getTupleBytes();
+        final boolean isNarrow = tuples.isNarrow();
         final long resumePosition = ring.getResumePosition(frameIndex);
         final long rowCount = keptRows != null ? keptRows.size() : task.getFrameRowCount();
         final long restCount = resumePosition < 0 ? 0 : rowCount - resumePosition;
@@ -1216,7 +1246,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             }
             long lastRow = -1;
             for (long t = tupleCount - 1; t > -1; t--) {
-                final long row = tuples.get(t * stride);
+                final long row = HashJoinTupleList.getProbeRow(tupleBase + t * tupleBytes, isNarrow);
                 if (row != lastRow) {
                     lastRow = row;
                     count++;
@@ -1228,7 +1258,7 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         } else {
             long lastRow = -1;
             for (long t = 0; t < tupleCount; t++) {
-                final long row = tuples.get(t * stride);
+                final long row = HashJoinTupleList.getProbeRow(tupleBase + t * tupleBytes, isNarrow);
                 if (row != lastRow) {
                     lastRow = row;
                     count++;
@@ -1384,10 +1414,10 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         final long rowCount = rows != null ? rows.size() : frameRowCount;
         final long keptRowCount = rows != null ? rowCount : -1;
         final long to = rowLimit < rowCount - from ? from + rowLimit : rowCount;
-        final long tupleCap = Math.max(taskOutputMaxRows, frameRowCount) * ring.getTupleStride();
+        final long tupleCap = Math.max(taskOutputMaxRows, frameRowCount) * ring.getTupleBytes();
         // Most probe rows yield one tuple, so the rows to join size the entry, which grows as
         // fan-out fills it.
-        final DirectLongList tuples = ring.openTuples(frameIndex, to - from);
+        final HashJoinTupleList tuples = ring.openTuples(frameIndex, to - from);
         slot.of(tuples, task.getFrameSequence(), circuitBreaker, pairsPerCheck);
         final long position;
         try {
@@ -1397,13 +1427,21 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         } finally {
             slot.of(null, null, null, 0);
         }
+        if (slot.tupleOverflow != 0) {
+            // The ring picked the narrow layout for values that did not fit it: the query fails
+            // rather than joins the wrong rows.
+            throw CairoException.nonCritical()
+                    .put("hash join tuple value does not fit its slot [frame=").put(frameIndex)
+                    .put(", slotBits=").put(Long.SIZE - tuples.getNarrowShift())
+                    .put(']');
+        }
         final boolean isCancelled = position == HashJoinStageStepper.CANCELLED;
         ring.setResumePosition(frameIndex, keptRowCount, isCancelled || position == rowCount ? -1 : position);
         if (isCancelled) {
             return HashJoinStageStepper.CANCELLED;
         }
         slot.joinedRowCount += position - from;
-        return tuples.size() / ring.getTupleStride();
+        return tuples.size();
     }
 
     // Decides which stages' steppers walk their matches in the execution, the hidden copies and the
@@ -1491,6 +1529,8 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         // True while the slot counts a frame's joined rows rather than writes its tuples; see
         // ofCount().
         boolean isCountOnly;
+        // True when the ring entry the slot writes takes 4-byte slots; see HashJoinTupleList.
+        boolean isNarrowTuples;
         // The rows the slot's tasks and chunks joined into tuples in the open cursor's execution;
         // see AsyncHashJoinAtom.getJoinedProbeRowCount().
         long joinedRowCount;
@@ -1505,8 +1545,19 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
         long parquetFrameCount;
         // The current probe row, by its index in the frame.
         long probeRow;
-        // The ring entry of the frame the slot joins; null between frames.
-        DirectLongList tuples;
+        // The ring entry of the frame the slot joins; null between frames. The slot keeps the entry's
+        // addresses itself while it writes it, see HashJoinTupleList, and hands the append address
+        // back when it unbinds.
+        HashJoinTupleList tuples;
+        long tupleAppendAddress;
+        long tupleBase;
+        int tupleBytes;
+        long tupleLimit;
+        // 64 less the bits of a narrow slot of the entry, and the bits of the values that did not
+        // fit theirs, ORed over the tuples the slot wrote since it bound the entry; see
+        // HashJoinTupleList.putTuple().
+        int tupleNarrowShift;
+        long tupleOverflow;
         // The breaker and the sequence of the frame the slot joins; null between frames.
         private SqlExecutionCircuitBreaker circuitBreaker;
         private PageFrameSequence<?> frameSequence;
@@ -1570,11 +1621,17 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
 
         // Appends the current probe row and its entry for every stage to the frame's tuples.
         void appendTuple() {
-            final DirectLongList tuples = this.tuples;
-            tuples.add(probeRow);
-            for (long entry : entries) {
-                tuples.add(entry);
+            long p = tupleAppendAddress;
+            if (tupleLimit - p < tupleBytes) {
+                p = growTuples(p);
             }
+            tupleAppendAddress = p + tupleBytes;
+            tupleOverflow |= HashJoinTupleList.putTuple(p, isNarrowTuples, tupleNarrowShift, probeRow, entries);
+        }
+
+        // The bytes of the tuples that the slot wrote into the frame's entry so far.
+        long getTupleSizeBytes() {
+            return tupleAppendAddress - tupleBase;
         }
 
         // Binds the slot to the k-th stage's build for the open cursor's execution, casting the
@@ -1606,9 +1663,26 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             record.setStageRecord(k, stageProbe.reader);
         }
 
-        // Binds the slot to the frame it joins, or, given nulls, unbinds it.
-        void of(DirectLongList tuples, PageFrameSequence<?> frameSequence, SqlExecutionCircuitBreaker circuitBreaker, long pairsPerCheck) {
+        // Binds the slot to the frame it joins, or, given nulls, unbinds it, handing the entry it
+        // wrote its append address back.
+        void of(HashJoinTupleList tuples, PageFrameSequence<?> frameSequence, SqlExecutionCircuitBreaker circuitBreaker, long pairsPerCheck) {
+            if (this.tuples != null) {
+                this.tuples.setAppendAddress(tupleAppendAddress);
+            }
             this.tuples = tuples;
+            if (tuples != null) {
+                tupleBase = tuples.getAddress();
+                tupleAppendAddress = tuples.getAppendAddress();
+                tupleLimit = tuples.getLimit();
+                tupleBytes = tuples.getTupleBytes();
+                isNarrowTuples = tuples.isNarrow();
+                tupleNarrowShift = tuples.getNarrowShift();
+                tupleOverflow = 0;
+            } else {
+                tupleBase = 0;
+                tupleAppendAddress = 0;
+                tupleLimit = 0;
+            }
             this.frameSequence = frameSequence;
             this.circuitBreaker = circuitBreaker;
             this.pairsPerCheck = pairsPerCheck;
@@ -1622,6 +1696,17 @@ public final class AsyncHashJoinAtom implements StatefulAtom, PerWorkerLockOwner
             this.isCountOnly = true;
             this.pairCount = 0;
             this.pairMultiplier = 1;
+        }
+
+        // Grows the frame's entry, which holds the tuples up to the given address, and returns where
+        // the next tuple goes. A breach of the per-query memory limit throws and leaves the entry, and
+        // the slot's addresses, as they were.
+        private long growTuples(long appendAddress) {
+            final HashJoinTupleList tuples = this.tuples;
+            final long p = tuples.grow(appendAddress);
+            tupleBase = tuples.getAddress();
+            tupleLimit = tuples.getLimit();
+            return p;
         }
     }
 

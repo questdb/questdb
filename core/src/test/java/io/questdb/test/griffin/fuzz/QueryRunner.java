@@ -1522,7 +1522,7 @@ public final class QueryRunner {
         final long ringMaxSize = engine.getConfiguration().getSqlParallelHashJoinTupleRingMaxSize();
         final long queryMemoryLimit = engine.getConfiguration().getQueryMemoryLimitBytes();
         final long ringBudget = queryMemoryLimit > 0 ? Math.min(ringMaxSize, queryMemoryLimit / 4) : ringMaxSize;
-        final long frameRowsWindow = Math.max(1, Math.min(ring.getEntryCount(), ringBudget / (maxFrameRows * ring.getTupleStride() * Long.BYTES)));
+        final long frameRowsWindow = Math.max(1, Math.min(ring.getEntryCount(), ringBudget / (maxFrameRows * ring.getTupleBytes())));
         return firstWindow < frameRowsWindow;
     }
 

@@ -55,16 +55,19 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * memory back once read when the entries hold more than the ring budget. The rows always equal the
  * ordinary plan's, in order.
  * <p>
- * The probe table t holds 64 rows in one partition, cut into eight frames of eight rows; a tuple of
- * the one-stage join takes two longs, so a frame of tuples, one per row, takes 128 bytes, and a
- * task's cap of 24 tuples, the three matches in d of each of a frame's eight rows, 384 bytes.
+ * The probe table t holds 64 rows in one partition, cut into eight frames of eight rows; the tables'
+ * values fit narrow tuple slots, so a tuple of the one-stage join takes two slots of 4 bytes, a frame
+ * of tuples, one per row, 64 bytes, and a task's cap of 24 tuples, the three matches in d of each of
+ * a frame's eight rows, 192 bytes.
  */
 public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
     // A task's cap of tuples, cairo.sql.parallel.hash.join.task.output.max.rows, that a frame of
     // eight rows fills when each row meets d's three rows of its key.
     private static final int CAP = 24;
-    private static final long CAP_BYTES = CAP * 2 * Long.BYTES;
-    private static final long FRAME_BYTES = 8 * 2 * Long.BYTES;
+    // The bytes of a narrow tuple slot, which every execution here takes.
+    private static final int SLOT_BYTES = Integer.BYTES;
+    private static final long CAP_BYTES = CAP * 2 * SLOT_BYTES;
+    private static final long FRAME_BYTES = 8 * 2 * SLOT_BYTES;
     // A walking join: d's three rows of each key, whose w, 100 and up, the residual keeps for every
     // probe row's v, up to 64.
     private static final String WALK = "SELECT t.v, d.w FROM t LEFT JOIN d ON t.k = d.k AND d.w > t.v";
@@ -133,11 +136,11 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             // A budget of four tasks' caps of tuples: a first window of four frames, whose entries the
-            // duplicate matches of d grow, doubling from a frame's room, to room for 32 tuples, 512
+            // duplicate matches of d grow, doubling from a frame's room, to room for 32 tuples, 256
             // bytes each. The first row leaves one more tuple-carrying frame in flight, the one that
             // the ramp sent out once the consumer took frame 0, whose entries a count reads and gives
-            // back: each of the two entries read holds more than its share of the budget, 1,536 / 8 =
-            // 192 bytes, while the window, which follows the entries read to three frames, holds fewer
+            // back: each of the two entries read holds more than its share of the budget, 768 / 8 =
+            // 96 bytes, while the window, which follows the entries read to three frames, holds fewer
             // frames than the ring's eight entries.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, CAP);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 4 * CAP_BYTES);
@@ -170,7 +173,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             createTables();
             // A budget of one frame of every row, which the first frame takes: the window stays at
             // one. That frame's entry, past its share of an eighth of the budget, gives its memory
-            // back once read; the later frames keep one row each, a tuple of 16 bytes, within their
+            // back once read; the later frames keep one row each, a tuple of 8 bytes, within their
             // shares, and their entries keep their memory for the frames that map to them next.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, FRAME_BYTES);
             final String sql = "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k WHERE t.v <= 8 OR t.v % 8 = 0";
@@ -184,7 +187,8 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                     while (cursor.hasNext()) {
                     }
                     Assert.assertEquals(1, ring.getDispatchLimit());
-                    Assert.assertEquals(7 * 2 * Long.BYTES, ring.getAllocatedBytes());
+                    Assert.assertTrue(ring.isNarrow());
+                    Assert.assertEquals(7 * 2 * SLOT_BYTES, ring.getAllocatedBytes());
                 }
             }
         });
@@ -197,7 +201,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             // e holds no row, and t1 one.
             execute("CREATE TABLE e (k INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t1 AS (SELECT 1 k, 1L v, '2024-01-01'::TIMESTAMP ts FROM long_sequence(1)) TIMESTAMP(ts) PARTITION BY DAY");
-            // A budget of two tasks' caps of tuples, 768 bytes, or six frames of one tuple per row. A
+            // A budget of two tasks' caps of tuples, 384 bytes, or six frames of one tuple per row. A
             // join whose workers walk d's three matches of each key fills a task's cap, three times
             // as many tuples as the frame's rows, so its first window holds two frames; a join whose
             // probe rows yield one tuple each keeps a first window of six.
@@ -219,7 +223,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                         Assert.assertEquals(sql, 2, join.getDispatchedFrameCount());
                         Assert.assertEquals(sql, 8, ring.getEntryCount());
                         Assert.assertEquals(sql, expected, printFromCurrentRow(cursor, factory.getMetadata()));
-                        // The entries grew, doubling from a frame's room, to room for 32 tuples, 512
+                        // The entries grew, doubling from a frame's room, to room for 32 tuples, 256
                         // bytes, which leaves a window of one frame.
                         Assert.assertEquals(sql, 1, ring.getDispatchLimit());
                         Assert.assertTrue(sql, ring.getAllocatedBytes() <= 2 * CAP_BYTES);
@@ -327,7 +331,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             // A budget of four tasks' caps of tuples, a window of four frames, until a frame's entry
             // grows: each probe row meets three rows of d, which a residual walks, and the frame's
             // twenty-four tuples, the cap, grow the entry, doubling from one frame's room, to room
-            // for 32 tuples, 512 bytes. The window then holds three frames.
+            // for 32 tuples, 256 bytes. The window then holds three frames.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, CAP);
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 4 * CAP_BYTES);
             assertParallelHashJoin(WALK, sqlExecutionContext);
@@ -337,6 +341,7 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
                 final HashJoinTupleRing ring = join.getAtom().getRing();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
+                    Assert.assertTrue(ring.isNarrow());
                     Assert.assertEquals(4, ring.getDispatchLimit());
                     Assert.assertEquals(8, ring.getEntryCount());
                     //noinspection StatementWithEmptyBody
@@ -408,14 +413,14 @@ public class AsyncHashJoinDynamicWindowTest extends AbstractCairoTest {
             // A budget of one frame of every row of the one-stage join: the window starts at one. The
             // filter keeps one row of each frame, whose entry takes one tuple, so once the consumer has
             // read the first frame the window holds as many frames as the budget holds tuples, up to
-            // the eight entries: all of them for a tuple of two longs, five for one of three.
+            // the eight entries: all of them for a tuple of two slots, five for one of three.
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, FRAME_BYTES);
             final String[] queries = {
                     "SELECT t.v, u.w FROM t LEFT JOIN u ON t.k = u.k WHERE t.v % 8 = 0",
                     "SELECT t.v, u.w FROM t JOIN u ON t.k = u.k WHERE t.v % 8 = 0 ORDER BY ts DESC",
                     "SELECT t.v, u.w, d.w FROM t LEFT JOIN u ON t.k = u.k LEFT JOIN d ON t.k = d.k WHERE t.v % 8 = 0",
             };
-            final int[] windows = {8, 8, (int) (FRAME_BYTES / (3 * Long.BYTES))};
+            final int[] windows = {8, 8, (int) (FRAME_BYTES / (3 * SLOT_BYTES))};
             for (int q = 0; q < queries.length; q++) {
                 final String sql = queries[q];
                 final int window = windows[q];

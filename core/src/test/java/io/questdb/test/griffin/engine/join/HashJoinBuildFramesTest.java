@@ -81,6 +81,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -553,7 +554,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                         for (int key = 1; key < 72; key++) {
                             a.find(key);
                             a.next();
-                            final int frameIndex = Rows.toPartitionIndex(reader.locator());
+                            final int frameIndex = Rows.toPartitionIndex(frames.getLocatorRowId(reader.locator()));
                             final CharSequence strA = reader.getStrA(varSize.str);
                             final Utf8Sequence vcA = reader.getVarcharA(varSize.vc);
                             final CharSequence symA = reader.getSymA(varSize.sym);
@@ -561,7 +562,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                             final long long256Word = long256A.getLong0();
                             a.find(key + 1);
                             a.next();
-                            if (Rows.toPartitionIndex(reader.locator()) != frameIndex) {
+                            if (Rows.toPartitionIndex(frames.getLocatorRowId(reader.locator())) != frameIndex) {
                                 continue;
                             }
                             if (frames.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET) {
@@ -655,6 +656,76 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                 }
             } finally {
                 sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLocatorsPackFramesAboveRowsInTheBitsOfTheLargestFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            // Daily partitions of one frame each, of the given rows: the largest frame's last row
+            // takes as many bits as its index needs, 4 for 16 rows and 5 for 17, and the frame index
+            // goes above them. The frames bound the locators at the frame count above the row bits,
+            // less one, which the last row of a last frame as large as the largest reaches. A build
+            // scan of no rows hands out no locator.
+            final Object[][] cases = {
+                    // the partitions' rows, the bound, the last row's locator
+                    {new int[]{16, 3, 5}, (3L << 4) - 1, (2L << 4) | 4},
+                    {new int[]{17, 3, 5}, (3L << 5) - 1, (2L << 5) | 4},
+                    {new int[]{1, 1, 1}, 2L, 2L},
+                    {new int[]{5, 3, 16}, (3L << 4) - 1, (2L << 4) | 15},
+                    {new int[]{}, -1L, -1L},
+            };
+            for (Object[] c : cases) {
+                final int[] partitionRows = (int[]) c[0];
+                final long expectedMaxLocator = (long) c[1];
+                final long expectedLastLocator = (long) c[2];
+                final String label = Arrays.toString(partitionRows);
+                execute("CREATE TABLE pk (k INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                long v = 0;
+                for (int p = 0; p < partitionRows.length; p++) {
+                    execute("INSERT INTO pk SELECT (x % 3)::INT, " + v + " + x, '2020-01-0" + (p + 1) + "'::TIMESTAMP + x FROM long_sequence(" + partitionRows[p] + ")");
+                    v += partitionRows[p];
+                }
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                     RecordCursorFactory factory = select("pk");
+                     HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(1), factory.getMetadata());
+                     IntHashJoinBuild build = new IntHashJoinBuild(true, 2, 16)) {
+                    frames.open(factory, ORDER_ASC, sqlExecutionContext);
+                    frames.loadFrames();
+                    Assert.assertEquals(label, partitionRows.length, frames.getFrameCount());
+                    Assert.assertEquals(label, expectedMaxLocator, frames.getMaxLocator());
+                    final FrozenHashJoinBuild.IntKeyed frozen = FrameBuilds.buildIntSerial(configuration, build, frames, 0, null, ORDER_ASC, tracker, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                    // Every row's locator is within the bound, and takes a reader of the frames back
+                    // to the row's v.
+                    long maxLocator = -1;
+                    try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe();
+                         HashJoinPayloadSource.Reader other = frames.newReader()) {
+                        other.reopen();
+                        final HashJoinPayloadSource.Reader reader = (HashJoinPayloadSource.Reader) probe.getRecord();
+                        for (int key = 0; key < 3; key++) {
+                            probe.find(key);
+                            while (probe.hasNext()) {
+                                probe.next();
+                                final long locator = reader.locator();
+                                Assert.assertTrue(label, locator <= expectedMaxLocator);
+                                maxLocator = Math.max(maxLocator, locator);
+                                other.positionLocator(locator);
+                                Assert.assertEquals(label, reader.getLong(0), other.getLong(0));
+                            }
+                        }
+                    }
+                    Assert.assertEquals(label, expectedLastLocator, maxLocator);
+                    if (v > 0) {
+                        // The copy's locators are its ordinals.
+                        frames.copyPayload(frozen, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                        Assert.assertEquals(label, v - 1, frames.getMaxLocator());
+                    }
+                    build.close();
+                    frames.clear();
+                    Assert.assertEquals(label, 0, tracker.getUsed());
+                }
+                execute("DROP TABLE pk");
             }
         });
     }
@@ -924,8 +995,9 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                                 probe.next();
                                 // The owner's build appends the rows in scan order, so the row with
                                 // this v is the (v - 1)-th: the copy's ordinal, or a row of the frames.
+                                final long locator = ((HashJoinPayloadSource.Reader) probe.getRecord()).locator();
                                 Assert.assertEquals(label, isVarSize ? scanRowId(frames, v - 1) : v - 1,
-                                        ((HashJoinPayloadSource.Reader) probe.getRecord()).locator());
+                                        isVarSize ? frames.getLocatorRowId(locator) : locator);
                                 for (int col = 0; col < payload.length; col++) {
                                     switch (payload[col]) {
                                         case 1 -> Assert.assertEquals(label, v, probe.getRecord().getLong(col));
@@ -1273,7 +1345,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                                 probes[p].next();
                                 Assert.assertFalse(probes[p].hasNext());
                                 final HashJoinPayloadSource.Reader reader = (HashJoinPayloadSource.Reader) probes[p].getRecord();
-                                final int frameIndex = Rows.toPartitionIndex(reader.locator());
+                                final int frameIndex = Rows.toPartitionIndex(frames.getLocatorRowId(reader.locator()));
                                 final boolean isNative = frames.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
                                 if (isNative) {
                                     nativeReads++;
@@ -1310,7 +1382,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                         for (int key = 1; key < 72; key++) {
                             a.find(key);
                             a.next();
-                            final int frameIndex = Rows.toPartitionIndex(reader.locator());
+                            final int frameIndex = Rows.toPartitionIndex(frames.getLocatorRowId(reader.locator()));
                             final boolean isNative = frames.getAddressCache().getFrameFormat(frameIndex) == PartitionFormat.NATIVE;
                             final CharSequence strA = reader.getStrA(varSize.str);
                             final CharSequence strA2 = reader.getStrA(varSize.str2);
@@ -1319,7 +1391,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                             for (int other : new int[]{key + 1, 73 - key}) {
                                 a.find(other);
                                 a.next();
-                                final boolean isSameFrame = Rows.toPartitionIndex(reader.locator()) == frameIndex;
+                                final boolean isSameFrame = Rows.toPartitionIndex(frames.getLocatorRowId(reader.locator())) == frameIndex;
                                 if (!isNative && !isSameFrame) {
                                     continue;
                                 }
@@ -1402,7 +1474,7 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
                         Assert.assertTrue(label, locator >= 0 && locator < frozen.getRowCount());
                     }
                     // The table's own row at the row id that the locator names holds the match.
-                    final long rowId = isCopied ? frozen.getRowId(locator) : locator;
+                    final long rowId = isCopied ? frozen.getRowId(locator) : frames.getLocatorRowId(locator);
                     record.init(pool.navigateTo(Rows.toPartitionIndex(rowId)));
                     record.setRowIndex(Rows.toLocalRowID(rowId));
                     Assert.assertEquals(label, key, record.getInt(0));
@@ -1416,6 +1488,27 @@ public class HashJoinBuildFramesTest extends AbstractCairoTest {
             Assert.assertEquals(label, 600, locators.size());
             for (long v = 1; v <= 600; v++) {
                 Assert.assertTrue(label, seenValues.contains(v));
+            }
+            // Every row matched, so the largest locator met is the last row's: the copy's last
+            // ordinal, which bounds the locators, or the last frame's index above its last row, in
+            // the bits of the largest frame's last row, within the bound of the frame count above
+            // the row bits.
+            long maxLocator = -1;
+            for (int i = 0, n = locators.size(); i < n; i++) {
+                maxLocator = Math.max(maxLocator, locators.getQuick(i));
+            }
+            if (isCopied) {
+                Assert.assertEquals(label, 599, maxLocator);
+                Assert.assertEquals(label, 599, frames.getMaxLocator());
+            } else {
+                long maxFrameRows = 0;
+                for (int frameIndex = 0, n = frames.getFrameCount(); frameIndex < n; frameIndex++) {
+                    maxFrameRows = Math.max(maxFrameRows, frames.getFrameRowCount(frameIndex));
+                }
+                final int rowBits = 64 - Long.numberOfLeadingZeros(maxFrameRows - 1);
+                final int lastFrame = frames.getFrameCount() - 1;
+                Assert.assertEquals(label, ((long) lastFrame << rowBits) | (frames.getFrameRowCount(lastFrame) - 1), maxLocator);
+                Assert.assertEquals(label, ((long) frames.getFrameCount() << rowBits) - 1, frames.getMaxLocator());
             }
             final int[] order = new int[locators.size()];
             for (int i = 0; i < order.length; i++) {

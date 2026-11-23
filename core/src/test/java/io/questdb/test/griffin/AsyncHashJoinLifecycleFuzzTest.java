@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolMode;
@@ -73,8 +74,9 @@ import static io.questdb.test.griffin.ParallelHashJoinTestUtils.*;
  * gain rows in order and out of order, lose them to TRUNCATE and DROP PARTITION, convert
  * partitions to Parquet and back, and gain columns, which makes the factories stale.
  * <p>
- * Every execution takes its builds, its orientation, its probe frames, its window and its SYMBOL
- * key translation from the tables as it finds them, so its rows are those of the ordinary plan
+ * Every execution takes its builds, its orientation, its probe frames, its window, its tuple layout
+ * and its SYMBOL key translation from the tables as it finds them, so its rows are those of the
+ * ordinary plan
  * compiled then, in order, and once its cursor closes, whatever ended it, the join holds no slot,
  * no ring memory and no reader. The first executions of a run follow a script, so that every run
  * swaps its inputs, reads Parquet probe frames, joins an empty build, cancels, breaches a memory
@@ -186,6 +188,10 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
         final int frameRows = 8 << rnd.nextInt(5);
         final long firstTaskRows = 1 + rnd.nextInt(100);
         final long stepperWarmUpRows = rnd.nextInt(3) == 0 ? 0 : rnd.nextInt(20_000);
+        // The bits of a narrow tuple slot: the server's 32, or a few, which the tables outgrow and
+        // shrink back under, so that the executions of a factory switch between the layouts, and
+        // the check of each narrowed value fails the run on a wrong choice.
+        final int narrowSlotBits = rnd.nextBoolean() ? Integer.SIZE : 8 + rnd.nextInt(8);
         final int executions = Integer.getInteger(EXECUTIONS_PROP, DEFAULT_EXECUTIONS);
         LOG.info().$("lifecycle fuzz [mode=").$(mode.name())
                 .$(", executions=").$(executions)
@@ -197,6 +203,7 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
                 .$(", frameRows=").$(frameRows)
                 .$(", firstTaskRows=").$(firstTaskRows)
                 .$(", stepperWarmUpRows=").$(stepperWarmUpRows)
+                .$(", narrowSlotBits=").$(narrowSlotBits)
                 .I$();
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, taskOutputMaxRows);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, queueCapacity);
@@ -208,6 +215,7 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowGroupSize);
         AsyncHashJoinRecordCursorFactory.setFirstTaskRowsForTesting(firstTaskRows);
         AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(stepperWarmUpRows);
+        HashJoinTupleRing.setNarrowSlotBitsForTesting(narrowSlotBits);
         try {
             final BindVariableService bindVariableService = new BindVariableServiceImpl(configuration);
             assertMemoryLeak(() -> executeOnWorkers(mode, WORKER_COUNT, bindVariableService, configuration, LOG, (db, context) -> {
@@ -231,6 +239,7 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
             }));
         } finally {
             AsyncHashJoinRecordCursorFactory.setFirstTaskRowsForTesting(AsyncHashJoinRecordCursorFactory.FIRST_TASK_ROWS);
+            HashJoinTupleRing.setNarrowSlotBitsForTesting(Integer.SIZE);
             restoreSteppers();
         }
     }
@@ -258,6 +267,8 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
         private int executionCount;
         private boolean hasDBulkRows;
         private int limitedExecutions;
+        // The executions that joined into narrow tuple slots, and into wide ones.
+        private int narrowExecutions;
         // The timestamp of the next row that an insert appends to t, in microseconds: the day after
         // the seed rows' at first.
         private long nextTimestamp;
@@ -265,6 +276,7 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
         private int staleFactories;
         private int swappedExecutions;
         private int tAddedRows;
+        private int wideExecutions;
 
         private Lifecycle(CairoEngine db, SqlExecutionContextImpl context, BindVariableService bindVariableService, Rnd rnd, WorkerPoolMode mode) {
             this.db = db;
@@ -409,6 +421,15 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
                 if (join.getAtom().getParquetProbeFrameCount() > 0) {
                     parquetExecutions++;
                 }
+                // An execution that built and bound its ring picked a tuple layout.
+                final HashJoinTupleRing ring = join.getAtom().getRing();
+                if (ring.getTupleBytes() > 0) {
+                    if (ring.isNarrow()) {
+                        narrowExecutions++;
+                    } else {
+                        wideExecutions++;
+                    }
+                }
             } catch (CairoException e) {
                 // Only a cancelled execution may report a cancellation, and only one under a memory
                 // limit a breach of it; either may also return every row.
@@ -496,6 +517,8 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
                     .$(", cancelled=").$(cancelledExecutions)
                     .$(", overMemoryLimit=").$(limitedExecutions)
                     .$(", staleFactories=").$(staleFactories)
+                    .$(", narrow=").$(narrowExecutions)
+                    .$(", wide=").$(wideExecutions)
                     .I$();
         }
 

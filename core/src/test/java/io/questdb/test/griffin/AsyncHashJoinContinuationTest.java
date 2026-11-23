@@ -298,10 +298,10 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                 final HashJoinTupleRing ring = find(factory).getAtom().getRing();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(50, ring.getTuples(0).size() / ring.getTupleStride());
+                    Assert.assertEquals(50, ring.getTuples(0).size());
                     Assert.assertEquals(1, ring.getResumePosition(0));
                     // The entry's memory, which the hot key grew, is the execution's.
-                    Assert.assertTrue(ring.getAllocatedBytes() >= 50L * ring.getTupleStride() * Long.BYTES);
+                    Assert.assertTrue(ring.getAllocatedBytes() >= 50L * ring.getTupleBytes());
                 }
                 Assert.assertEquals(0, ring.getAllocatedBytes());
             }
@@ -314,7 +314,7 @@ public class AsyncHashJoinContinuationTest extends AbstractCairoTest {
                 final HashJoinTupleRing ring = find(factory).getAtom().getRing();
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals(4, ring.getTuples(0).size() / ring.getTupleStride());
+                    Assert.assertEquals(4, ring.getTuples(0).size());
                     Assert.assertEquals(-1, ring.getResumePosition(0));
                 }
             }

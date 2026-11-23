@@ -869,18 +869,19 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
     @Test
     public void testProbeMemoryLimitAndReuse() throws Exception {
         assertMemoryLeak(() -> {
-            // One large probe frame over a two-row build: the frame's tuples take 50_000 * 2 * 8 bytes,
-            // far more than the build. Without a LIMIT the frame's task joins its first 4_096 rows,
-            // and the consumer's continuation joins the rest in chunks of as many rows as the frame
-            // joined before each, each into an entry of its tuples' room: 4_096 and 8_192 rows fit the
-            // limit, and the chunk of 16_384 rows, whose tuples take 262_144 bytes, breaches it.
+            // One large probe frame over a two-row build: the frame's tuples, of two narrow slots, take
+            // 50_000 * 2 * 4 bytes, far more than the build. Without a LIMIT the frame's task joins
+            // its first 4_096 rows, and the consumer's continuation joins the rest in chunks of as many
+            // rows as the frame joined before each, each into an entry of its tuples' room: 4_096 and
+            // 8_192 rows fit the limit, and the chunk of 16_384 rows, whose tuples take 131_072 bytes,
+            // breaches it.
             execute("CREATE TABLE t AS (SELECT (x % 3)::INT k, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(50_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT x::INT k, x w FROM long_sequence(2))");
             sqlExecutionContext.changePageFrameSizes(50_000, 50_000);
             final String sql = "SELECT t.k, d.w FROM t LEFT JOIN d ON t.k = d.k";
             final String expected = ordinary(sql, sqlExecutionContext);
             try (RecordCursorFactory factory = select(sql)) {
-                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 200_000L);
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 100_000L);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     //noinspection StatementWithEmptyBody
                     while (cursor.hasNext()) {
@@ -889,7 +890,7 @@ public class AsyncHashJoinTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     Assert.assertTrue(e.isOutOfMemory());
                     TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "size=262144");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "size=131072");
                 }
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
                 Assert.assertEquals(expected, result(factory, sqlExecutionContext));

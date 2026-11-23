@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.join.HashJoinPayloadSource;
 import io.questdb.griffin.engine.table.AsyncHashJoinAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
+import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolUtils;
@@ -209,6 +210,8 @@ import java.util.concurrent.locks.LockSupport;
  *       servers pass them; false opens them as the servers did before they passed them.</li>
  *   <li>{@code pageRows}: the rows that the {@code PAGE_*} shapes read, and that the
  *       {@code FETCH_*} shapes' client reads first; -1 keeps 1,001 and 1,000.</li>
+ *   <li>{@code tupleLayout}: {@code AUTO} lets each execution pick 4-byte tuple slots when its
+ *       values fit them, {@code WIDE} keeps the 8-byte slots that huge builds fall back to.</li>
  * </ul>
  * {@code plan=OPERATOR_TEMPLATE} runs the operator with the shared stepper template in place of a
  * hidden class per stage, whichever the warm-up picks. The report line names the ring budget and the
@@ -308,6 +311,9 @@ public class ParallelHashJoinBenchmark {
 
     @Param({"1"})
     public double ringBudgetFactor;
+
+    @Param({"AUTO"})
+    public String tupleLayout;
 
     @Param({"-1"})
     public long warmUpRows;
@@ -645,6 +651,7 @@ public class ParallelHashJoinBenchmark {
     private void free() {
         AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(true);
         AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS);
+        HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
         factory = Misc.free(factory);
         if (workerPool != null) {
             workerPool.halt();
@@ -754,6 +761,11 @@ public class ParallelHashJoinBenchmark {
             default -> throw new IllegalArgumentException("unknown plan: " + plan);
         };
         AsyncHashJoinRecordCursorFactory.setStepperCopiesEnabledForTesting(!"OPERATOR_TEMPLATE".equals(plan));
+        HashJoinTupleRing.setTupleLayoutForTesting(switch (tupleLayout) {
+            case "AUTO" -> HashJoinTupleRing.TUPLE_LAYOUT_AUTO;
+            case "WIDE" -> HashJoinTupleRing.TUPLE_LAYOUT_WIDE;
+            default -> throw new IllegalArgumentException("unknown tuple layout: " + tupleLayout);
+        });
         AsyncHashJoinRecordCursorFactory.setStepperWarmUpRowsForTesting(warmUpRows < 0 ? AsyncHashJoinAtom.STEPPER_WARM_UP_ROWS : warmUpRows);
         ctx.setParallelHashJoinEnabled(isOperator);
         text = sql();
@@ -817,6 +829,7 @@ public class ParallelHashJoinBenchmark {
                 .append(" warmUpRows=").append(warmUpRows)
                 .append(" hasFirstReadHint=").append(hasFirstReadHint)
                 .append(" pageRows=").append(pageRows)
+                .append(" tupleLayout=").append(tupleLayout)
                 .append(" cpus=").append(Runtime.getRuntime().availableProcessors());
 
         final long workerCpu0 = cpuNanos(threads, workerThreadIds);
@@ -865,6 +878,7 @@ public class ParallelHashJoinBenchmark {
                         .append(" copyBytes=").append(copyBytes)
                         .append(" dispatchLimit=").append(join.getAtom().getRing().getDispatchLimit())
                         .append(" ringBytes=").append(join.getAtom().getRing().getAllocatedBytes())
+                        .append(" tupleBytes=").append(join.getAtom().getRing().getTupleBytes())
                         .append(" continuations=").append(join.getAtom().getContinuationCount())
                         .append(" probeFrames=").append(join.getProbeFrameCount())
                         .append(" swapped=").append(join.getAtom().isSwapped());

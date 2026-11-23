@@ -33,6 +33,7 @@ import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.HashJoinBuildFrames;
 import io.questdb.griffin.engine.table.HashJoinBuildStage;
+import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.After;
 import org.junit.Assert;
@@ -61,6 +62,7 @@ public class AsyncHashJoinTuningTest extends AbstractCairoTest {
     @After
     public void restorePageFrameSizes() {
         sqlExecutionContext.restoreToDefaultPageFrameSizes();
+        HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
     }
 
     @Test
@@ -226,10 +228,11 @@ public class AsyncHashJoinTuningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRingBudgetDefaultKeepsTheWindowOfFiveStages() throws Exception {
+    public void testRingBudgetDefaultKeepsTheWindowOfFiveWideOrElevenNarrowStages() throws Exception {
         // Frames of four rows, the configured page frame size, and a dispatch limit of four: the
-        // default budget holds four frames of tuples of six longs, a probe row and five stages'
-        // entries, 4 * 4 * 6 * 8 bytes.
+        // default budget holds four frames of tuples of six 8-byte slots, a probe row and five
+        // stages' entries, 4 * 4 * 6 * 8 bytes, the most that the wide layout takes, and so four
+        // frames of tuples of twelve narrow slots of 4 bytes, eleven stages' entries.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 4);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 4);
         assertMemoryLeak(() -> {
@@ -241,13 +244,20 @@ public class AsyncHashJoinTuningTest extends AbstractCairoTest {
             sqlExecutionContext.changePageFrameSizes(4, 4);
             final StringBuilder sql = new StringBuilder("SELECT t.v");
             final StringBuilder joins = new StringBuilder(" FROM t");
-            for (int stage = 1; stage <= 6; stage++) {
+            for (int stage = 1; stage <= 12; stage++) {
                 sql.append(", u").append(stage).append(".w w").append(stage);
                 joins.append(" LEFT JOIN u u").append(stage).append(" ON t.k = u").append(stage).append(".k");
+                if (stage == 5 || stage == 6) {
+                    // Five stages in wide slots keep the dispatch limit of four frames; six, whose
+                    // frames take 4 * 7 * 8 bytes, keep three.
+                    HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_WIDE);
+                    assertWindow(sql + joins.toString(), stage, Long.BYTES, stage == 5 ? 4 : 3);
+                    HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
+                }
                 if (stage >= 5) {
-                    // Five stages keep the dispatch limit of four frames; six, whose frames take 4 * 7
-                    // * 8 bytes, keep three.
-                    assertWindow(sql + joins.toString(), stage, stage == 5 ? 4 : 3);
+                    // In narrow slots, eleven stages keep four frames; twelve, whose frames take
+                    // 4 * 13 * 4 bytes, keep three.
+                    assertWindow(sql + joins.toString(), stage, Integer.BYTES, stage <= 11 ? 4 : 3);
                 }
             }
         });
@@ -271,9 +281,9 @@ public class AsyncHashJoinTuningTest extends AbstractCairoTest {
         }
     }
 
-    // While a cursor of the query reads its rows, its ring holds the stages' tuples, in a window of
-    // as many frames as given.
-    private static void assertWindow(String sql, int stageCount, int dispatchLimit) throws SqlException {
+    // While a cursor of the query reads its rows, its ring holds the stages' tuples in slots of the
+    // given bytes, in a window of as many frames as given.
+    private static void assertWindow(String sql, int stageCount, int slotBytes, int dispatchLimit) throws SqlException {
         assertParallelHashJoin(sql, sqlExecutionContext);
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -282,6 +292,7 @@ public class AsyncHashJoinTuningTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(sql, 1 + stageCount, join.getAtom().getRing().getTupleStride());
+                Assert.assertEquals(sql, (1 + stageCount) * slotBytes, join.getAtom().getRing().getTupleBytes());
                 Assert.assertEquals(sql, dispatchLimit, join.getAtom().getRing().getDispatchLimit());
                 while (cursor.hasNext()) {
                     Assert.assertEquals(sql, dispatchLimit, join.getAtom().getRing().getDispatchLimit());

@@ -1104,6 +1104,11 @@ public final class MapHashJoinBuild implements Closeable {
         }
 
         @Override
+        public long getMaxChainHead() {
+            return heap.getMaxLink(rowsCount);
+        }
+
+        @Override
         public long getRowCount() {
             return rowsCount;
         }

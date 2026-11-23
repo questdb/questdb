@@ -821,6 +821,11 @@ public final class IntHashJoinBuild implements Closeable {
         }
 
         @Override
+        public long getMaxChainHead() {
+            return heap.getMaxLink(rowsCount);
+        }
+
+        @Override
         public long getRowCount() {
             return rowsCount;
         }

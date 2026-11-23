@@ -150,6 +150,72 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaxChainHeadIsTheLinkOfTheLastRow() throws Exception {
+        // A walk of every key's chain stands at every row's link in turn, so the largest link it
+        // meets is the last row's, (rows - 1) * row size + 8, which the build reports, for rows of
+        // 16 bytes, with a row id, and of 8, without, built serially or in partitions. A build of no
+        // rows has no link.
+        assertMemoryLeak(() -> {
+            createTables();
+            sqlExecutionContext.changePageFrameSizes(20, 20);
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                 RecordCursorFactory factory = select("t");
+                 HashJoinBuildFrames frames = new HashJoinBuildFrames(configuration, ints(2), factory.getMetadata())) {
+                frames.open(factory, ORDER_ASC, sqlExecutionContext);
+                frames.loadFrames();
+                final IntList keys = new IntList();
+                for (int key = 0; key < 6; key++) {
+                    keys.add(key);
+                }
+                for (int key = 1_001; key <= 1_600; key++) {
+                    keys.add(key);
+                }
+                keys.add(Numbers.INT_NULL);
+                for (boolean hasPayload : new boolean[]{true, false}) {
+                    try (IntHashJoinBuild build = new IntHashJoinBuild(hasPayload, 2, 16)) {
+                        for (boolean isPartitioned : new boolean[]{false, true}) {
+                            final String label = (hasPayload ? "row ids" : "links alone") + (isPartitioned ? ", partitioned" : ", serial");
+                            final FrozenHashJoinBuild.IntKeyed frozen = isPartitioned
+                                    ? FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, ROWS_PER_PARTITION, -1, null, tracker, NOOP)
+                                    : FrameBuilds.buildIntSerial(configuration, build, frames, 0, null, ORDER_ASC, tracker, NOOP);
+                            Assert.assertEquals(label, isPartitioned, build.getPartitionCount() > 1);
+                            final long rowCount = frozen.getRowCount();
+                            Assert.assertTrue(label, rowCount > 500);
+                            Assert.assertEquals(label, (rowCount - 1) * (hasPayload ? 16 : 8) + 8, frozen.getMaxChainHead());
+                            long links = 0;
+                            long maxLink = 0;
+                            try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                                for (int i = 0, n = keys.size(); i < n; i++) {
+                                    probe.find(keys.getQuick(i));
+                                    for (long link = probe.chainHead(); link != 0; link = probe.chainHead()) {
+                                        Assert.assertTrue(label, link <= frozen.getMaxChainHead());
+                                        maxLink = Math.max(maxLink, link);
+                                        links++;
+                                        probe.next();
+                                    }
+                                }
+                            }
+                            Assert.assertEquals(label, rowCount, links);
+                            Assert.assertEquals(label, frozen.getMaxChainHead(), maxLink);
+                            build.close();
+
+                            final FrozenHashJoinBuild.IntKeyed empty = isPartitioned
+                                    ? FrameBuilds.buildIntPartitioned(configuration, build, frames, 0, ROWS_PER_PARTITION, -1, v -> false, tracker, NOOP)
+                                    : FrameBuilds.buildIntSerial(configuration, build, frames, 0, v -> false, ORDER_ASC, tracker, NOOP);
+                            Assert.assertEquals(label, 0, empty.getRowCount());
+                            Assert.assertEquals(label, 0, empty.getMaxChainHead());
+                            build.close();
+                            Assert.assertEquals(label, 0, tracker.getUsed());
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
     public void testStagedKeyChainHeadsRestartChainsInChainOrder() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -199,6 +265,19 @@ public class HashJoinChainHeadTest extends AbstractCairoTest {
                     try (FrozenHashJoinBuild.RecordProbe a = frozen.newProbe(probeSink(asm, probeFactory, probeKey));
                          FrozenHashJoinBuild.RecordProbe b = frozen.newProbe(probeSink(asm, probeFactory, probeKey))) {
                         assertChainHeads(label, a, b, walk, expected);
+                        // A walk of every key's chain stands at every row's link in turn: the largest
+                        // is the last row's, of the build's rows of 16 bytes, a link and a row id.
+                        Assert.assertEquals(label, (frozen.getRowCount() - 1) * 16 + 8, frozen.getMaxChainHead());
+                        final long[] linksAndMax = new long[2];
+                        walk.forEachKey(a, false, (key, probe) -> {
+                            for (long link = probe.chainHead(); link != 0; link = probe.chainHead()) {
+                                linksAndMax[0]++;
+                                linksAndMax[1] = Math.max(linksAndMax[1], link);
+                                probe.next();
+                            }
+                        });
+                        Assert.assertEquals(label, frozen.getRowCount(), linksAndMax[0]);
+                        Assert.assertEquals(label, frozen.getMaxChainHead(), linksAndMax[1]);
                     }
                     final FrozenHashJoinBuild.RecordProbe expiring = frozen.newProbe(probeSink(asm, probeFactory, probeKey));
                     try (RecordCursor cursor = probeFactory.getCursor(sqlExecutionContext)) {

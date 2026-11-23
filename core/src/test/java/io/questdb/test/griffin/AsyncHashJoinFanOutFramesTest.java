@@ -155,12 +155,12 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     public void testContinuedFramesFirstWindowHoldsTheTaskCap() throws Exception {
         // t holds 8_000 probe rows over a hundred keys, and d ten rows of each key: frames of the
         // 1_000-row floor, whose tasks stop at the cap of 5_000 tuples and leave the rest of their
-        // frames to continuations. A ring budget of 160_000 bytes holds two such tasks' tuples of two
-        // longs, 80_000 bytes each, where the frames' rows, 16_000 bytes, would let the dispatch
-        // limit's eight frames in.
+        // frames to continuations. A ring budget of 80_000 bytes holds two such tasks' tuples of two
+        // narrow slots, 40_000 bytes each, where the frames' rows, 8_000 bytes, would let the
+        // dispatch limit's eight frames in.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 5_000);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 160_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 80_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT (x % 100)::INT k, x v, timestamp_sequence('2024-01-01', 5_000_000) ts FROM long_sequence(8_000)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT (x % 100)::INT k, 100_000 + x w FROM long_sequence(1_000))");
@@ -421,12 +421,12 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     @Test
     public void testParquetFirstWindowHoldsTheRowGroupTask() throws Exception {
         // As in testParquetFramesKeepTheirRowGroups: the Parquet partition's frame, its row group of
-        // twelve rows, past the cap of six, leaves its task a cap of twelve tuples, 192 bytes of two
-        // longs, which the tasks of the native partition's frames of two rows never pass: a ring
-        // budget of 384 bytes holds two such tasks, where the cap of six would let four in.
+        // twelve rows, past the cap of six, leaves its task a cap of twelve tuples, 96 bytes of two
+        // narrow slots, which the tasks of the native partition's frames of two rows never pass: a
+        // ring budget of 192 bytes holds two such tasks, where the cap of six would let four in.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 384);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 192);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 7_200_000_000) ts FROM long_sequence(24)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE d AS (SELECT (x % 4)::INT k, x * 100 w FROM long_sequence(12))");
@@ -517,13 +517,13 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     public void testSwappedFirstWindowHoldsTheTaskCap() throws Exception {
         // As in testSwappedInputsFollowTheLeftBuild: the join hashes l, three rows of each key, whose
         // matches the workers walk, and cuts r's frames to two rows, whose tasks fill the cap of six
-        // tuples. A ring budget of 288 bytes holds three such tasks' tuples of one stage, 96 bytes
-        // each, and two of two stages, 144 bytes each, where the frames' rows would let the dispatch
-        // limit's eight frames in, and six. The first row comes with the ramp's two frames, within
-        // that window.
+        // tuples. A ring budget of 144 bytes holds three such tasks' tuples of one stage, in narrow
+        // slots, 48 bytes each, and two of two stages, 72 bytes each, where the frames' rows would
+        // let the dispatch limit's eight frames in, and six. The first row comes with the ramp's two
+        // frames, within that window.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 8);
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, 6);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 288);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 144);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE l AS (SELECT (x % 4)::INT k, x v, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(12)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE r AS (SELECT (x % 4)::INT k, x * 100 w, timestamp_sequence('2024-01-01', 60_000_000) ts FROM long_sequence(24)) TIMESTAMP(ts) PARTITION BY DAY");
@@ -645,7 +645,8 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
     }
 
     // An execution of the query, which swaps the first join's inputs or not, starts at the given
-    // window of the ring, and its first row comes with the given frames dispatched.
+    // window of the ring, in narrow tuple slots, and its first row comes with the given frames
+    // dispatched.
     private static void assertFirstWindow(String sql, int window, int dispatched, boolean isSwapped) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -653,6 +654,7 @@ public class AsyncHashJoinFanOutFramesTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue(sql, cursor.hasNext());
                 Assert.assertEquals(sql, isSwapped, join.getAtom().isSwapped());
+                Assert.assertTrue(sql, join.getAtom().getRing().isNarrow());
                 Assert.assertEquals(sql, window, join.getAtom().getRing().getDispatchLimit());
                 Assert.assertEquals(sql, dispatched, join.getDispatchedFrameCount());
             }

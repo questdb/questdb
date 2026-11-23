@@ -34,7 +34,6 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinPayloadSource;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -194,10 +193,14 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
     private int rampWindow = 1;
     // The rows that hasNext() returned since the cursor opened or went back to the top.
     private long returnedRows;
+    // True when the tuples the cursor reads take 4-byte slots; see HashJoinTupleList.
+    private boolean isNarrowTuples;
+    // The address of the first tuple the cursor reads, which it keeps to itself, see
+    // HashJoinTupleList, and the bytes of a tuple.
+    private long tupleBase;
+    private int tupleBytes;
     private long tupleCount;
     private long tupleIndex;
-    private int tupleStride;
-    private DirectLongList tuples;
 
     AsyncHashJoinRecordCursor(AsyncHashJoinSpec spec, long firstTaskRows) {
         this.firstTaskRows = firstTaskRows;
@@ -258,7 +261,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                         addRows(counter, task.getFilteredRowCount());
                     } else {
                         // A task that the cursor dispatched before the count began carries tuples.
-                        tuples = atom.getRing().getTuples(frameIndex);
+                        ofTuples(atom.getRing().getTuples(frameIndex));
                         heldEntryFrame = frameIndex;
                         tupleIndex = 0;
                         tupleCount = task.getFilteredRowCount();
@@ -311,7 +314,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     chainStageCount = 0;
                     outputProbes.setAll(stageCount, null);
                     outputReaders.setAll(stageCount, null);
-                    tuples = null;
+                    tupleBase = 0;
                     circuitBreaker = null;
                 }
             }
@@ -421,7 +424,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 final HashJoinTupleRing ring = atom.getRing();
                 // Where the builds cap the frames' rows, a probe row may yield several tuples, and a
                 // task may write its cap of them.
-                ring.of(frameSequence, true, fanOutFrameRowCap != Long.MAX_VALUE);
+                ring.of(frameSequence, true, fanOutFrameRowCap != Long.MAX_VALUE, atom.getMaxTupleLocator(), atom.getMaxTupleChainHead());
                 firstWindow(ring.getDispatchLimit());
                 // The first window's probe rows, its LIMIT's or its head's, bound the keys that the
                 // execution translates until it joins past them; every probe row's bound them
@@ -433,7 +436,6 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 isSymbolKeyTranslationNarrowed = translationRows < probeRows;
                 rampStart = computeRampStart(ring);
                 rampWindow = rampStart;
-                tupleStride = ring.getTupleStride();
                 for (int k = 0; k < stageCount; k++) {
                     final FrozenHashJoinBuild.Probe outputProbe = atom.getStage(k).getOutputSlot().getProbe();
                     final HashJoinPayloadSource.Reader outputReader = (HashJoinPayloadSource.Reader) outputProbe.getRecord();
@@ -476,7 +478,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
             }
             final long chunkTupleCount = atom.continueFrame(frameSequence.getTask(cursor), circuitBreaker);
             if (chunkTupleCount != HashJoinStageStepper.CANCELLED) {
-                tuples = atom.getRing().getTuples(frameIndex);
+                ofTuples(atom.getRing().getTuples(frameIndex));
                 tupleIndex = 0;
                 tupleCount = chunkTupleCount;
                 return true;
@@ -536,10 +538,10 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         countedTupleFrameCount++;
         long rows = 0;
         for (; tupleIndex < tupleCount; tupleIndex++) {
-            final long base = tupleIndex * tupleStride;
+            final long tupleAddress = tupleBase + tupleIndex * tupleBytes;
             long tupleRows = 1;
             for (int k = 0; k < stageCount; k++) {
-                final long entry = tuples.get(base + 1 + k);
+                final long entry = HashJoinTupleList.getEntry(tupleAddress, k, isNarrowTuples);
                 if (entry < HashJoinStageStepper.NO_MATCH) {
                     tupleRows = HashJoinStageStepper.multiplyRowCounts(
                             tupleRows,
@@ -583,7 +585,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                 cursor = -1;
                 // The record reads the task's frame memory, which the task releases on collection.
                 probeRecord.clear();
-                tuples = null;
+                tupleBase = 0;
             }
         }
     }
@@ -620,7 +622,7 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
                     // task of a LIMIT's first window may leave the rest of its frame to a
                     // continuation without any.
                     if (tupleCount > 0 || atom.getRing().getResumePosition(frameIndex) > -1) {
-                        tuples = atom.getRing().getTuples(frameIndex);
+                        ofTuples(atom.getRing().getTuples(frameIndex));
                         probeRecord.init(task.getFrameMemory());
                         return;
                     }
@@ -728,14 +730,22 @@ class AsyncHashJoinRecordCursor implements NoRandomAccessRecordCursor {
         return false;
     }
 
+    // Reads the tuples of a ring entry, whose writer has handed back its append address.
+    private void ofTuples(HashJoinTupleList tuples) {
+        tupleBase = tuples.getAddress();
+        tupleBytes = tuples.getTupleBytes();
+        isNarrowTuples = tuples.isNarrow();
+    }
+
     // Positions the record at the next tuple: the probe row, and each stage's match, or the first
     // match of each chain that a stage left to the consumer.
     private void positionTuple() {
-        final long base = tupleIndex++ * tupleStride;
-        probeRecord.setRowIndex(tuples.get(base));
+        final boolean isNarrowTuples = this.isNarrowTuples;
+        final long tupleAddress = tupleBase + tupleIndex++ * tupleBytes;
+        probeRecord.setRowIndex(HashJoinTupleList.getProbeRow(tupleAddress, isNarrowTuples));
         chainStageCount = 0;
         for (int k = 0; k < stageCount; k++) {
-            final long entry = tuples.get(base + 1 + k);
+            final long entry = HashJoinTupleList.getEntry(tupleAddress, k, isNarrowTuples);
             if (entry > HashJoinStageStepper.NO_MATCH) {
                 outputReaders.getQuick(k).positionLocator(entry);
                 record.setHasMatch(k, true);

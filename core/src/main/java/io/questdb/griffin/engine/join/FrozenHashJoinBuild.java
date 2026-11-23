@@ -62,6 +62,13 @@ public interface FrozenHashJoinBuild {
 
     long getKeyCount();
 
+    /**
+     * The largest link that {@link Probe#chainHead()} of a probe of this execution's build may
+     * return, 0 for a build without rows: a thread that hands chain heads on to another in fewer
+     * bits than a LONG's checks that the largest one fits.
+     */
+    long getMaxChainHead();
+
     long getRowCount();
 
     /**

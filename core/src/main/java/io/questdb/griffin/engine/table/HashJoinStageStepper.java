@@ -48,10 +48,12 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * A stage's entry in a tuple is the locator of the build row that the probe row matches, see
  * {@code HashJoinPayloadSource.Reader.locator()}, {@link #NO_MATCH} for a LEFT join's miss, or a
- * tagged chain head when the key matches several build rows: the head of the key's chain, negated,
- * which a link's minimum of eight keeps below {@link #NO_MATCH}. The consumer walks such a chain
- * itself, so a key's duplicates cost the worker one lookup however many there are; see
- * {@link #toChainHead(long)}. An INNER join's miss drops the probe row.
+ * tagged chain head when the key matches several build rows: the complement of the head's index in
+ * 8-byte words, which a link's minimum of eight keeps below {@link #NO_MATCH}; see
+ * {@link #toChainEntry(long)}. A link is a multiple of eight, so the tag loses nothing, and a heap of
+ * up to 16 GiB tags its chains in 32 bits, which a narrow tuple holds; see {@link HashJoinTupleList}.
+ * The consumer walks such a chain itself, so a key's duplicates cost the worker one lookup however
+ * many there are; see {@link #toChainHead(long)}. An INNER join's miss drops the probe row.
  * <p>
  * A stage whose pairs run a filter in the open cursor's execution, an ON residual or a post-join
  * filter, is enumerated instead: the stepper walks the key's matches itself, runs the filters over
@@ -190,11 +192,18 @@ abstract class HashJoinStageStepper {
     }
 
     /**
+     * The tagged entry of a chain head, a link of at least eight; see {@link HashJoinStageStepper}.
+     */
+    static long toChainEntry(long head) {
+        return ~(head >>> 3);
+    }
+
+    /**
      * The chain head that a tagged entry carries; see {@link HashJoinStageStepper}.
      */
     static long toChainHead(long entry) {
         assert entry < NO_MATCH;
-        return -entry;
+        return ~entry << 3;
     }
 
     /**
@@ -262,7 +271,7 @@ abstract class HashJoinStageStepper {
      * @param to           the position, in the scan's order, of the row to stop before, at most
      *                     {@code rowCount}
      * @param isDescending true for a backward probe scan
-     * @param tupleCap     the longs of the slot's tuples that end the call at a probe row's boundary
+     * @param tupleCap     the bytes of the slot's tuples that end the call at a probe row's boundary
      * @return the position of the first row not probed, {@code to} once every row before it was, or
      * {@link #CANCELLED} when the execution was cancelled
      */

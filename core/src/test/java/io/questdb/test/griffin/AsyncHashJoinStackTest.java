@@ -1017,16 +1017,16 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
 
     @Test
     public void testRingSizedForStride() throws Exception {
-        // Frames of four rows, and a ring budget of 576 bytes: a frame of tuples of three longs, a
-        // probe row and two stages' entries, takes 96 bytes, and a frame of tuples of nine longs,
-        // eight stages' entries, 288. The workers walk the matches of the eight-stage stack's first
-        // seven stages, the first of which, d1, repeats its keys, so a task may write its cap of
-        // tuples, the frame's rows or task.output.max.rows if that is more: a cap of four keeps 288
-        // bytes a task, and a cap of eight makes it 576. The two-stage stack hands the chains of d1
-        // and d2, which repeat their keys too, to the consumer, one tuple per probe row, whatever
-        // the cap.
+        // Frames of four rows, and a ring budget of 288 bytes: a frame of tuples of three narrow
+        // slots of 4 bytes, a probe row and two stages' entries, takes 48 bytes, and a frame of
+        // tuples of nine slots, eight stages' entries, 144. The workers walk the matches of the
+        // eight-stage stack's first seven stages, the first of which, d1, repeats its keys, so a task
+        // may write its cap of tuples, the frame's rows or task.output.max.rows if that is more: a
+        // cap of four keeps 144 bytes a task, and a cap of eight makes it 288. The two-stage stack
+        // hands the chains of d1 and d2, which repeat their keys too, to the consumer, one tuple per
+        // probe row, whatever the cap.
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FILTER_DISPATCH_LIMIT, 16);
-        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 576);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TUPLE_RING_MAX_SIZE, 288);
         assertMemoryLeak(() -> {
             createTables();
             // rt holds four rows a day, so each of its frames holds four rows.
@@ -1035,8 +1035,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             final String two = "SELECT t.v, d1.w, d2.w2 FROM rt t LEFT JOIN d1 ON t.k = d1.k LEFT JOIN d2 ON t.lk = d2.lk";
             for (int cap : new int[]{4, 8}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_TASK_OUTPUT_MAX_ROWS, cap);
-                assertRing(two, 3, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (4 * 3 * 8)))));
-                assertRing(EIGHT_STAGES.replace(" FROM t", " FROM rt t"), 9, Math.max(1, Math.min(16, Math.min(queueCapacity, 576 / (Math.max(4, cap) * 9 * 8)))));
+                assertRing(two, 3, Math.max(1, Math.min(16, Math.min(queueCapacity, 288 / (4 * 3 * Integer.BYTES)))));
+                assertRing(EIGHT_STAGES.replace(" FROM t", " FROM rt t"), 9, Math.max(1, Math.min(16, Math.min(queueCapacity, 288 / (Math.max(4, cap) * 9 * Integer.BYTES)))));
             }
         });
     }
@@ -1214,8 +1214,8 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
         Assert.assertEquals(sql, expected, result(factory, sqlExecutionContext));
     }
 
-    // While a cursor of the query is open, its ring holds tuples of the given longs, in as many entries
-    // as the effective dispatch limit.
+    // While a cursor of the query is open, its ring holds tuples of the given narrow slots, in as many
+    // entries as the effective dispatch limit.
     private static void assertRing(String sql, int tupleStride, int dispatchLimit) throws SqlException {
         try (RecordCursorFactory factory = select(sql)) {
             final AsyncHashJoinRecordCursorFactory join = find(factory);
@@ -1223,6 +1223,7 @@ public class AsyncHashJoinStackTest extends AbstractCairoTest {
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                 Assert.assertTrue(cursor.hasNext());
                 Assert.assertEquals(sql, tupleStride, join.getAtom().getRing().getTupleStride());
+                Assert.assertEquals(sql, tupleStride * Integer.BYTES, join.getAtom().getRing().getTupleBytes());
                 Assert.assertEquals(sql, dispatchLimit, join.getAtom().getRing().getDispatchLimit());
             }
         }

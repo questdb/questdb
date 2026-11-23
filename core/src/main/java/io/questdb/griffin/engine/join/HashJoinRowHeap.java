@@ -295,6 +295,14 @@ final class HashJoinRowHeap implements Closeable {
     }
 
     /**
+     * The largest link of the first {@code rowCount} rows, the last one's: a link is a row's byte
+     * offset plus eight; 0 for no rows.
+     */
+    long getMaxLink(long rowCount) {
+        return rowCount > 0 ? (rowCount - 1) * rowSize + LINK_SIZE : 0;
+    }
+
+    /**
      * Where the row at this byte offset keeps its link, eight bytes. Until a parallel build links a
      * row that its frame task wrote, they hold the row's key instead.
      */

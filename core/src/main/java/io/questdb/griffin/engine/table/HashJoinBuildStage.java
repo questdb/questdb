@@ -695,6 +695,15 @@ public final class HashJoinBuildStage implements Mutable, QuietCloseable {
     }
 
     /**
+     * The largest locator that the open cursor's payload readers may hand out, -1 for a build scan
+     * without rows; see {@link HashJoinBuildFrames#getMaxLocator()}. Call it once the build is done
+     * and its payload copied, if at all.
+     */
+    public long getMaxLocator() {
+        return buildFrames.getMaxLocator();
+    }
+
+    /**
      * The build published for the open cursor, or null when no cursor is open, or when the open
      * cursor has not been asked for a result yet; see
      * {@link #build(SqlExecutionCircuitBreaker, PageFrameRoundDispatcher)}.

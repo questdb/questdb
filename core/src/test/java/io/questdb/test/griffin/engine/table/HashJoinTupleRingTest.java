@@ -37,12 +37,12 @@ import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.HashJoinTupleList;
 import io.questdb.griffin.engine.table.HashJoinTupleRing;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPoolMode;
-import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
@@ -53,6 +53,7 @@ import io.questdb.test.tools.LimitedMemoryTracker;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -65,6 +66,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.table.HashJoinTupleRing.computeDispatchLimit;
 import static io.questdb.griffin.engine.table.HashJoinTupleRing.computeRingBudget;
+import static io.questdb.griffin.engine.table.HashJoinTupleRing.isNarrowFit;
 
 /**
  * The tuple ring of a parallel hash join under a real ordered {@link PageFrameSequence}: a test
@@ -93,7 +95,92 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     private static final int MAX_ENTRIES = 64;
     private static final int STAGE_COUNT = 2;
     private static final int TUPLE_STRIDE = STAGE_COUNT + 1;
+    // The bytes of a tuple in 8-byte slots, which a ring bound for tests takes.
+    private static final int TUPLE_BYTES = TUPLE_STRIDE * Long.BYTES;
     private static final int WORKER_COUNT = 4;
+
+    @After
+    public void restoreTupleLayout() {
+        HashJoinTupleRing.setNarrowSlotBitsForTesting(Integer.SIZE);
+        HashJoinTupleRing.setTupleLayoutForTesting(HashJoinTupleRing.TUPLE_LAYOUT_AUTO);
+    }
+
+    @Test
+    public void testBindPicksTheTupleLayout() throws Exception {
+        // Frames of ten rows, so that the largest probe row, 9, takes five bits: the layout follows
+        // the stages' largest locator and chain head, at the slots' 32 bits and at fewer, and the
+        // test hooks force it. A budget of ten frames of narrow tuples holds five of wide ones.
+        final long narrowFrameBytes = FRAME_ROWS * TUPLE_STRIDE * Integer.BYTES;
+        final long maxNarrowHead = (long) Integer.MAX_VALUE << 3;
+        final int auto = HashJoinTupleRing.TUPLE_LAYOUT_AUTO;
+        final Object[][] cases = {
+                // slot bits, forced layout, largest locator, largest chain head, narrow
+                {32, auto, -1L, 0L, true},
+                {32, auto, (long) Integer.MAX_VALUE, maxNarrowHead, true},
+                {32, auto, Integer.MAX_VALUE + 1L, 8L, false},
+                {32, auto, 0L, maxNarrowHead + 8, false},
+                {5, auto, 15L, 15L << 3, true},
+                {5, auto, 16L, 0L, false},
+                {5, auto, 0L, 16L << 3, false},
+                {4, auto, -1L, 0L, false},
+                {32, HashJoinTupleRing.TUPLE_LAYOUT_WIDE, -1L, 0L, false},
+                {32, HashJoinTupleRing.TUPLE_LAYOUT_NARROW, Long.MAX_VALUE, Long.MAX_VALUE & ~7L, true},
+        };
+        assertMemoryLeak(() -> withRing(null, 8, 10 * narrowFrameBytes, -1, "t", (engine, compiler, context, sequence, factory) -> {
+            context.setMemoryTracker(null);
+            sequence.of(factory, context, sequence.getAtom().collectSubSeq, ORDER_ASC);
+            try {
+                sequence.prepareForDispatch();
+                Assert.assertEquals(FRAME_ROWS, sequence.getFrameRowCount(0));
+                for (Object[] c : cases) {
+                    final String label = Arrays.toString(c);
+                    HashJoinTupleRing.setNarrowSlotBitsForTesting((int) c[0]);
+                    HashJoinTupleRing.setTupleLayoutForTesting((int) c[1]);
+                    final boolean isNarrow = (boolean) c[4];
+                    try (HashJoinTupleRing ring = new HashJoinTupleRing(engine.getConfiguration(), STAGE_COUNT)) {
+                        ring.of(sequence, true, false, (long) c[2], (long) c[3]);
+                        Assert.assertEquals(label, isNarrow, ring.isNarrow());
+                        Assert.assertEquals(label, TUPLE_STRIDE * (isNarrow ? Integer.BYTES : Long.BYTES), ring.getTupleBytes());
+                        Assert.assertEquals(label, isNarrow ? 8 : 5, ring.getDispatchLimit());
+                        // clear() unbinds the layout along with the rest.
+                        ring.clear();
+                        Assert.assertFalse(label, ring.isNarrow());
+                        Assert.assertEquals(label, 0, ring.getTupleBytes());
+                    }
+                }
+            } finally {
+                restoreTupleLayout();
+                sequence.await();
+                sequence.reset();
+            }
+        }));
+    }
+
+    @Test
+    public void testNarrowFitBounds() {
+        // At 32 bits: probe rows and locators up to INT's largest, and chain heads whose tags,
+        // ~(head >>> 3), reach down to INT's smallest; an empty probe and build fit.
+        Assert.assertTrue(isNarrowFit(32, -1, -1, 0));
+        Assert.assertTrue(isNarrowFit(32, Integer.MAX_VALUE, Integer.MAX_VALUE, (long) Integer.MAX_VALUE << 3));
+        Assert.assertFalse(isNarrowFit(32, Integer.MAX_VALUE + 1L, 0, 8));
+        Assert.assertFalse(isNarrowFit(32, 0, Integer.MAX_VALUE + 1L, 8));
+        Assert.assertFalse(isNarrowFit(32, 0, 0, ((long) Integer.MAX_VALUE + 1) << 3));
+        Assert.assertFalse(isNarrowFit(32, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+        // A heap of 16 GiB, rows of 16 bytes: its last row's link, (2^30 - 1) * 16 + 8, fits; a row
+        // more does not.
+        Assert.assertTrue(isNarrowFit(32, 0, 0, ((1L << 30) - 1) * 16 + 8));
+        Assert.assertFalse(isNarrowFit(32, 0, 0, (1L << 30) * 16 + 8));
+        // At 8 bits: from -128 to 127.
+        Assert.assertTrue(isNarrowFit(8, 127, 127, 127 << 3));
+        Assert.assertFalse(isNarrowFit(8, 128, 0, 8));
+        Assert.assertFalse(isNarrowFit(8, 0, 128, 8));
+        Assert.assertFalse(isNarrowFit(8, 0, 0, 128 << 3));
+        // At 2 bits, from -2 to 1: the smallest link, 8, tags as -2.
+        Assert.assertTrue(isNarrowFit(2, 1, 1, 8));
+        Assert.assertFalse(isNarrowFit(2, 2, 1, 8));
+        Assert.assertFalse(isNarrowFit(2, 1, 2, 8));
+        Assert.assertFalse(isNarrowFit(2, 1, 1, 16));
+    }
 
     @Test
     public void testCountOnlyTasksWithWiderLimitOnOwnerAlone() throws Exception {
@@ -108,41 +195,41 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     @Test
     public void testDispatchLimitAtEachBound() {
         // The configured dispatch limit binds.
-        Assert.assertEquals(2, computeDispatchLimit(2, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(31, computeDispatchLimit(31, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
+        Assert.assertEquals(2, computeDispatchLimit(2, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(31, computeDispatchLimit(31, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
         // A limit of 0, which reduces every frame locally, or below leaves one entry.
-        Assert.assertEquals(1, computeDispatchLimit(1, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(0, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(-1, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(Integer.MIN_VALUE, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
+        Assert.assertEquals(1, computeDispatchLimit(1, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(0, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(-1, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(Integer.MIN_VALUE, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
         // The queue capacity binds a dispatch limit above it.
-        Assert.assertEquals(32, computeDispatchLimit(33, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(32, computeDispatchLimit(Integer.MAX_VALUE, 32, Long.MAX_VALUE, FRAME_ROWS, TUPLE_STRIDE));
+        Assert.assertEquals(32, computeDispatchLimit(33, 32, 100 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(32, computeDispatchLimit(Integer.MAX_VALUE, 32, Long.MAX_VALUE, FRAME_ROWS, TUPLE_BYTES));
         // The ring budget binds in whole frames.
-        Assert.assertEquals(3, computeDispatchLimit(100, 32, 3 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(2, computeDispatchLimit(100, 32, 3 * FRAME_BYTES - 1, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(2, computeDispatchLimit(100, 32, 2 * FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(100, 32, FRAME_BYTES, FRAME_ROWS, TUPLE_STRIDE));
+        Assert.assertEquals(3, computeDispatchLimit(100, 32, 3 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(2, computeDispatchLimit(100, 32, 3 * FRAME_BYTES - 1, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(2, computeDispatchLimit(100, 32, 2 * FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(100, 32, FRAME_BYTES, FRAME_ROWS, TUPLE_BYTES));
         // A budget below one frame leaves one entry.
-        Assert.assertEquals(1, computeDispatchLimit(100, 32, FRAME_BYTES - 1, FRAME_ROWS, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(100, 32, 0, FRAME_ROWS, TUPLE_STRIDE));
+        Assert.assertEquals(1, computeDispatchLimit(100, 32, FRAME_BYTES - 1, FRAME_ROWS, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(100, 32, 0, FRAME_ROWS, TUPLE_BYTES));
         // Each stage widens a tuple, so the same budget holds fewer frames of a wider stack.
-        Assert.assertEquals(5, computeDispatchLimit(100, 32, 5 * FRAME_ROWS * 9 * Long.BYTES, FRAME_ROWS, 9));
-        Assert.assertEquals(15, computeDispatchLimit(100, 32, 5 * FRAME_ROWS * 9 * Long.BYTES, FRAME_ROWS, 3));
+        Assert.assertEquals(5, computeDispatchLimit(100, 32, 5 * FRAME_ROWS * 9 * Long.BYTES, FRAME_ROWS, 9 * Long.BYTES));
+        Assert.assertEquals(15, computeDispatchLimit(100, 32, 5 * FRAME_ROWS * 9 * Long.BYTES, FRAME_ROWS, 3 * Long.BYTES));
         // The design's figures: 32 frames of 1M rows at stride 3 is 768 MB, which holds all 32
         // frames of a two-stage stack, but only 10 of an eight-stage one.
-        Assert.assertEquals(32, computeDispatchLimit(32, 256, 768_000_000L, 1_000_000, 3));
-        Assert.assertEquals(10, computeDispatchLimit(32, 256, 768_000_000L, 1_000_000, 9));
+        Assert.assertEquals(32, computeDispatchLimit(32, 256, 768_000_000L, 1_000_000, 3 * Long.BYTES));
+        Assert.assertEquals(10, computeDispatchLimit(32, 256, 768_000_000L, 1_000_000, 9 * Long.BYTES));
         // Without probe frames the budget bounds nothing.
-        Assert.assertEquals(8, computeDispatchLimit(8, 32, 0, 0, TUPLE_STRIDE));
+        Assert.assertEquals(8, computeDispatchLimit(8, 32, 0, 0, TUPLE_BYTES));
         // A huge budget over tiny frames stays within the limit.
-        Assert.assertEquals(8, computeDispatchLimit(8, 32, Long.MAX_VALUE, 1, TUPLE_STRIDE));
+        Assert.assertEquals(8, computeDispatchLimit(8, 32, Long.MAX_VALUE, 1, TUPLE_BYTES));
         // A frame too large to size in bytes fits no budget; one just below that fits once.
-        final long rowBytes = TUPLE_STRIDE * Long.BYTES;
-        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes + 1, TUPLE_STRIDE));
-        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes, TUPLE_STRIDE));
-        Assert.assertEquals(2, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes / 2, TUPLE_STRIDE));
+        final long rowBytes = TUPLE_BYTES;
+        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes + 1, TUPLE_BYTES));
+        Assert.assertEquals(1, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes, TUPLE_BYTES));
+        Assert.assertEquals(2, computeDispatchLimit(8, 32, Long.MAX_VALUE, Long.MAX_VALUE / rowBytes / 2, TUPLE_BYTES));
     }
 
     @Test
@@ -352,8 +439,8 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
                 assertFails(() -> ring.of(sequence), "clear() the ring before binding it to another execution");
                 Assert.assertEquals(4, ring.getDispatchLimit());
                 // Frame 4 maps to frame 0's entry: while frame 0 holds it, frame 4 reads nothing.
-                final DirectLongList tuples = ring.openTuples(0, 1);
-                tuples.add(7);
+                final HashJoinTupleList tuples = ring.openTuples(0, 1);
+                tuples.put(7, new long[STAGE_COUNT]);
                 ring.setResumePosition(0, 5, 2);
                 assertFails(() -> ring.getTuples(4), "frame 4 shares ring entry 0 with frame 0");
                 assertFails(() -> ring.getKeptRowCount(4), "frame 4 shares ring entry 0 with frame 0");
@@ -366,7 +453,7 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
                 Assert.assertEquals(2, ring.getResumePosition(0));
                 assertFails(() -> ring.getTuples(1), "frame 1 shares ring entry 1 with frame -1");
                 // The open allocated room for one tuple.
-                Assert.assertEquals(TUPLE_STRIDE * Long.BYTES, ring.getAllocatedBytes());
+                Assert.assertEquals(TUPLE_BYTES, ring.getAllocatedBytes());
             } finally {
                 sequence.await();
                 sequence.reset();
@@ -418,7 +505,7 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
             String label
     ) {
         try (HashJoinTupleRing ring = new HashJoinTupleRing(configuration, STAGE_COUNT)) {
-            ring.of(sequence, true, isFanOut);
+            ring.of(sequence, true, isFanOut, Long.MAX_VALUE, 0);
             Assert.assertEquals(label, window, ring.getDispatchLimit());
             Assert.assertEquals(label, entries, ring.getEntryCount());
             Assert.assertEquals(label, 0, ring.getAllocatedBytes());
@@ -717,19 +804,20 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
             atom.fail("frame " + frameIndex + " shares ring entry " + entry + " with frame " + holder);
         }
         record.init(task.populateFrameMemory());
-        final DirectLongList tuples = ring.openTuples(frameIndex, frameRows);
+        final HashJoinTupleList tuples = ring.openTuples(frameIndex, frameRows);
+        final long[] entries = new long[STAGE_COUNT];
         for (long row = 0; row < frameRows; row++) {
             record.setRowIndex(row);
             final long x = record.getLong(0);
             for (int copy = 0, n = copiesOf(atom, frameIndex, row); copy < n; copy++) {
-                tuples.add(row);
                 for (int stage = 0; stage < STAGE_COUNT; stage++) {
-                    tuples.add(locatorOf(x, copy, stage));
+                    entries[stage] = locatorOf(x, copy, stage);
                 }
+                tuples.put(row, entries);
             }
         }
         ring.setResumePosition(frameIndex, keptRowCountOf(frameIndex), resumePositionOf(frameIndex));
-        task.setFilteredRowCount(tuples.size() / ring.getTupleStride());
+        task.setFilteredRowCount(tuples.size());
         atom.reducedTupleFrames.incrementAndGet();
     }
 
@@ -745,16 +833,17 @@ public class HashJoinTupleRingTest extends AbstractCairoTest {
     // rows each in timestamp order, so frame f row r holds x = f * 10 + r + 1.
     private static void verifyTuples(RingAtom atom, int frameIndex, long tupleCount) {
         final HashJoinTupleRing ring = atom.ring;
-        final DirectLongList tuples = ring.getTuples(frameIndex);
+        final HashJoinTupleList tuples = ring.getTuples(frameIndex);
         Assert.assertEquals(tupleCountOf(atom, frameIndex), tupleCount);
-        Assert.assertEquals(tupleCount * TUPLE_STRIDE, tuples.size());
-        long p = 0;
+        Assert.assertEquals(tupleCount, tuples.size());
+        long t = 0;
         for (int row = 0; row < FRAME_ROWS; row++) {
             final long x = (long) frameIndex * FRAME_ROWS + row + 1;
             for (int copy = 0, n = copiesOf(atom, frameIndex, row); copy < n; copy++) {
-                Assert.assertEquals(row, tuples.get(p++));
+                final long tupleAddress = tuples.getTupleAddress(t++);
+                Assert.assertEquals(row, tuples.getProbeRow(tupleAddress));
                 for (int stage = 0; stage < STAGE_COUNT; stage++) {
-                    Assert.assertEquals(locatorOf(x, copy, stage), tuples.get(p++));
+                    Assert.assertEquals(locatorOf(x, copy, stage), tuples.getEntry(tupleAddress, stage));
                 }
             }
         }

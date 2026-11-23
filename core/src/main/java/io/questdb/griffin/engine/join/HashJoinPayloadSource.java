@@ -68,8 +68,9 @@ public interface HashJoinPayloadSource {
          * {@link #positionLocator(long)} takes back to the same row's payload, on this reader or on
          * any other reader of the same source, until the execution ends. A reader over a copy of the
          * payload columns names the row by its ordinal, the copied row it reads, and a reader that
-         * reads the columns where they live by the build row's id, so a locator costs nothing to take
-         * and nothing to follow. A source switches its readers to a copy only before any probe of the
+         * reads the columns where they live by the build row's frame and its row within the frame,
+         * packed into as few bits as the execution's frames need, so a locator costs a shift to take
+         * and to follow. A source switches its readers to a copy only before any probe of the
          * execution runs, so every locator that the probes take names its row the same way; a
          * locator taken before the switch does not survive it. Defined once {@link #position} or
          * {@link #positionLocator} positioned the reader in the execution.
