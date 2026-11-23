@@ -496,7 +496,8 @@ mod tests {
     fn writer_flags_varchar_chunks_by_their_own_values() {
         // rows 0-1, 2-3 and 4 make the row groups. v: a non-ASCII value in the second, NULL in
         // the third. w: a column top over the first row group and a row of the second, then a
-        // non-ASCII value. x is not VARCHAR.
+        // non-ASCII value. x and y are not VARCHAR; the first two row groups of y lie under its
+        // column top, which leaves a VARCHAR chunk ASCII.
         let partition = Partition {
             table: "t".to_string(),
             columns: vec![
@@ -507,14 +508,15 @@ mod tests {
                     &[Some("a"), Some("b"), Some("\u{e9}"), Some("c"), None],
                 ),
                 varchar_column("w", 3, &[Some("\u{fc}"), Some("d")]),
+                long_column("y", &[6], 4),
             ],
         };
         assert_eq!(
             chunk_ascii_of_whole_partition(2, &partition),
             [
-                [false, true, true],
-                [false, false, false],
-                [false, true, true]
+                [false, true, true, false],
+                [false, false, false, false],
+                [false, true, true, false]
             ]
         );
     }
