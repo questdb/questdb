@@ -68,6 +68,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TickExprEngineJobTest.class);
     private static final String RANGE_ORDER_ERROR = "Invalid date range: start is after end";
     private static final TimestampDriver[] TIMESTAMP_DRIVERS = {MicrosTimestampDriver.INSTANCE, NanosTimestampDriver.INSTANCE};
+    private final LongList compileProbeIntervals = new LongList();
     private final LongList intervals = new LongList();
     private final StringSink sink = new StringSink();
     // what the fuzz test met, so that it can tell that it reached the paths it is for
@@ -91,6 +92,46 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         };
         context.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), new BindVariableServiceImpl(configuration));
         return context;
+    }
+
+    @Test
+    public void testCompileProbeIsLenientAndMetadataProbeIsNot() throws Exception {
+        // A cursor that the compiler holds to inspect a query evaluates a tick expression as an
+        // engine job does: at 03:00 the range from 09:30 to "now" adds no interval. A metadata
+        // probe, which view auditing reads, does not change the checks of a user's context.
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl user = new SqlExecutionContextImpl(engine, 1)) {
+                user.with(securityContext, bindVariableService, null);
+                for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
+                    user.setNowAndFixClock(driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z"), driver.getTimestampType());
+                    try (CompiledTickExpression compiled = compile(driver, "$today + 570m..$now")) {
+                        user.setCompileProbe(true);
+                        compiled.init(null, user);
+                        intervals.clear();
+                        // it appends no interval, and what the caller appended before stays
+                        intervals.add(1L, 2L);
+                        compiled.evaluate(intervals);
+                        Assert.assertEquals(2, intervals.size());
+                        Assert.assertEquals(1, intervals.getQuick(0));
+                        Assert.assertEquals(2, intervals.getQuick(1));
+                        user.setCompileProbe(false);
+
+                        for (boolean isMetadataProbe : new boolean[]{true, false}) {
+                            user.setMetadataProbe(isMetadataProbe);
+                            compiled.init(null, user);
+                            intervals.clear();
+                            try {
+                                compiled.evaluate(intervals);
+                                Assert.fail("metadata probe: " + isMetadataProbe);
+                            } catch (CairoException e) {
+                                TestUtils.assertEquals(RANGE_ORDER_ERROR, e.getFlyweightMessage());
+                                Assert.assertEquals(0, e.getPosition());
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -199,12 +240,18 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
 
     @Test
     public void testEngineJobFuzz() throws Exception {
-        // Relaxing a check changes the result only where that check fires, and an engine job
-        // evaluates the compiled form of a literal the way the parser does without the checks
+        // Relaxing a check changes the result only where that check fires, an engine job
+        // evaluates the compiled form of a literal the way the parser does without the checks,
+        // and a cursor that the compiler holds to inspect a query evaluates it as the engine job
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             final StringSink expression = new StringSink();
-            try (SqlExecutionContextImpl engineJob = newEngineJobContext()) {
+            try (
+                    SqlExecutionContextImpl engineJob = newEngineJobContext();
+                    SqlExecutionContextImpl compileProbe = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                compileProbe.with(securityContext, bindVariableService, null);
+                compileProbe.setCompileProbe(true);
                 for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
                     // enough expressions for each kind that the assertions below count to come up
                     // in every run, the rarest, a range of business days without a day with a
@@ -213,7 +260,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         expression.clear();
                         final boolean isMalformed = TickExprTest.appendRandomTickExpr(rnd, expression);
                         for (String now : TickExprTest.FUZZ_NOWS) {
-                            assertChecksAgree(driver, engineJob, expression.toString(), isMalformed, driver.parseFloorLiteral(now));
+                            assertChecksAgree(driver, engineJob, compileProbe, expression.toString(), isMalformed, driver.parseFloorLiteral(now));
                         }
                     }
                 }
@@ -523,12 +570,15 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
 
     /**
      * Checks one expression at one "now": the parser with fewer checks agrees with the parser with
-     * all of them wherever those succeed or fail on a check that the others also run, and an engine
-     * job evaluates the compiled form to what the parser returns without any check.
+     * all of them wherever those succeed or fail on a check that the others also run, an engine
+     * job evaluates the compiled form to what the parser returns without any check, and a user's
+     * context with {@link io.questdb.griffin.SqlExecutionContext#isCompileProbe()} up evaluates it
+     * to what the engine job does.
      */
     private void assertChecksAgree(
             TimestampDriver driver,
             SqlExecutionContextImpl engineJob,
+            SqlExecutionContextImpl compileProbe,
             String expression,
             boolean isMalformed,
             long now
@@ -608,6 +658,13 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             } else if (!isMalformed) {
                 Assert.assertEquals(context, unchecked, intervalToString(driver, intervals).toString());
             }
+            // a cursor that the compiler holds to inspect a query never fails on a tick expression
+            // either, and gets the intervals of the engine job
+            compileProbe.setNowAndFixClock(now, driver.getTimestampType());
+            compiled.init(null, compileProbe);
+            compileProbeIntervals.clear();
+            compiled.evaluate(compileProbeIntervals);
+            Assert.assertEquals(context, intervals, compileProbeIntervals);
         }
     }
 

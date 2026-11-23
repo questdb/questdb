@@ -31,6 +31,7 @@ import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TickCalendarService;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
@@ -679,6 +680,21 @@ public final class IntervalUtils {
     // Checks if the timestamp is in the intervals, both sides inclusive.
     public static boolean isInIntervals(LongList intervals, long timestamp) {
         return findInterval(intervals, timestamp) != -1;
+    }
+
+    /**
+     * Returns whether a tick expression evaluates in the context without failing. An engine job,
+     * see {@link SqlExecutionContext#isBackgroundJob()}, has no caller to report a failure to. A
+     * cursor that the compiler holds to inspect a query, see
+     * {@link SqlExecutionContext#isCompileProbe()}, hands nobody its results, and may see a "now"
+     * other than the one the query runs at. There a range that starts after it ends adds no
+     * interval, a literal skips the interval limit, as {@link CompiledTickExpression#validate}
+     * checked it when the SQL compiled, and a bind or row value that does not parse, or that has
+     * more intervals than the limit, resolves to no interval. The query reports each of these when
+     * it runs.
+     */
+    public static boolean isTickEvaluationLenient(SqlExecutionContext executionContext) {
+        return executionContext.isBackgroundJob() || executionContext.isCompileProbe();
     }
 
     /**

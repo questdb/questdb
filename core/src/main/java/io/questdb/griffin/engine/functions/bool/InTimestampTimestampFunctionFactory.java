@@ -304,7 +304,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         private final TimestampDriver timestampDriver;
         private final StringSink sink = new StringSink();
         private int checks = IntervalUtils.TICK_CHECK_ALL;
-        // set in an engine job, where a value that does not parse acts as null instead of failing
+        // set where IntervalUtils.isTickEvaluationLenient() holds: a value that does not parse acts
+        // as null there instead of failing
         private boolean isLenient;
         private long now;
 
@@ -332,7 +333,8 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             } catch (SqlException e) {
                 if (isLenient) {
                     // An engine job has no caller to report to, and WAL apply would suspend the table
-                    // on an UPDATE that the client was told succeeded: the value acts as null, as
+                    // on an UPDATE that the client was told succeeded. A cursor that the compiler
+                    // holds to inspect a query hands nobody its rows. The value acts as null, as
                     // NOT IN, which negates IN, then agrees with a null value too.
                     return negated;
                 }
@@ -358,7 +360,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
             // a value resolves its date variables against the "now" of the query, as a literal does
             now = executionContext.getNow(timestampDriver.getTimestampType());
-            isLenient = executionContext.isBackgroundJob();
+            isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
             // the interval limit still applies, as nothing checked the value before
             checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;
         }
@@ -515,11 +517,13 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.STRING:
                 case ColumnType.VARCHAR:
                     // The value resolves its date variables against the "now" of the query, as a
-                    // literal does. In an engine job, a range that starts after it ends adds no
-                    // interval, and a value that does not parse acts as null rather than failing:
-                    // WAL apply would otherwise suspend the table on an UPDATE that the client was
-                    // told succeeded. The interval limit still applies, as nothing checked the value.
-                    final boolean isLenient = executionContext.isBackgroundJob();
+                    // literal does. In an engine job, and in a cursor that the compiler holds to
+                    // inspect a query, see IntervalUtils.isTickEvaluationLenient(), a range that
+                    // starts after it ends adds no interval, and a value that does not parse acts as
+                    // null rather than failing: WAL apply would otherwise suspend the table on an
+                    // UPDATE that the client was told succeeded. The interval limit still applies,
+                    // as nothing checked the value.
+                    final boolean isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
                     final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
                     final long now = executionContext.getNow(driver.getTimestampType());
                     final int checks = isLenient ? IntervalUtils.TICK_CHECK_INTERVAL_LIMIT : IntervalUtils.TICK_CHECK_ALL;

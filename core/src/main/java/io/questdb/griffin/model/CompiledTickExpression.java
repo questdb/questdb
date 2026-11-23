@@ -72,10 +72,12 @@ import io.questdb.std.str.StringSink;
  * A query that a user runs fails on a range that starts after it ends, on more intervals than
  * the limit, and on an expression without IR that does not parse. The SQL that the engine runs on
  * its own, see {@link SqlExecutionContext#isBackgroundJob()}, has no caller to report a failure
- * to: WAL apply would suspend the table on an UPDATE that the client was told succeeded. There
- * such a range adds no interval, the limit does not apply, as {@link #validate} checked it when
- * the SQL compiled, and an expression that does not parse resolves to no interval, see
- * {@link #evaluate(LongList)}.
+ * to: WAL apply would suspend the table on an UPDATE that the client was told succeeded. A cursor
+ * that the compiler holds to inspect a query, see {@link SqlExecutionContext#isCompileProbe()},
+ * hands nobody its results, and its "now" need not be the one the query runs at. In both, see
+ * {@link IntervalUtils#isTickEvaluationLenient}, such a range adds no interval, the limit does not
+ * apply, as {@link #validate} checked it when the SQL compiled, and an expression that does not
+ * parse resolves to no interval, see {@link #evaluate(LongList)}.
  */
 public class CompiledTickExpression extends UntypedFunction {
     // ---- Element tag (bits 63-62) ----
@@ -127,7 +129,8 @@ public class CompiledTickExpression extends UntypedFunction {
     private final TimeZoneRules tzRules;
     // the checks that evaluate() runs, see IntervalUtils.TICK_CHECK_ALL
     private int checks = IntervalUtils.TICK_CHECK_ALL;
-    // set in an engine job, where an expression that does not parse resolves to no interval instead of failing
+    // set where IntervalUtils.isTickEvaluationLenient() holds: an expression that does not parse
+    // resolves to no interval there instead of failing
     private boolean isLenient;
     private long now;
 
@@ -215,9 +218,10 @@ public class CompiledTickExpression extends UntypedFunction {
      * the resulting [lo, hi] interval pairs to outIntervals. With IR this is pure long
      * arithmetic, without IR it parses the expression.
      * <p>
-     * In an engine job, an expression without IR that does not parse appends nothing, as an
-     * expression that resolves to no interval does, which IN matches no row with, and NOT IN every
-     * row, the same as a null value. A query that a user runs fails on it instead.
+     * Where {@link IntervalUtils#isTickEvaluationLenient} holds, an expression without IR that does
+     * not parse appends nothing, as an expression that resolves to no interval does, which IN
+     * matches no row with, and NOT IN every row, the same as a null value. A query that a user runs
+     * fails on it instead.
      */
     public void evaluate(LongList outIntervals) {
         if (ir == null) {
@@ -270,7 +274,7 @@ public class CompiledTickExpression extends UntypedFunction {
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
         now = executionContext.getNow(timestampDriver.getTimestampType());
-        isLenient = executionContext.isBackgroundJob();
+        isLenient = IntervalUtils.isTickEvaluationLenient(executionContext);
         checks = isLenient ? 0 : IntervalUtils.TICK_CHECK_ALL;
     }
 
@@ -525,7 +529,8 @@ public class CompiledTickExpression extends UntypedFunction {
 
     /**
      * Parses the expression the same way as a bind variable, against the captured "now", and fails
-     * with the parser's error, or, in an engine job, appends nothing.
+     * with the parser's error, or, where {@link IntervalUtils#isTickEvaluationLenient} holds,
+     * appends nothing.
      */
     private void parse(LongList outIntervals) {
         final int outStart = outIntervals.size();

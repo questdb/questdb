@@ -2744,16 +2744,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         // test the cursor, if no exception thrown viewSql is working
                         // Nobody is handed the row this reads, so the open is flagged like the probe in
                         // executeCreateView: an audited view in the new body must not record a read.
-                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                        executionContext.setMetadataProbe(true);
-                        final RecordCursor cursor;
+                        // The compile probe flag covers the read too, since a cursor can bind part of
+                        // its plan there.
+                        final boolean wasCompileProbe = executionContext.isCompileProbe();
+                        executionContext.setCompileProbe(true);
                         try {
-                            cursor = factory.getCursor(executionContext);
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            final RecordCursor cursor;
+                            try {
+                                cursor = factory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
+                            try (cursor) {
+                                cursor.hasNext();
+                            }
                         } finally {
-                            executionContext.setMetadataProbe(wasMetadataProbe);
-                        }
-                        try (cursor) {
-                            cursor.hasNext();
+                            executionContext.setCompileProbe(wasCompileProbe);
                         }
                     }
 
@@ -6095,11 +6103,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             // like the probe in executeCreateView, so that an audited view in the
                             // SELECT does not record a read that never happened.
                             final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            final boolean wasCompileProbe = executionContext.isCompileProbe();
                             executionContext.setMetadataProbe(true);
+                            executionContext.setCompileProbe(true);
                             try {
                                 newCursor = newFactory.getCursor(executionContext);
                             } finally {
                                 executionContext.setMetadataProbe(wasMetadataProbe);
+                                executionContext.setCompileProbe(wasCompileProbe);
                             }
                             final RecordMetadata metadata = newFactory.getMetadata();
                             try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
@@ -6434,13 +6445,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             // The flag covers the cursor open only: the compile above runs with it
                             // clear, so whatever consumes it has to emit at open, not at generate.
                             // Restored rather than cleared - any execution context may set this, so
-                            // an outer probe has to survive an inner one.
+                            // an outer probe has to survive an inner one. The compile probe flag
+                            // covers the cursor's whole use, which is its open here.
                             final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            final boolean wasCompileProbe = executionContext.isCompileProbe();
                             executionContext.setMetadataProbe(true);
+                            executionContext.setCompileProbe(true);
                             try {
                                 newCursor = newFactory.getCursor(executionContext);
                             } finally {
                                 executionContext.setMetadataProbe(wasMetadataProbe);
+                                executionContext.setCompileProbe(wasCompileProbe);
                             }
                             if (expiryPolicyVersion != engine.getMetadataCache().getExpiryPolicyVersion()) {
                                 Misc.free(newCursor);
@@ -7349,16 +7364,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     )) {
                         // Nobody is handed the row this reads, so the open is flagged like the probe in
                         // executeCreateView: an audited view in the body must not record a read.
-                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                        executionContext.setMetadataProbe(true);
-                        final RecordCursor cursor;
+                        // The compile probe flag covers the read too, since a cursor can bind part of
+                        // its plan there.
+                        final boolean wasCompileProbe = executionContext.isCompileProbe();
+                        executionContext.setCompileProbe(true);
                         try {
-                            cursor = factory.getCursor(executionContext);
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            final RecordCursor cursor;
+                            try {
+                                cursor = factory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
+                            try (cursor) {
+                                cursor.hasNext();
+                            }
                         } finally {
-                            executionContext.setMetadataProbe(wasMetadataProbe);
-                        }
-                        try (cursor) {
-                            cursor.hasNext();
+                            executionContext.setCompileProbe(wasCompileProbe);
                         }
                     }
                     if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
@@ -8072,12 +8095,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Nobody is handed a row, so the open is flagged like the probe in executeCreateView: an
                 // audited view the probe reads must not record a read.
                 final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                final boolean wasCompileProbe = executionContext.isCompileProbe();
                 executionContext.setMetadataProbe(true);
+                executionContext.setCompileProbe(true);
                 final RecordCursor cursor;
                 try {
                     cursor = factory.getCursor(executionContext);
                 } finally {
                     executionContext.setMetadataProbe(wasMetadataProbe);
+                    executionContext.setCompileProbe(wasCompileProbe);
                 }
                 //noinspection EmptyTryBlock
                 try (cursor) {

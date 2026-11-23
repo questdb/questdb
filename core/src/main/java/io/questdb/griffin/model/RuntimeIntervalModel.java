@@ -231,10 +231,11 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
         // Start index of a pending run of batched UNION leaves, or -1 when no run is open.
         int unionRunStart = -1;
         // A tick expression resolves against the "now" of the query, which WAL apply fixes to the
-        // commit time of the transaction, and an engine job does not fail on it, see
+        // commit time of the transaction. An engine job, and a cursor that the compiler holds to
+        // inspect a query, do not fail on it, see IntervalUtils.isTickEvaluationLenient(),
         // CompiledTickExpression and parseStrInterval()
         final long now = sqlExecutionContext.getNow(timestampDriver.getTimestampType());
-        final boolean isLenient = sqlExecutionContext.isBackgroundJob();
+        final boolean isLenient = IntervalUtils.isTickEvaluationLenient(sqlExecutionContext);
 
         for (int i = dynamicStart; i < size; i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
             Function dynamicFunction = dynamicRangeList.getQuick(dynamicIndex);
@@ -422,8 +423,8 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
                             // This is subtraction or intersection with a string interval (not a single timestamp)
                             final CharSequence strInterval = dynamicFunction.getStrA(null);
                             if (strInterval == null || !parseStrInterval(strInterval, outIntervals, i, sqlExecutionContext, now, isLenient)) {
-                                // A null interval, or, in an engine job, one that does not parse, see
-                                // parseStrInterval()
+                                // A null interval, or, where the evaluation is lenient, one that does
+                                // not parse, see parseStrInterval()
                                 if (operation == IntervalOperation.INTERSECT_INTERVALS) {
                                     // a null interval matches nothing: return an empty set
                                     outIntervals.clear();
@@ -567,7 +568,9 @@ public class RuntimeIntervalModel implements RuntimeIntrinsicIntervalModel {
      * carries in its lo.
      * <p>
      * An engine job has no caller to report a failure to, and WAL apply would suspend the table on
-     * an UPDATE that the client was told succeeded. There a range that starts after it ends adds no
+     * an UPDATE that the client was told succeeded. A cursor that the compiler holds to inspect a
+     * query hands nobody its results, and its "now" need not be the one the query runs at. In both,
+     * see {@link IntervalUtils#isTickEvaluationLenient}, a range that starts after it ends adds no
      * interval, as in a literal, and a value that does not parse, or that has more intervals than
      * the limit, which nothing checked before, acts as a null value: the method returns false. Null
      * is the only answer that NOT IN agrees with in every plan, since a row filter computes NOT IN

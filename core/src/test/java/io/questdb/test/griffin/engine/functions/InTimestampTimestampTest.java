@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.functions;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -32,15 +33,25 @@ import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8String;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public class InTimestampTimestampTest extends AbstractCairoTest {
+    // 2024-01-02, before the range from 09:30 to "now" starts, and after
+    private static final long NOW_0300 = MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z");
+    private static final long NOW_1200 = MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z");
+    private static final String RANGE_ORDER_ERROR = "Invalid date range: start is after end";
 
     @Test
     public void testBindVarRuntimeConstantsWithConstant() throws Exception {
@@ -148,6 +159,87 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 assertIntrinsicRows("ts IN '$today'", day);
                 assertIntrinsicRows("ts IN '$today' OR ts > '2030-01-01'", day);
             } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testCompileProbeRestoredAfterJitOpen() throws Exception {
+        // The JIT compiler opens the interval scan of a filter to read symbol tables as the query
+        // compiles, at the "now" that the statement compiles at. The range from 09:30 to "now"
+        // fails nothing there, and once the open is over, a query fails on the range when it runs
+        // at 03:00: after a compile that keeps the JIT, after an open that fails with an error that
+        // makes the query take the Java filter, and after an open that fails the compile, here on a
+        // file of the table that a sub-query in the interval scan reads.
+        final AtomicBoolean isOpenFailing = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isOpenFailing.get() && Utf8s.containsAscii(name, "t2~") && Utf8s.endsWithAscii(name, "ts2.d")) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        final int jitMode = sqlExecutionContext.getJitMode();
+        assertMemoryLeak(ff, () -> {
+            createContextTables();
+            execute("CREATE TABLE t2 (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t2 VALUES ('2024-01-02T09:00:00.000000Z', '2024-01-02T09:30:00.000000Z')");
+            final String jitFilter = JitUtil.isJitSupported() ? "Async JIT Filter" : "Async Filter";
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                // the context keeps 03:00, and the clock says 12:00
+                setCurrentMicros(NOW_0300);
+                currentMicros = NOW_1200;
+                assertRangeQueryCompiles(jitFilter);
+
+                final String multiRowSql = "SELECT count() FROM t WHERE ts > (SELECT ts FROM t) AND s = 'a'";
+                try (RecordCursorFactory factory = select(multiRowSql)) {
+                    Assert.assertFalse(sqlExecutionContext.isCompileProbe());
+                    assertPlanContains(factory, "Async Filter");
+                    assertRunFails(factory, multiRowSql, multiRowSql.indexOf("(SELECT") + 1, "scalar sub-query returned more than one row");
+                }
+                setCurrentMicros(NOW_0300);
+                assertRangeQueryCompiles(jitFilter);
+
+                final String fileSql = "SELECT count() FROM t WHERE ts > (SELECT min(ts2) FROM t2) AND s = 'a'";
+                engine.releaseAllReaders();
+                isOpenFailing.set(true);
+                try {
+                    try (RecordCursorFactory ignore = select(fileSql)) {
+                        Assert.fail("compiled: " + fileSql);
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open, file does not exist: ");
+                        TestUtils.assertContains(e.getFlyweightMessage(), "ts2.d");
+                    }
+                    Assert.assertFalse(sqlExecutionContext.isCompileProbe());
+                    // the Java filter opens nothing as the query compiles
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    try (RecordCursorFactory ignore = select(fileSql)) {
+                        Assert.assertFalse(sqlExecutionContext.isCompileProbe());
+                    }
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                } finally {
+                    isOpenFailing.set(false);
+                }
+                engine.releaseAllReaders();
+                setCurrentMicros(NOW_1200);
+                try (RecordCursorFactory factory = select(fileSql)) {
+                    assertPlanContains(factory, jitFilter);
+                    // the rows with s = 'a', on odd hours, after 09:30 on 2024-01-02: 7 on that day, and
+                    // 12 on each of the two days after
+                    assertFactory(factory)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n31\n");
+                }
+                setCurrentMicros(NOW_0300);
+                assertRangeQueryCompiles(jitFilter);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
                 setCurrentMicros(-1);
             }
         });
@@ -905,6 +997,49 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalLimitAtStaleNowCompilesAndFailsWhenQueryRuns() throws Exception {
+        // From "now" to 1024 days after today, 09:00 comes 1025 times at 03:00, one more than the
+        // limit, and 1024 times at 12:00, after today's 09:00. SQL checks the limit as the query
+        // compiles, against the clock, and again every time the query runs. A statement that
+        // compiles at a stale "now", as a PostgreSQL Parse does, opens the interval scan of its
+        // filter at that "now" for the JIT, and the limit does not fail it there.
+        final int jitMode = sqlExecutionContext.getJitMode();
+        assertMemoryLeak(() -> {
+            createContextTables();
+            final String sql = "SELECT count() FROM t WHERE ts IN '[$now..$today + 1024d]T09:00' AND s = 'a'";
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                // the context keeps 03:00, and the clock says 12:00
+                setCurrentMicros(NOW_0300);
+                currentMicros = NOW_1200;
+                try (RecordCursorFactory factory = select(sql)) {
+                    sqlExecutionContext.initNow();
+                    assertPlanContains(factory, JitUtil.isJitSupported() ? "Async JIT Filter" : "Async Filter");
+                    // 09:00 on 2024-01-03 and on 2024-01-04
+                    assertFactory(factory)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n2\n");
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
+                    assertRunFails(factory, sql, sql.indexOf('\''), "Date range expansion produces too many intervals (max 1024)");
+                }
+                // compiled with the clock at 03:00
+                setCurrentMicros(NOW_0300);
+                try (RecordCursorFactory ignore = select(sql)) {
+                    Assert.fail("compiled: " + sql);
+                } catch (SqlException e) {
+                    TestUtils.assertEquals("Date range expansion produces too many intervals (max 1024)", e.getFlyweightMessage());
+                    Assert.assertEquals(sql.indexOf('\''), e.getPosition());
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testIntervalLiteralCompilesToOver255Elements() throws Exception {
         // The literal compiles to 481 elements: $today and 480 half-hourly intervals that do not
         // merge, more than the compiled expression could once count
@@ -935,38 +1070,64 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     public void testInvertedRangeLiteralCompilesAndFailsWhenQueryRuns() throws Exception {
         // Whether a range starts after it ends depends on the time the query runs, so it fails then,
         // and not when the query compiles: a statement prepared at 03:00, when the range runs from
-        // 09:30 to 03:00, runs at 12:00. With the JIT on, compiling the residual filter of a function
-        // of the designated timestamp opens its interval scan, which evaluates the range as the query
-        // compiles, so this checks the Java filter.
+        // 09:30 to 03:00, runs at 12:00. With the JIT on, compiling a filter opens its interval scan
+        // to read the symbol tables, which evaluates the range at 03:00: the filter keeps the JIT,
+        // and the filter of a dateadd() of the designated timestamp keeps the Java filter, as the JIT
+        // takes no date variable. The serial filter opens nothing as it compiles. The interval scan
+        // evaluates the range at every open, also on a table without rows.
         final int jitMode = sqlExecutionContext.getJitMode();
+        final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
         assertMemoryLeak(() -> {
-            createHourlyTable();
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            createContextTables();
+            execute("CREATE TABLE e (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
             try {
-                for (String condition : new String[]{
-                        "ts IN '$today + 570m..$now'",
-                        "ts IN '$today + 570m..$now' OR ts = 0",
-                        "dateadd('h', 1, ts) IN '$today + 570m..$now'"
-                }) {
-                    final String sql = "SELECT count(), min(ts), max(ts) FROM t WHERE " + condition;
-                    assertExceptionNoLeakCheck(sql, sql.indexOf("'$today"), "Invalid date range: start is after end");
-                    try (RecordCursorFactory factory = select(sql)) {
-                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
-                        assertFactory(factory)
-                                .withContext(sqlExecutionContext)
-                                .noRandomAccess()
-                                .expectSize()
-                                .returns(condition.startsWith("dateadd")
-                                        // 08:30 to 11:00, an hour earlier
-                                        ? "count\tmin\tmax\n3\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z\n"
-                                        : "count\tmin\tmax\n3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z\n"
-                                );
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    for (boolean isParallel : new boolean[]{true, false}) {
+                        sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                        final String javaFilter = isParallel ? "Async Group By" : "Filter filter: ";
+                        final String jitFilter = isParallel && mode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
+                                ? "Async JIT Group By"
+                                : javaFilter;
+                        // the condition, its rows at 12:00, and the plan of the query
+                        for (String[] condition : new String[][]{
+                                {"ts IN '$today + 570m..$now'", "3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z", "Interval forward scan"},
+                                {"ts IN '$today + 570m..$now' OR ts = 0", "3\t2024-01-02T10:00:00.000000Z\t2024-01-02T12:00:00.000000Z", "Interval forward scan"},
+                                // 08:30 to 11:00, an hour earlier
+                                {"dateadd('h', 1, ts) IN '$today + 570m..$now'", "3\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", javaFilter},
+                                // s is 'a' on odd hours
+                                {"ts IN '$today + 570m..$now' AND s = 'a'", "1\t2024-01-02T11:00:00.000000Z\t2024-01-02T11:00:00.000000Z", jitFilter},
+                                {"dateadd('h', 1, ts) IN '$today + 570m..$now' AND s = 'a'", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T11:00:00.000000Z", javaFilter}
+                        }) {
+                            final String sql = "SELECT count(), min(ts), max(ts) FROM t WHERE " + condition[0];
+                            setCurrentMicros(NOW_0300);
+                            try (RecordCursorFactory factory = select(sql)) {
+                                assertRunFails(factory, sql, sql.indexOf("'$today"), RANGE_ORDER_ERROR);
+                                setCurrentMicros(NOW_1200);
+                                assertPlanContains(factory, condition[2]);
+                                assertFactory(factory)
+                                        .withContext(sqlExecutionContext)
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .returns("count\tmin\tmax\n" + condition[1] + "\n");
+                            }
+                        }
+                        final String emptyTableSql = "SELECT count() FROM e WHERE ts IN '$today + 570m..$now' AND s = 'a'";
+                        setCurrentMicros(NOW_0300);
+                        try (RecordCursorFactory factory = select(emptyTableSql)) {
+                            assertRunFails(factory, emptyTableSql, emptyTableSql.indexOf('\''), RANGE_ORDER_ERROR);
+                            setCurrentMicros(NOW_1200);
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n0\n");
+                        }
                     }
-                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
                 }
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
                 setCurrentMicros(-1);
             }
         });
@@ -1424,6 +1585,130 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStatementCompiledAtStaleNowRunsInEveryContext() throws Exception {
+        // A PostgreSQL Parse compiles a statement at the "now" of the last statement that the
+        // connection ran, or at 1970-01-01 if it ran none, and the Execute that runs the statement
+        // sets "now" first. At such a "now" the range from 09:30 to "now" starts after it ends, and
+        // the JIT compiler evaluates it there, as it opens the interval scan of a filter. The
+        // statement compiles all the same wherever the query holds the range, and at 12:00 it
+        // returns the rows of the same query over the range without date variables. Run at 03:00,
+        // the same statement fails on the range.
+        final int jitMode = sqlExecutionContext.getJitMode();
+        final boolean isParallelHorizonJoinEnabled = sqlExecutionContext.isParallelHorizonJoinEnabled();
+        final boolean isParallelWindowJoinEnabled = sqlExecutionContext.isParallelWindowJoinEnabled();
+        assertMemoryLeak(() -> {
+            createContextTables();
+            final String tickExpr = "$today + 570m..$now";
+            final String reference = "BETWEEN '2024-01-02T09:30:00.000000Z' AND '2024-01-02T12:00:00.000000Z'";
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                // the parallel HORIZON JOIN and WINDOW JOIN bind the filters they take when they
+                // read their first row, and the serial ones when they open
+                for (boolean isParallel : new boolean[]{true, false}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                    sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                    // ? stands for the tick expression, which the filter s = 'a' comes with
+                    for (String query : new String[]{
+                            "WITH c AS (SELECT * FROM t WHERE ts IN ? AND s = 'a') SELECT count() FROM c",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a')",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a LEFT JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a RIGHT JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a RIGHT JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a FULL OUTER JOIN t b ON a.s = b.s",
+                            "SELECT count() FROM t a FULL OUTER JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b ON a.s = b.s",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a ASOF JOIN t b",
+                            "SELECT count() FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a LT JOIN t b",
+                            "SELECT count() FROM t a LT JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a SPLICE JOIN t b",
+                            "SELECT count() FROM t a SPLICE JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b",
+                            "SELECT count() FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a CROSS JOIN t b",
+                            "SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b",
+                            "SELECT a.ts, count() c FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a WINDOW JOIN t b ON (a.s = b.s) RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING",
+                            // the right side of a WINDOW JOIN takes an interval scan, but no filter
+                            "SELECT a.ts, count() c FROM t a WINDOW JOIN (SELECT * FROM t WHERE ts IN ?) b ON (a.s = b.s) RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING",
+                            "SELECT a.ts, count() c FROM t a WINDOW JOIN t b ON (a.s = b.s AND (b.ts IN ? OR b.s = 'z')) RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING",
+                            "SELECT count() c FROM (SELECT * FROM t WHERE ts IN ? AND s = 'a') a HORIZON JOIN t b ON (a.s = b.s) RANGE FROM 0s TO 0s STEP 1s AS h",
+                            "SELECT count() c, max(b.ts) m FROM t a HORIZON JOIN (SELECT * FROM t WHERE ts IN ? AND s = 'a') b ON (a.s = b.s) RANGE FROM 0s TO 0s STEP 1s AS h",
+                            "SELECT ts FROM t WHERE ts IN ? AND s = 'a' UNION SELECT ts FROM t",
+                            "SELECT ts FROM t UNION SELECT ts FROM t WHERE ts IN ? AND s = 'a'",
+                            "SELECT ts FROM t WHERE ts IN ? AND s = 'a' EXCEPT SELECT ts FROM t",
+                            "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN ? AND s = 'a'",
+                            "SELECT ts FROM t WHERE ts IN ? AND s = 'a' INTERSECT SELECT ts FROM t",
+                            "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN ? AND s = 'a'",
+                            "SELECT s, count() FROM t WHERE ts IN ? AND s = 'a' GROUP BY s",
+                            "SELECT * FROM t WHERE ts IN ? AND s = 'a' LATEST ON ts PARTITION BY s",
+                            "SELECT ts, count() FROM t WHERE ts IN ? AND s = 'a' SAMPLE BY 1h",
+                            "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ? AND s = 'a'",
+                            "SELECT * FROM t WHERE ts IN ? AND s = 'a' ORDER BY ts LIMIT -1",
+                            // a symbol without an index, and one with an index
+                            "SELECT count() FROM t WHERE s = 'a' AND ts IN ?",
+                            "SELECT count() FROM ti WHERE s = 'a' AND ts IN ?"
+                    }) {
+                        final String referenceSql = query.replace("IN ?", reference);
+                        // a connection that ran no statement, one that ran its last at 03:00, and one
+                        // that ran it just before the range starts
+                        for (String compileNow : new String[]{"1970-01-01T00:00:00.000000Z", "2024-01-02T03:00:00.000000Z", "2024-01-02T09:29:59.999999Z"}) {
+                            // the literal, and a bind variable of STRING and of VARCHAR type
+                            for (int holder = 0; holder < 3; holder++) {
+                                final String sql;
+                                final int position;
+                                if (holder == 0) {
+                                    bindVariableService.clear();
+                                    sql = query.replace("?", "'" + tickExpr + "'");
+                                    position = sql.indexOf('\'' + tickExpr);
+                                } else {
+                                    setTickExprBindVariable(tickExpr, holder == 2);
+                                    sql = query.replace("?", "$1");
+                                    // the parallel WINDOW JOIN binds its join filter as it reads its
+                                    // first row, and the error that a bind variable raises there
+                                    // carries no position
+                                    position = isParallel && query.contains("b.ts IN ?") ? -1 : sql.indexOf("$1");
+                                }
+                                // the context keeps the stale "now", and the clock says 12:00
+                                setCurrentMicros(MicrosFormatUtils.parseTimestamp(compileNow));
+                                currentMicros = NOW_1200;
+                                try (RecordCursorFactory factory = select(sql)) {
+                                    sqlExecutionContext.initNow();
+                                    try (RecordCursorFactory referenceFactory = select(referenceSql)) {
+                                        assertSameRows(referenceFactory, factory, sql + " compiled at " + compileNow);
+                                    }
+                                    setCurrentMicros(NOW_0300);
+                                    assertRunFails(factory, sql, position, RANGE_ORDER_ERROR);
+                                }
+                            }
+                        }
+                    }
+                }
+                bindVariableService.clear();
+
+                // EXPLAIN compiles the query, and renders its plan when it runs
+                final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '" + tickExpr + "' AND s = 'a'";
+                setCurrentMicros(NOW_0300);
+                currentMicros = NOW_1200;
+                try (RecordCursorFactory factory = select(explain)) {
+                    sqlExecutionContext.initNow();
+                    final StringSink plan = new StringSink();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        CursorPrinter.println(cursor, factory.getMetadata(), plan);
+                    }
+                    TestUtils.assertContains(plan, JitUtil.isJitSupported() ? "Async JIT Filter" : "Async Filter");
+                    TestUtils.assertContains(plan, "intervals: [(\"2024-01-02T09:30:00.000000Z\",\"2024-01-02T12:00:00.000000Z\")]");
+                }
+            } finally {
+                bindVariableService.clear();
+                sqlExecutionContext.setJitMode(jitMode);
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallelHorizonJoinEnabled);
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallelWindowJoinEnabled);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testTickExprAfterDynamicInterval() throws Exception {
         // An interval scan combines its conditions in the order the query lists them, so a static
         // tick expression can follow a condition that only resolves when the query runs. The
@@ -1643,6 +1928,79 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
             } finally {
                 sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testTickValueThatFailsWhenQueryCompilesKeepsJit() throws Exception {
+        // The JIT compiler opens the interval scan of a filter as the query compiles, which parses a
+        // bind variable that is set by then, and runs a scalar sub-query, with the filters of its
+        // own. A value that does not parse, one with more intervals than the limit, and a range that
+        // starts after it ends at the "now" of the compile fail nothing there, and the filter keeps
+        // the JIT. The query fails on such a value when it runs, and returns the rows of the value
+        // it runs with.
+        final int jitMode = sqlExecutionContext.getJitMode();
+        assertMemoryLeak(() -> {
+            createContextTables();
+            final String jitFilter = JitUtil.isJitSupported() ? "Async JIT Filter" : "Async Filter";
+            final String sql = "SELECT count() FROM t WHERE ts IN $1 AND s = 'a'";
+            final String subQuerySql = "SELECT count() FROM t WHERE ts > (SELECT min(ts) FROM t WHERE now() IN $1) AND s = 'a'";
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                for (boolean isVarchar : new boolean[]{false, true}) {
+                    // the value at the compile, the error of the query that runs with it at 12:00, if
+                    // any, and the count at 12:00 with the value, or after the error, with the range
+                    // from 09:30 to "now", which holds 11:00, on an odd hour
+                    for (String[] value : new String[][]{
+                            {"garbage", "Invalid date: garbage", "1"},
+                            {"[$today..$today + 2000d]T09:00", "Date range expansion produces too many intervals (max 1024)", "1"},
+                            {"$today + 570m..$now", null, "1"},
+                            {null, null, "0"}
+                    }) {
+                        setTickExprBindVariable(value[0], isVarchar);
+                        // the context keeps 03:00, and the clock says 12:00
+                        setCurrentMicros(NOW_0300);
+                        currentMicros = NOW_1200;
+                        try (RecordCursorFactory factory = select(sql)) {
+                            sqlExecutionContext.initNow();
+                            if (value[1] != null) {
+                                assertRunFails(factory, sql, sql.indexOf("$1"), value[1]);
+                                setTickExprBindVariable("$today + 570m..$now", isVarchar);
+                            }
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n" + value[2] + "\n");
+                            assertPlanContains(factory, jitFilter);
+                        }
+                    }
+
+                    // the sub-query runs as the JIT compiler opens the interval scan
+                    for (String value : new String[]{"garbage", "$today + 570m..$now"}) {
+                        setTickExprBindVariable(value, isVarchar);
+                        setCurrentMicros(NOW_0300);
+                        currentMicros = NOW_1200;
+                        try (RecordCursorFactory factory = select(subQuerySql)) {
+                            sqlExecutionContext.initNow();
+                            setTickExprBindVariable("$today + 570m..$now", isVarchar);
+                            assertPlanContains(factory, jitFilter);
+                            // "now" is in the range at 12:00, so the sub-query returns the first
+                            // row, at 00:00 with s = 'b', and the query counts every row with
+                            // s = 'a', one on each odd hour of the four days
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n48\n");
+                        }
+                    }
+                }
+            } finally {
+                bindVariableService.clear();
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
             }
         });
     }
@@ -1899,6 +2257,37 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         ));
     }
 
+    private static void assertPlanContains(RecordCursorFactory factory, String expected) {
+        planSink.of(factory, sqlExecutionContext);
+        TestUtils.assertContains(planSink.getSink(), expected);
+    }
+
+    /**
+     * Asserts that the query fails when it runs, with the error at the position, unless that is -1.
+     */
+    private static void assertRunFails(RecordCursorFactory factory, String sql, int position, String error) {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.drainCursor(cursor);
+            Assert.fail("the query should fail: " + sql);
+        } catch (CairoException | SqlException e) {
+            TestUtils.assertEquals(sql, error, e.getFlyweightMessage());
+            if (position != -1) {
+                Assert.assertEquals(sql, position, e.getPosition());
+            }
+        }
+    }
+
+    private static void assertSameRows(RecordCursorFactory expected, RecordCursorFactory actual, String message) throws SqlException {
+        try (
+                RecordCursor expectedCursor = expected.getCursor(sqlExecutionContext);
+                RecordCursor actualCursor = actual.getCursor(sqlExecutionContext)
+        ) {
+            TestUtils.assertEquals(expectedCursor, expected.getMetadata(), actualCursor, actual.getMetadata(), false);
+        } catch (AssertionError e) {
+            throw new AssertionError(message, e);
+        }
+    }
+
     /**
      * Creates table t with a row every hour from 2024-01-01T00:00 to 2024-01-04T23:00 and a symbol
      * column, and table ti with the same rows and an indexed symbol column.
@@ -2096,6 +2485,28 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Compiles a query with the range from 09:30 to "now" at the "now" of the context, and asserts
+     * that the compile leaves the compile probe flag down, that the query fails on the range when
+     * it runs at 03:00, and that it counts the row at 11:00, with the filter, when it runs at 12:00.
+     * It runs on the tables of {@link #createContextTables}.
+     */
+    private void assertRangeQueryCompiles(String expectedFilter) throws Exception {
+        final String sql = "SELECT count() FROM t WHERE ts IN '$today + 570m..$now' AND s = 'a'";
+        try (RecordCursorFactory factory = select(sql)) {
+            Assert.assertFalse(sqlExecutionContext.isCompileProbe());
+            setCurrentMicros(NOW_0300);
+            assertRunFails(factory, sql, sql.indexOf('\''), RANGE_ORDER_ERROR);
+            setCurrentMicros(NOW_1200);
+            assertPlanContains(factory, expectedFilter);
+            assertFactory(factory)
+                    .withContext(sqlExecutionContext)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1\n");
+        }
+    }
+
     private void assertTickExprBindVariableMatches(String tickExpr, String expectedRow) throws Exception {
         final String expected = "count\tmin\tmax\n" + expectedRow + "\n";
         bindVariableService.clear();
@@ -2194,7 +2605,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     private void setTickExprBindVariable(String tickExpr, boolean isVarchar) throws SqlException {
         bindVariableService.clear();
         if (isVarchar) {
-            bindVariableService.setVarchar(0, new Utf8String(tickExpr));
+            bindVariableService.setVarchar(0, tickExpr != null ? new Utf8String(tickExpr) : null);
         } else {
             bindVariableService.setStr(0, tickExpr);
         }

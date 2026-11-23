@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -177,6 +178,61 @@ public class ReversedTickRangeTest extends AbstractCairoTest {
                 assertRange(engineJob, "ts IN '[$now-2h, $now..$now-1h, $now+1h]'", "v\n4\n8\n", "v\n8\n4\n", 2);
                 assertRangeFails("ts IN '$now..$now-1h' AND ts > '2026-03-01'", "'$now..$now-1h'");
                 assertRange(engineJob, "ts IN '$now..$now-1h' AND ts > '2026-03-01'", "v\n", "v\n", 0);
+            }
+        });
+    }
+
+    @Test
+    public void testStatementCompiledBeforeRangeStartRunsAfterIt() throws Exception {
+        // A statement prepared at 03:00, when the range from 09:30 to "now" starts after it ends,
+        // compiles: the JIT compiler opens the interval scan of the filter as the statement
+        // compiles, and the range adds no interval there. The statement runs at 12:00, and fails
+        // only when it runs before 09:30. Its end is "now" itself, and at 09:30 the range is that
+        // one point in time.
+        final int jitMode = sqlExecutionContext.getJitMode();
+        assertMemoryLeak(() -> {
+            final String predicate = " WHERE ts IN '$today + 570m..$now' AND v > 0";
+            final String forwardSql = "SELECT v FROM x" + predicate;
+            final String backwardSql = "SELECT v FROM x" + predicate + " ORDER BY ts DESC";
+            final String countSql = "SELECT count() FROM x" + predicate;
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                // a Parquet partition converts from a partitioned table only
+                for (String partitionBy : partitionFormat == PartitionFormat.PARQUET ? new String[]{"DAY"} : new String[]{"DAY", "NONE"}) {
+                    execute("DROP TABLE IF EXISTS x");
+                    createTable(partitionBy);
+                    // the context keeps 03:00, and the clock says 12:00
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2026-03-15T03:00:00.000000Z"));
+                    currentMicros = MicrosFormatUtils.parseTimestamp(REVERSED_NOW);
+                    try (
+                            RecordCursorFactory forward = select(forwardSql);
+                            RecordCursorFactory backward = select(backwardSql);
+                            RecordCursorFactory count = select(countSql)
+                    ) {
+                        final QueryAssertion forwardAssertion = new QueryAssertion(engine, forward).withContext(sqlExecutionContext);
+                        final QueryAssertion backwardAssertion = new QueryAssertion(engine, backward).withContext(sqlExecutionContext);
+                        final QueryAssertion countAssertion = new QueryAssertion(engine, count).withContext(sqlExecutionContext).expectSize().noRandomAccess();
+                        // the rows at 10:00, 11:00, 11:30 and 12:00
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp(REVERSED_NOW));
+                        forwardAssertion.returns("v\n4\n5\n6\n7\n");
+                        backwardAssertion.returns("v\n7\n6\n5\n4\n");
+                        countAssertion.returns("count\n4\n");
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2026-03-15T10:00:00.000000Z"));
+                        forwardAssertion.returns("v\n4\n");
+                        backwardAssertion.returns("v\n4\n");
+                        countAssertion.returns("count\n1\n");
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2026-03-15T09:30:00.000000Z"));
+                        forwardAssertion.returns("v\n");
+                        backwardAssertion.returns("v\n");
+                        countAssertion.returns("count\n0\n");
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2026-03-15T09:29:59.999999Z"));
+                        assertCursorFails(forward, forwardSql);
+                        assertCursorFails(backward, backwardSql);
+                        assertCursorFails(count, countSql);
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
             }
         });
     }

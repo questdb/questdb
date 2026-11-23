@@ -322,6 +322,23 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isCacheHit();
 
+    /**
+     * Returns true while the code that compiles a statement holds a cursor that it opened to inspect
+     * a query, not to run it: the page frame cursor that the JIT filter compiler reads symbol tables
+     * from, and the cursors that {@code CREATE VIEW}, {@code CREATE MATERIALIZED VIEW},
+     * {@code ALTER VIEW} and the {@code EXPIRE ROWS} checks open to check a SELECT. Nobody is handed
+     * what such a cursor computes, and its "now" need not be the one the query runs at: a PostgreSQL
+     * Parse compiles before the Execute that sets it.
+     * <p>
+     * The flag stays up from before the open until the caller's last call on the cursor, reads
+     * included, because a cursor can bind part of its plan in its first {@code hasNext()}, as the
+     * parallel HORIZON JOIN and WINDOW JOIN do. {@link #isMetadataProbe()} differs: view auditing
+     * reads it at the open, and it covers the open only.
+     */
+    default boolean isCompileProbe() {
+        return false;
+    }
+
     // Returns false only for materialized view refresh contexts when the
     // cairo.mat.view.covering.index.enabled property is set to false.
     // All other contexts always return true.
@@ -595,6 +612,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
+
+    default void setCompileProbe(boolean value) {
+    }
 
     // A context without per-table read policies ignores this and reads every table under
     // getExpiryReadPolicy().

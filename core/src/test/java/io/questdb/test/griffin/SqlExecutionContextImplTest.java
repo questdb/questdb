@@ -31,10 +31,21 @@ import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.text.SqlExecutionContextStub;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class SqlExecutionContextImplTest extends AbstractCairoTest {
+
+    @Test
+    public void testCompileProbeDefaultIsNoOp() {
+        // a context that implements the interface on its own never raises the flag, so a tick
+        // expression in a cursor that a compile opens through it keeps every check
+        final SqlExecutionContextStub context = new SqlExecutionContextStub(engine);
+        Assert.assertFalse(context.isCompileProbe());
+        context.setCompileProbe(true);
+        Assert.assertFalse(context.isCompileProbe());
+    }
 
     @Test
     public void testRejectedWithDoesNotPartiallyMutateMountedContext() throws Exception {
@@ -77,6 +88,26 @@ public class SqlExecutionContextImplTest extends AbstractCairoTest {
                 context.setQueryRegistryOwnerId(-1);
             }
             context.reset();
+        });
+    }
+
+    @Test
+    public void testResetClearsCompileProbe() throws Exception {
+        // a reused per-connection context never inherits the flag from a compile that left it up
+        assertMemoryLeak(() -> {
+            try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)) {
+                context.with(securityContext, bindVariableService, null);
+                Assert.assertFalse(context.isCompileProbe());
+                context.setCompileProbe(true);
+                Assert.assertTrue(context.isCompileProbe());
+                context.reset();
+                Assert.assertFalse(context.isCompileProbe());
+
+                context.setCompileProbe(true);
+                Assert.assertTrue(context.isCompileProbe());
+                context.with(securityContext, bindVariableService, null);
+                Assert.assertFalse(context.isCompileProbe());
+            }
         });
     }
 
