@@ -45,6 +45,7 @@ import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Rnd;
@@ -501,7 +502,9 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     public void testManyRowGroups() throws Exception {
         // Each Parquet partition holds several row groups, which the export reads as separate
         // frames, and the export cuts row groups of another size: a written row group spans
-        // frames of both formats, and the decoded buffers of a frame outlive it.
+        // frames of both formats, and the decoded buffers of a frame outlive it. An interval
+        // whose bounds cut row groups makes the first and the last Parquet frames parts of row
+        // groups, which the hybrid path decodes from the frame's own first row.
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
             execute("CREATE TABLE tm (a INT, s SYMBOL, v VARCHAR, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -510,19 +513,34 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                     FROM long_sequence(1_600)""");
             execute("ALTER TABLE tm CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-03'");
             assertRowGroupCount("tm", 4);
+            // 400 rows a day: the interval starts at row 217 of day 1, row 17 of its row group 2,
+            // and ends before row 217 of day 3.
+            final String partialQuery = "SELECT a, a * 2 a2, s, v, d, ts FROM tm WHERE ts >= '2024-01-01T13:00' AND ts < '2024-01-03T13:00'";
+            Assert.assertEquals("[0 2 17 100][0 3 0 100][2 0 0 100][2 1 0 100][2 2 0 17]", parquetFrames(engine, sqlExecutionContext, partialQuery));
 
             for (String rowGroupSize : new String[]{"37", "1000"}) {
                 final String options = " ROW_GROUP_SIZE " + rowGroupSize;
                 assertExportMatchesQuery(engine, sqlExecutionContext, "SELECT v, ts, a FROM tm", DIRECT_PAGE_FRAME, "many_direct_" + rowGroupSize, options);
                 assertExportMatchesQuery(engine, sqlExecutionContext, "SELECT s, v, d * 2 d2, a, ts FROM tm", PAGE_FRAME_BACKED, "many_computed_" + rowGroupSize, options);
                 assertExportMatchesQuery(engine, sqlExecutionContext, "SELECT ts, s, length(v) l FROM tm WHERE ts IN '2024-01-01T12;2d'", PAGE_FRAME_BACKED, "many_interval_" + rowGroupSize, options);
+                assertExportMatchesQuery(engine, sqlExecutionContext, partialQuery, PAGE_FRAME_BACKED, "many_partial_" + rowGroupSize, options);
+                assertQuery("SELECT count() n, min(a) a_lo, max(a) a_hi, min(ts) ts_lo, max(ts) ts_hi FROM " + readParquet("many_partial_" + rowGroupSize))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\ta_lo\ta_hi\tts_lo\tts_hi
+                                800\t218\t1017\t2024-01-01T13:01:12.000000Z\t2024-01-03T12:57:36.000000Z
+                                """);
             }
         });
     }
 
     @Test
     public void testRandomProjections() throws Exception {
-        // Random column subsets and orders, with computed columns mixed in, over every type.
+        // Random column subsets and orders, with computed columns mixed in, over every type. About
+        // half of the queries take an interval at whole hours within days 1 to 4, whose bounds may
+        // cut the row group of a Parquet day, so that a frame starts or ends inside it.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             createAllTypesTable("tr", rnd.nextBoolean());
@@ -540,7 +558,17 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 if (isComputed) {
                     sink.put(", id * ").put(rnd.nextInt(100)).put(" computed");
                 }
-                final String query = "SELECT " + sink + " FROM tr";
+                sink.put(" FROM tr");
+                if (rnd.nextBoolean()) {
+                    // Hours since 2024-01-01T00:00, the lower bound before the upper one.
+                    final int loHour = rnd.nextInt(95);
+                    final int hiHour = loHour + 1 + rnd.nextInt(95 - loHour);
+                    sink.put(" WHERE ts >= ");
+                    putHourTimestamp(sink, loHour);
+                    sink.put(" AND ts < ");
+                    putHourTimestamp(sink, hiHour);
+                }
+                final String query = "SELECT " + sink;
                 LOG.info().$("exporting [query=").$(query).I$();
                 assertExportMatchesQuery(
                         engine,
@@ -814,6 +842,35 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         return sink.toString();
     }
 
+    // The Parquet frames of the page frame cursor that a hybrid export of the query reads, as
+    // [partitionIndex rowGroup rowGroupLo rowGroupHi], with the native frames left out.
+    private static String parquetFrames(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) throws Exception {
+        final StringSink sink = new StringSink();
+        try (
+                RecordCursorFactory factory = engine.select(query, sqlExecutionContext);
+                PageFrameCursor cursor = ((VirtualRecordCursorFactory) ParquetExportMode.unwrapFactory(factory)).getBaseFactory()
+                        .getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC)
+        ) {
+            PageFrame frame;
+            while ((frame = cursor.next()) != null) {
+                if (frame.getFormat() == PartitionFormat.PARQUET) {
+                    sink.put('[').put(frame.getPartitionIndex())
+                            .put(' ').put(frame.getParquetRowGroup())
+                            .put(' ').put(frame.getParquetRowGroupLo())
+                            .put(' ').put(frame.getParquetRowGroupHi())
+                            .put(']');
+                }
+            }
+        }
+        return sink.toString();
+    }
+
+    // A timestamp literal such as '2024-01-02T05:00', hours after 2024-01-01T00:00.
+    private static void putHourTimestamp(StringSink sink, int hour) {
+        final int hourOfDay = hour % 24;
+        sink.put("'2024-01-0").put(1 + hour / 24).put('T').put(hourOfDay < 10 ? "0" : "").put(hourOfDay).put(":00'");
+    }
+
     private static String readParquet(String fileName) {
         return "read_parquet('" + exportRoot + File.separator + fileName + ".parquet')";
     }
@@ -909,11 +966,13 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         }
         assertExportMatchesQuery("SELECT " + alternate + " FROM tt", DIRECT_PAGE_FRAME, "types_alternate");
         // The hybrid path passes every column through, and computes one from each type family.
-        assertExportMatchesQuery(
-                "SELECT " + reversed + ", an_int + 1 int1, concat(a_varchar, a_symbol) vs, a_double * 2 d2 FROM tt",
-                PAGE_FRAME_BACKED,
-                "types_computed"
-        );
+        final String computedQuery = "SELECT " + reversed + ", an_int + 1 int1, concat(a_varchar, a_symbol) vs, a_double * 2 d2 FROM tt";
+        assertExportMatchesQuery(computedQuery, PAGE_FRAME_BACKED, "types_computed");
+        // The same over an interval that cuts the row groups of days 1 and 4: the hybrid path
+        // decodes day 1 from row 5 of its row group, and day 4 up to row 19 of its row group.
+        final String intervalQuery = computedQuery + " WHERE ts >= '2024-01-01T05:00' AND ts < '2024-01-04T19:00'";
+        Assert.assertEquals("[0 0 5 24][1 0 0 24][3 0 0 19]", parquetFrames(engine, sqlExecutionContext, intervalQuery));
+        assertExportMatchesQuery(intervalQuery, PAGE_FRAME_BACKED, "types_computed_interval");
     }
 
     // Day 1 is converted before DROP COLUMN b, day 2 after it, and day 3 stays native. Day 2's file
