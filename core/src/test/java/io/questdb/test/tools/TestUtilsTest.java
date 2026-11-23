@@ -80,6 +80,26 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAssertEqualsOfTimestampedCursorsChecksAsciiFlagOfVarchar() {
+        final Utf8String nonAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, false);
+        final Utf8String nonAsciiFlaggedAscii = new Utf8String(new byte[]{(byte) 0xc3, (byte) 0xa9}, true);
+        final Utf8String ascii = new Utf8String(new byte[]{'a'}, true);
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata("ts", ColumnType.TIMESTAMP));
+        metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+        metadata.setTimestampIndex(0);
+
+        // the comparison forgives another order of rows of one timestamp, not a wrong flag
+        TestUtils.assertEquals(timestampedCursor(nonAscii), metadata, timestampedCursor(nonAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAscii), metadata, timestampedCursor(nonAsciiFlaggedAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAsciiFlaggedAscii), metadata, timestampedCursor(nonAscii), metadata, false);
+        // two rows of one timestamp in another order: the comparison stashes them
+        TestUtils.assertEquals(timestampedCursor(nonAscii, ascii), metadata, timestampedCursor(ascii, nonAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAscii, ascii), metadata, timestampedCursor(ascii, nonAsciiFlaggedAscii), metadata, false);
+        assertAsciiFlagRejected(timestampedCursor(nonAsciiFlaggedAscii, ascii), metadata, timestampedCursor(ascii, nonAscii), metadata, false);
+    }
+
+    @Test
     public void testAssertReverseLinesEqual() {
         Assert.assertThrows(AssertionError.class, () -> {
             TestUtils.assertReverseLinesEqual(null, "123\n456\n789\n", "123\n456\n789\n");
@@ -216,6 +236,11 @@ public final class TestUtilsTest extends AbstractCairoTest {
         });
     }
 
+    // rows of the timestamp 1 and the VARCHAR values, one row per value
+    private static RecordCursor timestampedCursor(Utf8String... values) {
+        return new TimestampedRowsCursor(values);
+    }
+
     // one row of a VARCHAR of the bytes, flagged as told
     private static RecordCursor varcharCursor(byte[] bytes, boolean isAscii) {
         final Utf8String value = new Utf8String(bytes, isAscii);
@@ -283,6 +308,65 @@ public final class TestUtilsTest extends AbstractCairoTest {
         @Override
         public void toTop() {
             hasNext = true;
+        }
+    }
+
+    private static class TimestampedRowsCursor implements RecordCursor {
+        private final Utf8String[] values;
+        private int row = -1;
+        private final Record record = new Record() {
+            @Override
+            public long getTimestamp(int col) {
+                return 1;
+            }
+
+            @Override
+            public Utf8Sequence getVarcharA(int col) {
+                return values[row];
+            }
+        };
+
+        private TimestampedRowsCursor(Utf8String[] values) {
+            this.values = values;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public Record getRecord() {
+            return record;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return record;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return ++row < values.length;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public long size() {
+            return values.length;
+        }
+
+        @Override
+        public void toTop() {
+            row = -1;
         }
     }
 }

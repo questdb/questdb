@@ -3390,6 +3390,30 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVarcharAsciiFlagOnConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
+            execute("CREATE TABLE x (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, CASE WHEN x = 15 THEN 'ü' || x ELSE 'b' || x END FROM long_sequence(30)");
+            execute("INSERT INTO x VALUES ('2022-02-26', 'n', 'n')");
+            drainWalQueue();
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2022-02-25'");
+            drainWalQueue();
+
+            assertQuery("SELECT ts, v2, length(v2) len, upper(v2) up FROM x WHERE ts = '2022-02-25T00:14:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv2\tlen\tup
+                            2022-02-25T00:14:00.000000Z\tü15\t3\tÜ15
+                            """);
+            // rows 1-12, 13-24 and 25-30 make the row groups, and each is flagged by its own values: v2 holds a
+            // non-ASCII value in the second only
+            assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x WHERE ts < '2022-02-26'", 30, 18);
+        });
+    }
+
+    @Test
     public void testVarcharAsciiFlagOnInPlaceAppendToAddedColumn() throws Exception {
         testVarcharAsciiFlagOnInPlaceAppendToAddedColumn("WAL", "'ü' || x");
     }
@@ -3539,7 +3563,7 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     // Adds the VARCHAR column v to both tables, then merges ASCII values into the 06:00+ row groups of x: the
-    // schema change makes that update rewrite the file, and the new _pm flags v ASCII, correctly.
+    // schema change makes that update rewrite the file, and the new _pm flags the chunks of v it writes ASCII.
     private void addVarcharColumnAndRewriteWithAscii() throws Exception {
         executeOnVarcharAsciiFlagTables("ALTER TABLE %s ADD COLUMN v VARCHAR");
         final long nameTxn = getPartitionNameTxn("x");
@@ -3575,15 +3599,16 @@ public class ParquetTest extends AbstractCairoTest {
         assertSqlCursors(query + "y", query + "x");
     }
 
-    // x: a FORMAT PARQUET table that only appends, with no DDL, row groups of 12 rows. The second commit rewrites
-    // the single row group of the first one and builds _pm from the footer, which flags both columns ASCII. The
-    // third commit appends row groups in place and brings the first non-ASCII values of v2; v1 stays ASCII.
-    // y: the same rows in a native partition. Returns the name txn of the Parquet partition.
+    // x: a FORMAT PARQUET table that only appends, with no DDL, row groups of 12 rows. The first commit writes a
+    // fresh Parquet partition and flags the chunks of its row group ASCII. The second commit rewrites that
+    // single row group. The third commit appends row groups in place and brings the first non-ASCII values of
+    // v2; v1 stays ASCII. y: the same rows in a native partition. Returns the name txn of the Parquet partition.
     private long createFormatParquetTableWithNonAsciiAppendInPlace() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
         execute("CREATE TABLE x (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
         execute("CREATE TABLE y (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
         executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, 'b' || x FROM long_sequence(5)");
+        assertAsciiFlaggedValueCounts("SELECT v1, v2 FROM x", 5, 5);
         final long firstNameTxn = getPartitionNameTxn("x");
         executeOnVarcharAsciiFlagTables("INSERT INTO %s SELECT '2022-02-25T01:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'c' || x, 'd' || x FROM long_sequence(40)");
         final long nameTxn = getPartitionNameTxn("x");

@@ -167,7 +167,7 @@ impl PartitionFrameWriter {
     pub(crate) fn new(
         template: Partition,
         file: File,
-        chunked_writer: ChunkedWriter<File>,
+        mut chunked_writer: ChunkedWriter<File>,
         additional_meta: Vec<KeyValue>,
         row_group_size: usize,
         sorting_columns: Option<Vec<SortingColumn>>,
@@ -176,6 +176,7 @@ impl PartitionFrameWriter {
         seq_txn: SeqTxn,
     ) -> Self {
         let column_tops = vec![(0, false); template.columns.len()];
+        chunked_writer.track_chunk_ascii();
         Self {
             template,
             chunked_writer,
@@ -266,19 +267,21 @@ impl PartitionFrameWriter {
             .position(|c| c.designated_timestamp)
             .map(|i| i as i32)
             .unwrap_or(-1);
-        let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
-            &col_infos,
-            self.chunked_writer.row_groups(),
-            designated_ts,
-            &sorting_col_indices,
-            footer_offset,
-            footer_length,
-            self.chunked_writer.bloom_bitsets(),
-            0, // unused_bytes: new file, no dead space
-            self.squash_tracker,
-            self.seq_txn,
-        )
-        .context("generate_parquet_metadata failed")?;
+        let (parquet_meta_bytes, _) =
+            crate::parquet_metadata::generate_parquet_metadata_with_chunk_ascii(
+                &col_infos,
+                self.chunked_writer.row_groups(),
+                designated_ts,
+                &sorting_col_indices,
+                footer_offset,
+                footer_length,
+                self.chunked_writer.bloom_bitsets(),
+                0, // unused_bytes: new file, no dead space
+                self.squash_tracker,
+                self.seq_txn,
+                self.chunked_writer.chunk_ascii(),
+            )
+            .context("generate_parquet_metadata failed")?;
 
         if self.parquet_meta_fd >= 0 {
             // ManuallyDrop: Java owns the fd and closes it.
@@ -400,6 +403,165 @@ mod tests {
             chunked.finish(meta).unwrap();
         }
         (buf, written)
+    }
+
+    /// A VARCHAR column of inlined values (9 bytes at most) after `column_top` rows without a
+    /// value, each flagged ASCII as its bytes are; `None` is NULL.
+    fn varchar_column(name: &'static str, column_top: usize, values: &[Option<&str>]) -> Column {
+        use crate::parquet::tests::ColumnTypeTagExt;
+        use qdb_core::col_type::ColumnTypeTag;
+
+        let aux: Vec<[u8; 16]> = values
+            .iter()
+            .map(|value| {
+                let mut entry = [0u8; 16];
+                match value {
+                    // the null flag alone
+                    None => entry[0] = 0b100,
+                    Some(value) => {
+                        let bytes = value.as_bytes();
+                        assert!(bytes.len() <= 9);
+                        // inlined, plus the ASCII bit
+                        entry[0] =
+                            ((bytes.len() as u8) << 4) | 0b01 | ((value.is_ascii() as u8) << 1);
+                        entry[1..1 + bytes.len()].copy_from_slice(bytes);
+                    }
+                }
+                entry
+            })
+            .collect();
+        let aux: &'static [[u8; 16]] = Box::leak(aux.into_boxed_slice());
+        Column::from_raw_data(
+            1,
+            name,
+            ColumnTypeTag::Varchar.into_type().code(),
+            column_top as i64,
+            column_top + aux.len(),
+            aux.as_ptr() as *const u8,
+            0,
+            aux.as_ptr() as *const u8,
+            aux.len() * 16,
+            std::ptr::null(),
+            0,
+            false,
+            false,
+            0,
+        )
+        .unwrap()
+    }
+
+    /// The chunk ASCII flags a tracking writer records for `partition`, written whole in row
+    /// groups of `row_group_size` rows.
+    fn chunk_ascii_of_whole_partition(
+        row_group_size: usize,
+        partition: &Partition,
+    ) -> Vec<Vec<bool>> {
+        let (schema, _) = to_parquet_schema(partition, false, -1, SeqTxn::UNSET).unwrap();
+        let mut buf = Vec::new();
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_row_group_size(Some(row_group_size))
+            .chunked_with_compressions(schema, to_encodings(partition), to_compressions(partition))
+            .unwrap();
+        chunked.track_chunk_ascii();
+        chunked.write_chunk(partition).unwrap();
+        chunked.chunk_ascii().to_vec()
+    }
+
+    /// The chunk ASCII flags a tracking writer records for `frames`, a frame at a time in row
+    /// groups of `row_group_size` rows.
+    fn chunk_ascii_of_frames(row_group_size: usize, frames: Vec<Partition>) -> Vec<Vec<bool>> {
+        let (schema, _) = to_parquet_schema(&frames[0], false, -1, SeqTxn::UNSET).unwrap();
+        let mut buf = Vec::new();
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .with_row_group_size(Some(row_group_size))
+            .chunked_with_compressions(
+                schema,
+                to_encodings(&frames[0]),
+                to_compressions(&frames[0]),
+            )
+            .unwrap();
+        chunked.track_chunk_ascii();
+        let mut acc = FrameAccumulator::new(row_group_size);
+        for f in frames {
+            acc.push(f, ());
+            while acc.has_full_row_group() {
+                acc.write_row_group(&mut chunked).unwrap();
+            }
+        }
+        acc.write_remaining(&mut chunked).unwrap();
+        chunked.chunk_ascii().to_vec()
+    }
+
+    #[test]
+    fn writer_flags_varchar_chunks_by_their_own_values() {
+        // rows 0-1, 2-3 and 4 make the row groups. v: a non-ASCII value in the second, NULL in
+        // the third. w: a column top over the first row group and a row of the second, then a
+        // non-ASCII value. x is not VARCHAR.
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![
+                long_column("x", &[1, 2, 3, 4, 5], 0),
+                varchar_column(
+                    "v",
+                    0,
+                    &[Some("a"), Some("b"), Some("\u{e9}"), Some("c"), None],
+                ),
+                varchar_column("w", 3, &[Some("\u{fc}"), Some("d")]),
+            ],
+        };
+        assert_eq!(
+            chunk_ascii_of_whole_partition(2, &partition),
+            [
+                [false, true, true],
+                [false, false, false],
+                [false, true, true]
+            ]
+        );
+    }
+
+    #[test]
+    fn writer_records_no_chunk_ascii_flags_unless_asked() {
+        let partition = Partition {
+            table: "t".to_string(),
+            columns: vec![varchar_column("v", 0, &[Some("a"), Some("b")])],
+        };
+        let (schema, _) = to_parquet_schema(&partition, false, -1, SeqTxn::UNSET).unwrap();
+        let mut buf = Vec::new();
+        let mut chunked = ParquetWriter::new(&mut buf)
+            .chunked_with_compressions(
+                schema,
+                to_encodings(&partition),
+                to_compressions(&partition),
+            )
+            .unwrap();
+        chunked.write_chunk(&partition).unwrap();
+        assert!(chunked.chunk_ascii().is_empty());
+    }
+
+    #[test]
+    fn frames_flag_varchar_chunks_by_the_rows_of_each_row_group() {
+        // Row groups of four rows: a, b, c from the first frame and d from the second; then the
+        // second frame's non-ASCII value and the third frame, whose first row lies under its
+        // column top. Only the part of a frame inside a row group counts.
+        let frames = vec![
+            Partition {
+                table: "t".to_string(),
+                columns: vec![varchar_column("v", 0, &[Some("a"), Some("b"), Some("c")])],
+            },
+            Partition {
+                table: "t".to_string(),
+                columns: vec![varchar_column("v", 0, &[Some("d"), Some("\u{e9}")])],
+            },
+            Partition {
+                table: "t".to_string(),
+                columns: vec![varchar_column("v", 1, &[Some("f"), Some("g")])],
+            },
+            Partition {
+                table: "t".to_string(),
+                columns: vec![varchar_column("v", 0, &[Some("h"), None, Some("i")])],
+            },
+        ];
+        assert_eq!(chunk_ascii_of_frames(4, frames), [[true], [false], [true]]);
     }
 
     fn long_column_with_id(

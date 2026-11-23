@@ -212,19 +212,6 @@ impl ParquetMetaWriter {
         let bloom_filter_columns = self.header_builder.bloom_filter_columns.clone();
         let bloom_col_count = bloom_filter_columns.len();
 
-        // A column flagged ASCII is ASCII in every row group of a new file. The chunks carry the
-        // flag as well: an update can append a footer but cannot clear the header flag, while a
-        // chunk flag stays true whatever follows.
-        for (col_idx, flags) in self.header_builder.column_flags().enumerate() {
-            if flags.is_ascii() {
-                for rg in &mut self.row_groups {
-                    if let Some(chunk) = rg.chunks.get_mut(col_idx) {
-                        chunk.flags = chunk.flags().with_ascii().0;
-                    }
-                }
-            }
-        }
-
         // Apply the squash tracker (stored on the writer) just before we serialize
         // the header — the header_builder can be recreated by designated_timestamp(),
         // so we thread the value through at finish time.
@@ -1844,14 +1831,25 @@ mod tests {
     }
 
     #[test]
-    fn create_copies_header_ascii_flag_to_every_chunk_of_the_column() {
-        let (bytes, size) = make_ascii_file(2, true);
+    fn create_flags_only_the_chunks_the_caller_flags() {
+        // `a` is flagged in the header, but a header flag describes the whole column and flags
+        // no chunk: row group 0 is flagged by its writer, row group 1 is not
+        let mut w = ParquetMetaWriter::new();
+        w.designated_timestamp(0);
+        w.add_column("ts", 0, 8, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_column("a", 1, 26, ColumnFlags::new().with_ascii(), 0, 0, 0, 0);
+        w.add_column("b", 2, 26, ColumnFlags::new(), 0, 0, 0, 0);
+        w.add_row_group(make_ascii_row_group(true));
+        w.add_row_group(make_ascii_row_group(false));
+        w.parquet_footer(4096, 256);
+        let (bytes, size) = w.finish().unwrap();
         let reader = ParquetMetaReader::from_file_size(&bytes, size).unwrap();
         assert!(reader.is_header_ascii_valid());
         assert!(!reader.footer_feature_flags().has_header_ascii_valid());
+        assert!(is_chunk_ascii(&reader, 0, 1));
+        assert!(!is_chunk_ascii(&reader, 1, 1));
         for row_group in 0..2 {
             assert!(!is_chunk_ascii(&reader, row_group, 0));
-            assert!(is_chunk_ascii(&reader, row_group, 1));
             assert!(!is_chunk_ascii(&reader, row_group, 2));
         }
     }
@@ -1921,8 +1919,8 @@ mod tests {
         });
         let reader = ParquetMetaReader::from_file_size(&appended, appended_size).unwrap();
         assert!(!reader.is_header_ascii_valid());
-        // the chunks keep their own flags: set at creation, not set on the added block
-        assert!(is_chunk_ascii(&reader, 0, 1));
+        // neither block is flagged: the header flag flags no chunk, the added block is not ASCII
+        assert!(!is_chunk_ascii(&reader, 0, 1));
         assert!(!is_chunk_ascii(&reader, 1, 1));
         // the snapshot before the update still reads its flags
         let before = ParquetMetaReader::from_file_size(&appended, size).unwrap();
@@ -1948,8 +1946,9 @@ mod tests {
         });
         let reader = ParquetMetaReader::from_file_size(&replaced, replaced_size).unwrap();
         assert!(!reader.is_header_ascii_valid());
+        // the replacement is not ASCII, and the kept block has no flag of its own
         assert!(!is_chunk_ascii(&reader, 0, 1));
-        assert!(is_chunk_ascii(&reader, 1, 1));
+        assert!(!is_chunk_ascii(&reader, 1, 1));
 
         // an update of the unproven snapshot can prove the flags again
         let (proven, proven_size) = append_footer(&replaced, replaced_size, |updater| {

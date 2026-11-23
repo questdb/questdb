@@ -570,11 +570,6 @@ impl FileHeaderBuilder {
         self
     }
 
-    /// The flags of the columns added so far, in column order.
-    pub(crate) fn column_flags(&self) -> impl Iterator<Item = ColumnFlags> + '_ {
-        self.columns.iter().map(|column| column.flags)
-    }
-
     /// Sets the bloom filter column indices. The list is sorted and deduped.
     pub fn set_bloom_filter_columns(&mut self, indices: &[u32]) -> &mut Self {
         self.bloom_filter_columns = indices.to_vec();

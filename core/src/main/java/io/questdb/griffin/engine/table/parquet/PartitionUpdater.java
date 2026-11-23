@@ -234,9 +234,8 @@ public class PartitionUpdater implements QuietCloseable {
 
     /**
      * Gives a rewrite the {@code _pm} of the file it reads, so that the row groups it copies keep the ASCII flags of
-     * their VARCHAR chunks. Without it a copied chunk gets the flag of its whole column from the parquet footer, and
-     * one non-ASCII value costs every row group of the column the ASCII fast path. Call after {@link #of}, before
-     * the first row group.
+     * their VARCHAR chunks. Without it a copied chunk has no flag: the flag of a whole column, in the parquet footer
+     * or in the old header, flags no chunk. Call after {@link #of}, before the first row group.
      *
      * @param parquetMetaAddr     address of the mapped {@code _pm}
      * @param parquetMetaFileSize size of the {@code _pm} snapshot that describes the file, which the map covers

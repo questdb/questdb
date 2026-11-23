@@ -308,9 +308,10 @@ public class FuzzRunner {
 
             if (waitApply) {
                 int applyThreadCount = Math.max(fuzzTransactions.size(), 4);
+                final AtomicInteger runningApplyThreads = new AtomicInteger(applyThreadCount);
                 for (int thread = 0; thread < applyThreadCount; thread++) {
                     final Rnd threadApplyRnd = new Rnd(rnd.getSeed0(), rnd.getSeed1());
-                    Thread applyThread = new Thread(() -> runApplyThread(done, errors, threadApplyRnd));
+                    Thread applyThread = new Thread(() -> runApplyThread(done, runningApplyThreads, errors, threadApplyRnd));
                     applyThread.start();
                     applyThreads.add(applyThread);
                 }
@@ -320,7 +321,7 @@ public class FuzzRunner {
                 applyThreads.add(purgeJobThread);
 
                 if (isScanningTablesDuringParallelApply) {
-                    Thread scanThread = new Thread(() -> runVarcharAsciiFlagScans(done, errors, tableNameBase, tableCount, multiTable));
+                    Thread scanThread = new Thread(() -> runVarcharAsciiFlagScans(runningApplyThreads, errors, tableNameBase, tableCount, multiTable));
                     scanThread.start();
                     applyThreads.add(scanThread);
                 }
@@ -2530,7 +2531,7 @@ public class FuzzRunner {
         }
     }
 
-    private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
+    private void runApplyThread(AtomicInteger done, AtomicInteger runningApplyThreads, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             int i = 0;
@@ -2557,6 +2558,7 @@ public class FuzzRunner {
         } finally {
             Path.clearThreadLocals();
             Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+            runningApplyThreads.decrementAndGet();
         }
     }
 
@@ -2571,8 +2573,13 @@ public class FuzzRunner {
         }
     }
 
+    /**
+     * Scans the tables for VARCHAR values flagged ASCII that are not, while the apply threads run: a later commit can
+     * rewrite the partition and correct a wrong flag before the run ends. The apply threads drain the WAL after the
+     * writers finish, so the scans go on until the last of them exits, and then scan the tables once more.
+     */
     private void runVarcharAsciiFlagScans(
-            AtomicInteger done,
+            AtomicInteger runningApplyThreads,
             ConcurrentLinkedQueue<Throwable> errors,
             String tableNameBase,
             int tableCount,
@@ -2580,7 +2587,9 @@ public class FuzzRunner {
     ) {
         try (SqlExecutionContextImpl scanContext = new SqlExecutionContextImpl(engine, 1)) {
             scanContext.with(AllowAllSecurityContext.INSTANCE);
-            while (done.get() == 0 && errors.isEmpty()) {
+            while (errors.isEmpty()) {
+                // read before the round: a round that starts after the last apply thread exits sees every commit
+                final boolean isLastRound = runningApplyThreads.get() == 0;
                 for (int i = 0; i < tableCount; i++) {
                     final String tableName = multiTable ? getWalParallelApplyTableName(tableNameBase, i) : tableNameBase;
                     try (
@@ -2599,6 +2608,9 @@ public class FuzzRunner {
                     } catch (SqlException | CairoException | TableReferenceOutOfDateException e) {
                         // a concurrent DDL, a dropped table or a busy reader: the next round reads the table again
                     }
+                }
+                if (isLastRound) {
+                    break;
                 }
                 Os.sleep(1);
             }

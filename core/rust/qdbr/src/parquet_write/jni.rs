@@ -757,6 +757,9 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
         let encodings = crate::parquet_write::schema::to_encodings(&partition);
         let compressions = crate::parquet_write::schema::to_compressions(&partition);
         let mut chunked = writer.chunked_with_compressions(schema, encodings, compressions)?;
+        if parquet_meta_fd >= 0 {
+            chunked.track_chunk_ascii();
+        }
         chunked.write_chunk(&partition)?;
         let parquet_file_size = chunked
             .finish(additional_meta)
@@ -799,7 +802,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
             .unwrap_or(-1);
 
         let (parquet_meta_bytes, _parquet_meta_footer_offset) =
-            crate::parquet_metadata::generate_parquet_metadata(
+            crate::parquet_metadata::generate_parquet_metadata_with_chunk_ascii(
                 &col_infos,
                 chunked.row_groups(),
                 designated_ts,
@@ -810,6 +813,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                chunked.chunk_ascii(),
             )
             .context("generate_parquet_metadata failed")?;
 

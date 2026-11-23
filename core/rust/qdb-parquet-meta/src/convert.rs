@@ -413,9 +413,9 @@ pub fn convert_from_parquet(
             if col_meta.format == Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                 flags = flags.with_local_key_is_global();
             }
-            if col_meta.ascii == Some(true) {
-                flags = flags.with_ascii();
-            }
+            // No IS_ASCII from the footer's `ascii`: a header flag must hold for every row group,
+            // and the footer value may be stale (9.3.4 and 9.3.5 kept it true after merging
+            // non-ASCII rows in place).
         }
 
         if let Some(sc) = sorting_cols.iter().find(|sc| sc.column_idx == i as i32) {
@@ -521,8 +521,8 @@ pub fn convert_from_parquet(
 /// a parquet2 [`FileMetaData`].
 ///
 /// `is_chunk_ascii` holds, by row group and column, whether every value of the
-/// chunk is ASCII; a row group or a column it lacks is not. The chunks of a
-/// column that `columns` flags ASCII carry the flag regardless.
+/// chunk is ASCII; a row group or a column it lacks is not. The column flags
+/// in `columns` go to the header as they are and flag no chunk.
 #[allow(clippy::too_many_arguments)]
 pub fn generate_parquet_metadata(
     columns: &[ParquetMetaColumnInfo<'_>],

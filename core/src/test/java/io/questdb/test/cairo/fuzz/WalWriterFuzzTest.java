@@ -57,6 +57,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Assert;
@@ -320,7 +321,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquet() throws Exception {
-        runConvertPartitionToParquetFuzz(generateRandom(LOG));
+        runConvertPartitionToParquetFuzz(generateRandom(LOG), null);
     }
 
     @Test
@@ -329,8 +330,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // VARCHAR column that had just received a non-ASCII value. The next rewrite of the partition
         // corrected the flag, so only a reader that scans the table between the two sees it. The run
         // takes that path under the ASYNC commit mode.
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
-        runConvertPartitionToParquetFuzz(generateRandom(LOG, 3176735989029557L, 1795001355429L));
+        runConvertPartitionToParquetFuzz(generateRandom(LOG, 3176735989029557L, 1795001355429L), "async");
+        Assert.assertEquals(CommitMode.ASYNC, engine.getConfiguration().getCommitMode());
     }
 
     /**
@@ -1509,8 +1510,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         fuzzer.setVacuumProbability(0);
     }
 
-    private void runConvertPartitionToParquetFuzz(Rnd rnd) throws Exception {
+    // commitMode, when given, pins the commit mode of the run; setTestParams() can restart the test setup, which
+    // gives the engine the commit mode of the fuzz test class, so it is set after
+    private void runConvertPartitionToParquetFuzz(Rnd rnd, @Nullable String commitMode) throws Exception {
         setTestParams(rnd);
+        if (commitMode != null) {
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        }
 
         setFuzzProbabilities(
                 0.01,

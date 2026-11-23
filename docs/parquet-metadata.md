@@ -221,7 +221,7 @@ file otherwise. Feature sections are ordered by bit position.
 | 2   | HEADER_ASCII_VALID | None. The `IS_ASCII` column flags of the header hold for every row group of this snapshot. See "ASCII flags" below.                              |
 | 32  | INDEX_ROW_MAP      | Required. `8 + 8 * ROW_GROUP_COUNT` bytes: `[u64 index_row_count][u64 index_row_lo; ROW_GROUP_COUNT]`. See "Index row map" below.               |
 
-Bit 2 indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
+Header bit 2 (SORTING_IS_DTS_ASC) indicates that the partition's sorting order is implicitly the designated timestamp column in ascending order. The
 on-disk `SORTING_COLUMN_COUNT` is 0 and the SORTING_COLUMNS section is absent, but readers treat the partition as sorted
 by `[DESIGNATED_TIMESTAMP]` ascending. The designated timestamp column's DESCENDING flag must not be set. This flag is
 only valid when `DESIGNATED_TIMESTAMP >= 0`; writers must not set it when `DESIGNATED_TIMESTAMP` is -1.
@@ -311,27 +311,31 @@ Per-column metadata. Written once in the header, applies across all row groups.
 A reader that knows every value of a VARCHAR chunk is ASCII skips UTF-8 handling. It may assume that
 only when the metadata says so, and a flag that says so wrongly gives wrong query results.
 
-The header is written once and every snapshot of the file shares it, so the `IS_ASCII` column flag
-is true for the snapshot the file was created with, and no later update can clear it. Two things
-that an update does write keep the flag true afterwards:
+The ASCII flag lives on each column chunk (the `IS_ASCII` bit of the chunk's FLAGS, see "Column
+chunk"): every value of that chunk is ASCII. A row group block never changes, so the flag holds in
+every snapshot that refers to the block. Only a writer that checked the values of the chunk sets it:
+every writer flags the chunks it writes by their values, whatever the rest of the column holds, and
+a writer that copies a row group into a new file copies the flags of its chunks from the `_pm` of
+the old file. A flag that describes a whole column, the header's `IS_ASCII` or the `ascii` of the
+QuestDB metadata in the parquet footer, never flags a chunk: no writer checked it chunk by chunk, and
+QuestDB 9.3.4 and 9.3.5 left the footer's true over non-ASCII values. A `_pm` built from the parquet
+file alone, without the `_pm` of the file it describes, flags no chunk.
 
-- the `IS_ASCII` flag of a column chunk (see "Column chunk"): every value of that chunk is ASCII. A
-  row group block never changes, so the flag holds in every snapshot that refers to the block. A
-  writer sets it on each chunk whose values it wrote and found ASCII, whatever the rest of the
-  column holds, and on every chunk of a column the header flags. A writer that copies a row group
-  into a new file copies the flags of its chunks from the `_pm` of the old file; the parquet footer
-  keeps one flag per column, and without the old `_pm` a copied chunk has only that.
-- the `HEADER_ASCII_VALID` footer flag: every column the header flags is still ASCII in all row
-  groups of the snapshot. An update that adds or replaces row groups sets it only when it knows
-  that. A footer that keeps the row groups of the previous one inherits its answer.
+The header's `IS_ASCII` column flag comes from QuestDB 10.2.0 and older, which set it when they
+created the file and trusted it alone; later versions do not set it. The header is written once and
+every snapshot of the file shares it, so the flag is true for the snapshot the file was created
+with, and no later update can clear it. The `HEADER_ASCII_VALID` footer flag says that every column
+the header flags is still ASCII in all row groups of the snapshot. An update that adds or replaces
+row groups sets it only when it knows that. A footer that keeps the row groups of the previous one
+inherits its answer.
 
 A reader takes a chunk for ASCII when the chunk flag is set, or when the header flags the column
 and the snapshot is the first of the chain (`PREV_PARQUET_META_FILE_SIZE` is 0) or carries
 `HEADER_ASCII_VALID`.
 
-QuestDB 10.2.0 and older wrote neither flag and trusted the header alone. A `_pm` they updated in
-place has a later footer without `HEADER_ASCII_VALID`, so its header flags are unproven and its
-values read as not ASCII, until an update that knows the columns of the file sets the flag again.
+A `_pm` that 10.2.0 or older updated in place has a later footer without `HEADER_ASCII_VALID`, so
+its header flags are unproven and its values read as not ASCII, until an update that knows the
+columns of the file sets the flag again.
 
 ### Sorting column (4 bytes)
 

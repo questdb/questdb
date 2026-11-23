@@ -263,10 +263,11 @@ impl FooterFeatureFlags {
     /// identity map. A reader ignoring it would resolve index rows at the wrong row group.
     pub const INDEX_ROW_MAP_BIT: u64 = 1 << 32;
 
-    /// The header's `IS_ASCII` column flags hold for every row group of this snapshot. The header
-    /// is written once, so an update that appends a footer cannot clear a flag there; its footer
-    /// carries this bit only when no flagged column holds a non-ASCII value. The first footer of
-    /// the chain needs no bit: the header was written with it. No section.
+    /// The header's `IS_ASCII` column flags hold for every row group of this snapshot. Only `_pm`
+    /// files written by QuestDB 10.2.0 and older flag columns in the header. The header is written
+    /// once, so an update that appends a footer cannot clear a flag there; its footer carries this
+    /// bit only when no flagged column holds a non-ASCII value. The first footer of the chain needs
+    /// no bit: the header was written with it. No section.
     pub const HEADER_ASCII_VALID_BIT: u64 = 1 << 2;
 
     pub const KNOWN_REQUIRED: u64 = Self::INDEX_ROW_MAP_BIT;
@@ -613,7 +614,9 @@ impl StatFlags {
 /// every snapshot that refers to the block.
 ///
 /// Layout:
-/// - bit 0: IS_ASCII (varchar columns): every value of the chunk is ASCII
+/// - bit 0: IS_ASCII (varchar columns): every value of the chunk is ASCII. Only a writer that
+///   checked the values of the chunk sets it, or one that copies the chunk together with it;
+///   never from a flag that describes the whole column.
 /// - bits 1-31: reserved
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
 pub struct ChunkFlags(pub u32);
@@ -691,8 +694,9 @@ impl TryFrom<u8> for FieldRepetition {
 /// Layout:
 /// - bit 0: LOCAL_KEY_IS_GLOBAL (symbol columns)
 /// - bit 1: IS_ASCII (varchar columns): every value of the column was ASCII when the file was
-///   created. It holds for a later snapshot only under
-///   [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`]; [`ChunkFlags`] carries the per-chunk flag.
+///   created. Written only by QuestDB 10.2.0 and older; later versions flag chunks instead
+///   ([`ChunkFlags`]). It holds for a later snapshot only under
+///   [`FooterFeatureFlags::HEADER_ASCII_VALID_BIT`].
 /// - bits 2-3: FIELD_REPETITION (2 bits)
 /// - bit 4: DESCENDING (for sorted columns)
 /// - bits 5-31: reserved

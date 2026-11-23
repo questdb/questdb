@@ -14,9 +14,13 @@ use parquet2::write::{
 use qdb_parquet_meta::SeqTxn;
 
 use crate::parquet_write::encode::encode_column_chunk;
+use crate::parquet_write::encoders::helpers::{compute_chunk_slice, partition_slice_range};
 use crate::parquet_write::schema::{
     to_compressions, to_encodings, to_parquet_schema, Column, Partition,
 };
+use crate::parquet_write::util::transmute_slice;
+use crate::parquet_write::varchar::is_column_ascii;
+use qdb_core::col_type::ColumnTypeTag;
 
 use crate::parquet::error::{ParquetError, ParquetResult};
 use crate::POOL;
@@ -284,6 +288,7 @@ impl<W: Write> ParquetWriter<W> {
             per_column_compressions,
             bloom_filter_columns: self.bloom_filter_columns,
             parallel,
+            chunk_ascii: None,
         })
     }
 
@@ -311,9 +316,25 @@ pub struct ChunkedWriter<W: Write> {
     per_column_compressions: Vec<Option<CompressionOptions>>,
     bloom_filter_columns: HashSet<usize>,
     parallel: bool,
+    // By row group written, then by column: whether every value of the column chunk is ASCII.
+    // None unless track_chunk_ascii() asked for it.
+    chunk_ascii: Option<Vec<Vec<bool>>>,
 }
 
 impl<W: Write> ChunkedWriter<W> {
+    /// Makes the writer record, for each row group it writes from now on, which VARCHAR column
+    /// chunks hold only ASCII values, from the per-value ASCII bit of their aux. A writer that
+    /// generates `_pm` passes them on, see [`Self::chunk_ascii`].
+    pub fn track_chunk_ascii(&mut self) {
+        self.chunk_ascii = Some(Vec::new());
+    }
+
+    /// By row group written since [`Self::track_chunk_ascii`], then by column: whether every
+    /// value of the column chunk is ASCII. Empty when the writer does not track them.
+    pub fn chunk_ascii(&self) -> &[Vec<bool>] {
+        self.chunk_ascii.as_deref().unwrap_or(&[])
+    }
+
     /// Write a chunk to the parquet writer.
     pub fn write_chunk(&mut self, partition: &Partition) -> ParquetResult<()> {
         let row_group_size = self
@@ -345,6 +366,15 @@ impl<W: Write> ChunkedWriter<W> {
                 self.parallel,
             )?;
             self.writer.write(row_group, &bloom_hashes)?;
+            if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
+                chunk_ascii.push(
+                    partition
+                        .columns
+                        .iter()
+                        .map(|column| is_varchar_range_ascii(column, offset, length))
+                        .collect(),
+                );
+            }
         }
         Ok(())
     }
@@ -368,6 +398,27 @@ impl<W: Write> ChunkedWriter<W> {
             self.parallel,
         )?;
         self.writer.write(row_group, &bloom_hashes)?;
+        if let Some(chunk_ascii) = self.chunk_ascii.as_mut() {
+            let partition_count = partitions.len();
+            let column_count = partitions.first().map_or(0, |p| p.columns.len());
+            chunk_ascii.push(
+                (0..column_count)
+                    .map(|col| {
+                        partitions.iter().enumerate().all(|(part_idx, partition)| {
+                            let column = &partition.columns[col];
+                            let (offset, length) = partition_slice_range(
+                                part_idx,
+                                partition_count,
+                                column.row_count,
+                                first_partition_start,
+                                last_partition_end,
+                            );
+                            is_varchar_range_ascii(column, offset, length)
+                        })
+                    })
+                    .collect(),
+            );
+        }
         Ok(())
     }
 
@@ -406,6 +457,20 @@ impl<W: Write> ChunkedWriter<W> {
 }
 
 pub type BloomHashes = Vec<Option<Arc<Mutex<HashSet<u64>>>>>;
+
+/// Whether `column` is VARCHAR and every value in its rows `[offset, offset + length)` is ASCII,
+/// by the per-value ASCII bit of its aux. Column top rows hold no value.
+fn is_varchar_range_ascii(column: &Column, offset: usize, length: usize) -> bool {
+    if column.data_type.tag() != ColumnTypeTag::Varchar {
+        return false;
+    }
+    let slice = compute_chunk_slice(column.column_top, offset, length);
+    // SAFETY: aux originates from JNI/Java memory-mapped column data and is page-aligned. Each
+    // entry is exactly 16 bytes.
+    let aux: &[[u8; 16]] = unsafe { transmute_slice(column.secondary_data) };
+    aux.get(slice.lower_bound..slice.upper_bound)
+        .is_some_and(is_column_ascii)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn create_row_group(

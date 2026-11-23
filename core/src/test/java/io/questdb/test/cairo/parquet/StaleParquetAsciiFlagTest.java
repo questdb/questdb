@@ -25,7 +25,9 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -54,9 +56,24 @@ import java.util.zip.ZipInputStream;
  * values above, which 10.2.0 then read as ASCII: {@code sum(length(v2))} returned 272 instead of 232. In
  * {@code ascii_kept} its v2 values are {@code 'f' || x}, so the header flags are still true, but nothing in
  * {@code _pm} tells the two tables apart.
+ * <p>
+ * {@code stale_ascii_934} is a table the released 9.3.4 wrote with row groups of 10 rows:
+ * <pre>
+ * CREATE TABLE stale_ascii (ts TIMESTAMP, v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL;
+ * INSERT INTO stale_ascii SELECT '2024-01-01T00:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x FROM long_sequence(30);
+ * INSERT INTO stale_ascii VALUES ('2024-01-02T00:00:00', 'next_day');
+ * ALTER TABLE stale_ascii CONVERT PARTITION TO PARQUET LIST '2024-01-01';
+ * INSERT INTO stale_ascii VALUES ('2024-01-01T00:02:30', 'é_m1_rg0'), ('2024-01-01T00:12:30', 'ü_m1_rg1');
+ * </pre>
+ * The last INSERT merged the two rows into row groups 0 and 1 in place, and 9.3.4 kept {@code "ascii": true} for v
+ * in the Parquet footer; 9.3.4 has no {@code _pm}. {@code stale_ascii_934_upgraded_by_1020} is the same table after
+ * the released 10.2.0 opened it: its upgrade built {@code _pm} from that footer and flagged v ASCII in the header,
+ * and 10.2.0 returns {@code length('é_m1_rg0')} as 9.
  */
 public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
     private static final String QUERY = "SELECT ts, v1, length(v1) len1, upper(v1) up1, v2, length(v2) len2, upper(v2) up2 FROM ";
+    private static final String STALE_FOOTER_ROWS = "SELECT ts, v, length(v) len, upper(v) up FROM stale_ascii WHERE ts IN ('2024-01-01T00:02:30', '2024-01-01T00:12:30')";
+    private static final String STALE_FOOTER_SUMMARY = "SELECT count() c, sum(length(v)) len, sum(length_bytes(v)) bytes FROM stale_ascii WHERE ts < '2024-01-02'";
 
     @Test
     public void testFlippedColumnReadsNoValueAsAscii() throws Exception {
@@ -110,10 +127,10 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
             Assert.assertNotEquals("the append must rewrite the parquet partition", nameTxn, getPartitionNameTxn("ascii_flipped"));
 
             assertSqlCursors(QUERY + "y", QUERY + "ascii_flipped");
-            // The rewrite builds _pm from the parquet footer, where 10.2.0 kept the flags right: v1 is ASCII
-            // in the whole file. The old _pm proves no chunk of v2 ASCII, so only the rows the rewrite
-            // wrote are flagged.
-            assertAsciiFlaggedValueCounts("ascii_flipped", 125, 40);
+            // The rewrite flags the row groups it writes, the 40 new rows. The row groups it copies keep the
+            // chunk flags of the old _pm, and 10.2.0 wrote none; the flag of a whole column, in the old
+            // header or in the parquet footer, flags no chunk.
+            assertAsciiFlaggedValueCounts("ascii_flipped", 40, 40);
         });
     }
 
@@ -135,6 +152,54 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStaleFooterFlagOf934IsDroppedByRewrite() throws Exception {
+        assertMemoryLeak(() -> {
+            unzipFixture("stale_ascii_934_upgraded_by_1020");
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10);
+            // A _pm of a single snapshot: every release trusts its header, and so does this one until the
+            // partition is next rewritten. length() counts the bytes of the two non-ASCII values.
+            assertStaleFooterSummary(32, 99, 99);
+
+            // ADD COLUMN, then a row into row group 1: the rewrite merges row group 1, which holds 'ü_m1_rg1',
+            // and copies row group 0, which holds 'é_m1_rg0'
+            long nameTxn = getPartitionNameTxn("stale_ascii");
+            execute("ALTER TABLE stale_ascii ADD COLUMN c INT");
+            execute("INSERT INTO stale_ascii (ts, v, c) VALUES ('2024-01-01T00:15:30', 'o3_a1', 1)");
+            drainWalQueue();
+            Assert.assertNotEquals("the insert must rewrite the parquet partition", nameTxn, getPartitionNameTxn("stale_ascii"));
+            assertStaleFooterRowsCorrect();
+            assertStaleFooterSummary(33, 102, 104);
+
+            // a second rewrite copies both row groups that hold the non-ASCII values
+            nameTxn = getPartitionNameTxn("stale_ascii");
+            execute("ALTER TABLE stale_ascii ADD COLUMN d INT");
+            execute("INSERT INTO stale_ascii (ts, v, c, d) VALUES ('2024-01-01T00:26:30', 'o3_a2', 2, 2)");
+            drainWalQueue();
+            Assert.assertNotEquals("the insert must rewrite the parquet partition", nameTxn, getPartitionNameTxn("stale_ascii"));
+            assertStaleFooterRowsCorrect();
+            assertStaleFooterSummary(34, 107, 109);
+        });
+    }
+
+    @Test
+    public void testStaleFooterFlagOf934IsDroppedByUpgrade() throws Exception {
+        assertMemoryLeak(() -> {
+            unzipFixture("stale_ascii_934");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.releaseInactive();
+            // the upgrade of a 9.3.4 database runs the migrations from 427 on; Mig941 builds _pm from the footer
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, true);
+            engine.reloadTableNames();
+            engine.reconcileTableNameRegistryState();
+            assertStaleFooterRowsCorrect();
+            assertStaleFooterSummary(32, 97, 99);
+        });
+    }
+
     private static long getPartitionNameTxn(String tableName) {
         try (TableReader reader = getReader(tableName)) {
             return reader.getTxFile().getPartitionNameTxn(0);
@@ -144,9 +209,23 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
     // Unpacks the table directory into the db root, lets the registry discover it from its _name file, and
     // creates y: the same rows in a native partition, where every value carries its own ASCII flag.
     private static void loadFixture(String tableDirName, String lastV2Prefix) throws Exception {
+        unzipFixture(tableDirName);
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
+
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
+        execute("CREATE TABLE y (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO y SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, 'b' || x FROM long_sequence(5)");
+        execute("INSERT INTO y SELECT '2022-02-25T01:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'c' || x, 'd' || x FROM long_sequence(40)");
+        execute("INSERT INTO y SELECT '2022-02-25T02:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'e' || x, " + lastV2Prefix + " || x FROM long_sequence(40)");
+        drainWalQueue();
+    }
+
+    // Unpacks the zip of the fixture into the db root.
+    private static void unzipFixture(String zipName) throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
-        try (InputStream is = StaleParquetAsciiFlagTest.class.getResourceAsStream("/parquet-stale-ascii-flag/" + tableDirName + ".zip")) {
+        try (InputStream is = StaleParquetAsciiFlagTest.class.getResourceAsStream("/parquet-stale-ascii-flag/" + zipName + ".zip")) {
             Assert.assertNotNull(is);
             try (ZipInputStream zip = new ZipInputStream(is)) {
                 ZipEntry ze;
@@ -168,15 +247,6 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
                 }
             }
         }
-        engine.reloadTableNames();
-        engine.reconcileTableNameRegistryState();
-
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 12);
-        execute("CREATE TABLE y (ts TIMESTAMP, v1 VARCHAR, v2 VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("INSERT INTO y SELECT '2022-02-25'::TIMESTAMP + (x - 1) * 60_000_000L, 'a' || x, 'b' || x FROM long_sequence(5)");
-        execute("INSERT INTO y SELECT '2022-02-25T01:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'c' || x, 'd' || x FROM long_sequence(40)");
-        execute("INSERT INTO y SELECT '2022-02-25T02:00:00'::TIMESTAMP + (x - 1) * 60_000_000L, 'e' || x, " + lastV2Prefix + " || x FROM long_sequence(40)");
-        drainWalQueue();
     }
 
     private void appendAsciiRows(String tableName) throws Exception {
@@ -184,6 +254,28 @@ public class StaleParquetAsciiFlagTest extends AbstractCairoTest {
         execute("INSERT INTO " + tableName + rows);
         execute("INSERT INTO y" + rows);
         drainWalQueue();
+    }
+
+    // The two non-ASCII values of stale_ascii, each 8 characters in 9 bytes, read right.
+    private void assertStaleFooterRowsCorrect() throws Exception {
+        assertQuery(STALE_FOOTER_ROWS)
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        ts\tv\tlen\tup
+                        2024-01-01T00:02:30.000000Z\té_m1_rg0\t8\tÉ_M1_RG0
+                        2024-01-01T00:12:30.000000Z\tü_m1_rg1\t8\tÜ_M1_RG1
+                        """);
+    }
+
+    // 'a1'..'a30' hold 81 characters in as many bytes; the two non-ASCII values 16 characters in 18 bytes; 'o3_a1'
+    // and 'o3_a2' 5 each.
+    private void assertStaleFooterSummary(int count, int length, int lengthBytes) throws Exception {
+        assertQuery(STALE_FOOTER_SUMMARY)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("c\tlen\tbytes\n" + count + "\t" + length + "\t" + lengthBytes + "\n");
     }
 
     // Counts the values of v1 and of v2 that a scan of the table returns flagged ASCII.

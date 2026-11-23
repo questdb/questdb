@@ -1252,7 +1252,11 @@ mod tests {
         let desc = reader.column_descriptor(0).unwrap();
         let flags = desc.flags();
         assert!(flags.is_local_key_global());
-        assert!(flags.is_ascii());
+        // the footer's `ascii` describes the whole column and may be stale (9.3.4 and 9.3.5 left
+        // it true over non-ASCII values): it flags neither the column nor its chunks
+        assert!(!flags.is_ascii());
+        let chunk = reader.row_group(0).unwrap().column_chunk(0).unwrap();
+        assert!(!chunk.flags().is_ascii());
     }
 
     #[test]
@@ -1794,8 +1798,9 @@ mod tests {
         assert_eq!(old_reader.row_group_count(), 1);
     }
 
-    /// A `_pm` over the multi-column file with the header flag of column 1 set, and the thrift
-    /// row groups of an update that appends one more row group to it.
+    /// A `_pm` over the multi-column file with the header flag of column 1 set, as QuestDB 10.2.0
+    /// and older wrote it, and the thrift row groups of an update that appends one more row group
+    /// to it.
     fn pm_with_ascii_flagged_column() -> (Vec<u8>, Vec<RowGroup>) {
         let parquet_data = write_multi_column_parquet(80);
         let mut cursor = Cursor::new(&parquet_data);
@@ -1870,9 +1875,10 @@ mod tests {
             let chunk = reader.row_group(rg).unwrap().column_chunk(col).unwrap();
             chunk.flags().is_ascii()
         };
-        // the committed block keeps the flags it was created with, the new block takes the update's
+        // the committed block keeps the flags it was created with, none: the header flag of
+        // column 1 flags no chunk. The new block takes the update's.
         assert!(!chunk_flags(0, 0));
-        assert!(chunk_flags(0, 1));
+        assert!(!chunk_flags(0, 1));
         assert!(!chunk_flags(1, 0));
         assert!(chunk_flags(1, 1));
     }

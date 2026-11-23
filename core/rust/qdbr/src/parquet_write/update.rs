@@ -493,9 +493,10 @@ impl ParquetUpdater {
     }
 
     /// Reads the ASCII flags of the source file's column chunks from its `_pm`, at the snapshot
-    /// of `parquet_meta_file_size` bytes. A rewrite copies most row groups as they are, and
-    /// without this it knows only the parquet footer's one flag per column: a single non-ASCII
-    /// value would cost every copied row group of the column its flag.
+    /// of `parquet_meta_file_size` bytes. A rewrite copies most row groups as they are, and a
+    /// copied chunk keeps the flag its writer gave it. A flag that describes the whole column,
+    /// the `_pm` header's or the parquet footer's, flags no chunk: no writer checked it chunk by
+    /// chunk, and 9.3.4 and 9.3.5 left the footer's true over non-ASCII values.
     pub fn set_source_parquet_meta(
         &mut self,
         parquet_meta: &[u8],
@@ -519,18 +520,12 @@ impl ParquetUpdater {
                 self.file_metadata.schema_descr.columns().len()
             ));
         }
-        let is_header_ascii_valid = reader.is_header_ascii_valid();
-        let mut is_column_ascii = Vec::with_capacity(column_count);
-        for col in 0..column_count {
-            is_column_ascii
-                .push(is_header_ascii_valid && reader.column_descriptor(col)?.flags().is_ascii());
-        }
         let mut source_chunk_ascii = Vec::with_capacity(row_group_count);
         for rg in 0..row_group_count {
             let block = reader.row_group(rg)?;
             let mut is_chunk_ascii = Vec::with_capacity(column_count);
-            for (col, &is_column_ascii) in is_column_ascii.iter().enumerate() {
-                is_chunk_ascii.push(is_column_ascii || block.column_chunk(col)?.flags().is_ascii());
+            for col in 0..column_count {
+                is_chunk_ascii.push(block.column_chunk(col)?.flags().is_ascii());
             }
             source_chunk_ascii.push(is_chunk_ascii);
         }
@@ -2886,11 +2881,10 @@ fn build_column_infos_from_qdb_meta<'a>(
                 crate::parquet_metadata::types::FieldRepetition::from(field_info.repetition);
             flags = flags.with_repetition(repetition);
             if let Some(c) = cm {
+                // No IS_ASCII from `c.ascii`: the chunks carry the flags this updater checked,
+                // and a header flag could not be cleared by a later in-place update.
                 if c.format == Some(QdbMetaColFormat::LocalKeyIsGlobal) {
                     flags = flags.with_local_key_is_global();
-                }
-                if c.ascii == Some(true) {
-                    flags = flags.with_ascii();
                 }
             }
             if let Some(sc) = sorting_columns.iter().find(|sc| sc.column_idx == i as i32) {
@@ -6969,8 +6963,9 @@ mod tests {
         }
     }
 
-    /// A Parquet file of one row group (ts 1..4, `a` and `b` ASCII) with the `_pm` a rewrite
-    /// builds for it: the header flags `a` and `b` ASCII.
+    /// A Parquet file of one row group (ts 1..4, `a` and `b` ASCII by default) with the `_pm` a
+    /// rewrite that writes the row group builds for it: the chunks of `a` and `b` are flagged by
+    /// their values, the header flags no column.
     struct VarcharAsciiFile {
         parquet: NamedTempFile,
         pm: NamedTempFile,
@@ -6979,17 +6974,17 @@ mod tests {
 
     impl VarcharAsciiFile {
         fn new() -> Result<Self, Box<dyn Error>> {
+            Self::with_values(&["a1", "a2", "a3", "a4"], &["b1", "b2", "b3", "b4"])
+        }
+
+        fn with_values(a: &[&str], b: &[&str]) -> Result<Self, Box<dyn Error>> {
             use crate::allocator::TestAllocatorState;
             use parquet2::metadata::SortingColumn;
 
             let src = NamedTempFile::new()?;
             ParquetWriter::new(src.reopen()?)
                 .with_sorting_columns(Some(vec![SortingColumn::new(0, false, false)]))
-                .finish(make_varchar_partition(
-                    &[1, 2, 3, 4],
-                    &["a1", "a2", "a3", "a4"],
-                    &["b1", "b2", "b3", "b4"],
-                ))?;
+                .finish(make_varchar_partition(&[1, 2, 3, 4], a, b))?;
             let src_len = src.as_file().metadata()?.len();
 
             let parquet = NamedTempFile::new()?;
@@ -7015,7 +7010,7 @@ mod tests {
                 -1,
                 SeqTxn::UNSET,
             )?;
-            updater.copy_row_group(0)?;
+            updater.replace_row_group(&make_varchar_partition(&[1, 2, 3, 4], a, b), 0, 0)?;
             updater.end(None)?;
             let pm_size = updater.result_parquet_meta_size() as u64;
             Ok(Self { parquet, pm, pm_size })
@@ -7130,16 +7125,25 @@ mod tests {
             Ok(std::fs::read(self.pm.path())?)
         }
 
-        /// Rewrites `_pm` the way QuestDB 10.2.0 and older left it: no chunk carries a flag and
-        /// no footer says whether the header flags hold.
-        fn strip_to_old_format(&mut self) -> Result<(), Box<dyn Error>> {
+        /// Rewrites `_pm` the way QuestDB 10.2.0 and older left it: the header flags `a` and `b`
+        /// ASCII, as the rewrite of 10.2.0 did for a file created with ASCII values in both, no
+        /// chunk carries a flag and no footer says whether the header flags hold.
+        fn rewrite_pm_as_old_format(&mut self) -> Result<(), Box<dyn Error>> {
             use crate::parquet_metadata::reader::ParquetMetaReader;
             use crate::parquet_metadata::types::{
-                FooterFeatureFlags, COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE,
-                FOOTER_FEATURE_FLAGS_OFF, HEADER_CRC_AREA_OFF,
+                ColumnFlags, FooterFeatureFlags, COLUMN_CHUNK_SIZE, COLUMN_DESCRIPTOR_SIZE,
+                FOOTER_CHECKSUM_SIZE, FOOTER_FEATURE_FLAGS_OFF, HEADER_CRC_AREA_OFF,
+                HEADER_FIXED_SIZE,
             };
 
             let mut bytes = self.pm_bytes()?;
+            // the flags field of a column descriptor follows name_offset, id and col_type
+            for col in [1, 2] {
+                let offset = HEADER_FIXED_SIZE + col * COLUMN_DESCRIPTOR_SIZE + 16;
+                let flags = i32::from_le_bytes(bytes[offset..offset + 4].try_into()?);
+                let flags = ColumnFlags(flags).with_ascii().0;
+                bytes[offset..offset + 4].copy_from_slice(&flags.to_le_bytes());
+            }
             // (footer flags offset, checksum offset) of every snapshot, newest first
             let mut footers = Vec::new();
             let mut chunk_flag_offsets = Vec::new();
@@ -7259,7 +7263,7 @@ mod tests {
     const NOT_ASCII: [bool; 4] = [false; 4];
 
     #[test]
-    fn rewrite_flags_ascii_columns_in_pm_header_and_chunks() -> Result<(), Box<dyn Error>> {
+    fn rewrite_flags_ascii_chunks_and_no_column_in_pm_header() -> Result<(), Box<dyn Error>> {
         use crate::parquet_metadata::reader::ParquetMetaReader;
 
         let file = VarcharAsciiFile::new()?;
@@ -7267,10 +7271,7 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&pm, file.pm_size).unwrap();
         let chunks = reader.row_group(0).unwrap();
         for (col, is_ascii) in [(0, false), (1, true), (2, true)] {
-            assert_eq!(
-                reader.column_descriptor(col).unwrap().flags().is_ascii(),
-                is_ascii
-            );
+            assert!(!reader.column_descriptor(col).unwrap().flags().is_ascii());
             assert_eq!(
                 chunks.column_chunk(col).unwrap().flags().is_ascii(),
                 is_ascii
@@ -7285,7 +7286,6 @@ mod tests {
     fn in_place_append_of_ascii_values_keeps_pm_ascii_flags() -> Result<(), Box<dyn Error>> {
         let mut file = VarcharAsciiFile::new()?;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
-        assert!(file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, ASCII]);
         Ok(())
@@ -7297,17 +7297,14 @@ mod tests {
         let mut file = VarcharAsciiFile::new()?;
         let pm_size_before = file.pm_size;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
-        // the header still flags b ASCII, which no append can undo
-        assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII]);
         // a reader of the snapshot before the append sees its one row group, flagged
         assert_eq!(file.decoded_ascii_flags_at(pm_size_before, 2)?, [ASCII]);
 
-        // The parquet footer now calls b non-ASCII, and the header can no longer vouch for it.
-        // A later append still flags its own chunk of b: its values are ASCII.
+        // The parquet footer now calls b non-ASCII. A later append still flags its own chunk of
+        // b: its values are ASCII.
         file.append_in_place(&["a9", "a10", "a11", "a12"], &["b9", "b10", "b11", "b12"])?;
-        assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII, ASCII]);
         Ok(())
@@ -7328,7 +7325,6 @@ mod tests {
                 &["b13", "b14", "b15", "b16"],
             ),
         ])?;
-        assert!(!file.is_header_ascii_valid()?);
         assert_eq!(
             file.decoded_ascii_flags(1)?,
             [ASCII, ASCII, ASCII, NOT_ASCII]
@@ -7351,7 +7347,7 @@ mod tests {
         file.rewrite(true, |updater| {
             (0..row_group_count).try_for_each(|rg| updater.copy_row_group(rg))
         })?;
-        // the new header flags a alone; the chunks of b keep the flags they had
+        // the copied chunks keep the flags they had
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII, ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII, ASCII]);
 
@@ -7391,15 +7387,15 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_without_source_pm_flags_copied_row_groups_by_column() -> Result<(), Box<dyn Error>> {
+    fn rewrite_without_source_pm_flags_no_copied_row_group() -> Result<(), Box<dyn Error>> {
         let mut file = VarcharAsciiFile::new()?;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
         let row_group_count = file.row_group_count()?;
         file.rewrite(false, |updater| {
             (0..row_group_count).try_for_each(|rg| updater.copy_row_group(rg))
         })?;
-        // the parquet footer says: a is ASCII, b is not
-        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
+        // the parquet footer calls a ASCII, but no copied chunk of a was checked by this rewrite
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
         Ok(())
     }
@@ -7409,24 +7405,26 @@ mod tests {
     ) -> Result<(), Box<dyn Error>> {
         let mut file = VarcharAsciiFile::new()?;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
-        file.strip_to_old_format()?;
+        file.rewrite_pm_as_old_format()?;
         let row_group_count = file.row_group_count()?;
         file.rewrite(true, |updater| {
             (0..row_group_count).try_for_each(|rg| updater.copy_row_group(rg))
         })?;
-        // the header of the old _pm flags b ASCII and nothing vouches for it
-        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
+        // the header of the old _pm flags a and b ASCII and nothing vouches for it; a column
+        // flag flags no copied chunk either way
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
         Ok(())
     }
 
     #[test]
-    fn rewrite_takes_ascii_flags_of_first_snapshot_of_old_pm_from_its_header(
-    ) -> Result<(), Box<dyn Error>> {
+    fn rewrite_takes_no_ascii_flag_from_header_of_old_pm() -> Result<(), Box<dyn Error>> {
         let mut file = VarcharAsciiFile::new()?;
-        file.strip_to_old_format()?;
-        // b turns non-ASCII in the row group the rewrite adds: the parquet footer of the new
-        // file calls it non-ASCII, the copied chunk keeps the flag the old header gave it
+        file.rewrite_pm_as_old_format()?;
+        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII]);
+        // the header of the first snapshot holds, yet it describes the column, not the chunk the
+        // rewrite copies; the row group the rewrite writes is flagged by its values
         file.rewrite(true, |updater| {
             updater.copy_row_group(0)?;
             updater.insert_row_group(
@@ -7435,8 +7433,40 @@ mod tests {
                 4,
             )
         })?;
-        assert_eq!(file.decoded_ascii_flags(1)?, [ASCII, ASCII]);
-        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII, NOT_ASCII]);
+        assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, ASCII]);
+        assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
+        Ok(())
+    }
+
+    #[test]
+    fn rewrite_drops_stale_ascii_flag_of_old_pm_header() -> Result<(), Box<dyn Error>> {
+        // 9.3.4 and 9.3.5 kept the footer flag of b true after merging a non-ASCII value in
+        // place, and the _pm built from that footer on upgrade flags b ASCII in its header
+        let mut file = VarcharAsciiFile::with_values(
+            &["a1", "a2", "a3", "a4"],
+            &["b1", "\u{e9}2", "b3", "b4"],
+        )?;
+        file.rewrite_pm_as_old_format()?;
+        // a single snapshot: the reader trusts the stale header, as every release did
+        assert_eq!(file.decoded_ascii_flags(2)?, [ASCII]);
+
+        // a rewrite that copies the row group and writes another one with a non-ASCII value of b
+        file.rewrite(true, |updater| {
+            updater.copy_row_group(0)?;
+            updater.insert_row_group(
+                &VarcharAsciiFile::next_rows(4, &["a5"; 4], &["b5", "\u{fc}6", "b7", "b8"]),
+                1,
+                4,
+            )
+        })?;
+        assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
+
+        // and the next rewrite, which copies both, finds no flag to carry either
+        let row_group_count = file.row_group_count()?;
+        file.rewrite(true, |updater| {
+            (0..row_group_count).try_for_each(|rg| updater.copy_row_group(rg))
+        })?;
+        assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
         Ok(())
     }
 
@@ -7566,8 +7596,10 @@ mod tests {
         use crate::parquet_metadata::reader::ParquetMetaReader;
         use parquet2::metadata::SortingColumn;
 
-        // the appended row group lies under the column top of a: the caller passes no aux for it
+        // the appended row group lies under the column top of a: the caller passes no aux for it.
+        // The header of the old _pm flags a and b ASCII.
         let mut file = VarcharAsciiFile::new()?;
+        file.rewrite_pm_as_old_format()?;
         let parquet_len = file.parquet.as_file().metadata()?.len();
         let alloc = TestAllocatorState::new();
         let mut updater = super::ParquetUpdater::new(
@@ -7612,7 +7644,8 @@ mod tests {
         updater.commit_parquet_meta(false)?;
         file.pm_size = updater.result_parquet_meta_size() as u64;
 
-        // a row group without values leaves a all-ASCII, and its chunk needs no flag
+        // a row group without values leaves a all-ASCII, so the footer still vouches for the
+        // header, and its chunk needs no flag
         assert!(file.is_header_ascii_valid()?);
         let pm = file.pm_bytes()?;
         let reader = ParquetMetaReader::from_file_size(&pm, file.pm_size).unwrap();
@@ -7626,7 +7659,7 @@ mod tests {
     fn pm_of_old_version_keeps_header_ascii_flags_until_updated_in_place(
     ) -> Result<(), Box<dyn Error>> {
         let mut file = VarcharAsciiFile::new()?;
-        file.strip_to_old_format()?;
+        file.rewrite_pm_as_old_format()?;
         // one snapshot: the header was written for it
         assert_eq!(file.decoded_ascii_flags(1)?, [ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [ASCII]);
@@ -7656,7 +7689,7 @@ mod tests {
         // flagging b ASCII
         let mut file = VarcharAsciiFile::new()?;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "\u{fc}6", "b7", "b8"])?;
-        file.strip_to_old_format()?;
+        file.rewrite_pm_as_old_format()?;
         assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
         assert_eq!(file.decoded_ascii_flags(2)?, [NOT_ASCII, NOT_ASCII]);
@@ -7675,7 +7708,7 @@ mod tests {
         // an old version appended ASCII values only: nothing in _pm tells that from the bug
         let mut file = VarcharAsciiFile::new()?;
         file.append_in_place(&["a5", "a6", "a7", "a8"], &["b5", "b6", "b7", "b8"])?;
-        file.strip_to_old_format()?;
+        file.rewrite_pm_as_old_format()?;
         assert!(!file.is_header_ascii_valid()?);
         assert_eq!(file.decoded_ascii_flags(1)?, [NOT_ASCII, NOT_ASCII]);
 

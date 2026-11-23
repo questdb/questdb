@@ -325,6 +325,9 @@ public final class TestUtils {
                 Assert.fail("Actual cursor does not have record at " + rowIndex);
             }
             rowIndex++;
+            // Before a row can be stashed: the stash compares rows as printed, and printing ignores the flag.
+            assertVarcharAsciiCompliance(metadataActual, l);
+            assertVarcharAsciiCompliance(metadataExpected, r);
             if (timestampValue != -1) {
                 // we are or were stashing record with the same timestamp
                 long tsL = l.getTimestamp(timestampIndex);
@@ -3018,6 +3021,15 @@ public final class TestUtils {
                 break;
             default:
                 throw new UnsupportedOperationException("Unexpected column type: " + ColumnType.nameOf(colTypeL));
+        }
+    }
+
+    // A VARCHAR value flagged ASCII must be ASCII.
+    private static void assertVarcharAsciiCompliance(RecordMetadata metadata, Record record) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.VARCHAR) {
+                assertAsciiCompliance(record.getVarcharA(i));
+            }
         }
     }
 
