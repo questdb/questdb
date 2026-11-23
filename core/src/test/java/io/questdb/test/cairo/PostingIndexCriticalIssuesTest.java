@@ -5654,7 +5654,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         final int fillerRowCount = growRecoveryCoverInReseal();
         final String rowIdsBeforeAppend = recoveryXphiRowIds(fillerRowCount, 40);
         final int[] reuseCount = {0};
-        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, isRestarted, where) -> {
             // no purge job runs yet
             final long stagedSealTxn = liveSealTxnBefore + 1;
             final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
@@ -5687,9 +5687,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
         final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] stagedCount = {0};
-        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, isRestarted, where) -> {
             final long stagedSealTxn = liveSealTxnBefore + 1;
-            if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore) {
+            // a restart drops the purge queue, and the next reseal takes the staged generation again
+            if (!isRestarted && headSealTxnOfRecoveryPartition() == liveSealTxnBefore) {
                 if (isRecoveryValueFilePresent(stagedSealTxn)) {
                     stagedCount[0]++;
                 }
@@ -6409,7 +6410,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
         final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] reuseCount = {0};
-        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, isRestarted, where) -> {
             final long stagedSealTxn = liveSealTxnBefore + 1;
             final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
             resealRecoveryPartitionAfterFailedSwitch();
@@ -11966,7 +11967,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
         final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] stagedCount = {0};
-        sweepRecoveryPartitionSwitch(true, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(true, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, isRestarted, where) -> {
             if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
                 stagedCount[0]++;
             }
@@ -11987,7 +11988,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
         final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] stagedCount = {0};
-        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, isRestarted, where) -> {
             if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
                 stagedCount[0]++;
             }
@@ -13992,8 +13993,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * </ul>
      * The setup puts {@code fillerRowCount} rows ahead of the rows of 2022-02-25, see
      * {@link #createPostingRecoveryTable(int)}. {@code afterFailure}, given the sealTxn of the chain head before the
-     * switch, must leave rows 35 to 39 and the 2022-02-26 row committed. It also runs after the last switch, the one
-     * that made fewer calls than the armed one. Returns the number of failures.
+     * switch and whether the failure stopped the engine, which the sweep then restarted, must leave rows 35 to 39 and
+     * the 2022-02-26 row committed. It also runs after the last switch, the one that made fewer calls than the armed
+     * one. Returns the number of failures.
      */
     private int sweepRecoveryPartitionSwitch(boolean isSync, int fillerRowCount, String expectedXphiRowIds, RecoverySweepStep afterFailure) throws Exception {
         final IndexFileCallFailingFacade sweepFf = new IndexFileCallFailingFacade(Files.SEPARATOR + "new_col_11.p");
@@ -14010,6 +14012,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 final Throwable failure = switchRecoveryPartitionFailingAt(sweepFf, failAt);
                 final String failedCall = sweepFf.failedCall();
                 String where = " [call=" + failAt + ']';
+                boolean isRestarted = false;
                 long keptSealTxn = -1;
                 if (failedCall == null) {
                     if (failure != null) {
@@ -14026,10 +14029,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     }
                     if (engine.isDurabilityFailed()) {
                         restartAfterFailedFlush();
+                        isRestarted = true;
                     }
                 }
                 try {
-                    afterFailure.run(liveSealTxnBefore, where);
+                    afterFailure.run(liveSealTxnBefore, isRestarted, where);
                     engine.releaseAllReaders();
                     try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                         runPostingSealPurgeJob(purgeJob);
@@ -14272,7 +14276,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     @FunctionalInterface
     private interface RecoverySweepStep {
-        void run(long liveSealTxnBefore, String where) throws Exception;
+        void run(long liveSealTxnBefore, boolean isRestarted, String where) throws Exception;
     }
 
     private static class FailAppendPositionLengthFacade extends TestFilesFacadeImpl {

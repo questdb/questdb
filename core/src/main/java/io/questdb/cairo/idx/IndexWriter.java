@@ -28,7 +28,6 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.TxReader;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
@@ -97,15 +96,15 @@ public interface IndexWriter extends Closeable, Mutable {
     }
 
     /**
-     * Passes the owning writer's txn record, read when a seal decides how to flush: under
+     * Passes the owning writer, read when a seal decides how to flush: under
      * {@link io.questdb.cairo.CommitMode#ADAPTIVE} a seal whose entry is stamped above the committed txn takes no
      * flush, since recovery drops such an entry after a power loss and the next save point makes it durable. Without
-     * a source every ADAPTIVE seal flushes. The source must be read only while its owner is open, and every partition
-     * a seal without a flush writes must be in the owner's save point write set.
+     * a source every seal flushes. The source must be read only while its owner is open, and every partition a seal
+     * without a flush writes must be in the owner's save point write set.
      *
-     * @param committedTxnSource the owner's txn record, or null for none
+     * @param committedTxnSource the owning writer, or null for none
      */
-    default void setCommittedTxnSource(@Nullable TxReader committedTxnSource) {
+    default void setCommittedTxnSource(@Nullable CommittedTxnSource committedTxnSource) {
     }
 
     default void configureCovering(

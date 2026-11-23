@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.file.CompositeFrameCache;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.CommittedTxnSource;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.IndexWriter;
@@ -179,7 +180,7 @@ import static io.questdb.std.Files.*;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.tasks.TableWriterTask.*;
 
-public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
+public class TableWriter implements TableWriterAPI, MetadataService, CommittedTxnSource, Closeable {
     // Sink slot 8 when the write left the partition's geometry alone.
     public static final long NO_GEOMETRY_REF = 0L;
     public static final int O3_BLOCK_DATA = 2;
@@ -1254,7 +1255,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The build seals every partition at the txn the meta commit below lands on: flush as this table commits
         // (an ADAPTIVE build takes no flush, see IndexWriter.setCommittedTxnSource), not at the instance-wide mode.
         indexer.getWriter().setCommitMode(getFlushCommitMode());
-        indexer.getWriter().setCommittedTxnSource(txWriter);
+        indexer.getWriter().setCommittedTxnSource(this);
         boolean isTxnWriteStarted = false;
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
@@ -3868,6 +3869,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public int getEffectiveCommitMode() {
         return effectiveCommitMode;
+    }
+
+    // A seal of a commit in progress may skip its flush only while this table takes save points: the next one makes
+    // its files durable, its pin keeps the files the seal superseded, and recovery to it drops the seal's entry. A
+    // replica, a non-WAL table and a table not yet enrolled take none.
+    @Override
+    public long getCommittedTxnForSeal() {
+        return enrolledAdaptive && getFlushCommitMode() == CommitMode.ADAPTIVE ? txWriter.getTxn() : -1L;
     }
 
     /**
@@ -15309,10 +15318,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // without threading the mode through the configureFollowerAndWriter() call sites. See
                 // reapplyColumnCommitMode.
                 indexer.getWriter().setCommitMode(effectiveCommitMode);
-                // Lets an ADAPTIVE seal of a commit in progress skip its flush (IndexWriter.setCommittedTxnSource).
-                // The effective mode, not getFlushCommitMode(), because these indexers outlive a role change: a
-                // replica's NOSYNC kept after a promotion would skip flushes recovery then relies on.
-                indexer.getWriter().setCommittedTxnSource(txWriter);
+                // Lets an ADAPTIVE seal of a commit in progress skip its flush while the table takes save points
+                // (getCommittedTxnForSeal()), read at each seal, so a role change needs no new mode here.
+                indexer.getWriter().setCommittedTxnSource(this);
                 if (IndexType.isPosting(indexer.getWriter().getIndexType())) {
                     hasPostingIndexers = true;
                 }
@@ -18904,7 +18912,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
                     parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
                     parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
-                    parquetRewriteIndexer.getWriter().setCommittedTxnSource(txWriter);
+                    parquetRewriteIndexer.getWriter().setCommittedTxnSource(this);
                     parquetRewriteIndexerType = indexType;
                 }
                 // The seal flushes as this table commits; an ADAPTIVE one skips its flush, see
@@ -18980,7 +18988,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // The seal flushes as this table commits; an ADAPTIVE one skips its flush, see
             // IndexWriter.setCommittedTxnSource.
             iw.setCommitMode(getFlushCommitMode());
-            iw.setCommittedTxnSource(txWriter);
+            iw.setCommittedTxnSource(this);
             iw.of(indexDir.trimTo(indexDirLen), columnName, columnNameTxn, indexValueBlockCapacity);
             // Both callers run during a partition format conversion before
             // txWriter.commit; tag the chain entry with the upcoming committed txn.

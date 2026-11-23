@@ -34,7 +34,6 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
@@ -169,7 +168,6 @@ public class PostingIndexWriter implements IndexWriter {
     private static final int MAX_GEN_COUNT = PostingIndexUtils.MAX_GEN_COUNT;
     private static final int PENDING_SLOT_CAPACITY = 8;
     // How a seal makes the files it wrote durable; see sealFlushGrade().
-    private static final int SEAL_FLUSH_ASYNC = 1;
     private static final int SEAL_FLUSH_NONE = 0;
     private static final int SEAL_FLUSH_ORDERED = 2;
     private final double alignedBitWidthThreshold;
@@ -294,7 +292,7 @@ public class PostingIndexWriter implements IndexWriter {
     // The owning table writer's txn record, read when a seal decides whether its entry is stamped above the
     // committed txn (see sealFlushGrade()). Null when the owner supplies none, and then every ADAPTIVE seal takes
     // the ordered flush. Kept across of() and close(): it belongs to the owner, not to the column instance.
-    private TxReader committedTxnSource;
+    private CommittedTxnSource committedTxnSource;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -797,7 +795,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
-    public void setCommittedTxnSource(@Nullable TxReader committedTxnSource) {
+    public void setCommittedTxnSource(@Nullable CommittedTxnSource committedTxnSource) {
         this.committedTxnSource = committedTxnSource;
     }
 
@@ -814,6 +812,8 @@ public class PostingIndexWriter implements IndexWriter {
     public void commitDense() {
         checkNotPoisoned();
         assert coverCount == 0 : "commitDense does not write covered sidecars; use seal()/commit() for covering indexes";
+        // A rebuild flushes as a seal does, see flushAllPendingDense()
+        final boolean isRebuild = pendingDiscardOldSealTxn >= 0;
         if (genCount > 0) {
             // flushAllPendingDense assumes it writes the first and only gen at
             // offset 0. That precondition breaks when the caller's preceding
@@ -840,7 +840,7 @@ public class PostingIndexWriter implements IndexWriter {
         }
         // Same gate as commit(); see IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
-        if (CommitMode.appliesColumnSync(commitMode)) {
+        if (!isRebuild && CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -3759,6 +3759,11 @@ public class PostingIndexWriter implements IndexWriter {
         long headerAddr = valueMem.addressOf(genOffset);
         Unsafe.copyMemory(flushHeaderBuf, headerAddr, headerSize);
         writeSidecarGenData((int) totalValues, genCount);
+        if (pendingDiscardOldSealTxn >= 0) {
+            // The first generation of a rebuild into the value file discardForRebuild() rotated to: as a seal, the
+            // new files reach the disk before the entry that names them (see sealFlushGrade()).
+            flushSealFiles(valueMem, sealFlushGrade());
+        }
 
         genCount++;
         if (COVERING_COUNTERS_ENABLED) {
@@ -3785,6 +3790,7 @@ public class PostingIndexWriter implements IndexWriter {
         // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
         // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
         if (pendingDiscardOldSealTxn >= 0) {
+            flushSealKeyFile();
             recordPostingSealPurge(pendingDiscardOldSealTxn);
             pendingDiscardOldSealTxn = -1L;
         }
@@ -3980,6 +3986,11 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             writeSidecarGenData((int) totalValues, /* genIndex */ 0);
+            if (pendingDiscardOldSealTxn >= 0) {
+                // A rebuild into the value file discardForRebuild() rotated to: as a seal, the new files reach the
+                // disk before the entry that names them (see sealFlushGrade()).
+                flushSealFiles(valueMem, sealFlushGrade());
+            }
 
             this.maxValue = maxValueAfter;
             this.genCount = 1;
@@ -3994,6 +4005,7 @@ public class PostingIndexWriter implements IndexWriter {
             );
 
             if (pendingDiscardOldSealTxn >= 0) {
+                flushSealKeyFile();
                 recordPostingSealPurge(pendingDiscardOldSealTxn);
                 pendingDiscardOldSealTxn = -1L;
             }
@@ -4036,10 +4048,7 @@ public class PostingIndexWriter implements IndexWriter {
         if (mem == null || !mem.isOpen() || grade == SEAL_FLUSH_NONE) {
             return;
         }
-        if (grade == SEAL_FLUSH_ASYNC) {
-            // As commit() under ASYNC: the OS writes the pages back on its own.
-            mem.sync(true);
-        } else if (ff.isSyncfsFileSystemWide()) {
+        if (ff.isSyncfsFileSystemWide()) {
             mem.syncFlushKick();
         } else {
             // No filesystem-wide barrier: an ordering barrier per file, F_BARRIERFSYNC on macOS. Windows has no
@@ -4075,11 +4084,8 @@ public class PostingIndexWriter implements IndexWriter {
     // Step 2 of a seal's flush (see sealFlushGrade()): the .pk, after the entry naming the new files is published
     // and before the superseded files are queued for deletion.
     private void flushSealKeyFile() {
-        switch (sealFlushGrade()) {
-            case SEAL_FLUSH_ORDERED -> keyMem.sync(false);
-            case SEAL_FLUSH_ASYNC -> keyMem.sync(true);
-            default -> {
-            }
+        if (sealFlushGrade() == SEAL_FLUSH_ORDERED) {
+            keyMem.sync(false);
         }
     }
 
@@ -6282,35 +6288,30 @@ public class PostingIndexWriter implements IndexWriter {
      * How a seal, a rollback re-encode or {@link #truncate()} makes the files it wrote durable, by the owner's
      * commit mode (see {@link #setCommitMode(int)}):
      * <ul>
-     *   <li>NOSYNC: no flush.</li>
-     *   <li>ASYNC: starts writeback without waiting, as {@link #commit()} does.</li>
-     *   <li>ADAPTIVE: no flush for an entry stamped above the committed txn. Recovery drops such an entry and
-     *       deletes its files when a power loss comes before the next save point, and the save point makes them
-     *       durable otherwise. Recovery keeps an entry stamped at or below the committed txn, so it takes the ordered
-     *       flush, as does every seal whose owner supplies no committed txn
-     *       ({@link #setCommittedTxnSource(TxReader)}).</li>
-     *   <li>SYNC: the ordered flush.</li>
+     *   <li>ADAPTIVE, an entry stamped above the committed txn: no flush. Recovery drops such an entry and deletes
+     *       its files when a power loss comes before the next save point, the save point makes them durable
+     *       otherwise, and its pin keeps the superseded files until then.</li>
+     *   <li>Every other seal, in every mode: the ordered flush. NOSYNC and ASYNC promise no commit across a power
+     *       loss, but the purge deletes the superseded files soon after the seal, and without the flush the
+     *       {@code .pk} on disk could then name deleted files, or new files whose pages never reached the disk:
+     *       the index would fail until REINDEX. An ADAPTIVE seal whose owner supplies no committed txn
+     *       ({@link #setCommittedTxnSource(CommittedTxnSource)}) counts as one recovery keeps.</li>
      * </ul>
      * The ordered flush has two steps: every new value and cover file reaches the disk before the {@code .pk}
      * entry that names them is published, then the {@code .pk} does, before the superseded files are queued for
      * deletion.
      */
     private int sealFlushGrade() {
-        return switch (indexCommitMode) {
-            case CommitMode.NOSYNC -> SEAL_FLUSH_NONE;
-            case CommitMode.ASYNC -> SEAL_FLUSH_ASYNC;
-            case CommitMode.ADAPTIVE -> isSealInProgress() ? SEAL_FLUSH_NONE : SEAL_FLUSH_ORDERED;
-            default -> SEAL_FLUSH_ORDERED;
-        };
+        return indexCommitMode == CommitMode.ADAPTIVE && isSealInProgress() ? SEAL_FLUSH_NONE : SEAL_FLUSH_ORDERED;
     }
 
-    // True when the entry the next publish stamps lies above the owner's committed txn. A source that reads no
-    // txn (a closed record) proves nothing.
+    // True when the entry the next publish stamps lies above the owner's committed txn and a save point will make it
+    // durable. A source that answers -1 (no save point to come, or a closed record) proves nothing.
     private boolean isSealInProgress() {
         if (committedTxnSource == null) {
             return false;
         }
-        final long committedTxn = committedTxnSource.getTxn();
+        final long committedTxn = committedTxnSource.getCommittedTxnForSeal();
         return committedTxn > -1 && pendingTxnAtSeal > committedTxn;
     }
 

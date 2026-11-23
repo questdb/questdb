@@ -27,6 +27,7 @@ package io.questdb.test.cairo.idx;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
@@ -49,12 +50,13 @@ import java.util.regex.Pattern;
  * reseal of older partitions by a WAL commit, the seal at a partition switch, the seal a fast WAL commit makes at the
  * generation cap of the last partition, and REINDEX.
  * <p>
- * The expected counts come from what each mode promises, not from the code: NOSYNC and ASYNC promise nothing on a
- * power loss, so a seal waits for no disk. ADAPTIVE recovers to its last save point and drops every chain entry
- * stamped above it, so a seal of a commit in progress needs no flush either; a seal stamped with the committed txn
- * (the generation cap, REINDEX) is kept by recovery and takes the ordered flush. SYNC takes the ordered flush for
- * every seal. The ordered flush is two disk waits: one device flush for every new value and cover file, then the
- * {@code .pk} flush.
+ * The expected counts come from what each mode promises, not from the code. ADAPTIVE recovers a WAL table to its last
+ * save point and drops every chain entry stamped above it, so a seal of a commit in progress needs no flush; a seal
+ * stamped with the committed txn (the generation cap, REINDEX), and every seal of a table that takes no save point (a
+ * non-WAL table, a replica), takes the ordered flush. Every other mode
+ * takes the ordered flush for every seal: NOSYNC and ASYNC may lose commits on a power loss, but must not leave an
+ * index that names files the purge of the superseded generation deleted, or files that never reached the disk. The
+ * ordered flush is two disk waits: one device flush for every new value and cover file, then the {@code .pk} flush.
  * <p>
  * The facade reports a filesystem-wide {@code syncfs} on every platform, so the counts are the same everywhere.
  */
@@ -145,7 +147,27 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         });
     }
 
+    // A replica takes no save point, so nothing would make the files of a seal of a commit in progress durable, and no
+    // pin would keep the files it superseded: the seal takes the ordered flush, as one that recovery keeps.
+    @Test
+    public void testOlderPartitionResealOnReplica() throws Exception {
+        assertMemoryLeak(new CountingFacade(), () -> {
+            createTable(true, true);
+            insertAndApply(rowsOverDays(0, 20, 4));
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                resetCounts();
+                insertAndApply(rowsOverDays(20, 20, 4, -500_000L));
+                assertSealFlushes(false, "WAL commit into older partitions on a replica");
+                assertIndexMatchesScan();
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
     // The last partition seals its generations when the writer moves to the next one, as part of the commit that does.
+    // A non-WAL table takes no save point, so the seal flushes in every mode.
     @Test
     public void testPartitionSwitchSeal() throws Exception {
         assertMemoryLeak(new CountingFacade(), () -> {
@@ -156,7 +178,8 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             }
             resetCounts();
             execute("INSERT INTO t VALUES (" + DAY + "::TIMESTAMP, 'k1', 41, 41, 41)");
-            assertSealFlushes(true, "commit into the next partition");
+            // a non-WAL table takes no save point
+            assertSealFlushes(false, "commit into the next partition of a non-WAL table");
             assertIndexMatchesScan();
         });
     }
@@ -251,7 +274,9 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         }
     }
 
-    private void assertSealFlushes(boolean isInProgress, String operation) {
+    // isSavePointCovered: the seal is of a commit in progress on a table that takes save points, so under ADAPTIVE the
+    // next save point makes it durable and it takes no flush
+    private void assertSealFlushes(boolean isSavePointCovered, String operation) {
         Assert.assertEquals(CommitMode.fromString(commitMode), engine.getConfiguration().getCommitMode());
         final int seals;
         final Map<String, Integer> flushes;
@@ -260,11 +285,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             flushes = new TreeMap<>(SEAL_FLUSHES);
         }
         Assert.assertTrue(operation + " made no seal", seals > 0);
-        final boolean isFlushed = switch (commitMode) {
-            case "sync" -> true;
-            case "adaptive" -> !isInProgress;
-            default -> false;
-        };
+        final boolean isFlushed = !"adaptive".equals(commitMode) || !isSavePointCovered;
         // The ordered flush is two disk waits: the new files, then the .pk.
         int total = 0;
         for (int n : flushes.values()) {
