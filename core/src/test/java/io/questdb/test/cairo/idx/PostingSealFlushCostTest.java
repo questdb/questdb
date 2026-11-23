@@ -27,6 +27,7 @@ package io.questdb.test.cairo.idx;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.idx.PostingIndexWriter;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.std.Files;
 import io.questdb.std.str.LPSZ;
@@ -80,6 +81,9 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
     private static final Map<String, Integer> SEAL_FLUSHES = new TreeMap<>();
     private static final Set<String> SEAL_METHODS = Set.of("seal", "rebuildSidecarsByCopy", "rollbackToMaxValue", "truncate");
     private static final String WRITER_CLASS = PostingIndexWriter.class.getName();
+    // Set by the test: the first file open inside a WAL apply promotes the replica, see CountingFacade.
+    private static volatile boolean isPromotionArmed;
+    private static volatile boolean isPromoted;
     private static int rebuilds;
     private static int seals;
     private final String commitMode;
@@ -155,6 +159,49 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             insertAndApply(rowsOverDays(20, 20, 4, -500_000L));
             assertRebuildAndSealFlushes(true, "WAL commit into older partitions");
             assertIndexMatchesScan();
+        });
+    }
+
+    // A replica promoted in the middle of an apply batch commits under ADAPTIVE at once, but its table has no save point
+    // and no pin until the batch-end reconcile: nothing would keep the files a seal superseded, so the seals of the
+    // batch take the ordered flush.
+    @Test
+    public void testOlderPartitionResealAfterPromotionMidBatch() throws Exception {
+        assertMemoryLeak(new CountingFacade(), () -> {
+            createTable(true, true);
+            // one generation per commit, up to the seal threshold, in each of 3 days
+            for (int d = 0; d < 3; d++) {
+                for (int i = 1; i <= 16; i++) {
+                    final int v = d * 16 + i;
+                    insertAndApply("(" + (d * DAY + i * 1_000_000L) + "::TIMESTAMP, 'k" + (v % 4) + "', " + v + ", " + v + ", " + v + ")");
+                }
+            }
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            try {
+                // the replica batch's reconcile removes the save point and its pin
+                insertAndApply("(" + (2 * DAY + 100_000_000L) + "::TIMESTAMP, 'k1', 49, 49, 49)");
+                resetCounts();
+                isPromotionArmed = true;
+                // one WAL transaction appending after the last row of each day: the older days take it out of order
+                final StringBuilder rows = new StringBuilder();
+                for (int d = 0; d < 3; d++) {
+                    for (int i = 0; i < 4; i++) {
+                        final int v = 50 + d * 4 + i;
+                        rows.append(rows.length() == 0 ? "" : ", ").append('(').append(d * DAY + 3_600_000_000L + i * 1_000_000L)
+                                .append("::TIMESTAMP, 'k").append(v % 4).append("', ").append(v).append(", ").append(v)
+                                .append(", ").append(v).append(')');
+                    }
+                }
+                insertAndApply(rows.toString());
+                Assert.assertTrue("the apply opened no file", isPromoted);
+                Assert.assertTrue(engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled());
+                assertSealFlushes(false, "WAL commit into older partitions after a promotion in the batch");
+                assertIndexMatchesScan();
+            } finally {
+                isPromotionArmed = false;
+                isPromoted = false;
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
         });
     }
 
@@ -246,6 +293,17 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
                 .filter(operation -> operation != Operation.NONE)
                 .findFirst()
                 .orElse(Operation.NONE));
+    }
+
+    // Promotes the replica at the first file open inside a WAL apply, after the batch-start reconcile, and counts from
+    // there.
+    private static void maybePromote() {
+        if (isPromotionArmed && !isPromoted && StackWalker.getInstance().walk(s -> s.anyMatch(frame ->
+                ApplyWal2TableJob.class.getName().equals(frame.getClassName()) && "processWalCommit".equals(frame.getMethodName())))) {
+            isPromoted = true;
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            resetCounts();
+        }
     }
 
     private static void recordFlush(String kind) {
@@ -424,7 +482,14 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRO(LPSZ name) {
+            maybePromote();
+            return super.openRO(name);
+        }
+
+        @Override
         public long openRW(LPSZ name, int opts) {
+            maybePromote();
             if (NEW_VALUE_FILE.matcher(name.asAsciiCharSequence()).matches() && !exists(name)) {
                 recordNewValueFile();
             }

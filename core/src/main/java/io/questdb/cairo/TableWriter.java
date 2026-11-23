@@ -3874,12 +3874,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, CommittedTx
         return effectiveCommitMode;
     }
 
-    // A seal of a commit in progress may skip its flush only while this table takes save points: the next one makes
-    // its files durable, its pin keeps the files the seal superseded, and recovery to it drops the seal's entry. A
-    // replica, a non-WAL table and a table not yet enrolled take none.
+    // A seal of a commit in progress may skip its flush only while this table takes save points and holds a save point
+    // pin: the next save point makes its files durable, the pin keeps the files the seal superseded, and recovery to
+    // the save point drops the seal's entry. A replica, a non-WAL table and a table not yet enrolled take none. A
+    // replica promoted in the middle of an apply batch resolves to ADAPTIVE at once, but has no save point and no pin
+    // until the batch-end reconcile.
     @Override
     public long getCommittedTxnForSeal() {
-        return enrolledAdaptive && getFlushCommitMode() == CommitMode.ADAPTIVE ? txWriter.getTxn() : -1L;
+        if (!enrolledAdaptive || getFlushCommitMode() != CommitMode.ADAPTIVE) {
+            return -1L;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTrackerIfExists(tableToken);
+        return tracker != null && tracker.getPinnedEpochTxn() >= 0 ? txWriter.getTxn() : -1L;
     }
 
     /**
