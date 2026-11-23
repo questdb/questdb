@@ -5651,8 +5651,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // purge with its own reader window, which removes them once the reader closes. The first reseal fails at each
         // call on the files of the index in turn; see sweepRecoveryPartitionSwitch().
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        final int fillerRowCount = growRecoveryCoverInReseal();
+        final String rowIdsBeforeAppend = recoveryXphiRowIds(fillerRowCount, 40);
         final int[] reuseCount = {0};
-        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39 40 41 42 43 44", (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, where) -> {
             // no purge job runs yet
             final long stagedSealTxn = liveSealTxnBefore + 1;
             final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
@@ -5662,7 +5664,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 reuseCount[0]++;
             }
             try (TableReader reader = getReader("posting_o3_recovery")) {
-                Assert.assertEquals("34 35 36 37 38 39", indexRowIdsOfRecoveryPartition(reader, "XPHI"));
+                Assert.assertEquals(rowIdsBeforeAppend, indexRowIdsOfRecoveryPartition(reader, "XPHI"));
                 // an out-of-order append to 2022-02-25 supersedes the generation of the reader
                 execute(insertPostingRowsSql(40, 45));
                 Assert.assertEquals(readerSealTxn + 1, headSealTxnOfRecoveryPartition());
@@ -5670,7 +5672,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     runPostingSealPurgeJob(purgeJob);
                 }
                 Assert.assertTrue("the purge removed the generation of an open reader", isRecoveryValueFilePresent(readerSealTxn));
-                Assert.assertEquals("34 35 36 37 38 39", indexRowIdsOfRecoveryPartition(reader, "XPHI"));
+                Assert.assertEquals(rowIdsBeforeAppend, indexRowIdsOfRecoveryPartition(reader, "XPHI"));
             }
         });
         Assert.assertTrue("no failed reseal left a staged generation that the next reseal took again", reuseCount[0] > 0);
@@ -5683,8 +5685,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // staged generation goes. The reseal fails at each call on the files of the index in turn; see
         // sweepRecoveryPartitionSwitch().
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] stagedCount = {0};
-        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
             final long stagedSealTxn = liveSealTxnBefore + 1;
             if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore) {
                 if (isRecoveryValueFilePresent(stagedSealTxn)) {
@@ -6404,8 +6407,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // generation is, after some of the failures, the reused generation of a failed reseal, which an orphan purge
         // targets too.
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
+        final int fillerRowCount = growRecoveryCoverInReseal();
         final int[] reuseCount = {0};
-        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39 40 41 42 43 44", (liveSealTxnBefore, where) -> {
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 45), (liveSealTxnBefore, where) -> {
             final long stagedSealTxn = liveSealTxnBefore + 1;
             final boolean isStagedLeft = headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(stagedSealTxn);
             resealRecoveryPartitionAfterFailedSwitch();
@@ -11960,7 +11964,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // sweepRecoveryPartitionSwitch().
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        sweepRecoveryPartitionSwitch(true, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> resealRecoveryPartitionAfterFailedSwitch());
+        final int fillerRowCount = growRecoveryCoverInReseal();
+        final int[] stagedCount = {0};
+        sweepRecoveryPartitionSwitch(true, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
+            if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
+                stagedCount[0]++;
+            }
+            resealRecoveryPartitionAfterFailedSwitch();
+        });
+        Assert.assertTrue("no failed reseal left a staged generation", stagedCount[0] > 0);
     }
 
     @Test
@@ -11973,7 +11985,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             return;
         }
         node1.setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 1);
-        sweepRecoveryPartitionSwitch(false, "34 35 36 37 38 39", (liveSealTxnBefore, where) -> resealRecoveryPartitionAfterFailedSwitch());
+        final int fillerRowCount = growRecoveryCoverInReseal();
+        final int[] stagedCount = {0};
+        sweepRecoveryPartitionSwitch(false, fillerRowCount, recoveryXphiRowIds(fillerRowCount, 40), (liveSealTxnBefore, where) -> {
+            if (headSealTxnOfRecoveryPartition() == liveSealTxnBefore && isRecoveryValueFilePresent(liveSealTxnBefore + 1)) {
+                stagedCount[0]++;
+            }
+            resealRecoveryPartitionAfterFailedSwitch();
+        });
+        Assert.assertTrue("no failure fell after the switch to the new value file", stagedCount[0] > 0);
     }
 
     /**
@@ -12804,6 +12824,19 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    // The row ids of XPHI in 2022-02-25 of posting_o3_recovery, set up with fillerRowCount rows, once the rows of
+    // minutes 34 to hi - 1 are in
+    private static String recoveryXphiRowIds(int fillerRowCount, int hi) {
+        final StringBuilder rowIds = new StringBuilder();
+        for (int minute = 34; minute < hi; minute++) {
+            if (minute > 34) {
+                rowIds.append(' ');
+            }
+            rowIds.append(fillerRowCount + minute);
+        }
+        return rowIds.toString();
+    }
+
     private static String timestampAtMinute(int minuteOfDay) {
         StringBuilder timestamp = new StringBuilder("2022-02-25T");
         if (minuteOfDay < 0) {
@@ -13243,9 +13276,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     private void createPostingRecoveryTable() throws SqlException {
+        createPostingRecoveryTable(0);
+    }
+
+    // fillerRowCount rows of A open 2022-02-25, all at its first instant, so that the row of minute m has row id
+    // fillerRowCount + m. Their markers spread over the whole LONG range, which the cover cannot compress.
+    private void createPostingRecoveryTable(int fillerRowCount) throws SqlException {
         execute("CREATE TABLE posting_o3_recovery (ts TIMESTAMP, sym2 SYMBOL INDEX TYPE POSTING INCLUDE (marker), sym_top SYMBOL CAPACITY 128, marker LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
         execute(insertPostingRowsSql(-85, 0));
         execute("ALTER TABLE posting_o3_recovery RENAME COLUMN sym2 TO new_col_11");
+        if (fillerRowCount > 0) {
+            execute("INSERT INTO posting_o3_recovery SELECT '2022-02-25T00:00:00.000000Z'::TIMESTAMP, 'A', 'S', x * 7_046_029_254_386_353_131 FROM long_sequence(" + fillerRowCount + ')');
+        }
         execute(insertPostingRowsSql(0, 35));
         drainPostingSealPurgeQueue();
         try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -13398,6 +13440,15 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             published++;
         }
         Assert.assertTrue("posting seal purge queue must be saturated by the test", published > 0);
+    }
+
+    // Of the calls on the files of the index, only those that grow a cover file fall between the switch of a reseal
+    // to its new value file and its publish. A value append page of one OS page, and more than a page of cover data
+    // in 2022-02-25, make the reseal of the partition switch grow its cover. Returns the filler row count for
+    // createPostingRecoveryTable(int) that gives that data.
+    private int growRecoveryCoverInReseal() {
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        return (int) (Files.PAGE_SIZE / Long.BYTES);
     }
 
     // The sealTxn of the head of the chain of the index of new_col_11 in 2022-02-25 of posting_o3_recovery
@@ -13753,7 +13804,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     // Whether the commit that crosses from 2022-02-25 into 2022-02-26 is in posting_o3_recovery
     private boolean isRecoveryPartitionSwitchCommitted() {
         try (TableReader reader = getReader("posting_o3_recovery")) {
-            return reader.size() > 120;
+            return reader.getPartitionCount() > 2;
         }
     }
 
@@ -13925,9 +13976,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
-    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
-    // intended short/overrunning layout rather than a page-padded file.
     /**
      * Fails each call on the files of the posting index of posting_o3_recovery in turn, during the commit that
      * crosses from 2022-02-25 into 2022-02-26 and reseals the index of 2022-02-25, rows 35 to 39 appended to
@@ -13942,17 +13990,18 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      *     <li>the index of 2022-02-25 serves {@code expectedXphiRowIds} for XPHI, and an indexed lookup returns
      *     what a scan returns.</li>
      * </ul>
-     * {@code afterFailure}, given the sealTxn of the chain head before the switch, must leave rows 35 to 39 and
-     * the 2022-02-26 row committed. It also runs after the last switch, the one that made fewer calls than the
-     * armed one. Returns the number of failures.
+     * The setup puts {@code fillerRowCount} rows ahead of the rows of 2022-02-25, see
+     * {@link #createPostingRecoveryTable(int)}. {@code afterFailure}, given the sealTxn of the chain head before the
+     * switch, must leave rows 35 to 39 and the 2022-02-26 row committed. It also runs after the last switch, the one
+     * that made fewer calls than the armed one. Returns the number of failures.
      */
-    private int sweepRecoveryPartitionSwitch(boolean isSync, String expectedXphiRowIds, RecoverySweepStep afterFailure) throws Exception {
+    private int sweepRecoveryPartitionSwitch(boolean isSync, int fillerRowCount, String expectedXphiRowIds, RecoverySweepStep afterFailure) throws Exception {
         final IndexFileCallFailingFacade sweepFf = new IndexFileCallFailingFacade(Files.SEPARATOR + "new_col_11.p");
         final int[] failureCount = {0};
         ff = sweepFf;
         assertMemoryLeak(ff, () -> {
             for (int failAt = 1; ; failAt++) {
-                createPostingRecoveryTable();
+                createPostingRecoveryTable(fillerRowCount);
                 final long liveSealTxnBefore = headSealTxnOfRecoveryPartition();
                 // the setup drops the purges it queues, so the generations it superseded stay
                 final LongList leftSealTxns = new LongList();
@@ -14135,6 +14184,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         return new SweepResult(outcomeCounts[0], outcomeCounts[1]);
     }
 
+    // Writes a deliberately corrupt posting seal-purge pending file, truncated to
+    // an exact length (TRUNCATE_TO_POINTER) so the recovery bound-checks see the
+    // intended short/overrunning layout rather than a page-padded file.
     private void writeCorruptPostingSealPurgePendingFile(TableToken token, int variant) {
         FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path()) {
@@ -14378,7 +14430,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * sync_file_range -1, with errno EIO, and a flush throws what {@link io.questdb.std.FilesFacadeImpl} throws.
      * Armed at 0 it fails nothing and only counts. The index's files are those whose path holds the marker, and the
      * fds and mappings of such files. A sweep arms it at 1, 2, ... until the operation makes fewer calls, so that
-     * every file call of the operation fails once.
+     * every file call of the operation fails once. A synchronous msync that does not fail runs as MS_ASYNC.
      */
     private static class IndexFileCallFailingFacade extends TestFilesFacadeImpl {
         private static final int EIO = 5;
@@ -14489,7 +14541,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     break;
                 }
             }
-            super.msync(addr, len, async);
+            // No power loss follows: a synchronous msync would only wait for the disk, which takes most of the time
+            // of a sweep under SYNC. MS_ASYNC still rejects a range that is not mapped.
+            super.msync(addr, len, true);
         }
 
         @Override
