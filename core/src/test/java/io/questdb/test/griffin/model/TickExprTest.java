@@ -4017,11 +4017,12 @@ public class TickExprTest {
             }
         }
         // The repeating interval of the parser, a duration, a period and a count, repeats nothing
-        // after such a range. The IR rejects it, and the form that parses on every evaluation takes
-        // it, as for every other element.
+        // after such a range, with every count that a day takes, from 1 to the largest int. The IR
+        // rejects it, and the form that parses on every evaluation takes it, as for every other
+        // element.
         final String[] repeatingSuffixes = {
                 "1h;1d;3", ";1d;3", "1h;1_0d;3", "1h;+1d;3", "1h;-1d;3", "1h;1d;+3", "1h;1d;3_0", "1h;1M;2", "1h;1y;2",
-                "1h;1s;2", "1h;1m;2", "1h;1h;2", "1h;0d;3", "1h;1s;2147483647"
+                "1h;1s;2", "1h;1m;2", "1h;1h;2", "1h;0d;3", "1h;1d;1", "1h;1s;2147483647"
         };
         for (String suffix : repeatingSuffixes) {
             for (PointInTimeRange range : POINT_IN_TIME_RANGES) {
