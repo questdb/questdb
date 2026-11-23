@@ -38,12 +38,14 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 import static io.questdb.cutlass.qwp.protocol.QwpConstants.*;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 /**
  * Tests for QwpWalAppender.
@@ -198,6 +200,42 @@ public class QwpWalAppenderTest {
     }
 
     @Test
+    public void testMapQwpTypeToQuestDBDecimalScaleCannotExceedPrecision() throws Exception {
+        // DECIMAL64 holds 18 digits, DECIMAL128 38 and DECIMAL256 76. A scale
+        // above that describes a column type that SQL rejects, so a block
+        // carrying one must not create a column.
+        final byte[] typeCodes = {TYPE_DECIMAL64, TYPE_DECIMAL128, TYPE_DECIMAL256};
+        final int[] precisions = {18, 38, 76};
+        final long clientMemUsedBefore = io.questdb.client.std.Unsafe.getMemUsed();
+        assertMemoryLeak(() -> {
+            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                for (int t = 0; t < typeCodes.length; t++) {
+                    final int precision = precisions[t];
+                    for (int scale : new int[]{0, precision - 1, precision}) {
+                        final int columnType = mapDecimalColumn(decoder, typeCodes[t], true, scale);
+                        assertEquals("DECIMAL(" + precision + "," + scale + ")", ColumnType.nameOf(columnType));
+                    }
+                    for (int scale : new int[]{precision + 1, 127, 128, 255}) {
+                        try {
+                            final int columnType = mapDecimalColumn(decoder, typeCodes[t], true, scale);
+                            fail(QwpConstants.getTypeName(typeCodes[t]) + ", scale byte " + scale
+                                    + " mapped to " + ColumnType.nameOf(columnType));
+                        } catch (CairoException e) {
+                            assertTrue(e.isSchemaMismatch());
+                            TestUtils.assertContains(
+                                    e.getFlyweightMessage(),
+                                    "decimal scale exceeds " + QwpConstants.getTypeName(typeCodes[t])
+                                            + " precision [column=d, scale=" + scale + ", maxScale=" + precision + ']'
+                            );
+                        }
+                    }
+                }
+            }
+        });
+        assertEquals("client native memory leaked", clientMemUsedBefore, io.questdb.client.std.Unsafe.getMemUsed());
+    }
+
+    @Test
     public void testMapQwpTypeToQuestDBDecimalScaleComesOnlyFromValues() throws Exception {
         // A decimal column that holds only NULLs carries a scale byte that means
         // nothing: the Java client sends 255, the Rust row API 0, and the Rust
@@ -342,7 +380,7 @@ public class QwpWalAppenderTest {
             QwpStreamingDecoder decoder,
             byte typeCode,
             boolean hasValue,
-            int nullBlockScale
+            int wireScale
     ) throws QwpParseException {
         try (
                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
@@ -368,7 +406,12 @@ public class QwpWalAppenderTest {
                 assertEquals(1, Unsafe.getByte(address + size - 3));
                 assertEquals(0b111, Unsafe.getByte(address + size - 2));
                 assertEquals((byte) 0xFF, Unsafe.getByte(address + size - 1));
-                Unsafe.putByte(address + size - 1, (byte) nullBlockScale);
+                Unsafe.putByte(address + size - 1, (byte) wireScale);
+            } else if (wireScale >= 0) {
+                // [null bitmap present][row 1 holds a value][scale][value]
+                final long scaleAddress = address + size - QwpConstants.getFixedTypeSize(typeCode) - 1;
+                assertEquals(2, Unsafe.getByte(scaleAddress));
+                Unsafe.putByte(scaleAddress, (byte) wireScale);
             }
             final QwpMessageCursor message = decoder.decode(address, size);
             assertTrue(message.hasNextTable());

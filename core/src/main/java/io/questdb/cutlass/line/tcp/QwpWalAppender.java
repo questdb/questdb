@@ -319,6 +319,7 @@ public class QwpWalAppender implements QuietCloseable {
      * @param colIndex   column index
      * @return QuestDB column type, or {@link ColumnType#UNDEFINED} if cursor metadata is out of range
      * or a decimal column has no value in this block to take its scale from
+     * @throws CairoException a schema mismatch, if a decimal block's scale exceeds the precision of its type
      */
     public static int mapQwpTypeToQuestDB(int qwpType, QwpTableBlockCursor tableBlock, int colIndex) {
         switch (qwpType) {
@@ -330,8 +331,23 @@ public class QwpWalAppender implements QuietCloseable {
                     return ColumnType.UNDEFINED;
                 }
                 int tag = mapQwpTypeToQuestDB(qwpType);
+                int precision = Decimals.getDecimalTagPrecision(tag);
                 int scale = decimalCursor.getScale() & 0xFF;
-                return ColumnType.getDecimalType(tag, Decimals.getDecimalTagPrecision(tag), scale);
+                // The scale counts fractional digits, so it cannot exceed the
+                // digits the type holds. SQL rejects such a column type too.
+                if (scale > precision) {
+                    throw CairoException.schemaMismatch()
+                            .put("decimal scale exceeds ")
+                            .put(QwpConstants.getTypeName((byte) qwpType))
+                            .put(" precision [column=")
+                            .put(tableBlock.getColumnDef(colIndex).getName())
+                            .put(", scale=")
+                            .put(scale)
+                            .put(", maxScale=")
+                            .put(precision)
+                            .put(']');
+                }
+                return ColumnType.getDecimalType(tag, precision, scale);
             }
             case TYPE_GEOHASH -> {
                 int bits = tableBlock.getGeoHashColumn(colIndex).getPrecision();
