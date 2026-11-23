@@ -36,6 +36,7 @@ import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.PostingSealPurgeOperator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexKeyFileView;
@@ -74,6 +75,8 @@ import static org.junit.Assert.*;
 public class PostingSealPurgeTest extends AbstractCairoTest {
 
     private static final int BATCH_KEYS = 4;
+    // At or above the end of the window of every task the tests publish.
+    private static final long COMMITTED_TXN = 20;
     private int iteration;
 
     @Before
@@ -1216,12 +1219,24 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         }
     }
 
+    // The table's committed txn reaches COMMITTED_TXN, so every task a test publishes ends at or below it, as a task a
+    // writer queues does: the purge deletes nothing while the table's txn is below the end of the task's window.
     private TableToken createPostingTable(String name) {
-        return createTable(
+        final TableToken tok = createTable(
                 new TableModel(configuration, name, PartitionBy.NONE)
                         .col("c", ColumnType.INT)
                         .timestamp("ts")
         );
+        try (TableWriter writer = getWriter(tok)) {
+            for (int i = 0; i < COMMITTED_TXN; i++) {
+                final TableWriter.Row row = writer.newRow(0L);
+                row.putInt(0, i);
+                row.append();
+                writer.commit();
+            }
+            assertEquals(COMMITTED_TXN, writer.getTxn());
+        }
+        return tok;
     }
 
     private PostingSealPurgeTask newPostingSealPurgeTask(
