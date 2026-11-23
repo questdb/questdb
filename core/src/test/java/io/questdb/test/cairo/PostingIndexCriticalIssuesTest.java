@@ -13116,10 +13116,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
     /**
      * Asserts that the index of new_col_11 in 2022-02-25 of posting_o3_recovery holds the value and cover files of
-     * its live generation, and of {@code keptSealTxn}, a generation the chain on disk may still name, and of no
-     * other generation.
+     * its live generation, and of the generations of {@code keptSealTxns}, and of no other generation.
      */
-    private void assertRecoveryPartitionFilesOfLiveGeneration(long keptSealTxn, String where) throws NumericException {
+    private void assertRecoveryPartitionFilesOfLiveGeneration(LongList keptSealTxns, String where) throws NumericException {
         final long liveSealTxn = headSealTxnOfRecoveryPartition();
         Assert.assertTrue("the value file of the live generation is gone" + where, isRecoveryValueFilePresent(liveSealTxn));
         final StringSink fileName = new StringSink();
@@ -13132,7 +13131,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 if (Chars.startsWith(fileName, "new_col_11.pv.") || Chars.startsWith(fileName, "new_col_11.pc") && !Chars.startsWith(fileName, "new_col_11.pci")) {
                     final String file = fileName.toString();
                     final long sealTxn = Long.parseLong(file.substring(file.lastIndexOf('.') + 1));
-                    if (sealTxn != liveSealTxn && sealTxn != keptSealTxn) {
+                    if (sealTxn != liveSealTxn && keptSealTxns.indexOf(sealTxn) < 0) {
                         deadFiles.add(file);
                     }
                 }
@@ -13735,20 +13734,20 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
-    private String debugRecoveryFiles() throws NumericException {
+    // Collects the sealTxns of the value files of the index of new_col_11 in 2022-02-25 of posting_o3_recovery
+    private void collectRecoveryValueFileSealTxns(LongList sealTxns) throws NumericException {
+        sealTxns.clear();
         final StringSink fileName = new StringSink();
-        final ObjList<String> files = new ObjList<>();
         try (Path path = new Path()) {
             configuration.getFilesFacade().iterateDir(recoveryPartitionPath(path).$(), (pUtf8NameZ, type) -> {
                 fileName.clear();
                 Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
-                if (Chars.startsWith(fileName, "new_col_11.p")) {
-                    files.add(fileName.toString());
+                if (Chars.startsWith(fileName, "new_col_11.pv.")) {
+                    final String file = fileName.toString();
+                    sealTxns.add(Long.parseLong(file.substring(file.lastIndexOf('.') + 1)));
                 }
             });
         }
-        files.sort(String::compareTo);
-        return files.toString();
     }
 
     // Whether the commit that crosses from 2022-02-25 into 2022-02-26 is in posting_o3_recovery
@@ -13938,7 +13937,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      *     <li>under SYNC a failed flush stops the engine;</li>
      *     <li>once the purge job ran with no reader open, the index of 2022-02-25 holds the files of its live
      *     generation only, and of the generation live before the switch when a flush of the .pk failed after the
-     *     switch moved the chain head (the chain on disk may still name it);</li>
+     *     switch moved the chain head (the chain on disk may still name it), and of the generations the setup
+     *     superseded, as it drops their purges;</li>
      *     <li>the index of 2022-02-25 serves {@code expectedXphiRowIds} for XPHI, and an indexed lookup returns
      *     what a scan returns.</li>
      * </ul>
@@ -13954,6 +13954,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             for (int failAt = 1; ; failAt++) {
                 createPostingRecoveryTable();
                 final long liveSealTxnBefore = headSealTxnOfRecoveryPartition();
+                // the setup drops the purges it queues, so the generations it superseded stay
+                final LongList leftSealTxns = new LongList();
+                collectRecoveryValueFileSealTxns(leftSealTxns);
+                leftSealTxns.remove(liveSealTxnBefore);
                 final Throwable failure = switchRecoveryPartitionFailingAt(sweepFf, failAt);
                 final String failedCall = sweepFf.failedCall();
                 String where = " [call=" + failAt + ']';
@@ -13975,15 +13979,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                         restartAfterFailedFlush();
                     }
                 }
-                where += " DEBUG after failure: head=" + headSealTxnOfRecoveryPartition() + " files=" + debugRecoveryFiles() + " rows=" + isRecoveryPartitionSwitchCommitted();
                 try {
                     afterFailure.run(liveSealTxnBefore, where);
-                    where += " DEBUG after continuation: head=" + headSealTxnOfRecoveryPartition() + " files=" + debugRecoveryFiles();
                     engine.releaseAllReaders();
                     try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                         runPostingSealPurgeJob(purgeJob);
                     }
-                    assertRecoveryPartitionFilesOfLiveGeneration(keptSealTxn, where);
+                    if (keptSealTxn > -1) {
+                        leftSealTxns.add(keptSealTxn);
+                    }
+                    assertRecoveryPartitionFilesOfLiveGeneration(leftSealTxns, where);
                     assertRecoveryTableIndexRows(expectedXphiRowIds);
                 } catch (AssertionError e) {
                     throw new AssertionError(e.getMessage() + where, e);

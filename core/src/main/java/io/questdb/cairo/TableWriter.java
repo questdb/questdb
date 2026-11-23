@@ -15212,8 +15212,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // the very next reopen's recovery walk drops as
                             // abandoned -- silently losing the partition's index.
                             indexer.getWriter().setNextTxnAtSeal(txWriter.getTxn());
-                            indexer.mergeTentativeIntoActiveIfAny();
-                            indexer.getWriter().rollbackConditionally(rowCount);
+                            try {
+                                indexer.mergeTentativeIntoActiveIfAny();
+                                indexer.getWriter().rollbackConditionally(rowCount);
+                            } finally {
+                                // The rollback queues the purge of the generation it superseded, or of
+                                // the files it staged when it failed, in the indexer's outbox. Hand them
+                                // over now: the next of() of this indexer drops an unpublished outbox,
+                                // and their files would stay on disk for good.
+                                deferPendingPostingSealPurges(indexer, txWriter.getTxn());
+                            }
                         }
                     }
                 }
