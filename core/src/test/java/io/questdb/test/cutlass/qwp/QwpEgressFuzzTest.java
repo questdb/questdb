@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatch;
 import io.questdb.client.cutlass.qwp.client.QwpColumnBatchHandler;
 import io.questdb.client.cutlass.qwp.client.QwpQueryClient;
@@ -31,6 +32,7 @@ import io.questdb.client.std.str.DirectUtf8Sequence;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
@@ -116,6 +118,12 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
             new Decimal256Generator(),
             new DoubleArrayGenerator(),
     };
+    // Page size of the POSTING index value and INCLUDE sidecar files. ADD INDEX creates these files in every
+    // partition and backs each one's first page with posix_fallocate(). On tmpfs, the db root of the Linux CI
+    // agents, that allocates memory for the whole page: at the 16 MB server default, about 20 ms per file there,
+    // so indexing 125 partitions with 16 INCLUDE columns took 43 s and overran awaitTable. The cairo test
+    // suite runs with 1 MB pages too, see Overrides.
+    private static final long INDEX_VALUE_PAGE_SIZE = Numbers.SIZE_1MB;
     private static final String KEY_COLUMN = "k";
     private static final SymbolGenerator KEY_GENERATOR = new SymbolGenerator("k", 3);
     private static final Log LOG = LogFactory.getLog(QwpEgressFuzzTest.class);
@@ -143,7 +151,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         // symbol dict (dedup map + bytes heap + packed entries), the conn dict
         // reset by resetForNewQuery, schema registry, Gorilla decoder state.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented()) {
+            try (TestServerMain server = startFuzzServer()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
@@ -159,7 +167,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
     public void testRandomSchemaRoundtrip() throws Exception {
         // Main sweep: fresh connection per case so state pollution can't mask a bug.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented()) {
+            try (TestServerMain server = startFuzzServer()) {
                 for (int i = 0; i < ROUNDTRIP_CASES; i++) {
                     try (QwpQueryClient client = QwpQueryClient.fromConfig(
                             "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
@@ -220,7 +228,11 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                 .$(", maxLiveAddedColumns=").$(maxLiveAddedColumns)
                 .$(", readAheadWillNeed=").$(isReadAheadWillNeed).$();
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startWithEnvVariables(new ReadAheadFilesFacade(isReadAheadWillNeed))) {
+            try (TestServerMain server = startWithEnvVariables(
+                    new ReadAheadFilesFacade(isReadAheadWillNeed),
+                    PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getEnvVarName(),
+                    Long.toString(INDEX_VALUE_PAGE_SIZE)
+            )) {
                 server.execute("CREATE TABLE fz_seq(id LONG, v DOUBLE, cat SYMBOL, ts TIMESTAMP) "
                         + "TIMESTAMP(ts) PARTITION BY DAY WAL");
                 // Stable population: rowCount rows, id 1..rowCount, cat cycles 4
@@ -233,8 +245,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
                         + rowCount + ")");
                 server.awaitTable("fz_seq");
                 // Serves shape 6 as a covering index scan; the added columns stay out of it.
-                server.execute("ALTER TABLE fz_seq ALTER COLUMN cat ADD INDEX TYPE POSTING INCLUDE (id, v)");
-                server.awaitTable("fz_seq");
+                addPostingIndex(server, "fz_seq", "cat", "id, v");
 
                 // Live added-column names. DROP picks from here (and removes);
                 // ADD appends using a monotonic counter so dropped names are never
@@ -318,7 +329,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         // 10-16 columns stresses the batch buffer's per-column state arrays and
         // the schema block encoder.
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain server = startFragmented()) {
+            try (TestServerMain server = startFuzzServer()) {
                 try (QwpQueryClient client = QwpQueryClient.fromConfig(
                         "ws::addr=127.0.0.1:" + HTTP_PORT + ";" + pickCompression())) {
                     client.connect();
@@ -699,6 +710,16 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         long verify(QwpColumnBatch batch, long startRow);
     }
 
+    // Builds a POSTING index on the column, after asserting that the server runs with the index value page
+    // size that keeps the build fast on tmpfs, see INDEX_VALUE_PAGE_SIZE.
+    private static void addPostingIndex(TestServerMain server, String table, String column, String includedColumns) {
+        Assert.assertEquals("index value page size", INDEX_VALUE_PAGE_SIZE,
+                server.getEngine().getConfiguration().getDataIndexValueAppendPageSize());
+        server.execute("ALTER TABLE " + table + " ALTER COLUMN " + column
+                + " ADD INDEX TYPE POSTING INCLUDE (" + includedColumns + ")");
+        server.awaitTable(table);
+    }
+
     private static String allDataCols(int colCount) {
         // Explicit list (c0, c1, ...) instead of "*" so we don't have to account
         // for the id bookkeeping column in our colMap.
@@ -983,9 +1004,7 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
         // A POSTING index that INCLUDEs every data column turns the key shapes into
         // covering index scans. The other shapes do not use it, so they draw it at random.
         if (shape == SHAPE_SINGLE_KEY || shape == SHAPE_MULTI_KEY || random.nextBoolean()) {
-            server.execute("ALTER TABLE " + table + " ALTER COLUMN " + KEY_COLUMN
-                    + " ADD INDEX TYPE POSTING INCLUDE (" + allDataCols(colCount) + ")");
-            server.awaitTable(table);
+            addPostingIndex(server, table, KEY_COLUMN, allDataCols(colCount));
         }
 
         // Plan a query shape; compute which rows / cols appear + in what order.
@@ -1034,6 +1053,14 @@ public class QwpEgressFuzzTest extends AbstractQwpBootstrapTest {
             map[i] = pick;
         }
         return map;
+    }
+
+    // Starts the server with fragmented HTTP I/O and the index value page size of INDEX_VALUE_PAGE_SIZE.
+    private TestServerMain startFuzzServer() {
+        return startFragmented(
+                PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE.getEnvVarName(),
+                Long.toString(INDEX_VALUE_PAGE_SIZE)
+        );
     }
 
     /**
