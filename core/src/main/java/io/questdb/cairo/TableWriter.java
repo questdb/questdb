@@ -23138,8 +23138,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void updateMaxTimestamp(long timestamp) {
+        try {
+            this.timestampSetter.accept(timestamp);
+        } catch (Throwable th) {
+            // The designated timestamp is the first value of the row, and its column could not take it, e.g. the
+            // disk is full when the column file needs a new page. newRow0() has bumped masterRef, but txWriter
+            // has not counted the row: take the bump back. Left odd, masterRef would make the next newRow() or
+            // commit() cancel the row through rowCancel(), which drops the last row that txWriter did count.
+            masterRef--;
+            throw th;
+        }
         txWriter.updateMaxTimestamp(timestamp);
-        this.timestampSetter.accept(timestamp);
     }
 
     private void updateO3ColumnTops() {
