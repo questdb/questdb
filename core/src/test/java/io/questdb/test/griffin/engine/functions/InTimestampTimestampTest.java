@@ -483,6 +483,179 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsAsLiteral() throws Exception {
+        // A date variable range that adds no interval when the query compiles, one that starts
+        // after it ends or a range of business days that holds no business day, with a timezone or
+        // day filter of its element that does not parse, fails a literal as the query compiles,
+        // wherever the query holds it, at the position of the literal
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+                assertLiteralFailsWhenQueryCompiles("[$tomorrow..$today@Bogus/Zone]", "invalid timezone: Bogus/Zone");
+                assertLiteralFailsWhenQueryCompiles("[$tomorrow..$today#Xyz]", "Invalid day name: Xyz");
+                assertLiteralFailsWhenQueryCompiles("[$now..$now - 1h@Bogus/Zone]", "invalid timezone: Bogus/Zone");
+                // a Saturday
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+                assertLiteralFailsWhenQueryCompiles("[$today..$today + 0bd@Bogus/Zone]", "invalid timezone: Bogus/Zone");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsInEveryContext() throws Exception {
+        // A date variable range that adds no interval, with a timezone of its element that does not
+        // parse, fails the query wherever the query holds it, at the position of the expression: a
+        // literal as the query compiles, and a bind variable as it runs, which fails on the order
+        // of a range that starts after it ends first. At 03:00 the range from 09:30 to "now" starts
+        // after it ends, and on Saturday 2024-01-06 the range of business days of the day holds
+        // none.
+        assertMemoryLeak(() -> {
+            createContextTables();
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+                assertTickExprFailsInEveryContext(
+                        "[$today + 570m..$now@Bogus/Zone]",
+                        "invalid timezone: Bogus/Zone",
+                        "[$today + 570m..$now@Bogus/Zone]",
+                        "Invalid date range: start is after end"
+                );
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+                assertTickExprFailsInEveryContext(
+                        "[$today..$today + 0bd@Bogus/Zone]",
+                        "invalid timezone: Bogus/Zone",
+                        "[$today..$today + 0bd@Bogus/Zone]",
+                        "invalid timezone: Bogus/Zone"
+                );
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsOnEveryTimestampType() throws Exception {
+        // A date variable range that adds no interval, with a timezone of its element that does not
+        // parse, fails the query on a designated nanosecond timestamp, a nullable timestamp, and a
+        // DATE, which IN compares as a microsecond timestamp: as a literal as the query compiles,
+        // and as a bind variable, in the interval scan and in the row filter, and as a value of a
+        // row as it runs. At 03:00 the range from 09:30 to "now" starts after it ends, and on
+        // Saturday 2024-01-06 the range of business days of the day holds none. With a timezone
+        // that parses, the first range selects the rows from 09:30 to 12:00 when the query runs at
+        // 12:00, the second none, and the range of business days from the Saturday to the next one
+        // the rows of Monday 2024-01-08, NULL aside.
+        assertMemoryLeak(() -> {
+            final String noDay = "[$today..$today + 0bd@Bogus/Zone]";
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, ts2 TIMESTAMP, d DATE, s STRING, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tn VALUES "
+                    + "('2024-01-02T09:30:00.000000000Z', '2024-01-02T09:30:00.000000Z', '2024-01-02T09:30:00.000Z', '" + noDay + "', '" + noDay + "'), "
+                    + "('2024-01-08T09:30:00.000000000Z', '2024-01-08T09:30:00.000000Z', '2024-01-08T09:30:00.000Z', '" + noDay + "', '" + noDay + "'), "
+                    + "('2024-01-08T11:00:00.000000000Z', NULL, NULL, '" + noDay + "', '" + noDay + "')");
+            try {
+                for (String[] column : new String[][]{
+                        {"ts", "1\t2024-01-02T09:30:00.000000000Z\t2024-01-02T09:30:00.000000000Z", "2\t2024-01-08T09:30:00.000000000Z\t2024-01-08T11:00:00.000000000Z"},
+                        {"ts2", "1\t2024-01-02T09:30:00.000000Z\t2024-01-02T09:30:00.000000Z", "1\t2024-01-08T09:30:00.000000Z\t2024-01-08T09:30:00.000000Z"},
+                        {"d", "1\t2024-01-02T09:30:00.000Z\t2024-01-02T09:30:00.000Z", "1\t2024-01-08T09:30:00.000Z\t2024-01-08T09:30:00.000Z"}
+                }) {
+                    final String query = "SELECT count(), min(" + column[0] + "), max(" + column[0] + ") FROM tn WHERE " + column[0] + " IN ";
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+                    final String reversed = query + "'[$today + 570m..$now@Bogus/Zone]'";
+                    assertExceptionNoLeakCheck(reversed, reversed.indexOf('\''), "invalid timezone: Bogus/Zone");
+                    try (RecordCursorFactory factory = select(query + "'[$today + 570m..$now@+00:00]'")) {
+                        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+                        assertFactory(factory)
+                                .withContext(sqlExecutionContext)
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    }
+
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+                    final String literal = query + "'" + noDay + "'";
+                    assertExceptionNoLeakCheck(literal, literal.indexOf('\''), "invalid timezone: Bogus/Zone");
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable(noDay, isVarchar);
+                        assertExceptionNoLeakCheck(query + "$1", query.length(), "invalid timezone: Bogus/Zone");
+                        assertExceptionNoLeakCheck(query + "$1 OR " + column[0] + " > '2030-01-01'", query.length(), "invalid timezone: Bogus/Zone");
+                        setTickExprBindVariable("[$today..$today + 0bd@+00:00]", isVarchar);
+                        assertQuery(query + "$1")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n0\t\t\n");
+                        setTickExprBindVariable("[$today..$today + 1bd@+00:00]", isVarchar);
+                        assertQuery(query + "$1")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n" + column[2] + "\n");
+                    }
+                    bindVariableService.clear();
+                }
+                for (String column : new String[]{"s", "vc"}) {
+                    final String sql = "SELECT count() FROM tn WHERE ts IN " + column;
+                    assertExceptionNoLeakCheck(sql, sql.lastIndexOf(' ') + 1, "invalid timezone: Bogus/Zone");
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsWhateverTheData() throws Exception {
+        // A date variable range that adds no interval, with a timezone of its element that does not
+        // parse, fails a literal as the query compiles, without reading data, on an empty table and
+        // on one of a single row. A prepared query fails on the run that binds such an expression
+        // on a Saturday, and keeps working on the runs before and after it, where the range of
+        // business days from the Saturday to the next one selects Monday 2024-01-08.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE empty_table (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE single_row (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO single_row VALUES ('2024-01-08T09:30:00.000000Z')");
+            // hourly rows from Saturday 2024-01-06 to Monday 2024-01-08
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-06T00:00:00.000000Z', 3_600_000_000L) ts
+                        FROM long_sequence(72)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+            try {
+                for (String table : new String[]{"empty_table", "single_row"}) {
+                    for (String tickExpr : new String[]{"[$today..$today + 0bd@Bogus/Zone]", "[$tomorrow..$today@Bogus/Zone]"}) {
+                        final String sql = "SELECT count() FROM " + table + " WHERE ts IN '" + tickExpr + "'";
+                        assertExceptionNoLeakCheck(sql, sql.indexOf('\''), "invalid timezone: Bogus/Zone");
+                    }
+                }
+                final String monday = "count\tmin\tmax\n24\t2024-01-08T00:00:00.000000Z\t2024-01-08T23:00:00.000000Z\n";
+                final String prepared = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "[$today..$today + 1bd]");
+                try (RecordCursorFactory factory = select(prepared)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(monday);
+                    bindVariableService.setStr(0, "[$today..$today + 0bd@Bogus/Zone]");
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("the run with [$today..$today + 0bd@Bogus/Zone] should fail");
+                    } catch (SqlException | CairoException e) {
+                        TestUtils.assertEquals("invalid timezone: Bogus/Zone", e.getFlyweightMessage());
+                        Assert.assertEquals(prepared.indexOf("$1"), e.getPosition());
+                    }
+                    bindVariableService.setStr(0, "[$today..$today + 1bd]");
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(monday);
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDateVariableRangeElementDayFilterBindVariable() throws Exception {
         // the range's own day filter keeps the Mondays: 2024-01-01 and 2024-01-08
         setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));

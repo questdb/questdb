@@ -155,8 +155,10 @@ public class WalTickExprTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
             // a range between two points in time ignores its duration, which still has to parse:
-            // from 03:00 to 10:00 it would hold the rows of the first day
-            for (String bindValue : new String[]{BAD_ZONE, null, "$now..$now + 7h;1h#Tue"}) {
+            // from 03:00 to 10:00 it would hold the rows of the first day. A range that starts
+            // after it ends needs a timezone of its element that parses too: $today would hold
+            // the rows of the first day.
+            for (String bindValue : new String[]{BAD_ZONE, null, "$now..$now + 7h;1h#Tue", "[$tomorrow..$today@Bogus/Zone, $today]"}) {
                 for (boolean isVarchar : new boolean[]{false, true}) {
                     // the interval scan
                     assertBindUpdateApplied("ts IN $1", bindValue, isVarchar, "11111");
@@ -170,6 +172,25 @@ public class WalTickExprTest extends AbstractCairoTest {
                     assertBindUpdateApplied("ts2 IN $1 OR v = 3", bindValue, isVarchar, "11111");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testBusinessDayRangeWithoutDayWithMalformedElementSuffixFails() throws Exception {
+        // On Saturday 2024-01-06 the range of business days of the day holds none, and adds no
+        // interval. A timezone or day filter of its element that does not parse fails the UPDATE
+        // as it compiles all the same, before the client sees it succeed: the apply would run it
+        // as a null value, so NOT IN would update every row. With a timezone that parses, NOT IN
+        // updates every row, and IN none.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+            final TableToken token = createTable(true);
+            assertUpdateRejected(token, "ts NOT IN '[$today..$today + 0bd@Bogus/Zone]'", "invalid timezone: Bogus/Zone");
+            assertUpdateRejected(token, "ts2 NOT IN '[$today..$today + 0bd@Bogus/Zone]'", "invalid timezone: Bogus/Zone");
+            assertUpdateRejected(token, "ts IN '[$today..$today + 0bd#Xyz]'", "Invalid day name: Xyz");
+            assertApplied(token, "11111");
+            assertUpdateApplied("ts NOT IN '[$today..$today + 0bd@+00:00]'", "22222");
+            assertUpdateApplied("ts IN '[$today..$today + 0bd@+00:00]'", "11111");
         });
     }
 
@@ -284,6 +305,21 @@ public class WalTickExprTest extends AbstractCairoTest {
             assertUpdateRejected(token, "ts IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
             assertUpdateRejected(token, "ts NOT IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
             assertUpdateRejected(token, "ts2 IN " + elementTimePart, "Invalid date: 2024-01-01T09:00T09:00");
+            // a range that starts after it ends at 03:00, with a timezone or day filter of its
+            // element that does not parse: the apply would run it as a range that adds no
+            // interval, so NOT IN would update every row
+            assertUpdateRejected(token, "ts NOT IN '[$tomorrow..$today@Invalid/Zone]'", "invalid timezone: Invalid/Zone");
+            assertUpdateRejected(token, "ts IN '[$tomorrow..$today#Xyz]T[09..10]:30'", "Invalid day name: Xyz");
+            assertUpdateRejected(token, "ts2 NOT IN '[" + INVERTED_AT_0300 + "@Invalid/Zone]T[09..10]:30'", "invalid timezone: Invalid/Zone");
+            assertUpdateRejected(token, "ts NOT IN '[$today..$now - 4h#Xyz]'", "Invalid day name: Xyz");
+            assertUpdateRejected(token, "ts NOT IN '[$tomorrow..$today@+02:00@UTC]'", "Invalid date: 2024-01-03@+02:00");
+            for (String sql : new String[]{
+                    "UPDATE " + token.getTableName() + " SET v = 2 WHERE dateadd('h', 1, ts) IN '[$tomorrow..$today@Invalid/Zone]'",
+                    "ALTER TABLE " + token.getTableName() + " DROP PARTITION WHERE ts IN '[$tomorrow..$today@Invalid/Zone]'"
+            }) {
+                assertExceptionNoLeakCheck(sql, sql.indexOf("'[$tomorrow"), "invalid timezone: Invalid/Zone");
+            }
+            Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(token));
             assertApplied(token, "11111");
         });
     }
@@ -364,6 +400,9 @@ public class WalTickExprTest extends AbstractCairoTest {
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts2 IN '" + INVERTED_AT_0300 + "'", "'", "Invalid date range: start is after end");
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN '$today;1x'", "'", "Invalid duration unit: x");
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN '$now - 1h..$now;1x'", "'", "Invalid duration unit: x");
+            // a timezone of the element of a range that starts after it ends fails the statement
+            // as it compiles, before the order of the range when it runs
+            assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN '[$tomorrow..$today@Bogus/Zone]'", "'", "invalid timezone: Bogus/Zone");
             assertRows(name, "11111");
         });
     }
@@ -426,6 +465,42 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPreparedUpdateWithMalformedElementSuffixFailsWhileRangeStartsAfterItEnds() throws Exception {
+        // The UPDATE compiles at 03:00, when the range starts after it ends, which SQL lets
+        // through, as whether it does depends on the time the statement runs. A timezone or day
+        // filter of its element that does not parse fails it as it compiles all the same, before
+        // the client sees it succeed: the apply would run it as a range that adds no interval, or,
+        // at a commit time when the range does not start after it ends, as a null value, so NOT IN
+        // would update every row. With a timezone that parses, the UPDATE runs at 12:00: the range
+        // from 09:30 to "now" holds the row at 10:00, and the one from the start of the day to 4
+        // hours before "now" the row at 08:00.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            final TableToken token = createTable(true);
+            assertUpdateRejected(token, "ts NOT IN '[" + INVERTED_AT_0300 + "@Bogus/Zone]'", "invalid timezone: Bogus/Zone");
+            assertUpdateRejected(token, "ts NOT IN '[$today..$now - 4h@Bogus/Zone]'", "invalid timezone: Bogus/Zone");
+            assertUpdateRejected(token, "ts NOT IN '[$today..$now - 4h#Xyz]'", "Invalid day name: Xyz");
+            assertApplied(token, "11111");
+
+            for (String[] tickExpr : new String[][]{{"[" + INVERTED_AT_0300 + "@+00:00]", "11211"}, {"[$today..$now - 4h@+00:00]", "21111"}}) {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+                final TableToken prepared = createTable(true);
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    final CompiledQuery cq = compiler.compile(
+                            "UPDATE " + prepared.getTableName() + " SET v = 2 WHERE ts IN '" + tickExpr[0] + "'",
+                            sqlExecutionContext
+                    );
+                    setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+                    try (UpdateOperation ignore = cq.getUpdateOperation(); OperationFuture fut = cq.execute(null)) {
+                        fut.await();
+                    }
+                }
+                assertApplied(prepared, tickExpr[1]);
+            }
+        });
+    }
+
+    @Test
     public void testRowValueDateVariablesResolveAtCommitTime() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
@@ -473,6 +548,10 @@ public class WalTickExprTest extends AbstractCairoTest {
             for (String column : new String[]{"s", "vc"}) {
                 assertUpdateAppliedWithSecondRowValue("$now - 4h..$now;1h#Tue", "ts IN " + column, "21221");
                 assertUpdateAppliedWithSecondRowValue("$now - 4h..$now;1h#Tue", "ts NOT IN " + column, "12112");
+                // a range that starts after it ends needs a timezone of its element that parses
+                // too: $today would hold the 09:00 of the second row
+                assertUpdateAppliedWithSecondRowValue("[$tomorrow..$today@Bogus/Zone, $today]", "ts IN " + column, "21221");
+                assertUpdateAppliedWithSecondRowValue("[$tomorrow..$today@Bogus/Zone, $today]", "ts NOT IN " + column, "12112");
             }
         });
     }

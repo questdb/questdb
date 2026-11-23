@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -166,6 +167,76 @@ public class PGTickExprWalUpdateTest extends BasePGTest {
                             sink,
                             rs
                     );
+                }
+            }
+            drainWalQueue();
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT v FROM w")) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[INTEGER]
+                                1
+                                1
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testPreparedWalUpdateWithMalformedElementSuffixFails() throws Exception {
+        // A date variable range that adds no interval, with a timezone of its element that does
+        // not parse, fails a prepared statement on every run: an UPDATE with the literal at 03:00,
+        // when the range from 09:30 to "now" starts after it ends, which the WAL would apply as a
+        // range that adds no interval, so NOT IN would update every row; and a query with a bind
+        // variable that holds the range of business days of a Saturday, which holds none, until
+        // the bind variable holds a timezone that parses.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE w (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO w VALUES
+                        ('2024-01-02T08:00:00.000000Z', 1),
+                        ('2024-01-02T10:00:00.000000Z', 1),
+                        ('2024-01-03T09:00:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("w");
+            final long seqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            try (PreparedStatement update = connection.prepareStatement("UPDATE w SET v = 2 WHERE ts NOT IN '[$today + 570m..$now@Bogus/Zone]'")) {
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        update.execute();
+                        Assert.fail("the UPDATE should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "invalid timezone: Bogus/Zone");
+                    }
+                }
+            }
+            // the WAL has nothing to apply
+            Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(token));
+
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts FROM w WHERE ts IN ?")) {
+                select.setString(1, "[$today..$today + 0bd@Bogus/Zone]");
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet ignore = select.executeQuery()) {
+                        Assert.fail("the query should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "invalid timezone: Bogus/Zone");
+                    }
+                }
+                select.setString(1, "[$today..$today + 0bd@+00:00]");
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet rs = select.executeQuery()) {
+                        sink.clear();
+                        assertResultSet("ts[TIMESTAMP]\n", sink, rs);
+                    }
                 }
             }
             drainWalQueue();

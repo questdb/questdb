@@ -71,6 +71,8 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     private final LongList intervals = new LongList();
     private final StringSink sink = new StringSink();
     // what the fuzz test met, so that it can tell that it reached the paths it is for
+    private int fuzzMalformedElementZoneRangeOrderCount;
+    private int fuzzMalformedElementZoneWithoutDayCount;
     private int fuzzNotParsedCount;
     private int fuzzRangeOrderCount;
     private int fuzzRejectedSuffixCount;
@@ -204,7 +206,10 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             final StringSink expression = new StringSink();
             try (SqlExecutionContextImpl engineJob = newEngineJobContext()) {
                 for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
-                    for (int i = 0; i < 2_000; i++) {
+                    // enough expressions for each kind that the assertions below count to come up
+                    // in every run, the rarest, a range of business days without a day with a
+                    // timezone that does not parse, some 40 times
+                    for (int i = 0; i < 6_000; i++) {
                         expression.clear();
                         final boolean isMalformed = TickExprTest.appendRandomTickExpr(rnd, expression);
                         for (String now : TickExprTest.FUZZ_NOWS) {
@@ -215,11 +220,22 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             }
             // the generator makes ranges that start after they end, malformed expressions that
             // only the form parsing on every evaluation lets through, durations with a unit that
-            // the timestamp drivers do not add, and texts after the first ';' that do not parse
+            // the timestamp drivers do not add, texts after the first ';' that do not parse, and
+            // timezones of an element that do not parse on ranges that start after they end and
+            // on ranges of business days that hold no business day
+            LOG.info().$("engine job fuzz done [rangeOrder=").$(fuzzRangeOrderCount)
+                    .$(", notParsed=").$(fuzzNotParsedCount)
+                    .$(", unknownUnitNotParsed=").$(fuzzUnknownUnitNotParsedCount)
+                    .$(", rejectedSuffix=").$(fuzzRejectedSuffixCount)
+                    .$(", malformedElementZoneRangeOrder=").$(fuzzMalformedElementZoneRangeOrderCount)
+                    .$(", malformedElementZoneWithoutDay=").$(fuzzMalformedElementZoneWithoutDayCount)
+                    .I$();
             Assert.assertTrue(fuzzRangeOrderCount > 0);
             Assert.assertTrue(fuzzNotParsedCount > 0);
             Assert.assertTrue(fuzzUnknownUnitNotParsedCount > 0);
             Assert.assertTrue(fuzzRejectedSuffixCount > 0);
+            Assert.assertTrue(fuzzMalformedElementZoneRangeOrderCount > 0);
+            Assert.assertTrue(fuzzMalformedElementZoneWithoutDayCount > 0);
         });
     }
 
@@ -240,7 +256,14 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             // a static element with a time part of its own that starts with a
                             // bracket, under a time of the list
                             "[2024-01T[09:00,10:00], $today]T10:00",
-                            "[2024-01-05T[09:00], $today]T10:00"
+                            "[2024-01-05T[09:00], $today]T10:00",
+                            // a range that starts after it ends at 03:00, with a timezone or day
+                            // filter of its element that does not parse, whatever the other
+                            // elements
+                            "[$tomorrow..$today@Bogus/Zone]",
+                            "[$tomorrow..$today@Bogus/Zone, $tomorrow]",
+                            "[$today + 570m..$now@Bogus/Zone]",
+                            "[$today..$now - 4h#Xyz]"
                     }) {
                         try (CompiledTickExpression compiled = compile(driver, expression)) {
                             engineJob.setNowAndFixClock(driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z"), driver.getTimestampType());
@@ -349,6 +372,10 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     assertEngineJobIntervals(driver, engineJob, now, "[$now..$now - 1h]");
                     assertEngineJobIntervals(driver, engineJob, now, "[$tomorrow..$today, $tomorrow]", tomorrow, driver.endOfDay(tomorrow));
                     assertEngineJobIntervals(driver, engineJob, now, "[$today + 570m..$now, $tomorrow]T09:00", nineAm, nineAm + minute);
+                    // with a timezone of the element that parses, which SQL parses on every
+                    // evaluation
+                    assertEngineJobIntervals(driver, engineJob, now, "[$tomorrow..$today@+02:00, $tomorrow]", tomorrow, driver.endOfDay(tomorrow));
+                    assertEngineJobIntervals(driver, engineJob, now, "[$today + 570m..$now@+00:00, $tomorrow]T09:00", nineAm, nineAm + minute);
                     // the intervals that the caller appended before stay, as when an interval scan
                     // evaluates the expression after another condition
                     try (CompiledTickExpression compiled = compile(driver, "$now..$now-1h")) {
@@ -451,6 +478,26 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             }
                         }
                     }
+                    // a timezone of the element that does not parse: the engine job appends no
+                    // interval, and the user's query fails on the order of the range first
+                    try (CompiledTickExpression compiled = compile(driver, "[$tomorrow..$today@Bogus/Zone]")) {
+                        compiled.init(null, engineJob);
+                        intervals.clear();
+                        intervals.add(1L, 2L);
+                        compiled.evaluate(intervals);
+                        Assert.assertEquals(2, intervals.size());
+                        Assert.assertEquals(1, intervals.getQuick(0));
+                        Assert.assertEquals(2, intervals.getQuick(1));
+                        compiled.init(null, user);
+                        intervals.clear();
+                        try {
+                            compiled.evaluate(intervals);
+                            Assert.fail();
+                        } catch (CairoException e) {
+                            TestUtils.assertEquals(RANGE_ORDER_ERROR, e.getFlyweightMessage());
+                        }
+                        Assert.assertEquals(0, intervals.size());
+                    }
                     try (CompiledTickExpression compiled = compile(driver, "[$today..$today + 2000d]T09:00")) {
                         compiled.init(null, engineJob);
                         intervals.clear();
@@ -493,9 +540,26 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         if (!isMalformed && (TickExprTest.hasRejectedSuffix(expression) || TickExprTest.hasMisplacedDayFilter(expression))) {
             // a text after the first ';' that does not parse fails the expression after every
             // element, a range between two points in time included, unless a range that starts
-            // after it ends fails first; a malformed time part can take that text in
+            // after it ends fails first; a malformed time part can take that text in. A range of
+            // business days that holds no day reads no such text, see
+            // TickExprTest.hasBusinessDayRange().
             fuzzRejectedSuffixCount++;
+            if (!("[]".equals(strict) && TickExprTest.hasBusinessDayRange(expression))) {
+                Assert.assertTrue(context, isError(strict));
+            }
+        }
+        if (!isMalformed && TickExprTest.hasMalformedElementZone(expression) && !expression.contains("]T[10:30@+02:00]")) {
+            // a timezone of an element that does not parse fails the expression whatever the
+            // checks, on a range that adds no interval as well; a slot of a time list with a
+            // timezone of its own takes that timezone rather than the one of the element
             Assert.assertTrue(context, isError(strict));
+            Assert.assertTrue(context, isError(withoutRangeOrder));
+            Assert.assertTrue(context, isError(unchecked));
+            if (strict.contains(RANGE_ORDER_ERROR)) {
+                fuzzMalformedElementZoneRangeOrderCount++;
+            } else if (strict.contains("invalid timezone: ") && hasMalformedZoneOnlyOnRangesWithoutDay(driver, expression, now)) {
+                fuzzMalformedElementZoneWithoutDayCount++;
+            }
         }
         if (!isError(strict)) {
             Assert.assertEquals(context, strict, withoutRangeOrder);
@@ -580,6 +644,30 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
 
     private CompiledTickExpression compile(TimestampDriver driver, String expression) throws SqlException {
         return IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0);
+    }
+
+    /**
+     * Returns whether every element of a generated expression with a timezone of
+     * TickExprTest.FUZZ_MALFORMED_ELEMENT_ZONES is a range of business days that holds no day at
+     * "now": the same range without the timezone parses to no interval, where one that starts
+     * after it ends fails on its order.
+     */
+    private boolean hasMalformedZoneOnlyOnRangesWithoutDay(TimestampDriver driver, String expression, long now) {
+        final String rangeEnd = ".." + TickExprTest.FUZZ_BUSINESS_DAY_RANGE_END;
+        for (String zone : TickExprTest.FUZZ_MALFORMED_ELEMENT_ZONES) {
+            for (int i = expression.indexOf(zone); i >= 0; i = expression.indexOf(zone, i + 1)) {
+                if (!expression.startsWith(rangeEnd, i - rangeEnd.length())) {
+                    return false;
+                }
+                // a generated range holds no ',' or '[', so the last one before the timezone
+                // starts its element
+                final int elementStart = Math.max(expression.lastIndexOf(',', i), expression.lastIndexOf('[', i)) + 1;
+                if (!"[]".equals(parse(driver, "[" + expression.substring(elementStart, i) + "]", now, IntervalUtils.TICK_CHECK_ALL))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private String parse(TimestampDriver driver, String expression, long now, int checks) {

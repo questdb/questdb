@@ -3618,6 +3618,10 @@ public final class IntervalUtils {
      * Each generated date is processed like a single date element with the shared suffix.
      * Adjacent full-day intervals will be merged by the caller's unionBracketExpandedIntervals.
      * <p>
+     * A range that adds no interval - one that starts after it ends, below the range order check,
+     * or a range of business days within a weekend - still fails on a timezone or day filter of its
+     * element that does not parse, as a day of it would, see {@link #validateRangeElementSuffix}.
+     * <p>
      * Consider extracting a shared helper method if this becomes a maintenance burden.
      */
     private static void expandDateVariableRange(
@@ -3715,7 +3719,9 @@ public final class IntervalUtils {
             validateDurationSuffix(timestampDriver, seq, durationSemicolon, lim, errorPos);
         }
         if (rangeLo > rangeHi) {
-            // without the range order check, such a range adds no interval
+            // without the range order check, such a range adds no interval, and still fails on a
+            // timezone or day filter of its element that does not parse, as a day of it would
+            validateRangeElementSuffix(timestampDriver, configuration, seq, rangeEnd, elementEnd, isPointInTimeRange, startDay, errorPos, out, sink, applyEncoded);
             return;
         }
 
@@ -3786,6 +3792,7 @@ public final class IntervalUtils {
         StringSink dateVarSink = tlDateVarSink.get();
         long currentTimestamp = startTimestamp;
         long previousTimestamp = currentTimestamp - 1; // For infinite loop protection
+        boolean hasDay = false;
 
         while (currentTimestamp <= endTimestamp) {
             // Safety check: addDays always advances the timestamp, so this should never trigger
@@ -3799,6 +3806,7 @@ public final class IntervalUtils {
                 currentTimestamp = timestampDriver.addDays(currentTimestamp, 1);
                 continue;
             }
+            hasDay = true;
 
             // Format the date
             dateVarSink.clear();
@@ -3982,6 +3990,11 @@ public final class IntervalUtils {
 
             // Move to next day
             currentTimestamp = timestampDriver.addDays(currentTimestamp, 1);
+        }
+        if (!hasDay) {
+            // a range of business days within a weekend adds no day, and still fails on a
+            // timezone or day filter of its element that does not parse, as a day of it would
+            validateRangeElementSuffix(timestampDriver, configuration, seq, rangeEnd, elementEnd, false, startTimestamp, errorPos, out, sink, applyEncoded);
         }
     }
 
@@ -5183,6 +5196,68 @@ public final class IntervalUtils {
             case PeriodType.YEAR, PeriodType.MONTH, PeriodType.HOUR, PeriodType.MINUTE, PeriodType.SECOND, PeriodType.DAY -> {
             }
             default -> throw SqlException.$(position, "Unknown period: ").put(periodType).put(" at 1");
+        }
+    }
+
+    /**
+     * Fails on the suffix of a date variable range element, {@code seq[rangeEnd, elementEnd)}, as
+     * the expansion of the range fails on it, for a range that adds no interval. It reads that text
+     * the way {@link #expandDateVariableRange} reads it, with the same functions, and appends
+     * nothing to {@code out}:
+     * <ul>
+     * <li>a range between two points in time reads the timezone that its interval takes, the text
+     * after the last '@' outside brackets before a ';', to the end of the element;</li>
+     * <li>a range of days appends the suffix to the date of each day, which holds none of '#', '@',
+     * '[', ']' and ';', so the searches below find what they find there. A day reads the day filter
+     * or tick calendar after the first '#', then parses its date with the text up to the timezone,
+     * which no date format takes when it is not empty, as it then starts with an '@', then the
+     * timezone, to the end of the element. Such a text fails with the date of {@code firstDay}, the
+     * first day of the range.</li>
+     * </ul>
+     */
+    private static void validateRangeElementSuffix(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence seq,
+            int rangeEnd,
+            int elementEnd,
+            boolean isPointInTimeRange,
+            long firstDay,
+            int errorPos,
+            LongList out,
+            StringSink sink,
+            boolean applyEncoded
+    ) throws SqlException {
+        // the timezone converts no interval from out.size() on, so applyTimezoneToIntervals()
+        // only parses it
+        if (isPointInTimeRange) {
+            final int tzMarker = findTimezoneMarker(seq, rangeEnd, elementEnd);
+            if (tzMarker >= 0) {
+                applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, elementEnd, errorPos, applyEncoded);
+            }
+            return;
+        }
+
+        int tzSearchEnd = elementEnd;
+        for (int i = rangeEnd; i < elementEnd; i++) {
+            if (seq.charAt(i) == '#') {
+                if (getExchangeSchedule(configuration, seq, i + 1, elementEnd) == null) {
+                    parseDayFilter(seq, i + 1, elementEnd, errorPos);
+                }
+                tzSearchEnd = i;
+                break;
+            }
+        }
+        final int tzMarker = findTimezoneMarker(seq, rangeEnd, tzSearchEnd);
+        final int dateEnd = tzMarker >= 0 ? tzMarker : tzSearchEnd;
+        if (rangeEnd < dateEnd) {
+            sink.clear();
+            appendDate(timestampDriver, firstDay, sink);
+            sink.put(seq, rangeEnd, dateEnd);
+            throw SqlException.$(errorPos, "Invalid date: ").put(sink);
+        }
+        if (tzMarker >= 0) {
+            applyTimezoneToIntervals(timestampDriver, configuration, out, out.size(), seq, tzMarker + 1, elementEnd, errorPos, applyEncoded);
         }
     }
 

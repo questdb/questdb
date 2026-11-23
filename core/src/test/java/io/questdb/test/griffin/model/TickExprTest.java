@@ -61,6 +61,11 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
+    // the end of a range of business days, which holds no day when the range starts on a weekend
+    static final String FUZZ_BUSINESS_DAY_RANGE_END = "$today + 0bd";
+    // timezones of an element that do not parse, which the parser and the compiled form reject
+    // alike, see DateVariableDetectionChecker
+    static final String[] FUZZ_MALFORMED_ELEMENT_ZONES = {"@Bogus/Zone", "@+25:00"};
     // "now" on different days, weekdays and times of day, and on days when the clocks change
     static final String[] FUZZ_NOWS = {
             "2024-01-02T10:00:00.000000Z", // a Tuesday
@@ -78,7 +83,7 @@ public class TickExprTest {
     private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
     // time parts that the grammar rejects
     private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
-    private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
+    private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09", FUZZ_BUSINESS_DAY_RANGE_END};
     // texts after the first ';' that the parser rejects after every element, and the compiled form
     // as well: one more ';', too many, a period or count that is not a number, a count below 1, and
     // a period with a unit that does not repeat
@@ -96,6 +101,32 @@ public class TickExprTest {
     private static final String[] FUZZ_ZONES = {"", "@+02:00", "@Europe/London", "@America/New_York"};
     private static final Log LOG = LogFactory.getLog(TickExprTest.class);
     private static final String NINE_TO_TEN = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+    // date variable ranges that add no interval at their "now": ranges that start after they end,
+    // and ranges of business days that hold no business day, with the first day of a range of
+    // days, and a range of the same kind that adds intervals at 2024-01-02T10:00Z, a Tuesday
+    private static final NoIntervalRange[] NO_INTERVAL_RANGES = {
+            new NoIntervalRange("$tomorrow..$today", "2024-01-02T10:00:00.000000Z", "2024-01-03", true, "$today..$tomorrow"),
+            // before 1970, after a leap day, on the day London springs forward, and at the end of
+            // a century
+            new NoIntervalRange("$tomorrow..$today", "1969-12-31T23:30:00.000000Z", "1970-01-01", true, "$today..$tomorrow"),
+            new NoIntervalRange("$tomorrow..$today", "2024-02-29T23:59:00.000000Z", "2024-03-01", true, "$today..$tomorrow"),
+            new NoIntervalRange("$tomorrow..$today", "2024-03-31T00:30:00.000000Z", "2024-04-01", true, "$today..$tomorrow"),
+            new NoIntervalRange("$tomorrow..$today", "2099-12-31T23:59:00.000000Z", "2100-01-01", true, "$today..$tomorrow"),
+            // from a day to a point in time, which starts after it ends before 04:00
+            new NoIntervalRange("$today..$now - 4h", "2024-01-02T03:00:00.000000Z", "2024-01-02", true, "$today..$now"),
+            new NoIntervalRange("$today..$now - 4h", "1969-12-31T03:00:00.000000Z", "1969-12-31", true, "$today..$now"),
+            // from a point in time to a day, which starts after it ends from 22:00 on
+            new NoIntervalRange("$now + 2h..$today", "2024-01-02T23:00:00.000000Z", "2024-01-03", true, "$now..$tomorrow"),
+            // between two points in time
+            new NoIntervalRange("$now..$now - 1h", "2024-01-02T10:00:00.000000Z", null, true, "$now - 1h..$now"),
+            new NoIntervalRange("$today + 570m..$now", "2024-01-02T03:00:00.000000Z", null, true, "$now - 1h..$now"),
+            // business days on a Saturday, on a Sunday, over a weekend, and on the Saturday after
+            // a Friday
+            new NoIntervalRange("$today..$today + 0bd", "2024-01-06T10:00:00.000000Z", "2024-01-06", false, "$today..$today + 0bd"),
+            new NoIntervalRange("$today..$today + 0bd", "2024-01-07T10:00:00.000000Z", "2024-01-07", false, "$today..$today + 0bd"),
+            new NoIntervalRange("$today..$tomorrow + 0bd", "2024-01-06T10:00:00.000000Z", "2024-01-06", false, "$today..$today + 0bd"),
+            new NoIntervalRange("$tomorrow..$tomorrow + 0bd", "2024-01-05T10:00:00.000000Z", "2024-01-06", false, "$today..$today + 0bd")
+    };
     // ranges between two points in time, each a single interval, with the intervals that they select
     // at 2024-01-02T10:00Z, a Tuesday; ? stands for the text after the first ';' of the expression
     private static final PointInTimeRange[] POINT_IN_TIME_RANGES = {
@@ -125,6 +156,7 @@ public class TickExprTest {
             new PointInTimeRange("[$now - 1h..$now]T[09..10]:30;?", NINE_TO_TEN, false),
             new PointInTimeRange("  $now - 1h ..  $now ;?", NINE_TO_TEN, true)
     };
+    private static final String RANGE_ORDER_ERROR = "Invalid date range: start is after end";
     private static final int[] TICK_CHECK_LEVELS = {IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0};
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
@@ -4221,6 +4253,237 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeAddingNoIntervalElementSuffixErrorOrder() throws SqlException {
+        // A date variable range that adds no interval fails on the order of its ends first under
+        // the range order check, at its '..', and a range between two points in time checks the
+        // text after the first ';' of the list before the suffix of its element, as when it adds
+        // an interval. In a list, the first element that fails decides the error.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long ten = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final long three = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        final int[] withoutRangeOrderCheck = {IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0};
+
+        assertParseFails("[$now..$now - 1h@Invalid/Zone];1x", ten, IntervalUtils.TICK_CHECK_ALL, 11, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$now..$now - 1h@Invalid/Zone];1x", ten, checks, 7, "Invalid duration unit: x");
+        }
+        assertParseFailsAtEveryCheckLevel("[$now - 1h..$now@Invalid/Zone];1x", ten, "Invalid duration unit: x");
+        assertValidateFailsWith("[$now..$now - 1h@Invalid/Zone];1x", ten, "Invalid duration unit: x");
+        assertParseFails("[$today + 570m..$now@Invalid/Zone];1x", three, IntervalUtils.TICK_CHECK_ALL, 20, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$today + 570m..$now@Invalid/Zone];1x", three, checks, 7, "Invalid duration unit: x");
+            assertParseFails("[$today + 570m..$now@Invalid/Zone]", three, checks, 7, "invalid timezone: Invalid/Zone");
+        }
+
+        // a range of days that adds no interval fails on the suffix of its element, where a range
+        // of days that adds intervals fails on the time part and the text after the first ';' of
+        // the list first
+        assertParseFails("[$tomorrow..$today@Invalid/Zone]", ten, IntervalUtils.TICK_CHECK_ALL, 16, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$tomorrow..$today@Invalid/Zone]", ten, checks, 7, "invalid timezone: Invalid/Zone");
+            assertParseFails("[$tomorrow..$today@Invalid/Zone];1x", ten, checks, 7, "invalid timezone: Invalid/Zone");
+            assertParseFails("[$tomorrow..$today@Invalid/Zone]T25:00", ten, checks, 7, "invalid timezone: Invalid/Zone");
+        }
+        assertParseFailsAtEveryCheckLevel("[$today..$tomorrow@Invalid/Zone];1x", ten, "Invalid duration unit: x");
+        assertParseFailsAtEveryCheckLevel("[$today..$tomorrow@Invalid/Zone]T25:00", ten, "Invalid date: 2024-01-02T25:00");
+        assertValidateFailsWith("[$tomorrow..$today@Invalid/Zone];1x", ten, "invalid timezone: Invalid/Zone");
+
+        // the first element that fails decides
+        assertParseFails("[$tomorrow..$today@Invalid/Zone, $today@Bogus/Zone]", ten, IntervalUtils.TICK_CHECK_ALL, 16, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$tomorrow..$today@Invalid/Zone, $today@Bogus/Zone]", ten, checks, 7, "invalid timezone: Invalid/Zone");
+        }
+        assertParseFailsAtEveryCheckLevel("[$today@Bogus/Zone, $tomorrow..$today@Invalid/Zone]", ten, "invalid timezone: Bogus/Zone");
+        assertParseFails("[$today, $tomorrow..$today#Xyz, $today#Qqq]", ten, IntervalUtils.TICK_CHECK_ALL, 16, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$today, $tomorrow..$today#Xyz, $today#Qqq]", ten, checks, 7, "Invalid day name: Xyz");
+        }
+        assertValidateFailsWith("[$tomorrow..$today@Invalid/Zone, $today@Bogus/Zone]", ten, "invalid timezone: Invalid/Zone");
+
+        // a time list whose every slot has a timezone of its own
+        assertParseFails("[$tomorrow..$today@Invalid/Zone]T[09:00@UTC]", ten, IntervalUtils.TICK_CHECK_ALL, 16, RANGE_ORDER_ERROR);
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$tomorrow..$today@Invalid/Zone]T[09:00@UTC]", ten, checks, 7, "invalid timezone: Invalid/Zone");
+        }
+
+        // the letter case of the variables, the timezone and the day filter, and whitespace
+        // around the parts of the element
+        for (int checks : withoutRangeOrderCheck) {
+            assertParseFails("[$TOMORROW..$Today@INVALID/ZONE]", ten, checks, 7, "invalid timezone: INVALID/ZONE");
+            assertParseFails("[$TOMORROW..$Today#XYZ]", ten, checks, 7, "Invalid day name: XYZ");
+            assertParseFails("[ $tomorrow .. $today @Invalid/Zone ]", ten, checks, 7, "invalid timezone: Invalid/Zone");
+        }
+        assertParseFails("[ $tomorrow .. $today @Invalid/Zone ]", ten, IntervalUtils.TICK_CHECK_ALL, 17, RANGE_ORDER_ERROR);
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalFailsOnMalformedElementSuffix() throws SqlException {
+        // A date variable range adds no interval when it starts after it ends, which the parser
+        // lets through without the range order check, and when it is a range of business days
+        // that holds no business day. A timezone or day filter of its element still has to parse:
+        // the range fails on it with the error of a day of the range, at every check level that
+        // lets the range through, whatever the time part, timezone and day filter of the list. The
+        // compiled form parses such an expression on every evaluation, so it fails the same way as
+        // the SQL that holds it is validated. The same suffix fails a range of the same kind that
+        // adds intervals with the same error, apart from the date that a day shows: that of the
+        // first day of the range, followed by the time part of the list where there is one.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long tuesday = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final String manyX = "x".repeat(100_000);
+        // the suffix of the element, the error of a range of days, where ? stands for its first
+        // day, and the error of a range between two points in time, where null leaves it out
+        final String[][] suffixes = {
+                // a timezone that does not parse
+                {"@Invalid/Zone", "invalid timezone: Invalid/Zone", "invalid timezone: Invalid/Zone"},
+                {"@", "invalid timezone: ", "invalid timezone: "},
+                {"@ UTC", "invalid timezone:  UTC", "invalid timezone:  UTC"},
+                {"@[UTC]", "invalid timezone: [UTC]", "invalid timezone: [UTC]"},
+                {"@+25:00", "invalid timezone: +25:00", "invalid timezone: +25:00"},
+                {"@\u00dcnknown", "invalid timezone: \u00dcnknown", "invalid timezone: \u00dcnknown"},
+                {"@\uD83D\uDE00", "invalid timezone: \uD83D\uDE00", "invalid timezone: \uD83D\uDE00"},
+                {"@Bogus/" + manyX, "invalid timezone: Bogus/" + manyX, "invalid timezone: Bogus/" + manyX},
+                // the timezone takes the rest of the element, and a range of days parses its day
+                // filter first
+                {"@Invalid/Zone#Mon", "invalid timezone: Invalid/Zone#Mon", "invalid timezone: Invalid/Zone#Mon"},
+                {"@Invalid/Zone#Xyz", "Invalid day name: Xyz", "invalid timezone: Invalid/Zone#Xyz"},
+                {"#Mon@Invalid/Zone", "Invalid day name: Mon@Invalid/Zone", "invalid timezone: Invalid/Zone"},
+                // a range of days takes the text before the last '@' for a part of its date
+                {"@UTC@Invalid/Zone", "Invalid date: ?@UTC", "invalid timezone: Invalid/Zone"},
+                {"@+02:00@UTC", "Invalid date: ?@+02:00", null},
+                {"@Invalid/Zone@UTC", "Invalid date: ?@Invalid/Zone", null},
+                // a day filter that does not parse
+                {"#Xyz", "Invalid day name: Xyz", null},
+                {"#", "Empty day filter after '#'", null},
+                {"# Mon", "Invalid day name:  Mon", null},
+                {"#[Mon]", "Invalid day name: [Mon]", null},
+                {"#Mon#Tue", "Invalid day name: Mon#Tue", null},
+                {"#L\u00fcn", "Invalid day name: L\u00fcn", null},
+                // no tick calendar service knows it
+                {"#XNYS", "Invalid day name: XNYS", null},
+                {"#" + manyX, "Invalid day name: " + manyX, null},
+                {"@+02:00#Xyz", "Invalid day name: Xyz", null},
+                {"@UTC@UTC#Xyz", "Invalid day name: Xyz", null}
+        };
+        final String[] listSuffixes = {"", "T09:00", "T[09..10]:30", "T[09:00,10:00]", "@+00:00", "#Tue"};
+        for (NoIntervalRange range : NO_INTERVAL_RANGES) {
+            for (String[] suffix : suffixes) {
+                final String error = range.isPointInTime() ? suffix[2] : suffix[1];
+                if (error == null) {
+                    continue;
+                }
+                for (String listSuffix : listSuffixes) {
+                    final String expression = "[" + range.range() + suffix[0] + "]" + listSuffix;
+                    assertNoIntervalRangeFails(range, expression, range.isPointInTime() ? error : error.replace("?", range.firstDay()));
+                    if (listSuffix.indexOf('T') < 0 || error.indexOf('?') < 0) {
+                        final String forward = "[" + range.forwardRange() + suffix[0] + "]" + listSuffix;
+                        TestUtils.assertEquals(
+                                forward,
+                                "error: " + error.replace("?", "2024-01-02"),
+                                parseWithChecks(timestampDriver, forward, tuesday, IntervalUtils.TICK_CHECK_ALL)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalFailsOnMalformedElementSuffixInDynamicMode() throws SqlException {
+        // Dynamic mode keeps the intervals encoded for the runtime, and always checks the order of
+        // a range, so only a range of business days that holds no business day adds no interval
+        // there. It fails on a timezone of its element that does not parse, as the same range does
+        // on a weekday, and adds no interval with one that parses.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expression = "[$today..$today + 0bd@Bogus/Zone]";
+        for (String now : new String[]{"2024-01-06T10:00:00.000000Z", "2024-01-07T10:00:00.000000Z", "2024-01-02T10:00:00.000000Z"}) {
+            out.clear();
+            try {
+                parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 7, out, IntervalOperation.INTERSECT, false, timestampDriver.parseFloorLiteral(now));
+                Assert.fail("parse should fail: " + expression + " at " + now);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(now, "invalid timezone: Bogus/Zone", e.getFlyweightMessage());
+                Assert.assertEquals(now, 7, e.getPosition());
+            }
+            Assert.assertEquals(now, 0, out.size());
+        }
+        assertEncodedIntervalWithNow("[]", "[$today..$today + 0bd@+00:00]", "2024-01-06T10:00:00.000000Z");
+        assertEncodedIntervalWithNow("[]", "[$today..$today + 0bd@+00:00]", "2024-01-07T10:00:00.000000Z");
+        assertEncodedIntervalWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "[$today..$today + 0bd@+00:00]",
+                "2024-01-02T10:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeAddingNoIntervalKeepsWellFormedElementSuffix() throws SqlException {
+        // A date variable range that adds no interval, with a timezone or day filter of its
+        // element that parses, adds no interval at every check level that lets the range through,
+        // whatever the time part, timezone and day filter of the list, and the other elements of
+        // the list keep their intervals. The compiled form validates it as the SQL that holds it
+        // compiles. A timezone name matches by its prefix, in any letter case.
+        final String[] zones = {
+                "", "@+02:00", "@-05:30", "@+14:00", "@-12:00", "@UTC", "@utc", "@Z", "@GMT+2", "@UTCx", "@Europe/London",
+                "@europe/london", "@America/New_York", " @UTC"
+        };
+        final String[] dayFilters = {"#Mon", "#MON", "#mon", "#Monday", "#Tue", "#workday", "#WORKDAY", "#wd", "#weekend", "#Mon ", "@UTC#Mon", "@+02:00#Sat"};
+        // the time part, timezone and day filter of the list, and the intervals that $today
+        // selects with them at 2024-01-02T10:00Z, a Tuesday
+        final String wholeDay = "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]";
+        final String[][] listSuffixes = {
+                {"", wholeDay},
+                {"T09:00", "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z}]"},
+                {"T[09..10]:30", "[{lo=2024-01-02T09:30:00.000000Z, hi=2024-01-02T09:30:59.999999Z},{lo=2024-01-02T10:30:00.000000Z, hi=2024-01-02T10:30:59.999999Z}]"},
+                {"T[09:00,10:00]", "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}]"},
+                {"@+00:00", wholeDay},
+                {"#Tue", wholeDay}
+        };
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long tuesday = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        for (NoIntervalRange range : NO_INTERVAL_RANGES) {
+            for (String[] suffixes : new String[][]{zones, dayFilters}) {
+                if (suffixes == dayFilters && range.isPointInTime()) {
+                    continue;
+                }
+                for (String suffix : suffixes) {
+                    for (String[] listSuffix : listSuffixes) {
+                        assertNoIntervalRangeAddsNoInterval(range, "[" + range.range() + suffix + "]" + listSuffix[0]);
+                    }
+                }
+            }
+        }
+        // next to another element
+        for (String[] suffixes : new String[][]{zones, dayFilters}) {
+            for (String suffix : suffixes) {
+                for (String[] listSuffix : listSuffixes) {
+                    for (String range : new String[]{"$tomorrow..$today", "$now..$now - 1h"}) {
+                        if (suffixes == dayFilters && range.startsWith("$now")) {
+                            continue;
+                        }
+                        final String expression = "[" + range + suffix + ", $today]" + listSuffix[0];
+                        assertParseFails(expression, tuesday, IntervalUtils.TICK_CHECK_ALL, 7 + expression.indexOf("..") - 1, RANGE_ORDER_ERROR);
+                        for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+                            assertParsed(forTimestampType(listSuffix[1]), expression, tuesday, checks);
+                        }
+                        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                                timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+                            compiled.validate(tuesday);
+                        }
+                    }
+                }
+            }
+        }
+        // a range of business days that skips a weekend before its first day
+        final long saturday = timestampDriver.parseFloorLiteral("2024-01-06T10:00:00.000000Z");
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}]"),
+                "[$today..$today + 1bd@+00:00]",
+                saturday
+        );
+        assertParseFailsAtEveryCheckLevel("[$today..$today + 1bd@Bogus/Zone]", saturday, "invalid timezone: Bogus/Zone");
+    }
+
+    @Test
     public void testDateVariableRangeArithmeticBothSides() throws SqlException {
         // [$today+1bd..$today+5bd] produces 2 merged intervals (business days)
         // 2026-01-22 (Thu) + 1bd = Fri 23, + 5bd = Thu 29
@@ -7997,6 +8260,9 @@ public class TickExprTest {
                         sink.put(time);
                         isMalformed |= time.indexOf('@') >= 0;
                     }
+                    // a timezone that does not parse, which counts as well-formed, see
+                    // DateVariableDetectionChecker
+                    case 3 -> sink.put(pick(rnd, FUZZ_MALFORMED_ELEMENT_ZONES));
                     default -> {
                     }
                 }
@@ -8077,6 +8343,29 @@ public class TickExprTest {
         int month = driver.getMonthOfYear(timestamp);
         int day = driver.getDayOfMonth(timestamp);
         return String.format("%04d-%02d-%02d", year, month, day);
+    }
+
+    /**
+     * Returns whether a generated expression has a range of business days, which ends at
+     * {@link #FUZZ_BUSINESS_DAY_RANGE_END}. The parser reads the time part and the text after the
+     * first ';' of the list for each day of a range, and such a range holds no day when it starts
+     * on a weekend.
+     */
+    static boolean hasBusinessDayRange(String expression) {
+        return expression.contains(".." + FUZZ_BUSINESS_DAY_RANGE_END);
+    }
+
+    /**
+     * Returns whether a generated expression has an element with a timezone of
+     * {@link #FUZZ_MALFORMED_ELEMENT_ZONES}, which no other part of a generated expression holds.
+     */
+    static boolean hasMalformedElementZone(String expression) {
+        for (String zone : FUZZ_MALFORMED_ELEMENT_ZONES) {
+            if (expression.contains(zone)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -8583,6 +8872,84 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the expression, a date list with the range as its first element, adds no
+     * interval at the "now" of the range, at every check level that lets the range through: one
+     * that starts after it ends fails on its order under the range order check, at its '..'. The
+     * compiled form validates it, and evaluates it to the same.
+     */
+    private void assertNoIntervalRangeAddsNoInterval(NoIntervalRange range, String expression) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(range.now());
+        final int rangeOrderPosition = 7 + expression.indexOf("..") - 1;
+        for (int checks : TICK_CHECK_LEVELS) {
+            if (range.isReversed() && (checks & IntervalUtils.TICK_CHECK_RANGE_ORDER) != 0) {
+                assertParseFails(expression, now, checks, rangeOrderPosition, RANGE_ORDER_ERROR);
+            } else {
+                assertParsed("[]", expression, now, checks);
+            }
+        }
+        final String context = expression + " at " + range.now();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+            compiled.validate(now);
+            out.clear();
+            try {
+                compiled.evaluate(out, now);
+                Assert.assertFalse(context, range.isReversed());
+                Assert.assertEquals(context, 0, out.size());
+            } catch (CairoException e) {
+                Assert.assertTrue(context, range.isReversed());
+                TestUtils.assertEquals(context, RANGE_ORDER_ERROR, e.getFlyweightMessage());
+            }
+        }
+    }
+
+    /**
+     * Asserts that the parser and the compiled form fail on the expression, a date list with the
+     * range as its first element, at the "now" of the range, with exactly the error, at the
+     * position of the expression, at every check level that lets the range through: one that
+     * starts after it ends fails on its order under the range order check, at its '..'. The
+     * compiled form parses the expression on every evaluation, fails as the SQL that holds it is
+     * validated, and when it evaluates, where it keeps what the caller appended before.
+     */
+    private void assertNoIntervalRangeFails(NoIntervalRange range, String expression, String expectedError) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(range.now());
+        final int rangeOrderPosition = 7 + expression.indexOf("..") - 1;
+        for (int checks : TICK_CHECK_LEVELS) {
+            if (range.isReversed() && (checks & IntervalUtils.TICK_CHECK_RANGE_ORDER) != 0) {
+                assertParseFails(expression, now, checks, rangeOrderPosition, RANGE_ORDER_ERROR);
+            } else {
+                assertParseFails(expression, now, checks, 7, expectedError);
+            }
+        }
+        final String context = expression + " at " + range.now();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+            Assert.assertTrue(context, compiled.isParsedOnEvaluation());
+            try {
+                compiled.validate(now);
+                Assert.fail("validate should fail: " + context);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(context, expectedError, e.getFlyweightMessage());
+                Assert.assertEquals(context, 7, e.getPosition());
+            }
+            out.clear();
+            out.add(1L, 2L);
+            try {
+                compiled.evaluate(out, now);
+                Assert.fail("evaluation should fail: " + context);
+            } catch (CairoException e) {
+                TestUtils.assertEquals(context, range.isReversed() ? RANGE_ORDER_ERROR : expectedError, e.getFlyweightMessage());
+                Assert.assertEquals(context, range.isReversed() ? rangeOrderPosition : 7, e.getPosition());
+            }
+            Assert.assertEquals(context, 2, out.size());
+            Assert.assertEquals(context, 1, out.getQuick(0));
+            Assert.assertEquals(context, 2, out.getQuick(1));
+        }
+    }
+
+    /**
      * Asserts that the parser rejects the expression at 2024-01-02T10:00Z with exactly the error, at
      * the position of the expression.
      */
@@ -8871,9 +9238,14 @@ public class TickExprTest {
      * compiled form parses an expression with a static element with a time part of its own under a
      * time of the list when it evaluates. A time part of an element with a slot that has a timezone
      * of its own counts as malformed: under a timezone of the list, the compiled form converts the
-     * slot by both timezones, and the parser by its own. The repeating interval of the parser, a
-     * duration, a period and a count, counts as malformed: the parser takes it, and the IR of the
-     * compiled form rejects it.
+     * slot by both timezones, and the parser by its own. A timezone of an element that does not
+     * parse counts as well-formed: the compiled form parses an expression with an element with a
+     * timezone of its own on every evaluation. The repeating interval of the parser, a duration, a
+     * period and a count, counts as malformed: the parser takes it, and the IR of the compiled form
+     * rejects it. A range of business days that holds no day at a "now" reads neither the time part
+     * nor the text after the first ';' of the list there, see {@link #hasBusinessDayRange}, so the
+     * parser may return no interval at that "now" for an expression that the compiled form rejects
+     * as it compiles.
      */
     private static class DateVariableDetectionChecker {
         private static final String ERROR = "error";
@@ -8967,7 +9339,7 @@ public class TickExprTest {
                 compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
             } catch (SqlException | CairoException e) {
                 for (int i = 0; i < nows.length; i++) {
-                    if (!ERROR.equals(parsed[i])) {
+                    if (!ERROR.equals(parsed[i]) && !("[]".equals(parsed[i]) && hasBusinessDayRange(expression))) {
                         fail(expression, "does not compile [error=" + e.getFlyweightMessage() + "], but parses to "
                                 + parsed[i] + " at " + FUZZ_NOWS[i]);
                         return;
@@ -9025,6 +9397,17 @@ public class TickExprTest {
             } catch (SqlException | CairoException e) {
                 return ERROR;
             }
+        }
+    }
+
+    /**
+     * A date variable range that adds no interval at {@code now}, whether it starts after it ends
+     * there, the first day of a range of days, null for a range between two points in time, and a
+     * range of the same kind that adds intervals at 2024-01-02T10:00Z.
+     */
+    private record NoIntervalRange(String range, String now, String firstDay, boolean isReversed, String forwardRange) {
+        boolean isPointInTime() {
+            return firstDay == null;
         }
     }
 

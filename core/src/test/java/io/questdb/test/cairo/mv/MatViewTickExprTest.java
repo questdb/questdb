@@ -47,6 +47,86 @@ import org.junit.Test;
 public class MatViewTickExprTest extends AbstractCairoTest {
 
     @Test
+    public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsCreate() throws Exception {
+        // SQL rejects a view and a materialized view whose literal holds a date variable range
+        // with a timezone or day filter of its element that does not parse as it creates them, at
+        // the literal, even when the range adds no interval then: at 03:00 the range from 09:30 to
+        // "now" starts after it ends, and so does the range from tomorrow to today at any time.
+        // A range that starts after it ends fails the query of a view when CREATE runs it, on
+        // its order, so the views with a timezone that parses are created at 12:00, when the
+        // range does not start after it ends. Both load after a restart, the materialized view
+        // stays valid after a refresh, and the view selects the row at 10:00.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2024-01-02T08:00:00.000000Z', 1),
+                    ('2024-01-02T10:00:00.000000Z', 1),
+                    ('2024-01-03T09:00:00.000000Z', 1)
+                    """);
+            drainWalQueue();
+            // ? stands for the literal
+            final String viewSql = "SELECT ts, v FROM base WHERE ts IN '?'";
+            final String matViewSql = "SELECT ts, count() c FROM base WHERE ts IN '?' SAMPLE BY 1h";
+            for (String[] literal : new String[][]{
+                    {"[$today + 570m..$now@Bogus/Zone]", "invalid timezone: Bogus/Zone"},
+                    {"[$tomorrow..$today#Xyz]", "Invalid day name: Xyz"}
+            }) {
+                for (String sql : new String[]{"CREATE VIEW v AS (" + viewSql + ")", "CREATE MATERIALIZED VIEW mv AS (" + matViewSql + ")"}) {
+                    final String create = sql.replace("?", literal[0]);
+                    assertExceptionNoLeakCheck(create, create.indexOf('\''), literal[1]);
+                }
+            }
+
+            final String wellFormed = "[$today + 570m..$now@+00:00]";
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+            execute("CREATE VIEW v AS (" + viewSql.replace("?", wellFormed) + ")");
+            execute("CREATE MATERIALIZED VIEW mv AS (" + matViewSql.replace("?", wellFormed) + ")");
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                drainWalAndMatViewQueues(restarted);
+                drainViewQueue(restarted);
+                restarted.execute("REFRESH MATERIALIZED VIEW mv FULL", restartedContext);
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_name, view_status FROM materialized_views()")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                view_name\tview_status
+                                mv\tvalid
+                                """);
+                // the query of the view runs at 12:00
+                restartedContext.initNow();
+                assertQuery("v")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .inferTimestamp()
+                        .sizeMayVary()
+                        .returns("""
+                                ts\tv
+                                2024-01-02T10:00:00.000000Z\t1
+                                """);
+                restarted.releaseInactive();
+            }
+        });
+    }
+
+    @Test
     public void testLiteralWithElementTimePartUnderListTimeFailsCreateAndActsAsNullInRefresh() throws Exception {
         // SQL rejects a view and a materialized view with a literal that has a static element with
         // a time part of its own that starts with a bracket, under a time of the list, as it creates

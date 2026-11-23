@@ -394,6 +394,56 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testDateVariableRangeAddingNoIntervalWithTickCalendar() throws SqlException {
+        // A date variable range that adds no interval, one that starts after it ends, without the
+        // range order check, or a range of business days that holds no business day, takes the
+        // tick calendar of its element for one, as a day of the range does. A timezone before the
+        // calendar takes the rest of the element, so one that does not parse fails with the
+        // calendar in its text. 2025-01-28 is a Tuesday, and 2025-01-25 a Saturday.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final String context = " [" + ColumnType.nameOf(timestampType) + ']';
+            final long tuesday = driver.parseFloorLiteral("2025-01-28T10:00:00.000000Z");
+            final long saturday = driver.parseFloorLiteral("2025-01-25T10:00:00.000000Z");
+            final String zoneError = "error: invalid timezone: Bogus/Zone#XNYS";
+            Assert.assertEquals(context, "error: Invalid date range: start is after end", parseTickExpr(driver, "[$tomorrow..$today@Bogus/Zone#XNYS]", tuesday));
+            for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+                Assert.assertEquals(context, "[]", parseTickExpr(driver, "[$tomorrow..$today#XNYS]", tuesday, checks));
+                Assert.assertEquals(context, "[]", parseTickExpr(driver, "[$tomorrow..$today@UTC#XNYS]", tuesday, checks));
+                Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$tomorrow..$today@Bogus/Zone#XNYS]", tuesday, checks));
+            }
+            for (int checks : new int[]{IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+                Assert.assertEquals(context, "[]", parseTickExpr(driver, "[$today..$today + 0bd#XNYS]", saturday, checks));
+                Assert.assertEquals(context, "[]", parseTickExpr(driver, "[$today..$today + 0bd@UTC#XNYS]", saturday, checks));
+                Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$today..$today + 0bd@Bogus/Zone#XNYS]", saturday, checks));
+            }
+            // the compiled form parses an element with a tick calendar of its own on every
+            // evaluation, and fails as the SQL that holds it is validated
+            for (String expression : new String[]{"[$tomorrow..$today@Bogus/Zone#XNYS]", "[$today..$today + 0bd@Bogus/Zone#XNYS]"}) {
+                try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+                    Assert.assertTrue(expression + context, compiled.isParsedOnEvaluation());
+                    try {
+                        compiled.validate(expression.contains("bd") ? saturday : tuesday);
+                        Assert.fail("validate should fail: " + expression + context);
+                    } catch (SqlException e) {
+                        Assert.assertEquals(expression + context, zoneError, "error: " + e.getFlyweightMessage());
+                    }
+                }
+            }
+            // the same ranges where they add intervals: the trading sessions of the Tuesday and of
+            // the Wednesday from 14:30 to 21:00Z
+            final String sessions = "[{lo=2025-01-28T14:30:00.000000Z, hi=2025-01-28T20:59:59.999999Z},{lo=2025-01-29T14:30:00.000000Z, hi=2025-01-29T20:59:59.999999Z}]";
+            Assert.assertEquals(
+                    context,
+                    ColumnType.isTimestampNano(timestampType) ? sessions.replace("00Z", "00000Z").replace("99Z", "99999Z") : sessions,
+                    parseTickExpr(driver, "[$today..$tomorrow#XNYS]", tuesday)
+            );
+            Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$today..$tomorrow@Bogus/Zone#XNYS]", tuesday));
+            Assert.assertEquals(context, zoneError, parseTickExpr(driver, "[$today..$today + 0bd@Bogus/Zone#XNYS]", tuesday));
+        }
+    }
+
+    @Test
     public void testDateVariableRangeWithExchangeFilter() throws SqlException {
         // $today..$today+10d with exchange filter, now = 2025-01-24 (Friday)
         // Range: Jan 24 to Feb 3 (11 days)
@@ -1378,9 +1428,17 @@ public class TickCalendarTest {
      * Returns the intervals that the parser parses the expression to, or its error.
      */
     private static String parseTickExpr(TimestampDriver driver, String expression, long now) {
+        return parseTickExpr(driver, expression, now, IntervalUtils.TICK_CHECK_ALL);
+    }
+
+    /**
+     * Returns the intervals that the parser parses the expression to with the checks, or its
+     * error.
+     */
+    private static String parseTickExpr(TimestampDriver driver, String expression, long now, int checks) {
         final LongList out = new LongList();
         try {
-            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now);
+            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now, checks);
             return intervalToString(driver, out);
         } catch (SqlException e) {
             return "error: " + e.getFlyweightMessage();
