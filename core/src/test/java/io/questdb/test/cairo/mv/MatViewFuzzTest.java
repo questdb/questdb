@@ -46,10 +46,12 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlParser;
+import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -89,6 +91,7 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -136,6 +139,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     private static final long OPS_DAY_LO = 1_704_067_200_000_000L;
     // The share of the generic fuzzers' data commits that replace a range of the base, see setFuzzParams().
     private static final double REPLACE_INSERT_PROB = 0.1;
+    // the aggregates of the ALTER ... AS SQLs of testAggregatingViewAlterAs(), see AggregatingSql.aggregate
+    private static final String[] AGGREGATES = {"sum", "max", "min"};
+    // the length of the hour of a timestamp as the rows print it, "2024-01-01T05"
+    private static final int ALTER_AS_HOUR_PREFIX_LENGTH = 13;
     private static final long SPIN_LOCK_TIMEOUT = 100_000_000;
     // Month starts that follow the end of a year, of February in a common and a leap year, and of a 30-day month.
     private static final ObjList<String> monthStarts = new ObjList<>(
@@ -1675,6 +1682,10 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             baseDays[row.day] = true;
         }
 
+        // the buckets of the base rows inserted after the last ALTER ... AS, before a RANGE recomputes them
+        final int postAlterBuckets = oracle.assertPostAlterRows(readOperationsFuzzRows("mv"), twinRows, generator.getSqlColumns(), context);
+        LOG.info().$("fuzz: checked buckets with base rows after ALTER ... AS [count=").$(postAlterBuckets).I$();
+
         if (oracle.isGapAccepted() || oracle.isNeedsBackfill() || rnd.nextInt(8) == 0) {
             final StringSink sql = new StringSink();
             sql.put("REFRESH MATERIALIZED VIEW mv RANGE FROM ");
@@ -1937,6 +1948,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             MicrosFormatUtils.appendDateTimeUSec(sink, OPS_DAY_LO + op.rowTs.getQuick(i));
             sink.put("')");
             oracle.onInsert((int) (op.rowTs.getQuick(i) / Micros.DAY_MICROS));
+            oracle.onInsertRow(op.rowTs.getQuick(i), "s" + op.rowSyms.getQuick(i));
         }
         execute(sink);
     }
@@ -2046,11 +2058,16 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             final TimestampDriver driver = ColumnType.getTimestampDriver(metadata.getColumnType(tsIndex));
             final long dayLo = driver.fromMicros(OPS_DAY_LO);
             final long dayLength = driver.fromMicros(Micros.DAY_MICROS);
+            final long hourLength = driver.fromMicros(Micros.HOUR_MICROS);
             final Record record = cursor.getRecord();
             while (cursor.hasNext()) {
                 final long ts = record.getTimestamp(tsIndex);
                 final CharSequence sym = record.getSymA(symIndex);
-                final MatViewFuzzOracle.Row row = new MatViewFuzzOracle.Row((int) Math.floorDiv(ts - dayLo, dayLength));
+                final MatViewFuzzOracle.Row row = new MatViewFuzzOracle.Row(
+                        (int) Math.floorDiv(ts - dayLo, dayLength),
+                        (int) Math.floorDiv(ts - dayLo, hourLength),
+                        String.valueOf(sym)
+                );
                 Assert.assertTrue("bucket outside the fuzz days: " + ts, row.day > -1 && row.day < OPS_DAY_COUNT);
                 for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                     row.values.put(metadata.getColumnName(i), printOperationsFuzzValue(record, metadata.getColumnType(i), i));
@@ -2177,6 +2194,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             boolean isTimerView
     ) throws Exception {
         final StringSink sql = new StringSink();
+        switch (op.kind) {
+            // the operations that touch the view's buckets other than through a refresh, see
+            // MatViewFuzzOracle.onPostAlterRowsUnchecked()
+            case BASE_DROP_PARTITION_LIST, BASE_DROP_PARTITION_WHERE, BASE_DETACH_PARTITION, BASE_ATTACH_PARTITION,
+                 BASE_TRUNCATE, BASE_TRUNCATE_ATTACH_UPDATE, BASE_UPDATE, BASE_SET_TTL, BASE_REPLACE,
+                 BASE_REPLACE_FULL_RESTART, BASE_REPLACE_RESUME_RESTART, VIEW_ADD_COLUMN, VIEW_DROP_PARTITION_LIST,
+                 VIEW_DROP_PARTITION_WHERE, VIEW_INVALIDATE, VIEW_RESUME, BACKLOG_UPDATE, RESTART ->
+                    oracle.onPostAlterRowsUnchecked();
+            default -> {
+                // the operations that leave those buckets to the refreshes
+            }
+        }
         switch (op.kind) {
             case INSERT -> insertOperationsFuzzRows(op, oracle);
             case BASE_DROP_PARTITION_LIST -> {
@@ -2349,18 +2378,33 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             case VIEW_ALTER_AS -> {
                 final String viewSql = MatViewFuzzOpGenerator.viewSql(op.sqlColumns, op.isPositional);
                 LOG.info().$("fuzz: ALTER AS ").$(viewSql).$();
+                final TableToken viewToken = engine.verifyTableName("mv");
+                if (generator.isViewWalSuspended() && engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn() == -1) {
+                    // A view ALTER judges an earlier ALTER ... AS by the writer txn of the view's tracker, which a reset
+                    // lowers to -1, while the generator predicts its refusal on a suspended view WAL by the definition
+                    // event alone. The check job initialises the tracker again first, as it does within its interval.
+                    try (CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine)) {
+                        checkJob.run();
+                    }
+                }
                 final long viewSeqTxn = opsViewSeqTxn();
                 try {
                     executeOpsViewAlter(generator, "ALTER MATERIALIZED VIEW mv AS (" + viewSql + ')');
                     Assert.assertFalse("ALTER ... AS must refuse a column out of its position: " + viewSql, op.isRefused);
                     generator.onDefinitionChangeIssued();
                     oracle.onSqlChanged(sqlColumnsBefore, op.sqlColumns);
+                    oracle.onDefinitionChanged();
                 } catch (SqlException e) {
                     if (!op.isRefused) {
                         throw e;
                     }
                     final ObjList<String> viewColumns = generator.getViewColumns();
-                    if (op.isPositional && op.sqlColumns.size() != viewColumns.size()) {
+                    if (op.isRefusedBySuspension) {
+                        TestUtils.assertEquals(
+                                "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, run ALTER MATERIALIZED VIEW mv RESUME WAL first",
+                                e.getFlyweightMessage()
+                        );
+                    } else if (op.isPositional && op.sqlColumns.size() != viewColumns.size()) {
                         TestUtils.assertContains(e.getFlyweightMessage(), "materialized view query does not match view schema [view=mv, queryColumnCount="
                                 + op.sqlColumns.size() + ", viewColumnCount=" + viewColumns.size() + ']');
                     } else {
@@ -2417,7 +2461,30 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 }
                 restartOperationsFuzzViewStates(oracle);
             }
-            case APPLY_WAL -> drainWalQueue();
+            case APPLY_WAL -> {
+                drainWalQueue();
+                // the WAL apply skips a suspended view's WAL
+                if (!generator.isViewWalSuspended()) {
+                    generator.onViewWalApplied();
+                }
+            }
+            case APPLY_BASE_WAL -> {
+                try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                    walApplyJob.applyWalDirect(engine.verifyTableName("base"), Job.RUNNING_STATUS);
+                }
+            }
+            case RESET_VIEW_TRACKER -> {
+                // A FULL refresh of an invalid view parks while the view's tracker shows unapplied view WAL, and only
+                // a WAL apply of the view redelivers it. A reset with nothing left to apply runs no such apply, while
+                // the view check expects a pending FULL to complete. So no reset comes while a FULL is pending.
+                if (isOperationsFuzzFullPending()) {
+                    LOG.info().$("fuzz: skipping the reset of the view's tracker while a FULL refresh is pending").$();
+                } else {
+                    engine.notifyWalTxnRepublisher(engine.verifyTableName("mv"));
+                }
+            }
+            case VIEW_SUSPEND_WAL -> execute("ALTER MATERIALIZED VIEW mv SUSPEND WAL");
+            case VIEW_RESUME_WAL -> resumeOperationsFuzzViewWal(generator, op, oracle);
             case RUN_REFRESH_JOB -> {
                 if (isTimerView) {
                     fireOperationsFuzzTimer();
@@ -2428,6 +2495,55 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             // apply job takes one now and then, so that the purge deletes the view's txn-log parts below them
             case PURGE_WAL -> MatViewTxnLogParts.purge(engine, engine.verifyTableName("mv"));
             default -> throw new AssertionError("unexpected operation: " + op.kind);
+        }
+    }
+
+    // Tells the generator that the view's WAL applied the pending definition event, which the operations that apply the
+    // WAL of every table on their way do: the generator predicts the refusal of an ALTER ... AS on a suspended view WAL
+    // by it.
+    private static void syncOperationsFuzzDefinitionPending(MatViewFuzzOpGenerator generator) {
+        if (generator.isDefinitionPending() && !opsViewState("mv").isDefinitionPending()) {
+            generator.onDefinitionApplied();
+        }
+    }
+
+    // RESUME WAL of the view. A VIEW_RESUME_WAL drawn to skip the pending definition event does so with RESUME WAL FROM
+    // TXN when the event is the view's only transaction that its WAL apply has not applied, so that the skip loses no
+    // other transaction, and the view keeps the SQL it had; it is a plain RESUME WAL otherwise.
+    private static void resumeOperationsFuzzViewWal(MatViewFuzzOpGenerator generator, MatViewFuzzOpGenerator.Op op, MatViewFuzzOracle oracle) throws SqlException {
+        final TableToken viewToken = engine.verifyTableName("mv");
+        final long definitionSeqTxn = opsViewState("mv").getPendingDefinitionSeqTxn();
+        boolean isSkipping = false;
+        if (op.isSkipDefinition) {
+            final long appliedSeqTxn;
+            try (TableReader reader = engine.getReader(viewToken)) {
+                appliedSeqTxn = reader.getSeqTxn();
+            }
+            isSkipping = opsViewSeqTxn() == definitionSeqTxn && appliedSeqTxn == definitionSeqTxn - 1;
+            if (!isSkipping) {
+                LOG.info().$("fuzz: RESUME WAL without the skip, the view's WAL holds more than the definition event [definitionSeqTxn=")
+                        .$(definitionSeqTxn)
+                        .$(", viewSeqTxn=").$(opsViewSeqTxn())
+                        .$(", appliedSeqTxn=").$(appliedSeqTxn)
+                        .I$();
+            }
+        }
+        if (isSkipping) {
+            LOG.info().$("fuzz: RESUME WAL FROM TXN past the definition event [seqTxn=").$(definitionSeqTxn).I$();
+            final ObjList<String> sqlColumnsBefore = new ObjList<>();
+            sqlColumnsBefore.addAll(generator.getSqlColumns());
+            execute("ALTER MATERIALIZED VIEW mv RESUME WAL FROM TXN " + (definitionSeqTxn + 1));
+            // The WAL apply job runs once the statement lets it, which moves the view's tracker past the skipped event: a
+            // view ALTER judges an earlier ALTER ... AS by the tracker, and refuses on a view WAL that a later SUSPEND
+            // WAL stops before the tracker moved.
+            try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                walApplyJob.applyWalDirect(viewToken, Job.RUNNING_STATUS);
+            }
+            generator.onDefinitionSkipped();
+            oracle.onSqlChanged(sqlColumnsBefore, generator.getSqlColumns());
+            oracle.onPostAlterRowsUnchecked();
+        } else {
+            execute("ALTER MATERIALIZED VIEW mv RESUME WAL");
         }
     }
 
@@ -2524,11 +2640,22 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 runOperationsFuzzOp(generator, op, sqlColumnsBefore, oracle, timestampType, isTimerView);
             }
             isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
-            if (rnd.nextBoolean()) {
+            // the queues drain after half of the operations, and after a third of them while a definition event waits,
+            // so that the refresh job meets the event more often
+            if (rnd.nextBoolean() && (!generator.isDefinitionPending() || rnd.nextInt(3) == 0)) {
                 drainWalAndMatViewQueues();
                 oracle.onDrained(isOperationsFuzzFullPending());
+                if (!generator.isViewWalSuspended()) {
+                    generator.onViewWalApplied();
+                }
             }
+            syncOperationsFuzzDefinitionPending(generator);
             if (step % 6 == 5 || step == steps - 1) {
+                if (generator.isViewWalSuspended()) {
+                    // the view check takes a view whose WAL applies
+                    runOperationsFuzzOp(generator, generator.resumeViewWal(rnd, op), sqlColumnsBefore, oracle, timestampType, isTimerView);
+                    syncOperationsFuzzDefinitionPending(generator);
+                }
                 checkOperationsFuzzViews(rnd, generator, oracle, step);
             }
         }
@@ -2539,8 +2666,9 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
     // A check of testPassthroughViewAlterAs() and testAggregatingViewAlterAs(): catches the view up, as the next base
     // commit would after a restart lost its refresh, and asserts that the view is valid, has the SQL the fuzzer last
-    // saw taken, and holds exactly the rows the SQL gives on the base.
-    private static void checkAlterAsFuzzView(String viewSql, int step) throws Exception {
+    // saw taken, and holds exactly the rows the SQL gives on the base: all of them, or those of the hours, given as
+    // the rows print them, when other buckets may hold the values of an earlier SQL.
+    private static void checkAlterAsFuzzView(String viewSql, int step, @Nullable TreeSet<String> hours) throws Exception {
         final TableToken viewToken = engine.verifyTableName("mv");
         engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
         for (int i = 0; i < 3; i++) {
@@ -2552,10 +2680,31 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final MatViewState state = opsViewState("mv");
         Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport() + ' ' + context, state.isInvalid());
         Assert.assertEquals(context, viewSql, state.getViewDefinition().getMatViewSql());
-        assertSqlCursors(
-                "SELECT ts, sym, price, qty FROM (" + viewSql + ") ORDER BY ts, sym, price, qty",
-                "SELECT ts, sym, price, qty FROM mv ORDER BY ts, sym, price, qty"
-        );
+        final String expectedSql = "SELECT ts, sym, price, qty FROM (" + viewSql + ") ORDER BY ts, sym, price, qty";
+        final String actualSql = "SELECT ts, sym, price, qty FROM mv ORDER BY ts, sym, price, qty";
+        if (hours == null) {
+            assertSqlCursors(expectedSql, actualSql);
+            return;
+        }
+        LOG.info().$("fuzz: checking the hours with base rows after the last ALTER ... AS [count=").$(hours.size()).I$();
+        TestUtils.assertEquals(context, printAlterAsFuzzHours(expectedSql, hours), printAlterAsFuzzHours(actualSql, hours));
+    }
+
+    // The rows of the query in the hours, which the rows' first column, the timestamp, starts with.
+    private static String printAlterAsFuzzHours(String sql, TreeSet<String> hours) throws SqlException {
+        final StringSink rows = new StringSink();
+        printSql(sql, rows);
+        final StringSink sink = new StringSink();
+        final String[] lines = rows.toString().split("\n");
+        // the header
+        sink.put(lines[0]).put('\n');
+        for (int i = 1; i < lines.length; i++) {
+            final String line = lines[i];
+            if (line.length() >= ALTER_AS_HOUR_PREFIX_LENGTH && hours.contains(line.substring(0, ALTER_AS_HOUR_PREFIX_LENGTH))) {
+                sink.put(line).put('\n');
+            }
+        }
+        return sink.toString();
     }
 
     private static void createMatView(String viewSql, String mvName, boolean deferred) throws SqlException {
@@ -2613,8 +2762,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                 .put(hours < 10 ? "0" : "").put(hours).put(':').put(minutes < 10 ? "0" : "").put(minutes).put('\'');
     }
 
-    // The SQL of an ALTER ... AS of testAggregatingViewAlterAs(): the sums of price and qty of each symbol by the hour
-    // over the rows of a SQL of generatePassthroughSql(), the inner SQL, whose designated timestamp passes the base's
+    // The SQL of an ALTER ... AS of testAggregatingViewAlterAs(): the sums, maximums or minimums of price and qty of each
+    // symbol by the hour over the rows of a SQL of generatePassthroughSql(), the inner SQL, whose designated timestamp passes the base's
     // through, or is shifted or taken from ts2. The aggregating SELECT buckets its timestamp ts by SAMPLE BY, or by
     // timestamp_floor() with or without its origin argument, and reads the inner SQL as a subquery, a CTE or the master
     // of a join with the table other. A TIMESTAMP(ts) clause on the inner SQL restores the designated timestamp that a
@@ -2656,7 +2805,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
             // FLOOR_FROM
             default -> "timestamp_floor('1h', " + prefix + "ts, '2024-01-01T00:00:00.000000Z') AS ts";
         };
-        final String[] columns = {timestampColumn, prefix + "sym", "sum(" + prefix + "price) AS price", "sum(" + prefix + "qty) AS qty"};
+        out.aggregate = AGGREGATES[rnd.nextInt(AGGREGATES.length)];
+        final String[] columns = {timestampColumn, prefix + "sym", out.aggregate + "(" + prefix + "price) AS price", out.aggregate + "(" + prefix + "qty) AS qty"};
         final int rotation = rnd.nextInt(4);
         sb.append("SELECT ");
         int timestampOffset = -1;
@@ -2830,14 +2980,19 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // which is shorter than 31 days at the end of February or of a 30-day month.
     // Rows at random times of the days of testPassthroughViewAlterAs(), in and out of order, whose ts2 lies within an
     // hour of their ts.
-    private static void insertPassthroughFuzzRows(Rnd rnd, int rowCount) throws SqlException {
+    private static void insertPassthroughFuzzRows(Rnd rnd, int rowCount, TreeSet<String> hours) throws SqlException {
         final StringSink sink = new StringSink();
+        final StringSink hour = new StringSink();
         sink.put("INSERT INTO base VALUES ");
         for (int i = 0; i < rowCount; i++) {
             if (i > 0) {
                 sink.put(", ");
             }
             final long ts = OPS_DAY_LO + rnd.nextLong(OPS_DAY_COUNT * Micros.DAY_MICROS);
+            hour.clear();
+            MicrosFormatUtils.appendDateTimeUSec(hour, ts);
+            // the hour as the view's rows print it, both precisions
+            hours.add(hour.subSequence(0, ALTER_AS_HOUR_PREFIX_LENGTH).toString());
             sink.put("('");
             MicrosFormatUtils.appendDateTimeUSec(sink, ts);
             sink.put("', '");
@@ -2885,11 +3040,18 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
     // A round of testPassthroughViewAlterAs() or testAggregatingViewAlterAs(): a base with the designated timestamp ts
     // and another TIMESTAMP column ts2, of either precision, and a view of its ts, sym, price and qty, which passes the
     // base's rows through, or sums the price and qty of each symbol by the hour. The aggregating round reads the table
-    // other, which holds a row of each symbol, in its joins.
+    // other, which holds a row of each symbol, in its joins, and its ALTER ... AS SQLs take the sum, the maximum or the
+    // minimum, so that a bucket of several rows tells them apart. The WAL apply runs for every table, or for the base
+    // alone, as an apply run that serves the base before the view does. The round starts with an ALTER ... AS whose
+    // definition event the refresh job meets in the view's WAL, behind base rows that the base's WAL applied alone.
     private static void runAlterAsOperations(Rnd rnd, int steps, boolean isAggregating) throws Exception {
         final String timestampType = rnd.nextBoolean() ? "TIMESTAMP" : "TIMESTAMP_NS";
         execute("CREATE TABLE base (ts " + timestampType + ", ts2 " + timestampType + ", sym SYMBOL, price DOUBLE, qty LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        insertPassthroughFuzzRows(rnd, 1 + rnd.nextInt(20));
+        // The hours that got a base row after the last ALTER ... AS the view took. Their refresh read rows committed
+        // after the statement returned, so it ran with the statement's SQL, as the check asserts. The other buckets of
+        // an aggregating view may keep the values of an earlier SQL, until a FULL rebuilds them.
+        final TreeSet<String> hoursSinceAlter = new TreeSet<>();
+        insertPassthroughFuzzRows(rnd, 1 + rnd.nextInt(20), hoursSinceAlter);
         String viewSql;
         if (isAggregating) {
             execute("CREATE TABLE other (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2905,25 +3067,40 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         final String alterHead = "ALTER MATERIALIZED VIEW mv AS (";
         final PassthroughSql passthroughAlter = new PassthroughSql();
         final AggregatingSql aggregatingAlter = new AggregatingSql();
+        // The aggregate of the view's SQL, whether a bucket may hold the values of another aggregate, a FULL issued since
+        // the last ALTER ... AS the view took that no refresh job has run yet, and a FULL that ran since: every bucket
+        // holds the values of the view's SQL while all SQLs since the view's last rebuild took one aggregate, as the SQLs
+        // of one aggregate agree on every bucket, after a FULL, which rebuilds the view, and always in the passthrough
+        // round, whose SQLs all pass the rows through.
+        String viewAggregate = "sum";
+        boolean isAggregateMixed = false;
+        boolean isFullQueued = false;
+        boolean isFullSinceAlter = false;
         for (int step = 0; step < steps; step++) {
-            switch (rnd.nextInt(10)) {
+            // the round's first step: ALTER ... AS, base rows, the base's WAL alone, then the refresh job, which meets
+            // the definition event in the view's WAL and waits for it
+            final int pick = step == 0 ? 11 : rnd.nextInt(11);
+            switch (pick) {
                 case 0, 1, 2 ->
-                        insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5));
-                case 3, 4, 5 -> {
-                    final String sql;
-                    final int kind;
-                    final int timestampPosition;
-                    if (isAggregating) {
-                        generateAggregatingSql(rnd, aggregatingAlter);
-                        sql = aggregatingAlter.sql.toString();
-                        kind = aggregatingAlter.inner.kind;
-                        timestampPosition = aggregatingAlter.timestampPosition;
-                    } else {
-                        generatePassthroughSql(rnd, passthroughAlter);
-                        sql = passthroughAlter.sql.toString();
-                        kind = passthroughAlter.kind;
-                        timestampPosition = passthroughAlter.timestampPosition;
-                    }
+                        insertPassthroughFuzzRows(rnd, rnd.nextInt(8) == 0 ? 20 + rnd.nextInt(40) : 1 + rnd.nextInt(5), hoursSinceAlter);
+                case 3, 4, 5, 11 -> {
+                    final boolean isWindow = pick == 11;
+                    String sql;
+                    int kind;
+                    int timestampPosition;
+                    do {
+                        if (isAggregating) {
+                            generateAggregatingSql(rnd, aggregatingAlter);
+                            sql = aggregatingAlter.sql.toString();
+                            kind = aggregatingAlter.inner.kind;
+                            timestampPosition = aggregatingAlter.timestampPosition;
+                        } else {
+                            generatePassthroughSql(rnd, passthroughAlter);
+                            sql = passthroughAlter.sql.toString();
+                            kind = passthroughAlter.kind;
+                            timestampPosition = passthroughAlter.timestampPosition;
+                        }
+                    } while (isWindow && kind != PassthroughSql.PASSED_THROUGH);
                     LOG.info().$("fuzz: step ").$(step).$(" ALTER AS ").$(sql).$(" [kind=").$(kind).I$();
                     final long viewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
                     try {
@@ -2933,6 +3110,14 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         // one definition event
                         Assert.assertEquals(viewSeqTxn + 1, engine.getTableSequencerAPI().lastTxn(viewToken));
                         viewSql = sql;
+                        hoursSinceAlter.clear();
+                        if (isAggregating) {
+                            // a FULL since the previous ALTER ... AS rebuilt every bucket with that one's aggregate
+                            isAggregateMixed = (isAggregateMixed && !isFullSinceAlter) || !viewAggregate.equals(aggregatingAlter.aggregate);
+                            viewAggregate = aggregatingAlter.aggregate;
+                        }
+                        isFullQueued = false;
+                        isFullSinceAlter = false;
                     } catch (SqlException e) {
                         if (kind == PassthroughSql.PASSED_THROUGH) {
                             throw e;
@@ -2947,26 +3132,65 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
                         Assert.assertEquals(sql, alterHead.length() + timestampPosition, e.getPosition());
                         Assert.assertEquals("a refused ALTER ... AS wrote to the view's WAL: " + sql, viewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
                     }
+                    if (isWindow) {
+                        insertPassthroughFuzzRows(rnd, 1 + rnd.nextInt(10), hoursSinceAlter);
+                        try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                            walApplyJob.applyWalDirect(engine.verifyTableName("base"), Job.RUNNING_STATUS);
+                        }
+                        final long windowViewSeqTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+                        drainMatViewQueue(engine);
+                        // the refresh of the base commit waited for the definition event, and wrote nothing
+                        final MatViewState state = opsViewState("mv");
+                        Assert.assertTrue(state.isDefinitionPending());
+                        Assert.assertTrue(state.hasDeferredDefinitionRefreshForTesting());
+                        Assert.assertEquals(windowViewSeqTxn, engine.getTableSequencerAPI().lastTxn(viewToken));
+                    }
                 }
                 case 6 -> drainWalQueue();
-                case 7 -> drainMatViewQueue(engine);
+                case 7 -> {
+                    drainMatViewQueue(engine);
+                    // the FULL runs: its definition event applied before it was issued
+                    isFullSinceAlter |= isFullQueued;
+                    isFullQueued = false;
+                }
                 case 8 -> {
                     LOG.info().$("fuzz: step ").$(step).$(" FULL").$();
                     // a REFRESH waits for an ALTER ... AS until the view's WAL applies it
                     drainWalQueue();
                     execute("REFRESH MATERIALIZED VIEW mv FULL");
+                    isFullQueued = true;
+                }
+                case 9 -> {
+                    LOG.info().$("fuzz: step ").$(step).$(" applying base WAL").$();
+                    try (ApplyWal2TableJob walApplyJob = createWalApplyJob()) {
+                        walApplyJob.applyWalDirect(engine.verifyTableName("base"), Job.RUNNING_STATUS);
+                    }
                 }
                 default -> {
+                    if (opsViewState("mv").isDefinitionPending()) {
+                        // A restart of the view states forgets the seqTxn of the definition event that an ALTER ... AS
+                        // left in the view's WAL, so the refreshes after it would not wait for the event. Until the
+                        // restart's load finds such an event in the view's WAL, the view's WAL applies it first.
+                        drainWalQueue();
+                    }
                     LOG.info().$("fuzz: step ").$(step).$(" restarting view states").$();
                     engine.getMatViewStateStore().clear();
                     engine.hydrateMatViewStateStore();
+                    // the restart loses a FULL that has not run
+                    isFullQueued = false;
                 }
             }
             if (rnd.nextBoolean()) {
                 drainWalAndMatViewQueues();
+                isFullSinceAlter |= isFullQueued;
+                isFullQueued = false;
             }
             if (step % 6 == 5 || step == steps - 1) {
-                checkAlterAsFuzzView(viewSql, step);
+                // the check drains the queues, which run a queued FULL
+                isFullSinceAlter |= isFullQueued;
+                isFullQueued = false;
+                final boolean isEveryBucketChecked = !isAggregateMixed || isFullSinceAlter;
+                checkAlterAsFuzzView(viewSql, step, isEveryBucketChecked ? null : hoursSinceAlter);
             }
         }
         execute("DROP MATERIALIZED VIEW mv");
@@ -3534,6 +3758,8 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
         // the inner SQL, whose kind tells whether ALTER ... AS takes the SQL
         final PassthroughSql inner = new PassthroughSql();
         final StringSink sql = new StringSink();
+        // the aggregate of price and qty: sum, max or min, so that a bucket of several rows tells the SQLs apart
+        String aggregate;
         int bucketing;
         int source;
         // the offset in the SQL of the outermost SELECT's timestamp column, where a refusal points, or 0 under a

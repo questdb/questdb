@@ -485,24 +485,25 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
             return;
         }
 
-        final Object pendingMarker = state.getPendingInvalidationMarker();
-        if (pendingMarker == null) {
-            return;
-        }
-
-        final String pendingInvalidationReason = state.getPendingInvalidationReason(pendingMarker);
-        if (pendingInvalidationReason != null && !state.isInvalid()) {
-            enqueueInvalidate(
-                    matViewToken,
-                    pendingInvalidationReason,
-                    state.getPendingInvalidationBaseTableToken(pendingMarker),
-                    state.getPendingInvalidationBaseTxn(pendingMarker),
-                    state.isPendingInvalidationForced(pendingMarker)
-            );
-        }
-        final Object fullRefreshOwner = state.getPendingFullRefreshOwner(pendingMarker);
-        if (fullRefreshOwner != null) {
-            enqueueFullRefresh(matViewToken, fullRefreshOwner);
+        // The wake of the refreshes that deferred on a pending definition and the redelivery of the marker's facets are
+        // each attempted even if the other throws, as the wakes of a lock holder's release are. Each records a retry
+        // for whatever it could not deliver before it throws, and the marker's failure carries the wake's as a
+        // suppressed exception.
+        Throwable deferredRefreshWakeFailure = null;
+        try {
+            wakeDeferredDefinitionRefresh(matViewToken, state);
+        } catch (Throwable th) {
+            deferredRefreshWakeFailure = th;
+            throw th;
+        } finally {
+            try {
+                redeliverPendingMarker(matViewToken, state);
+            } catch (Throwable th) {
+                if (deferredRefreshWakeFailure != null && deferredRefreshWakeFailure != th) {
+                    th.addSuppressed(deferredRefreshWakeFailure);
+                }
+                throw th;
+            }
         }
     }
 
@@ -696,6 +697,30 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
         }
     }
 
+    // Re-publishes the facets of the view's pending marker: a retained invalidation of a valid view, and a full refresh
+    // owner.
+    private void redeliverPendingMarker(TableToken matViewToken, MatViewState state) {
+        final Object pendingMarker = state.getPendingInvalidationMarker();
+        if (pendingMarker == null) {
+            return;
+        }
+
+        final String pendingInvalidationReason = state.getPendingInvalidationReason(pendingMarker);
+        if (pendingInvalidationReason != null && !state.isInvalid()) {
+            enqueueInvalidate(
+                    matViewToken,
+                    pendingInvalidationReason,
+                    state.getPendingInvalidationBaseTableToken(pendingMarker),
+                    state.getPendingInvalidationBaseTxn(pendingMarker),
+                    state.isPendingInvalidationForced(pendingMarker)
+            );
+        }
+        final Object fullRefreshOwner = state.getPendingFullRefreshOwner(pendingMarker);
+        if (fullRefreshOwner != null) {
+            enqueueFullRefresh(matViewToken, fullRefreshOwner);
+        }
+    }
+
     private void runPendingTaskReenqueueScanSeamForTesting() {
         final Runnable seam = onPendingTaskReenqueueScanForTesting;
         if (seam != null) {
@@ -712,5 +737,27 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
 
     private void storeMatViewTelemetry(short event, TableToken tableToken, long baseTableTxn, CharSequence errorMessage, long latencyUs) {
         TelemetryMatViewTask.store(telemetry, event, tableToken.getTableId(), baseTableTxn, errorMessage, latencyUs);
+    }
+
+    // Enqueues one incremental refresh for the refreshes that deferred on a pending definition, once its event is
+    // applied or skipped, see MatViewState.claimDeferredDefinitionRefresh(). On a failed enqueue the request goes to
+    // the refresh job's retry scan, which delivers the refresh from there, so the wake logs a queue growth failure
+    // (OutOfMemoryError) and does not rethrow it. Any other throwable is a defect, and the wake rethrows it.
+    private void wakeDeferredDefinitionRefresh(TableToken matViewToken, MatViewState state) {
+        if (!state.claimDeferredDefinitionRefresh()) {
+            return;
+        }
+        LOG.info().$("materialized view definition is no longer pending, waking deferred refresh [view=").$(matViewToken).I$();
+        try {
+            enqueueIncrementalRefresh(matViewToken);
+        } catch (Throwable th) {
+            requestPendingIncrementalRefreshReenqueue(state);
+            if (!(th instanceof OutOfMemoryError)) {
+                throw th;
+            }
+            LOG.error().$("could not enqueue deferred incremental refresh, the retry scan delivers it [view=").$(matViewToken)
+                    .$(", ex=").$(th)
+                    .I$();
+        }
     }
 }

@@ -427,6 +427,48 @@ public class PGMatViewDdlTest extends BasePGTest {
     }
 
     @Test
+    public void testRangeExecutedTwiceAcrossSuspendedPendingDefinition() throws Exception {
+        // REFRESH ... RANGE compiles at each execution: a prepared one refuses while the definition event of an ALTER ...
+        // AS waits in the suspended view WAL, writes nothing, and, executed again once RESUME WAL let the event apply,
+        // recomputes its range with the new SQL.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            createBaseAndView();
+            execute("ALTER MATERIALIZED VIEW mv AS (SELECT ts, sym, sum(price) * 10 AS price FROM base SAMPLE BY 1h)");
+            execute("ALTER MATERIALIZED VIEW mv SUSPEND WAL");
+            final long viewSeqTxn = viewSeqTxn();
+            final String rangeSql = "REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-02T23:59:59.999999Z'";
+            try (PreparedStatement range = connection.prepareStatement(rangeSql)) {
+                try {
+                    range.execute();
+                    Assert.fail("RANGE must refuse while the definition waits in the suspended view WAL");
+                } catch (PSQLException e) {
+                    final ServerErrorMessage error = e.getServerErrorMessage();
+                    Assert.assertNotNull(error);
+                    TestUtils.assertEquals(
+                            "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, run ALTER MATERIALIZED VIEW mv RESUME WAL first",
+                            error.getMessage()
+                    );
+                    // the server counts positions from 1
+                    Assert.assertEquals("REFRESH MATERIALIZED VIEW ".length() + 1, error.getPosition());
+                }
+                Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+                Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+                execute("ALTER MATERIALIZED VIEW mv RESUME WAL");
+                drainWalAndMatViewQueues();
+                range.execute();
+                drainWalAndMatViewQueues();
+            }
+            assertQueryResult(connection, "SELECT * FROM mv ORDER BY ts", """
+                    ts[TIMESTAMP],sym[VARCHAR],price[DOUBLE]
+                    2024-01-01 00:00:00.0,a,10.0
+                    2024-01-02 00:00:00.0,a,20.0
+                    2024-01-03 00:00:00.0,a,3.0
+                    2024-01-04 00:00:00.0,a,4.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRangeRefreshRefusesBindVariables() throws Exception {
         // REFRESH ... RANGE takes timestamp literals only, as before this feature.
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {

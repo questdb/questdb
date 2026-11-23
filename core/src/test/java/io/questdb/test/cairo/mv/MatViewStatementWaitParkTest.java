@@ -29,7 +29,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlException;
@@ -41,6 +43,7 @@ import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.Path;
@@ -679,6 +682,22 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewWalSuspendedWhileRangeParkedOnPendingDefinition() throws Exception {
+        // A REFRESH ... RANGE parked on the definition event refuses at its next wake once the view's WAL is suspended,
+        // as a view ALTER does: its bounds cannot wait in the refresh job.
+        assertMemoryLeak(() -> {
+            createViewWithPendingDefinition();
+            assertParkedStatementStopsAfterWake(
+                    "REFRESH MATERIALIZED VIEW v RANGE FROM '2024-01-01' TO '2024-01-01T02:00:00.000000Z'",
+                    REFRESH_VIEW_NAME_POSITION,
+                    0,
+                    () -> execute("ALTER MATERIALIZED VIEW v SUSPEND WAL"),
+                    DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW v RESUME WAL first"
+            );
+        });
+    }
+
+    @Test
     public void testViewWalSuspendedWhileResumeParked() throws Exception {
         assertStopsAfterWake(
                 "ALTER MATERIALIZED VIEW v SUSPEND WAL",
@@ -688,8 +707,23 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
 
     // A view ADD COLUMN on the view of createViewWithPendingDefinition() parks while the definition event waits in the
     // view's WAL; the action then runs on the test thread, and the parked statement stops at its next wake with the
-    // refusal at the view name. It writes nothing, and returns the compiler and the view's sequencer metadata.
+    // refusal at the view name. It writes nothing, and returns the compiler and the view's sequencer metadata, which
+    // it holds while it waits.
     private void assertAddColumnStopsAfterWake(ParkedAction action, String refusal) throws Exception {
+        assertParkedStatementStopsAfterWake(ADD_X, ALTER_VIEW_NAME_POSITION, 1, action, refusal);
+    }
+
+    // The statement, a view ALTER or a REFRESH ... RANGE on the view of createViewWithPendingDefinition(), parks while
+    // the definition event waits in the view's WAL; the action then runs on the test thread, and the parked statement
+    // stops at its next wake with the refusal at the view name. It writes nothing, enqueues no refresh, and returns the
+    // compiler and the view's sequencer metadata, of which it holds parkedMetadataCount while it waits.
+    private void assertParkedStatementStopsAfterWake(
+            String statement,
+            int viewNamePosition,
+            int parkedMetadataCount,
+            ParkedAction action,
+            String refusal
+    ) throws Exception {
         final TableToken viewToken = viewToken();
         final FiberRuntime runtime = new FiberRuntime(1);
         try (
@@ -700,9 +734,9 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
         ) {
             context.with(circuitBreaker);
             circuitBreaker.resetTimer();
-            final StatementTask task = new StatementTask(ADD_X, context);
+            final StatementTask task = new StatementTask(statement, context);
             assertParks(runtime, task, watchdog);
-            Assert.assertEquals(1, metadataCounter.get());
+            Assert.assertEquals(parkedMetadataCount, metadataCounter.get());
 
             action.run();
             final long viewSeqTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn();
@@ -711,13 +745,35 @@ public class MatViewStatementWaitParkTest extends AbstractCairoTest {
             Assert.assertTrue(String.valueOf(task.error), task.error instanceof SqlException);
             final SqlException e = (SqlException) task.error;
             TestUtils.assertEquals(refusal, e.getFlyweightMessage());
-            Assert.assertEquals(ALTER_VIEW_NAME_POSITION, e.getPosition());
+            Assert.assertEquals(viewNamePosition, e.getPosition());
             Assert.assertEquals(viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+            assertNoRefreshQueued();
             Assert.assertEquals(0, metadataCounter.get());
         } finally {
             close(runtime);
         }
         Assert.assertEquals(0, engine.getSqlCompilerPool().getBusyCount());
+    }
+
+    // The refresh queue holds no refresh task: other tasks, such as the invalidation a view drop queues, go back on it.
+    private static void assertNoRefreshQueued() {
+        final MatViewStateStore stateStore = engine.getMatViewStateStore();
+        final ObjList<MatViewRefreshTask> tasks = new ObjList<>();
+        while (true) {
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            if (!stateStore.tryDequeueRefreshTask(task)) {
+                break;
+            }
+            tasks.add(task);
+        }
+        for (int i = 0, n = tasks.size(); i < n; i++) {
+            final MatViewRefreshTask task = tasks.getQuick(i);
+            Assert.assertFalse(
+                    "refresh task queued: " + MatViewRefreshTask.getRefreshOperationName(task.operation),
+                    MatViewRefreshTask.isRefreshOperation(task.operation)
+            );
+            stateStore.reenqueueRefreshTask(task);
+        }
     }
 
     // Runs RESUME on a busy latch after the action has run, which makes the statement's park fail: the statement

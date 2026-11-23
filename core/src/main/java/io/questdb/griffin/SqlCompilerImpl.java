@@ -3338,7 +3338,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     // Returns the definition that the WAL entry of a view ADD COLUMN, DROP COLUMN or ALTER ... AS applies after, which
     // the statement checks itself against. An ALTER ... AS that this node ran may still wait in the view's WAL, so the
-    // statement waits until the WAL applies its definition event, see MatViewAlter.awaitPendingDefinitionForAlter(),
+    // statement waits until the WAL applies its definition event, see MatViewAlter.awaitPendingDefinitionOrRefuse(),
     // and reads the definition then. A read-only node refuses first, as it may never apply the event. A validation-only
     // compile, which writes nothing, checks the definition the view's WAL applied, as REFRESH does not wait there either.
     // The caller authorized the statement. A DROP of the view that ran meanwhile removed the definition.
@@ -3351,7 +3351,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (engine.isReadOnlyMode()) {
                 throw CairoException.readOnlyAccess();
             }
-            MatViewAlter.awaitPendingDefinitionForAlter(engine, executionContext, matViewToken, matViewNamePosition);
+            MatViewAlter.awaitPendingDefinitionOrRefuse(engine, executionContext, matViewToken, matViewNamePosition);
         }
         final MatViewDefinition viewDefinition = engine.getDependentViewGraph().getViewDefinition(matViewToken);
         if (viewDefinition == null) {
@@ -5565,8 +5565,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             if (!isStatsReset) {
                 // FULL, INCREMENTAL and RANGE run the view's SQL as its WAL applied it, so one issued right after
-                // ALTER MATERIALIZED VIEW ... AS waits for the statement's definition event to apply.
-                MatViewAlter.awaitPendingDefinition(engine, executionContext, matViewToken);
+                // ALTER MATERIALIZED VIEW ... AS waits for the statement's definition event to apply. While the WAL
+                // apply of the view is suspended short of the event, FULL and INCREMENTAL go to the refresh job, which
+                // waits for the event there, and RANGE refuses: its bounds cannot wait in the refresh job.
+                if (from != Numbers.LONG_NULL) {
+                    MatViewAlter.awaitPendingDefinitionOrRefuse(engine, executionContext, matViewToken, matViewNamePosition);
+                } else {
+                    MatViewAlter.awaitPendingDefinition(engine, executionContext, matViewToken);
+                }
             }
             if (!isStatsReset && !fullRefresh) {
                 // INCREMENTAL and RANGE on an invalid view would be skipped; RESUME makes the view valid first.

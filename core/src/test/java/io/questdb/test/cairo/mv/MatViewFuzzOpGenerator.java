@@ -44,6 +44,13 @@ import io.questdb.std.datetime.microtime.Micros;
  * buckets of the day, which the view usually computed before the partition detached, must change too: the oracle
  * finds a lost range there. A period view's round reloads a day whose period ended, which the oracle compares.
  * <p>
+ * It draws the operations around a pending ALTER ... AS too: the apply of the base's WAL alone, which lets the refresh
+ * job meet the definition event that waits in the view's WAL, a reset of the view's SeqTxnTracker, as a republish of
+ * the WAL apply job does, and SUSPEND WAL and RESUME WAL of the view, the latter also as RESUME WAL FROM TXN past the
+ * pending definition event alone, after which the view keeps the SQL it had. While the view's WAL is suspended, it draws
+ * only the operations whose outcome it predicts there, see {@link #isAllowedWhileViewWalSuspended(Kind)}, and an ALTER
+ * ... AS is refused while an earlier one's definition event waits.
+ * <p>
  * It draws the round's initial rows, one to ten in each day. In a period view's round, half of the days after the
  * first are gap days, as a weekend is: the base takes no row there until the day's period ends, so the period timer's
  * firing finds the day without a base partition. Most UPDATEs of such a round correct a day whose period ended, so
@@ -142,6 +149,24 @@ public final class MatViewFuzzOpGenerator {
     public static final int RESUME_REFUSED_SWITCH = 2;
     public static final String SYM = "sym";
     public static final String TS = "ts";
+    // The operations that meet a definition event that waits in the view's WAL, which a third of the draws take while one
+    // waits: base rows, the base's WAL applied alone, the refresh job, a reset of the view's tracker, the suspension of
+    // the view's WAL and its resume, and another ALTER ... AS.
+    private static final Kind[] DEFINITION_WINDOW_KINDS = {
+            Kind.INSERT,
+            Kind.APPLY_BASE_WAL,
+            Kind.APPLY_BASE_WAL,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RUN_REFRESH_JOB,
+            Kind.RESET_VIEW_TRACKER,
+            Kind.VIEW_SUSPEND_WAL,
+            Kind.VIEW_SUSPEND_WAL,
+            Kind.VIEW_RESUME_WAL,
+            Kind.VIEW_RESUME_WAL,
+            Kind.VIEW_ALTER_AS,
+            Kind.VIEW_ALTER_AS
+    };
     private final boolean[] attachableDays;
     private final boolean[] baseDays;
     private final int dayCount;
@@ -152,6 +177,9 @@ public final class MatViewFuzzOpGenerator {
     // the columns the view's last accepted SET EXPIRE reads, none without a policy
     private final ObjList<String> policyColumns = new ObjList<>();
     private final ObjList<String> sqlColumns = new ObjList<>();
+    // the SQL's columns before the accepted ALTER ... AS whose definition event waits, which a RESUME WAL FROM TXN past
+    // the event leaves the view with
+    private final ObjList<String> sqlColumnsBeforeDefinition = new ObjList<>();
     private final ObjList<String> viewColumnTypes = new ObjList<>();
     private final ObjList<String> viewColumns = new ObjList<>();
     // the days, from the first, whose period ended: the clock of a period view is at the end of the last of them
@@ -174,6 +202,10 @@ public final class MatViewFuzzOpGenerator {
     private boolean isColumnChangePending;
     // the test ran an ALTER ... AS and has not applied the view's WAL since, as far as it has told
     private boolean isDefinitionPending;
+    // the view's WAL is suspended: the test ran SUSPEND WAL and no RESUME WAL since
+    private boolean isViewWalSuspended;
+    // whether the SQL before that ALTER ... AS relied on a generated column name, see sqlColumnsBeforeDefinition
+    private boolean isSqlPositionalBeforeDefinition;
     // the test ran a SET or DROP EXPIRE and has not applied the view's WAL since, as far as it has told
     private boolean isPolicyChangePending;
     // an ALTER ... AS of the bare-name round changed the reading of the view's later rows since the last FULL, so the
@@ -315,6 +347,16 @@ public final class MatViewFuzzOpGenerator {
         return sb.append(" SAMPLE BY 1h").toString();
     }
 
+    // The operations drawn while the view's WAL is suspended: those that touch the base alone, run the jobs, reset the
+    // view's tracker, or that a pending definition decides, ALTER ... AS, and RESUME WAL. The others fall back to INSERT
+    // there: their outcome on a suspended view WAL is not the one the generator predicts.
+    public static boolean isAllowedWhileViewWalSuspended(Kind kind) {
+        return switch (kind) {
+            case INSERT, APPLY_WAL, APPLY_BASE_WAL, RUN_REFRESH_JOB, RESET_VIEW_TRACKER, VIEW_ALTER_AS, VIEW_RESUME_WAL -> true;
+            default -> false;
+        };
+    }
+
     // How often each operation comes up: ingestion most, the operations that reset most of the oracle's checks least.
     // A period view's round draws the period timer's firings, and more UPDATEs, so that the range of an UPDATE often
     // waits in the view's cache when a firing comes.
@@ -336,6 +378,10 @@ public final class MatViewFuzzOpGenerator {
             case VIEW_ADD_COLUMN, VIEW_INVALIDATE, RESTART, APPLY_WAL, RUN_REFRESH_JOB, VIEW_SET_EXPIRE -> 4;
             case VIEW_DROP_EXPIRE -> 2;
             case VIEW_ALTER_AS -> 5;
+            case APPLY_BASE_WAL -> 4;
+            case RESET_VIEW_TRACKER, VIEW_SUSPEND_WAL -> 2;
+            // drawn only while the view's WAL is suspended, INSERT otherwise
+            case VIEW_RESUME_WAL -> 6;
             // only a bare-name round draws them, see bareNameRoundWeight()
             case BASE_ADD_BARE_NAME_COLUMN, BASE_DROP_BARE_NAME_COLUMN, BASE_RACED_BARE_NAME_COLUMN_CHANGE -> 0;
         };
@@ -458,6 +504,11 @@ public final class MatViewFuzzOpGenerator {
         return isDefinitionPending;
     }
 
+    // Whether the view's WAL is suspended, see VIEW_SUSPEND_WAL.
+    public boolean isViewWalSuspended() {
+        return isViewWalSuspended;
+    }
+
     // Whether the day is a gap day of a period view's round, which takes no row until its period ends.
     public boolean isGapDay(int day) {
         return gapDays[day];
@@ -489,18 +540,25 @@ public final class MatViewFuzzOpGenerator {
 
     public Op next(Rnd rnd, Op op) {
         op.clear();
-        int pick = rnd.nextInt(totalWeight);
         Kind kind = Kind.INSERT;
-        for (Kind k : Kind.values()) {
-            pick -= isBareNameRound ? bareNameRoundWeight(k) : weight(k, isPeriodView);
-            if (pick < 0) {
-                kind = k;
-                break;
+        if (!isBareNameRound && isDefinitionPending && rnd.nextInt(3) == 0) {
+            kind = DEFINITION_WINDOW_KINDS[rnd.nextInt(DEFINITION_WINDOW_KINDS.length)];
+        } else {
+            int pick = rnd.nextInt(totalWeight);
+            for (Kind k : Kind.values()) {
+                pick -= isBareNameRound ? bareNameRoundWeight(k) : weight(k, isPeriodView);
+                if (pick < 0) {
+                    kind = k;
+                    break;
+                }
             }
         }
         op.kind = kind;
         if (isBareNameRound) {
             return nextOfBareNameRound(rnd, op);
+        }
+        if (isViewWalSuspended ? !isAllowedWhileViewWalSuspended(kind) || kind == Kind.VIEW_SUSPEND_WAL : kind == Kind.VIEW_RESUME_WAL) {
+            return insteadInsert(rnd, op);
         }
         switch (kind) {
             case INSERT -> {
@@ -658,7 +716,13 @@ public final class MatViewFuzzOpGenerator {
                 op.isRefused = op.isPositional
                         ? isRefusedByPositionalCopy(viewColumns, op.sqlColumns)
                         : isRefusedBySamePositionRule(viewColumns, op.sqlColumns);
+                // the statement waits for the definition event of an earlier ALTER ... AS, and refuses while the view's
+                // WAL is suspended short of it, before it checks the SQL
+                op.isRefusedBySuspension = isViewWalSuspended && isDefinitionPending;
+                op.isRefused |= op.isRefusedBySuspension;
             }
+            // RESUME WAL FROM TXN past the pending definition event, half of the time
+            case VIEW_RESUME_WAL -> op.isSkipDefinition = isDefinitionPending && rnd.nextBoolean();
             case VIEW_RANGE -> {
                 op.day = rnd.nextInt(dayCount);
                 op.dayHi = op.day + 1 + rnd.nextInt(dayCount - op.day);
@@ -690,6 +754,20 @@ public final class MatViewFuzzOpGenerator {
         isDefinitionPending = true;
     }
 
+    // The view's WAL applied the pending definition event, while a view column or policy change may still wait.
+    public void onDefinitionApplied() {
+        isDefinitionPending = false;
+    }
+
+    // RESUME WAL FROM TXN skipped the view's WAL past the pending definition event: the view keeps the SQL it had
+    // before the statement.
+    public void onDefinitionSkipped() {
+        sqlColumns.clear();
+        sqlColumns.addAll(sqlColumnsBeforeDefinition);
+        isSqlPositional = isSqlPositionalBeforeDefinition;
+        isDefinitionPending = false;
+    }
+
     // The executor's answer to a DETACH: the partition detaches only when the base holds it and a newer one.
     public void onDetached(int day, boolean isDetached) {
         attachableDays[day] = isDetached;
@@ -701,6 +779,16 @@ public final class MatViewFuzzOpGenerator {
     // The test ran a SET or DROP EXPIRE, which waits in the view's WAL.
     public void onPolicyChangeIssued() {
         isPolicyChangePending = true;
+    }
+
+    // The RESUME WAL that the test runs before a view check, which takes a view with no suspended WAL: a VIEW_RESUME_WAL
+    // as next() draws it.
+    public Op resumeViewWal(Rnd rnd, Op op) {
+        op.clear();
+        op.kind = Kind.VIEW_RESUME_WAL;
+        op.isSkipDefinition = isDefinitionPending && rnd.nextBoolean();
+        apply(op);
+        return op;
     }
 
     // The test has applied the view's WAL: the view's applied columns, SQL and policy are the generator's.
@@ -840,12 +928,17 @@ public final class MatViewFuzzOpGenerator {
             }
             case VIEW_ALTER_AS -> {
                 if (!op.isRefused) {
+                    sqlColumnsBeforeDefinition.clear();
+                    sqlColumnsBeforeDefinition.addAll(sqlColumns);
+                    isSqlPositionalBeforeDefinition = isSqlPositional;
                     sqlColumns.clear();
                     sqlColumns.addAll(op.sqlColumns);
                     isSqlPositional = op.isPositional;
                 }
             }
             case VIEW_PERIOD_REFRESH -> completeDays++;
+            case VIEW_SUSPEND_WAL -> isViewWalSuspended = true;
+            case VIEW_RESUME_WAL -> isViewWalSuspended = false;
             default -> {
                 // nothing the generator draws from changes
             }
@@ -1176,7 +1269,16 @@ public final class MatViewFuzzOpGenerator {
         RESTART,
         APPLY_WAL,
         RUN_REFRESH_JOB,
-        PURGE_WAL
+        PURGE_WAL,
+        // the WAL apply of the base alone, as an apply run that serves the base before the view, so that the refresh job
+        // meets the base rows before the view's WAL applies a pending definition event
+        APPLY_BASE_WAL,
+        // a reset of the view's SeqTxnTracker, as a republish of the WAL apply job does, see
+        // CairoEngine.notifyWalTxnRepublisher()
+        RESET_VIEW_TRACKER,
+        VIEW_SUSPEND_WAL,
+        // RESUME WAL of the view, or RESUME WAL FROM TXN past the pending definition event alone, see Op.isSkipDefinition
+        VIEW_RESUME_WAL
     }
 
     public static final class Op {
@@ -1207,7 +1309,12 @@ public final class MatViewFuzzOpGenerator {
         public boolean isPositional;
         public boolean isProbed;
         public boolean isRefused;
+        // an ALTER ... AS refused because the view's WAL is suspended short of an earlier ALTER ... AS
+        public boolean isRefusedBySuspension;
         public boolean isSkipBacklog;
+        // a VIEW_RESUME_WAL that skips the pending definition event with RESUME WAL FROM TXN, when it is the view's only
+        // transaction that the WAL apply has not applied
+        public boolean isSkipDefinition;
         public Kind kind;
         // the text after SET EXPIRE ROWS
         public String policy;
@@ -1231,6 +1338,8 @@ public final class MatViewFuzzOpGenerator {
             isPositional = false;
             isProbed = false;
             isRefused = false;
+            isRefusedBySuspension = false;
+            isSkipDefinition = false;
             policy = null;
             policyColumns.clear();
             racers.clear();

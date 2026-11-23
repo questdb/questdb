@@ -1259,6 +1259,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         .$(", baseTableChange=").$(info.isBaseTableChange())
                         .I$();
             }
+            // The refreshes that deferred on the event, and a FULL that parked on it, can run now. They are woken here,
+            // before the rest of the batch, which can fail, or end without the batch end's redelivery.
+            final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
+            if (state != null) {
+                state.recordAppliedDefinitionSeqTxn(seqTxn);
+                redeliverParkedMatViewWork(viewToken);
+            }
         } catch (CairoException e) {
             LOG.error().$("could not update materialized view definition [view=").$(viewToken)
                     .$(", msg=").$safe(e.getFlyweightMessage())
@@ -1461,8 +1468,10 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     // A FULL refresh of an invalid view waits until the view's own WAL is applied, so that it rebuilds under the
     // latest definition, and parks its request on the view's pending marker meanwhile. Once this job has applied the
-    // view's WAL, the store redelivers it, as RESUME WAL does. The WAL apply has already committed, so a task the store
-    // could not enqueue goes to the refresh job's retry scan, which redelivers whatever the view's marker still holds.
+    // view's WAL, the store redelivers it, as RESUME WAL does. The store also wakes the refreshes that deferred on a
+    // definition event, which this job does as soon as it applied or skipped one, too. The WAL apply goes on, so a task
+    // the store could not enqueue goes to the refresh job's retry scan, which redelivers whatever the view's marker
+    // still holds.
     private void redeliverParkedMatViewWork(TableToken viewToken) {
         final MatViewStateStore stateStore = engine.getMatViewStateStore();
         final MatViewState state = stateStore.getViewState(viewToken);

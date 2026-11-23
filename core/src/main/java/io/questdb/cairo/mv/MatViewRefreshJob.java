@@ -112,6 +112,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final long MAX_RUN_DURATION_NANOS = 1_000_000_000L;
     // Refresh tasks a single run() may consume before it yields to the rest of the worker's jobs.
     private static final int MAX_TASKS_PER_RUN = 32;
+    // The error of a user REFRESH ... RANGE that meets a pending definition in the refresh job, see rangeRefresh().
+    private static final String PENDING_DEFINITION_RANGE_ERROR = "an earlier ALTER MATERIALIZED VIEW ... AS is not applied yet, run the REFRESH ... RANGE again";
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     // Scratch list for the post-cluster working copy of refresh intervals.
     // Decouples downstream cluster/period/limit mutations from the live
@@ -157,6 +159,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private volatile Runnable onBeforeRefreshLockForTesting;
     @TestOnly
     private volatile Runnable onCastErrorReplayForTesting;
+    @TestOnly
+    private volatile Runnable onFullRefreshDefinitionReadForTesting;
     @TestOnly
     private volatile Runnable onFullRefreshTerminalFailureForTesting;
     @TestOnly
@@ -466,6 +470,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setOnCastErrorReplayForTesting(Runnable onCastErrorReplayForTesting) {
         this.onCastErrorReplayForTesting = onCastErrorReplayForTesting;
+    }
+
+    /**
+     * Test seam: runs when a full refresh has read the view's definition after its check of the view's WAL, and before
+     * it opens its base table reader. A test can run ALTER MATERIALIZED VIEW ... AS and base commits here, as other
+     * threads would in that window. Persistent: fires on every pass until reset.
+     */
+    @TestOnly
+    public void setOnFullRefreshDefinitionReadForTesting(Runnable onFullRefreshDefinitionReadForTesting) {
+        this.onFullRefreshDefinitionReadForTesting = onFullRefreshDefinitionReadForTesting;
     }
 
     /**
@@ -792,6 +806,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return true;
         }
         return false;
+    }
+
+    // Logs that a refresh waits for a pending definition, once per definition event, whichever refresh meets it first.
+    private static void logDefinitionWait(TableToken viewToken, MatViewState viewState, String refreshKind) {
+        if (viewState.claimDefinitionWaitLog()) {
+            LOG.info().$("materialized view definition is not applied yet, refresh waits for it [view=").$(viewToken)
+                    .$(", definitionSeqTxn=").$(viewState.getPendingDefinitionSeqTxn())
+                    .$(", refresh=").$(refreshKind)
+                    .I$();
+        }
     }
 
     // Whether a base table range that an ATTACH PARTITION or an UPDATE changed goes into the view's cache: a valid
@@ -1944,6 +1968,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (viewState.isDefinitionPending()) {
+            // An ALTER MATERIALIZED VIEW ... AS waits in the view's WAL, and one rebuild under one reading of the
+            // view's SQL cannot tell the base rows committed before the statement from those after it. The owner
+            // stays parked on the marker, as for a suspended view, and the WAL apply job redelivers it as it applies
+            // or skips the definition event (reenqueuePendingOnResume). The FULL takes no latch, writer or reader, so
+            // a lock holder's release that redelivers it before then finds it parked again at no cost.
+            logDefinitionWait(viewToken, viewState, "full");
+            return false;
+        }
+
         if (!tryLockForFullRefresh(viewState)) {
             LOG.debug().$("could not lock materialized view for full refresh, the lock holder enqueues it on release [view=")
                     .$(viewToken).I$();
@@ -1958,7 +1992,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // the success site would wrongly consume it.
         final Object preSnapshotMarker = viewState.getPendingInvalidationMarker();
 
-        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        // Read again after each check below that waits for the view's WAL; the catch blocks and the kickstart of an
+        // IMMEDIATE view use the definition read last.
+        MatViewDefinition viewDefinition = viewState.getViewDefinition();
         boolean isFullRefreshDeferred = false;
         // Set once the auth-refusal catch below defers this invocation's own refused owner, or once
         // the rename branch below re-enqueues this invocation's owner under the updated token; the
@@ -1966,6 +2002,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         Object suppressedFullRefreshOwner = null;
         // Set when this invocation parks its owner until the view's own WAL is applied, see below.
         boolean isParkedOnViewWal = false;
+        // Set when this invocation parks its owner until a pending definition is applied or skipped, see below.
+        boolean isParkedOnDefinition = false;
         try (WalWriter walWriter = engine.getWalWriter(viewToken)) {
             // FULL on an invalid view rebuilds it under the latest definition, so it waits while the view's own WAL
             // has unapplied transactions. It parks its owner on the view's marker, as for a suspended view, and the
@@ -1980,6 +2018,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 isParkedOnViewWal = true;
                 return false;
             }
+            // A base change marks the view invalid under the latch before it writes its definition event, and only
+            // RESUME, which waits for the view's whole WAL, makes the view valid again. So once the check above passed,
+            // the view's WAL holds no base change that has not applied, and none comes while this FULL holds the
+            // latch: the base table name read now is the one the rebuild reads, also after an apply that landed
+            // between the read above and the check.
+            viewDefinition = viewState.getViewDefinition();
 
             final TableToken baseTableToken = verifyBaseTableToken(viewDefinition, viewState, walWriter);
             if (baseTableToken == null) {
@@ -2011,6 +2055,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             // - write the result set to WAL (or directly to table writer O3 area)
             // - apply resulting commit
             // - update applied to txn in MatViewStateStore
+            runFullRefreshDefinitionReadSeamForTesting();
             try (TableReader baseTableReader = engine.getReader(baseTableToken)) {
                 // The designated timestamp type check, on the reader the rebuild reads.
                 final CharSequence baseTableTimestampRefusal = getBaseTableTimestampRefusal(
@@ -2023,6 +2068,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     refreshFailState(viewDefinition, viewState, walWriter, baseTableTimestampRefusal);
                     return false;
                 }
+                // The reader can hold base rows committed after an ALTER MATERIALIZED VIEW ... AS returned whose
+                // definition event still waits in the view's WAL: the statement and the rows after it can land after
+                // the check before the latch. The FULL parks as on the view's WAL above, before it writes anything, and
+                // checks again after the unlock, see redeliverParkedFullRefresh(). Otherwise it rebuilds with the
+                // definition read now, which differs from the one above in its SQL text alone.
+                if (viewState.isDefinitionPending()) {
+                    logDefinitionWait(viewToken, viewState, "full");
+                    isFullRefreshDeferred = true;
+                    suppressedFullRefreshOwner = fullRefreshOwner;
+                    isParkedOnDefinition = true;
+                    return false;
+                }
+                viewDefinition = viewState.getViewDefinition();
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
@@ -2193,8 +2251,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 // redelivered by the handoff and re-runs once, which is bounded and safe). Same pattern as
                 // clearBlockedFullRefresh.
                 finalizeAndUnlock0(engine, stateStore, viewToken, viewState, true, null, suppressedFullRefreshOwner);
-                if (isParkedOnViewWal) {
-                    redeliverParkedFullRefresh(viewToken, viewState, fullRefreshOwner);
+                if (isParkedOnViewWal || isParkedOnDefinition) {
+                    redeliverParkedFullRefresh(viewToken, viewState, fullRefreshOwner, isParkedOnDefinition);
                 }
             }
         }
@@ -3805,7 +3863,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        final MatViewDefinition viewDefinition = viewState.getViewDefinition();
+        if (periodRefresh && viewState.requestDeferredDefinitionRefresh()) {
+            // An ALTER MATERIALIZED VIEW ... AS waits in the view's WAL: the period refresh defers before the view
+            // lock, and the incremental refresh that the WAL apply job enqueues as it applies or skips the definition
+            // event re-includes every complete-but-unrefreshed period, as the re-drive after a backoff does.
+            logDefinitionWait(viewToken, viewState, "period");
+            return false;
+        }
+
+        // Read again once the base reader is open, see below.
+        MatViewDefinition viewDefinition = viewState.getViewDefinition();
         final TimestampDriver driver = viewDefinition.getBaseTableTimestampDriver();
 
         runBeforeRefreshLockSeamForTesting();
@@ -3863,6 +3930,22 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 if (isInvalidationPublished(viewState, false)) {
                     return false;
                 }
+                // As in refreshIncremental0(): the reader can hold base rows committed after an ALTER MATERIALIZED
+                // VIEW ... AS returned whose definition event still waits in the view's WAL. A period refresh defers,
+                // as above. A user's REFRESH ... RANGE carries bounds that no wake can deliver again, so it ends with an
+                // error that asks for a rerun, which waits for the event at the statement, and the view stays valid.
+                // Otherwise the refresh reads the view's definition now, which differs from the one above in its SQL
+                // text alone.
+                if (periodRefresh) {
+                    if (viewState.requestDeferredDefinitionRefresh()) {
+                        logDefinitionWait(viewToken, viewState, "period");
+                        return false;
+                    }
+                } else if (viewState.isDefinitionPending()) {
+                    rangeRefreshFailState(viewState, prevRefreshStartTimestamp, PENDING_DEFINITION_RANGE_ERROR);
+                    return false;
+                }
+                viewDefinition = viewState.getViewDefinition();
                 // Operate SQL on a fixed reader that has known max transaction visible. The reader
                 // is used to initialize base table readers returned from the refreshExecutionContext.getReader()
                 // call, so that all of them are at the same txn.
@@ -4034,6 +4117,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     continue;
                 }
 
+                if (viewState.requestDeferredDefinitionRefresh()) {
+                    // An ALTER MATERIALIZED VIEW ... AS waits in the view's WAL: the refresh defers before the view
+                    // lock, skipped like a view in backoff, and the WAL apply job enqueues one incremental refresh of
+                    // the view as it applies or skips the definition event.
+                    logDefinitionWait(viewToken, viewState, "immediate");
+                    continue;
+                }
+
                 if (!lockForIncrementalRefresh(viewToken, viewState)) {
                     continue;
                 }
@@ -4045,7 +4136,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         if (!checkBaseTableIdentity(viewDefinition, viewState, walWriter, baseTableToken, true)) {
                             continue;
                         }
-                        final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
+                        final long result = refreshIncremental0(baseTableToken, viewToken, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
                         refreshed |= (result & 1L) != 0;
                         final long examinedBaseTxn = result >> 1;
                         minExaminedToTxn = minExaminedToTxn != Numbers.LONG_NULL
@@ -4224,6 +4315,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return skipIncrementalRefresh(viewState);
         }
 
+        if (viewState.requestDeferredDefinitionRefresh()) {
+            // An ALTER MATERIALIZED VIEW ... AS waits in the view's WAL: the refresh defers before the view lock, as a
+            // finished task, and the WAL apply job enqueues one incremental refresh of the view as it applies or skips
+            // the definition event.
+            logDefinitionWait(viewToken, viewState, "incremental");
+            return skipIncrementalRefresh(viewState);
+        }
+
         if (!lockForIncrementalRefresh(viewToken, viewState)) {
             // Either the lock holder's release enqueues this view's next incremental refresh, which increments
             // the refresh sequence when it finishes, or the helper released the lock after its re-check and
@@ -4249,7 +4348,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 }
                 // The examined base txn is only needed when refreshing dependent views; here we just
                 // return the "refreshed" flag from bit 0.
-                final long result = refreshIncremental0(baseTableToken, viewDefinition, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
+                final long result = refreshIncremental0(baseTableToken, viewToken, viewState, walWriter, refreshTriggerTimestamp, refreshTask);
                 return (result & 1L) != 0;
             } catch (Throwable th) {
                 // A demote that flips the read-only flag mid-refresh makes the commit fence refuse from
@@ -4310,7 +4409,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // reading the result.
     private long refreshIncremental0(
             @NotNull TableToken baseTableToken,
-            @NotNull MatViewDefinition viewDefinition,
+            @NotNull TableToken viewToken,
             @NotNull MatViewState viewState,
             @NotNull WalWriter walWriter,
             long refreshTriggerTimestamp,
@@ -4331,8 +4430,19 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             if (isInvalidationPublished(viewState, false)) {
                 return toBaseTxn << 1;
             }
+            // The reader can hold base rows committed after an ALTER MATERIALIZED VIEW ... AS returned whose definition
+            // event still waits in the view's WAL: the statement and the rows after it can land after the check before
+            // the lock. The refresh then defers without writing, and the WAL apply job enqueues one incremental refresh
+            // of the view as it applies or skips the event. Otherwise the view's WAL has applied or skipped every
+            // definition this node sequenced before the reader opened, and the refresh reads the view's definition now.
+            // It differs from the one the caller checked the base table with in its SQL text alone: a base change marks
+            // the view invalid under the lock, which the refresh holds on a valid view.
+            if (viewState.requestDeferredDefinitionRefresh()) {
+                logDefinitionWait(viewToken, viewState, "incremental");
+                return toBaseTxn << 1;
+            }
+            final MatViewDefinition viewDefinition = viewState.getViewDefinition();
             if (fromBaseTxn > toBaseTxn) {
-                final TableToken viewToken = viewDefinition.getMatViewToken();
                 throw CairoException.nonCritical().put("unexpected txn numbers, base table may have been renamed [view=").put(viewToken.getTableName())
                         .put(", fromBaseTxn=").put(fromBaseTxn)
                         .put(", toBaseTxn=").put(toBaseTxn)
@@ -4456,13 +4566,20 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     // each view it locked inside the loop, and a throw there would skip the remaining views and
     // notifyBaseRefreshed, which leaves the base table marked as notified so that its later commits enqueue
     // nothing. Any other throwable is a defect, so this caller lets it propagate despite that cost.
-    // A FULL refresh that parked its owner until the view's own WAL applies suppressed the owner's wake on its unlock.
-    // The WAL apply job redelivers the owner once it has applied the view's WAL, but a redelivery that it published
-    // while this FULL still held the latch may have found the latch held and left the owner to the holder's wake,
-    // which the suppression dropped. So the FULL checks the view's WAL again after the unlock, and redelivers the
-    // owner itself when the WAL is applied by then.
-    private void redeliverParkedFullRefresh(TableToken viewToken, MatViewState viewState, Object fullRefreshOwner) {
-        if (hasUnappliedViewWal(viewToken) || !viewState.isPendingFullRefreshOwner(fullRefreshOwner)) {
+    // A FULL refresh that parked its owner until the view's own WAL applies, or until a pending definition is applied or
+    // skipped, suppressed the owner's wake on its unlock. The WAL apply job redelivers the owner once it has applied
+    // the view's WAL, or applied or skipped the definition event, but a redelivery that it published while this FULL
+    // still held the latch may have found the latch held and left the owner to the holder's wake, which the
+    // suppression dropped. So the FULL checks again after the unlock what it parked on, and redelivers the owner itself
+    // when that no longer holds.
+    private void redeliverParkedFullRefresh(
+            TableToken viewToken,
+            MatViewState viewState,
+            Object fullRefreshOwner,
+            boolean isParkedOnDefinition
+    ) {
+        final boolean isStillParked = isParkedOnDefinition ? viewState.isDefinitionPending() : hasUnappliedViewWal(viewToken);
+        if (isStillParked || !viewState.isPendingFullRefreshOwner(fullRefreshOwner)) {
             return;
         }
         LOG.info().$("materialized view WAL is applied, redelivering parked full refresh [view=").$(viewToken).I$();
@@ -4563,6 +4680,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
     private void runCastErrorReplaySeamForTesting() {
         final Runnable seam = onCastErrorReplayForTesting;
+        if (seam != null) {
+            seam.run();
+        }
+    }
+
+    private void runFullRefreshDefinitionReadSeamForTesting() {
+        final Runnable seam = onFullRefreshDefinitionReadForTesting;
         if (seam != null) {
             seam.run();
         }

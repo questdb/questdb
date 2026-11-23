@@ -36,6 +36,7 @@ import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.mv.MatViewBacklog;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateReader;
 import io.questdb.cairo.mv.MatViewStateStoreImpl;
@@ -118,6 +119,10 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             """;
     private static final String POSITIONAL_COPY_HINT = "; the query relies on generated column names, so refresh copies its columns by position: "
             + "keep each view column at its position, or give the query's columns explicit names";
+    // a REFRESH ... RANGE over the two hours of createBaseWithRefreshedView()
+    private static final String RANGE_SQL = "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-01T01:59:59.999999Z'";
+    // a SQL whose rows tell it from VIEW_SQL: ten times the hourly maximum price
+    private static final String TEN_TIMES_MAX_SQL = "SELECT ts, sym, max(price) * 10 AS price FROM base SAMPLE BY 1h";
     private static final String RESUME_SKIP_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME SKIP BACKLOG";
     private static final String RESUME_SQL = "REFRESH MATERIALIZED VIEW price_1h RESUME";
     private static final int VIEW_NAME_POSITION = ALTER_PREFIX.indexOf("price_1h");
@@ -1490,6 +1495,265 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeAcceptedOnSuspendedViewWalOnceDefinitionApplied() throws Exception {
+        // REFRESH ... RANGE waits only for a definition event that the view's WAL has not applied: once it applied, a
+        // later suspension of the view's WAL refuses no RANGE, which then recomputes with the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            drainWalQueue();
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            armNoWaitGuard();
+            try {
+                execute(RANGE_SQL);
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            execute(ALTER_PREFIX + "RESUME WAL");
+            drainWalAndMatViewQueues();
+            Assert.assertNull(viewState().getLastRefreshError());
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T01:00:00.000000Z\tb\t20.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeAcceptedOnSuspendedViewWalWithNothingPending() throws Exception {
+        // REFRESH ... RANGE on a view that ran no ALTER ... AS has no definition to wait for: a suspended view WAL refuses
+        // nothing.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute("INSERT INTO base VALUES ('a', 3.0, 3.0, '2024-01-01T00:20:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals(-1, viewState().getPendingDefinitionSeqTxn());
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            armNoWaitGuard();
+            try {
+                execute(RANGE_SQL);
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            execute(ALTER_PREFIX + "RESUME WAL");
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t3.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeRefusalOrderWithPendingBaseChange() throws Exception {
+        // REFRESH ... RANGE after a base change whose definition event waits in a suspended view WAL refuses on the WAL
+        // first, and, once RESUME WAL let the event apply, on the view it left invalid: each refusal names its remedy.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("IMMEDIATE");
+            createBase2WithRow();
+            execute(ALTER_PREFIX + "WITH BASE base2 AS (" + BASE2_SQL + ")");
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            armNoWaitGuard();
+            try {
+                assertAlterRefused(
+                        "price_1h",
+                        RANGE_SQL,
+                        REFRESH_VIEW_NAME_POSITION,
+                        DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first",
+                        true
+                );
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            execute(ALTER_PREFIX + "RESUME WAL");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals("base2", viewDefinition().getBaseTableName());
+            assertAlterRefused(
+                    "price_1h",
+                    RANGE_SQL,
+                    REFRESH_VIEW_NAME_POSITION,
+                    "materialized view is invalid, run REFRESH MATERIALIZED VIEW price_1h RESUME first [reason=base table changed]",
+                    true
+            );
+        });
+    }
+
+    @Test
+    public void testRangeRefusedAfterDefinitionApplyFailureUntilSkipped() throws Exception {
+        // A definition event that fails to apply suspends the view's WAL, and REFRESH ... RANGE refuses until RESUME WAL
+        // FROM TXN skips the event. RESUME WAL FROM TXN leaves the view's applied seqTxn to the WAL apply, so the next
+        // RANGE waits for it, and then recomputes with the SQL the view kept.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final long definitionSeqTxn = viewSeqTxn();
+            final MatViewDefinition definition = viewDefinition();
+            engine.getDependentViewGraph().removeView(viewToken());
+            try {
+                drainWalQueue();
+                Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(viewToken()));
+            } finally {
+                engine.getDependentViewGraph().addView(definition);
+            }
+            armNoWaitGuard();
+            try {
+                assertAlterRefused(
+                        "price_1h",
+                        RANGE_SQL,
+                        REFRESH_VIEW_NAME_POSITION,
+                        DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+                );
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+            execute(ALTER_PREFIX + "RESUME WAL FROM TXN " + (definitionSeqTxn + 1));
+            execute("INSERT INTO base VALUES ('a', 3.0, 3.0, '2024-01-01T00:20:00.000000Z')");
+            final AtomicBoolean isWaitSeen = armSeamDrain();
+            execute(RANGE_SQL);
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            drainWalAndMatViewQueues();
+            Assert.assertNull(viewState().getLastRefreshError());
+            // the skipped event never applies: the view keeps its SQL, the last price of the hour
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t3.0
+                    2024-01-01T01:00:00.000000Z\tb\t2.0
+                    """);
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+        });
+    }
+
+    @Test
+    public void testRangeRefusedWhenViewWalSuspendedWhileWaiting() throws Exception {
+        // A REFRESH ... RANGE that waits for the definition event of an ALTER ... AS refuses once the view's WAL is
+        // suspended, and enqueues nothing.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                isWaitSeen.set(true);
+                try {
+                    execute(ALTER_PREFIX + "SUSPEND WAL");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            });
+            final long viewSeqTxn = viewSeqTxn();
+            try {
+                execute(RANGE_SQL);
+                Assert.fail("the RANGE must refuse once the view's WAL is suspended");
+            } catch (SqlException e) {
+                TestUtils.assertEquals(DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first", e.getFlyweightMessage());
+                Assert.assertEquals(REFRESH_VIEW_NAME_POSITION, e.getPosition());
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(viewSeqTxn, viewSeqTxn());
+            Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+            execute(ALTER_PREFIX + "RESUME WAL");
+            drainWalAndMatViewQueues();
+            Assert.assertEquals(TEN_TIMES_MAX_SQL, viewDefinition().getMatViewSql());
+            assertViewRows(VIEW_ROWS);
+        });
+    }
+
+    @Test
+    public void testRangeRefusedWhileViewListedInSuspendedTables() throws Exception {
+        // The cairo.wal.apply.suspended.tables list stops the apply of the view's WAL without the suspended flag of its
+        // tracker: a REFRESH ... RANGE that would wait for the definition event the list holds back refuses at once, and
+        // names the list entry. Once the list no longer holds the view, the event applies, and the RANGE recomputes
+        // with the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final String dirName = viewToken().getDirName();
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, dirName);
+            armNoWaitGuard();
+            try {
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+                assertAlterRefused(
+                        "price_1h",
+                        RANGE_SQL,
+                        REFRESH_VIEW_NAME_POSITION,
+                        DEFINITION_NOT_APPLIED + "remove " + dirName
+                                + " from cairo.wal.apply.suspended.tables and run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+                );
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_TABLES, null);
+            }
+            Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+            drainWalQueue();
+            Assert.assertEquals(TEN_TIMES_MAX_SQL, viewDefinition().getMatViewSql());
+            execute(RANGE_SQL);
+            drainWalAndMatViewQueues();
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t10.0
+                    2024-01-01T01:00:00.000000Z\tb\t20.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testRangeRefusedWhileViewWalSuspendedWithPendingDefinition() throws Exception {
+        // REFRESH ... RANGE issued while the definition event of an earlier ALTER ... AS waits in a suspended view WAL
+        // refuses at once, at the view name, as a view ALTER does, and enqueues nothing: its bounds cannot wait in the
+        // refresh job. So it does after ALTER ... SUSPEND WAL, and with the hard suspension flag alone. A statement that
+        // does not parse fails on its parse error first. INCREMENTAL and FULL go on to the refresh job, which waits for
+        // the event there. Once RESUME WAL lets the event apply, the RANGE waits for it and recomputes with the new SQL.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            execute(ALTER_PREFIX + "SUSPEND WAL");
+            final String refusal = DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first";
+            final String rangeTail = " RANGE FROM '2024-01-01T00:00:00.000000Z' TO '2024-01-01T01:59:59.999999Z'";
+            armNoWaitGuard();
+            try {
+                assertAlterRefused("price_1h", RANGE_SQL, REFRESH_VIEW_NAME_POSITION, refusal);
+                // the view name quoted, and in upper case
+                assertAlterRefused("price_1h", "REFRESH MATERIALIZED VIEW 'price_1h'" + rangeTail, REFRESH_VIEW_NAME_POSITION, refusal);
+                assertAlterRefused("price_1h", "REFRESH MATERIALIZED VIEW PRICE_1H" + rangeTail, REFRESH_VIEW_NAME_POSITION, refusal);
+                // parse errors come first
+                final String badFrom = "REFRESH MATERIALIZED VIEW price_1h RANGE FROM 'x' TO '2024-01-02'";
+                assertAlterRefused("price_1h", badFrom, badFrom.indexOf("'x'"), "invalid FROM timestamp value");
+                final String badTo = "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-02' TO '2024-01-01'";
+                assertAlterRefused("price_1h", badTo, badTo.indexOf("'2024-01-01'"), "TO timestamp must not be earlier than FROM timestamp");
+                assertAlterRefused("price_1h", RANGE_SQL + " x", RANGE_SQL.length() + 1, "unexpected token [x] while trying to refresh materialized view");
+                Assert.assertTrue(engine.getMatViewStateStore().isRefreshQueueEmpty());
+                // INCREMENTAL and FULL do not wait while the view's WAL is suspended
+                execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
+                execute("REFRESH MATERIALIZED VIEW price_1h FULL");
+                execute(ALTER_PREFIX + "RESUME WAL");
+                engine.addWalApplySuspended(viewToken());
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(viewToken()));
+                assertAlterRefused("price_1h", RANGE_SQL, REFRESH_VIEW_NAME_POSITION, refusal);
+                engine.removeWalApplySuspended(viewToken());
+            } finally {
+                viewState().setOnDefinitionWaitForTesting(null);
+            }
+            Assert.assertEquals(VIEW_SQL, viewDefinition().getMatViewSql());
+            final AtomicBoolean isWaitSeen = armSeamDrain();
+            execute("INSERT INTO base VALUES ('a', 3.0, 3.0, '2024-01-01T00:20:00.000000Z')");
+            execute(RANGE_SQL);
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertEquals(TEN_TIMES_MAX_SQL, viewDefinition().getMatViewSql());
+            drainWalAndMatViewQueues();
+            Assert.assertNull(viewState().getLastRefreshError());
+            // ten times the maximum price of the hour: a 3.0, b 2.0
+            assertViewRows("""
+                    ts\tsym\tprice
+                    2024-01-01T00:00:00.000000Z\ta\t30.0
+                    2024-01-01T01:00:00.000000Z\tb\t20.0
+                    """);
+        });
+    }
+
+    @Test
     public void testRangeRightAfterAlterRecomputesWithNewSql() throws Exception {
         // A RANGE refresh issued right after ALTER ... AS waits for the definition event to apply, so it recomputes
         // its range with the new SQL even when the refresh job runs before the WAL apply job.
@@ -1544,8 +1808,9 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshDoesNotWaitWithoutPendingAlterOrOnSuspendedWal() throws Exception {
-        // REFRESH waits only for a pending ALTER ... AS whose definition event the view's WAL has not applied, and
-        // not at all while the view's WAL is suspended.
+        // REFRESH waits only for a pending ALTER ... AS whose definition event the view's WAL has not applied. While the
+        // view's WAL is suspended short of the event, INCREMENTAL does not wait, and leaves the wait to the refresh job,
+        // while RANGE refuses: its bounds cannot wait in the refresh job.
         assertMemoryLeak(() -> {
             currentMicros = parseFloorPartialTimestamp("2024-01-05T00:00:00.000000Z");
             createBaseWithRefreshedView("IMMEDIATE");
@@ -1565,7 +1830,12 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             Assert.assertFalse(isWaitSeen.get());
             engine.getTableSequencerAPI().suspendTable(viewToken(), ErrorTag.NONE, "test suspension");
             execute("REFRESH MATERIALIZED VIEW price_1h INCREMENTAL");
-            execute("REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-02'");
+            assertAlterRefused(
+                    "price_1h",
+                    "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-02'",
+                    REFRESH_VIEW_NAME_POSITION,
+                    DEFINITION_NOT_APPLIED + "run ALTER MATERIALIZED VIEW price_1h RESUME WAL first"
+            );
             Assert.assertFalse(isWaitSeen.get());
             Assert.assertEquals("SELECT ts, sym, max(price) AS price FROM base SAMPLE BY 1h", viewDefinition().getMatViewSql());
             execute("ALTER MATERIALIZED VIEW price_1h RESUME WAL");
@@ -3582,6 +3852,41 @@ public class AlterMatViewAsTest extends AbstractCairoTest {
             Assert.assertEquals("other_1h", definition.getBaseTableName());
             Assert.assertTrue(engine.getDependentViewGraph().isOnDependencyLoop(definition));
             Assert.assertNotNull(engine.getMatViewStateStore().getViewState(newView));
+        });
+    }
+
+    @Test
+    public void testRangeStopsWaitingForDroppedView() throws Exception {
+        // A REFRESH ... RANGE that waits for a pending definition refuses once the view is dropped, and enqueues nothing.
+        assertMemoryLeak(() -> {
+            createBaseWithRefreshedView("MANUAL");
+            execute(ALTER_PREFIX + "AS (" + TEN_TIMES_MAX_SQL + ")");
+            final TableToken viewToken = viewToken();
+            final AtomicBoolean isWaitSeen = new AtomicBoolean();
+            viewState().setOnDefinitionWaitForTesting(() -> {
+                isWaitSeen.set(true);
+                try {
+                    execute("DROP MATERIALIZED VIEW price_1h");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            });
+            try {
+                execute(RANGE_SQL);
+                Assert.fail("the view is dropped");
+            } catch (SqlException e) {
+                TestUtils.assertEquals("materialized view does not exist [view=price_1h]", e.getFlyweightMessage());
+                Assert.assertEquals(REFRESH_VIEW_NAME_POSITION, e.getPosition());
+            }
+            Assert.assertTrue(isWaitSeen.get());
+            Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(viewToken).isDropped());
+            // the drop queued the invalidation of the views over the dropped view, and the RANGE queued nothing
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            Assert.assertTrue(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
+            Assert.assertEquals(MatViewRefreshTask.INVALIDATE, task.operation);
+            Assert.assertFalse(engine.getMatViewStateStore().tryDequeueRefreshTask(task));
+            drainWalAndMatViewQueues();
+            Assert.assertNull(engine.getTableTokenIfExists("price_1h"));
         });
     }
 

@@ -26,9 +26,11 @@ package io.questdb.test.cairo.mv;
 
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import org.junit.Assert;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -58,6 +60,11 @@ import java.util.TreeMap;
  * </ul>
  * A RANGE refresh over every day, which the test runs after a RESUME SKIP BACKLOG and after a view column becomes
  * mapped, recomputes the days the base holds; a completed FULL refresh rebuilds the view and resets the oracle.
+ * <p>
+ * Before that RANGE, which recomputes them too, the oracle compares the buckets that got a base row after the last
+ * ALTER ... AS the view took: the refresh that computed them read rows committed after the statement returned, so it ran
+ * with the statement's SQL, and none of them is missing. It does so while the operations since the statement leave
+ * those buckets to the refreshes alone, see {@link #onPostAlterRowsUnchecked()}.
  */
 final class MatViewFuzzOracle {
     private final IntList columnIds = new IntList();
@@ -70,6 +77,8 @@ final class MatViewFuzzOracle {
     private final boolean[] isSuspect;
     private final boolean[] isTouched;
     private final boolean[] isViewDropped;
+    // the hour and symbol of the base rows inserted since the last ALTER ... AS the view took, see assertPostAlterRows()
+    private final HashSet<String> postAlterRows = new HashSet<>();
     private int baseEpoch;
     private int baseEpochAtLastValid;
     // the days, from the first, that the oracle compares: the complete periods of a period view, every day otherwise
@@ -80,6 +89,8 @@ final class MatViewFuzzOracle {
     private boolean isFullPending;
     private boolean isGapAccepted;
     private boolean isNeedsBackfill;
+    // no operation since the last ALTER ... AS the view took touched the buckets of postAlterRows but the refreshes
+    private boolean isPostAlterRowsChecked;
     private int nextColumnId;
     private int ttlDays;
 
@@ -174,6 +185,46 @@ final class MatViewFuzzOracle {
         }
     }
 
+    // Asserts the view's buckets that got a base row after the last ALTER ... AS the view took against the twin's, in
+    // the view columns the SQL produces, before a RANGE refresh recomputes them: a refresh of such rows waits for the
+    // statement's definition event, so each bucket holds the values of the statement's SQL, and none of them is
+    // missing. Returns the number of buckets it compared.
+    int assertPostAlterRows(
+            TreeMap<String, Row> viewRows,
+            TreeMap<String, Row> twinRows,
+            ObjList<String> sqlColumns,
+            CharSequence context
+    ) {
+        if (!isPostAlterRowsChecked) {
+            return 0;
+        }
+        int checkedCount = 0;
+        for (Map.Entry<String, Row> e : twinRows.entrySet()) {
+            final Row twinRow = e.getValue();
+            if (twinRow.day >= completeDays || !postAlterRows.contains(postAlterRowKey(twinRow.hour, twinRow.sym))) {
+                continue;
+            }
+            checkedCount++;
+            final Row viewRow = viewRows.get(e.getKey());
+            if (viewRow == null) {
+                Assert.fail("view lacks a bucket with base rows after ALTER ... AS [key=" + e.getKey() + ", twin=" + twinRow.values + "] " + context);
+            }
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                final String name = columnNames.getQuick(i);
+                if (MatViewFuzzOpGenerator.isCatalogueName(name) && sqlColumns.indexOf(name) > -1) {
+                    final String expected = twinRow.values.get(name);
+                    final String actual = viewRow.values.get(name);
+                    if (!isSameValue(expected, actual)) {
+                        Assert.fail("view bucket with base rows after ALTER ... AS differs from its SQL on the base [key=" + e.getKey()
+                                + ", column=" + name + ", expected=" + expected + ", actual=" + actual
+                                + ", view=" + viewRow.values + ", twin=" + twinRow.values + "] " + context);
+                    }
+                }
+            }
+        }
+        return checkedCount;
+    }
+
     int getBaseEpoch() {
         return baseEpoch;
     }
@@ -256,6 +307,12 @@ final class MatViewFuzzOracle {
         }
     }
 
+    // The view took an ALTER ... AS: the buckets of the base rows inserted from now on hold its SQL's values.
+    void onDefinitionChanged() {
+        postAlterRows.clear();
+        isPostAlterRowsChecked = true;
+    }
+
     // The queues drained: the WAL apply published every range task and the refresh job ran them. A FULL on an invalid
     // view waits for the view's own WAL, which a drain applies after the refresh job ran, so a FULL can outlive the
     // drain; the caller passes whether the view still holds one.
@@ -305,9 +362,24 @@ final class MatViewFuzzOracle {
         onRecreated(day);
     }
 
+    // A base row inserted at the offset from the first day, of the symbol.
+    void onInsertRow(long tsOffsetMicros, String sym) {
+        if (isPostAlterRowsChecked) {
+            postAlterRows.add(postAlterRowKey((int) (tsOffsetMicros / Micros.HOUR_MICROS), sym));
+        }
+    }
+
     // The period of the next day ended.
     void onPeriodCompleted() {
         completeDays++;
+    }
+
+    // An operation touched the view's buckets other than through a refresh, or may have left the view's rows to a
+    // RANGE refresh: a base partition operation, TRUNCATE, UPDATE, TTL or replacement, an invalidation, RESUME, a
+    // restart, a view column added or a view partition dropped, or a skipped definition event. The buckets of the base
+    // rows inserted after the last ALTER ... AS go unchecked until the next one.
+    void onPostAlterRowsUnchecked() {
+        isPostAlterRowsChecked = false;
     }
 
     // The range task of an ATTACH or UPDATE of the day ran: the view's cache holds the range, or the view recomputed it.
@@ -423,12 +495,21 @@ final class MatViewFuzzOracle {
         isTouched[day] = true;
     }
 
+    private static String postAlterRowKey(int hour, String sym) {
+        return hour + "|" + sym;
+    }
+
     static final class Row {
         final int day;
+        // the hours since the first day's start
+        final int hour;
+        final String sym;
         final HashMap<String, String> values = new HashMap<>();
 
-        Row(int day) {
+        Row(int day, int hour, String sym) {
             this.day = day;
+            this.hour = hour;
+            this.sym = sym;
         }
     }
 }

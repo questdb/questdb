@@ -37,8 +37,9 @@ import org.junit.Test;
  * A validation-only compile of the statements this feature adds, as the web console's syntax check runs it, writes
  * nothing: RESUME and RESUME SKIP BACKLOG leave an invalid view invalid, ALTER ... WITH BASE leaves the base, and view
  * ADD COLUMN, DROP COLUMN and DROP PARTITION leave the view's columns and rows. The view's WAL gets no transaction.
- * Nor does a validation-only view ALTER wait for an earlier ALTER ... AS to apply, or refuse while the apply of the
- * view's WAL is suspended: it checks the definition the view's WAL applied, as REFRESH does.
+ * Nor does a validation-only view ALTER or REFRESH ... RANGE wait for an earlier ALTER ... AS to apply, or refuse while
+ * the apply of the view's WAL is suspended: a view ALTER checks the definition the view's WAL applied, as REFRESH does,
+ * and a REFRESH enqueues no refresh.
  */
 public class MatViewValidationOnlyTest extends AbstractCairoTest {
     private static final String VIEW_ROWS = """
@@ -68,6 +69,7 @@ public class MatViewValidationOnlyTest extends AbstractCairoTest {
                     "ALTER MATERIALIZED VIEW price_1h DROP COLUMN price",
                     "ALTER MATERIALIZED VIEW price_1h AS (SELECT ts, sym, min(price) AS price FROM base SAMPLE BY 1h)",
                     "ALTER MATERIALIZED VIEW price_1h WITH BASE base2 AS (SELECT ts, sym, last(price) AS price FROM base2 SAMPLE BY 1h)",
+                    "REFRESH MATERIALIZED VIEW price_1h RANGE FROM '2024-01-01' TO '2024-01-02'",
             };
             final MatViewState state = engine.getMatViewStateStore().getViewState(viewToken);
             // a statement that waits fails instead of polling forever under the test's circuit breaker
@@ -168,5 +170,6 @@ public class MatViewValidationOnlyTest extends AbstractCairoTest {
             context.setValidationOnly(false);
         }
         Assert.assertEquals(sql, viewSeqTxn, engine.getTableSequencerAPI().getTxnTracker(viewToken).getSeqTxn());
+        Assert.assertTrue(sql, engine.getMatViewStateStore().isRefreshQueueEmpty());
     }
 }

@@ -41,8 +41,11 @@ import org.jetbrains.annotations.NotNull;
  * writes the {@code MAT_VIEW_DEFINITION} event to the view's WAL, under the role-switch commit fence, and every node
  * replaces the view's base table name and SQL text when the event applies.
  * <p>
- * Without a base change, the statement takes no latch: the view keeps its validity, rows and refresh position, and a
- * refresh that runs meanwhile finishes with the old SQL.
+ * Without a base change, the statement takes no latch: the view keeps its validity, rows and refresh position. A
+ * refresh whose base snapshot predates the statement's record of its event may finish with the old SQL. A later refresh
+ * waits until the view's WAL applies or skips the event, see {@link MatViewState#isDefinitionPending()}: an incremental
+ * refresh defers, and the WAL apply job wakes it as it applies or skips the event, a FULL refresh parks its request
+ * until then, and a REFRESH ... RANGE that meets the event pending in the refresh job ends with an error.
  * <p>
  * A base change leaves the view invalid ("base table changed") until {@code REFRESH ... RESUME SKIP BACKLOG} positions
  * it on the new base table. The statement takes the view latch, whether or not the view is valid, waiting while
@@ -56,6 +59,7 @@ import org.jetbrains.annotations.NotNull;
  * Either way the node records the sequencer txn of the definition event, see
  * {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a REFRESH issued right after the statement waits for the
  * new definition, and so does a view ADD COLUMN, DROP COLUMN or ALTER ... AS, which checks itself against it.
+ * REFRESH ... RANGE refuses, as those ALTERs do, while the WAL apply of the view is suspended short of the event.
  */
 public final class MatViewAlter {
     private static final Log LOG = LogFactory.getLog(MatViewAlter.class);
@@ -100,6 +104,7 @@ public final class MatViewAlter {
                 seqTxn = MatViewCommitFence.appendMatViewDefinition(engine, walWriter, baseTableName, matViewSql, false);
             }
         }
+        viewState.runDefinitionEventWrittenSeamForTesting();
         viewState.recordPendingDefinitionSeqTxn(seqTxn);
         viewState.alterSuccess(isBaseTableChange);
         LOG.info().$("altered materialized view SQL [view=").$(viewToken)
@@ -150,16 +155,18 @@ public final class MatViewAlter {
      * Waits until the view's WAL is applied up to the definition event of the last {@code ALTER MATERIALIZED VIEW ...
      * AS} this node ran, see {@link MatViewState#getPendingDefinitionSeqTxn()}, so that a view ADD COLUMN, DROP COLUMN
      * or ALTER ... AS issued right after the statement checks itself against the definition that its own WAL entry
-     * applies after. Returns at once with no such statement pending, and once the view's WAL applied the event, or
-     * passed it, whatever the WAL's state is then. While the event waits, it refuses a dropped view, and a view whose WAL
-     * apply is suspended, see {@link MatViewBacklog#isViewWalSuspended(CairoEngine, TableToken, SeqTxnTracker)}: the WAL
-     * then reaches the event only after a user acts, and the definition the statement's entry would apply after is
-     * unknown until then. Honours the statement timeout and cancellation, as REFRESH's wait does.
+     * applies after, and a REFRESH ... RANGE recomputes its range with that definition. Returns at once with no such
+     * statement pending, and once the view's WAL applied the event, or passed it, whatever the WAL's state is then.
+     * While the event waits, it refuses a dropped view, and a view whose WAL apply is suspended, see
+     * {@link MatViewBacklog#isViewWalSuspended(CairoEngine, TableToken, SeqTxnTracker)}: the WAL then reaches the event
+     * only after a user acts, and the definition the statement would run against is unknown until then. A RANGE refuses
+     * since its bounds cannot wait in the refresh job the way an incremental or FULL refresh does there. Honours the
+     * statement timeout and cancellation, as REFRESH's wait does.
      *
      * @param viewNamePosition the position of the view name in the statement, where refusals point
      * @throws SqlException a dropped view, or a view WAL whose apply is suspended
      */
-    public static void awaitPendingDefinitionForAlter(
+    public static void awaitPendingDefinitionOrRefuse(
             @NotNull CairoEngine engine,
             @NotNull SqlExecutionContext executionContext,
             @NotNull TableToken viewToken,
@@ -252,9 +259,9 @@ public final class MatViewAlter {
         }
     }
 
-    // The refusal of a view ALTER while the WAL apply of the view stops short of a pending definition event. RESUME WAL
-    // lifts a suspension; a view in the cairo.wal.apply.suspended.tables list also needs its entry, by dir name, out of
-    // the list, which RESUME WAL does not lift.
+    // The refusal of a view ALTER or a REFRESH ... RANGE while the WAL apply of the view stops short of a pending
+    // definition event. RESUME WAL lifts a suspension; a view in the cairo.wal.apply.suspended.tables list also needs
+    // its entry, by dir name, out of the list, which RESUME WAL does not lift.
     private static SqlException definitionNotApplied(CairoEngine engine, TableToken viewToken, int viewNamePosition) {
         final SqlException e = SqlException.$(viewNamePosition, "materialized view WAL is suspended with an earlier ALTER MATERIALIZED VIEW ... AS not applied, ");
         final ObjHashSet<String> suspendedTables = engine.getConfiguration().getWalApplySuspendedTables();

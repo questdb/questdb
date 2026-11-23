@@ -43,6 +43,7 @@ import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -5654,6 +5655,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         commitSeqTxn(seqTxn);
+        if (tableToken.isMatView()) {
+            // RESUME WAL FROM TXN skipped the view's WAL past seqTxn, definition events included: the refreshes that
+            // deferred on one run with the definition the view keeps, and RESUME WAL wakes them once it lifted the
+            // suspension, see MatViewState.recordAppliedDefinitionSeqTxn().
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(tableToken);
+            if (viewState != null) {
+                viewState.recordAppliedDefinitionSeqTxn(seqTxn);
+            }
+        }
     }
 
     @TestOnly

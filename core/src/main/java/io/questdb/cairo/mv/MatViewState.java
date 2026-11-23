@@ -129,9 +129,16 @@ public class MatViewState implements QuietCloseable {
     private final AtomicBoolean latch = new AtomicBoolean(false);
     // Serializes the writers of bareNameSwitches: the WAL apply threads of the view's base tables.
     private final Object bareNameSwitchesLock = new Object();
+    // Serializes the writes of appliedDefinitionSeqTxn and hasDeferredDefinitionRefresh, so that a refresh judges a
+    // definition pending and registers its request in one step against the raise of the applied seqTxn and the claim,
+    // see requestDeferredDefinitionRefresh().
+    private final Object definitionLock = new Object();
+    // The highest pending definition seqTxn whose wait the refresh job logged, or -1, see claimDefinitionWaitLog().
+    private final AtomicLong definitionWaitLoggedSeqTxn = new AtomicLong(-1);
     // The sequencer txn of the MAT_VIEW_DEFINITION event of the last ALTER MATERIALIZED VIEW ... AS that this node ran,
     // or -1. REFRESH ... FULL, INCREMENTAL and RANGE wait until the view's WAL is applied up to it, so that they run
     // the new SQL, and so do view ADD COLUMN, DROP COLUMN and ALTER ... AS, so that they check themselves against it.
+    // The refresh job defers while the view's WAL has not applied or skipped the event, see isDefinitionPending().
     // Kept in memory only: a restart loses it.
     private final AtomicLong pendingDefinitionSeqTxn = new AtomicLong(-1);
     // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
@@ -156,6 +163,12 @@ public class MatViewState implements QuietCloseable {
     // reads it to tell whether the refresh task it enqueued has left the queue.
     private final AtomicLong refreshSeq = new AtomicLong();
     private final MatViewTelemetryFacade telemetryFacade;
+    // The sequencer txn up to which this node's WAL apply of the view has applied or skipped every definition event, or
+    // -1: the WAL apply job raises it as it applies a MAT_VIEW_DEFINITION event or skips it as stale, and RESUME WAL
+    // FROM TXN as it skips the view's WAL past one, see recordAppliedDefinitionSeqTxn(). It is not the writer txn of the
+    // view's SeqTxnTracker: a republish resets that to -1 long after the event applied, and RESUME WAL FROM TXN moves it
+    // only with the apply run that follows. Written under definitionLock, never lowered, kept in memory only.
+    private volatile long appliedDefinitionSeqTxn = -1;
     // Exponential moving average of one REPLACE_RANGE commit, in nanoseconds.
     // Used together with the scan-sample/scan-range EMAs to derive a
     // timestamp-width threshold below which clustering two adjacent cached
@@ -209,6 +222,9 @@ public class MatViewState implements QuietCloseable {
     // a refresh that finds a factory of another SQL discards it, see acquireRecordFactory(String).
     private String cursorFactorySql;
     private volatile boolean dropped;
+    // Set by a refresh that deferred on a pending definition, cleared by the claim that enqueues one incremental refresh
+    // for every refresh that deferred since, see claimDeferredDefinitionRefresh(). Written under definitionLock.
+    private volatile boolean hasDeferredDefinitionRefresh;
     private volatile boolean invalid;
     private volatile String invalidationReason;
     // Set under this.latch while REFRESH MATERIALIZED VIEW ... RESUME recovers the view. An invalidation published
@@ -257,6 +273,12 @@ public class MatViewState implements QuietCloseable {
     private volatile Runnable onBareNameSwitchCopiedForTesting;
     @TestOnly
     private volatile Runnable onBareNameSwitchRecordedForTesting;
+    @TestOnly
+    private volatile Runnable onDeferredDefinitionClaimForTesting;
+    @TestOnly
+    private volatile Runnable onDeferredDefinitionRequestForTesting;
+    @TestOnly
+    private volatile Runnable onDefinitionEventWrittenForTesting;
     @TestOnly
     private volatile Runnable onDefinitionWaitForTesting;
     @TestOnly
@@ -643,6 +665,42 @@ public class MatViewState implements QuietCloseable {
         return pendingFullRefreshHandoff.get() && pendingFullRefreshHandoff.getAndSet(false);
     }
 
+    /**
+     * Claims the request of the refreshes that deferred on a pending definition, see
+     * {@link #requestDeferredDefinitionRefresh()}, once no definition is pending: the caller enqueues one incremental
+     * refresh, which reads the base table after the claim, and so covers every refresh that deferred before it. Returns
+     * false without a request, and while a definition is pending: the claim that follows the apply or skip of its event
+     * takes the request then.
+     */
+    boolean claimDeferredDefinitionRefresh() {
+        // The read without the lock writes nothing when no refresh deferred. A request registered before a raise of the
+        // applied seqTxn is visible to the claim that follows the raise, since the raise takes the lock too.
+        if (!hasDeferredDefinitionRefresh) {
+            return false;
+        }
+        final Runnable seam = onDeferredDefinitionClaimForTesting;
+        if (seam != null) {
+            onDeferredDefinitionClaimForTesting = null;
+            seam.run();
+        }
+        synchronized (definitionLock) {
+            // another claim may have taken the request since the read above
+            if (!hasDeferredDefinitionRefresh || isDefinitionPending()) {
+                return false;
+            }
+            hasDeferredDefinitionRefresh = false;
+            return true;
+        }
+    }
+
+    /**
+     * Returns true once per pending definition: the refresh job logs the wait of the first refresh that meets it.
+     */
+    boolean claimDefinitionWaitLog() {
+        final long pendingSeqTxn = pendingDefinitionSeqTxn.get();
+        return definitionWaitLoggedSeqTxn.getAndAccumulate(pendingSeqTxn, Math::max) < pendingSeqTxn;
+    }
+
     boolean claimPendingIncrementalRefresh() {
         // Reads before clearing, so that a claim with nothing pending writes nothing. The read is volatile,
         // so it still observes a request that a loser published before its final lock attempt.
@@ -901,6 +959,11 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshFinishTimestampUs;
     }
 
+    @TestOnly
+    public long getAppliedDefinitionSeqTxnForTesting() {
+        return appliedDefinitionSeqTxn;
+    }
+
     public long getBackfillFrontier() {
         return backfillFrontier.get();
     }
@@ -1038,6 +1101,11 @@ public class MatViewState implements QuietCloseable {
         return pendingIncrementalRefresh.get();
     }
 
+    @TestOnly
+    public boolean hasDeferredDefinitionRefreshForTesting() {
+        return hasDeferredDefinitionRefresh;
+    }
+
     /**
      * Returns whether the marker's reason stands for a base table change, which a publication names with the base
      * table's token and the change's sequencer txn, such as the bare-name guard's: true also when a merge with a
@@ -1119,6 +1187,15 @@ public class MatViewState implements QuietCloseable {
         assert latch.get();
         final FullRefreshCoverage coverage = lastFullRefreshCoverage;
         return coverage != null && coverage.baseTableToken.getTableId() == baseTableId && coverage.baseTableTxn >= baseTableTxn;
+    }
+
+    /**
+     * Returns true while the definition event of an ALTER MATERIALIZED VIEW ... AS that this node ran waits in the
+     * view's WAL: this node's WAL apply of the view has neither applied nor skipped it, see
+     * {@link #recordAppliedDefinitionSeqTxn(long)}. False when the node ran no such statement since it started.
+     */
+    public boolean isDefinitionPending() {
+        return appliedDefinitionSeqTxn < pendingDefinitionSeqTxn.get();
     }
 
     public boolean isDropped() {
@@ -1480,6 +1557,20 @@ public class MatViewState implements QuietCloseable {
         }
     }
 
+    /**
+     * Records that this node's WAL apply of the view applied or skipped every definition event up to the sequencer txn:
+     * the WAL apply job as it applies a MAT_VIEW_DEFINITION event or skips it as stale, and RESUME WAL FROM TXN as it
+     * skips the view's WAL past it, see {@link #isDefinitionPending()}. The caller then claims the request of the
+     * refreshes that deferred on the event, see {@link #claimDeferredDefinitionRefresh()}. The record only grows.
+     */
+    public void recordAppliedDefinitionSeqTxn(long seqTxn) {
+        synchronized (definitionLock) {
+            if (seqTxn > appliedDefinitionSeqTxn) {
+                appliedDefinitionSeqTxn = seqTxn;
+            }
+        }
+    }
+
     void recordFullRefreshSuccess(TableToken baseTableToken, long baseTableTxn) {
         assert latch.get();
         lastFullRefreshCoverage = new FullRefreshCoverage(baseTableToken, baseTableTxn);
@@ -1621,6 +1712,33 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    /**
+     * Returns true when a definition is pending, see {@link #isDefinitionPending()}, after it registered the request of
+     * the refresh that asks: the refresh then defers without writing, and the claim that follows the apply or skip of
+     * the definition event enqueues one incremental refresh for it, see {@link #claimDeferredDefinitionRefresh()}.
+     * Returns false when no definition is pending, and the refresh goes ahead. The check and the registration are one
+     * step under the lock that the raise of the applied seqTxn and the claim take, so a refresh that goes ahead leaves no
+     * request, and only a claim that enqueues a refresh clears one, whatever number of refreshes, claims and ALTERs
+     * meet.
+     */
+    boolean requestDeferredDefinitionRefresh() {
+        if (!isDefinitionPending()) {
+            return false;
+        }
+        final Runnable seam = onDeferredDefinitionRequestForTesting;
+        if (seam != null) {
+            onDeferredDefinitionRequestForTesting = null;
+            seam.run();
+        }
+        synchronized (definitionLock) {
+            if (!isDefinitionPending()) {
+                return false;
+            }
+            hasDeferredDefinitionRefresh = true;
+            return true;
+        }
+    }
+
     void requestPendingFullRefreshHandoff() {
         final Runnable onRequest = onPendingFullRefreshHandoffRequestForTesting;
         if (onRequest != null) {
@@ -1685,6 +1803,14 @@ public class MatViewState implements QuietCloseable {
         final Runnable seam = onBareNameSwitchRecordedForTesting;
         if (seam != null) {
             onBareNameSwitchRecordedForTesting = null;
+            seam.run();
+        }
+    }
+
+    void runDefinitionEventWrittenSeamForTesting() {
+        final Runnable seam = onDefinitionEventWrittenForTesting;
+        if (seam != null) {
+            onDefinitionEventWrittenForTesting = null;
             seam.run();
         }
     }
@@ -1839,9 +1965,40 @@ public class MatViewState implements QuietCloseable {
     }
 
     /**
+     * Test seam: runs once in {@code claimDeferredDefinitionRefresh}, after the claim read a request without the lock and
+     * before it takes the lock. Tests use it to run another claim in that window. One-shot: the seam clears itself before
+     * firing.
+     */
+    @TestOnly
+    public void setOnDeferredDefinitionClaimForTesting(Runnable onDeferredDefinitionClaimForTesting) {
+        this.onDeferredDefinitionClaimForTesting = onDeferredDefinitionClaimForTesting;
+    }
+
+    /**
+     * Test seam: runs once in {@code requestDeferredDefinitionRefresh}, after a refresh found a definition pending and
+     * before it checks again and registers its request under the lock. Tests use it to apply or skip the definition
+     * event in that window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnDeferredDefinitionRequestForTesting(Runnable onDeferredDefinitionRequestForTesting) {
+        this.onDeferredDefinitionRequestForTesting = onDeferredDefinitionRequestForTesting;
+    }
+
+    /**
+     * Test seam: runs once in ALTER MATERIALIZED VIEW ... AS, after the statement wrote its definition event, and, with
+     * a base change, released the view latch, and before it records the event's seqTxn, see
+     * {@link #getPendingDefinitionSeqTxn()}. Tests use it to run a refresh in that window. One-shot: the seam clears
+     * itself before firing.
+     */
+    @TestOnly
+    public void setOnDefinitionEventWrittenForTesting(Runnable onDefinitionEventWrittenForTesting) {
+        this.onDefinitionEventWrittenForTesting = onDefinitionEventWrittenForTesting;
+    }
+
+    /**
      * Test seam: runs once, while a REFRESH or a view ADD COLUMN, DROP COLUMN or ALTER ... AS waits for the definition
      * event of an ALTER MATERIALIZED VIEW ... AS to apply, see {@link MatViewAlter#awaitPendingDefinition} and
-     * {@link MatViewAlter#awaitPendingDefinitionForAlter}.
+     * {@link MatViewAlter#awaitPendingDefinitionOrRefuse}.
      */
     @TestOnly
     public void setOnDefinitionWaitForTesting(Runnable onDefinitionWaitForTesting) {

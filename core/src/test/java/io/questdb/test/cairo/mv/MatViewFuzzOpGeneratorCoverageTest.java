@@ -45,6 +45,11 @@ import org.junit.Test;
  *     refused; and none on a view that dropped a column;</li>
  *     <li>a view ADD COLUMN, DROP COLUMN and ALTER ... AS, accepted and refused, while the definition event of an
  *     earlier ALTER ... AS waits in the view's WAL, which the statement waits for;</li>
+ *     <li>the refresh job while such an event waits: after the apply of the base's WAL alone, twice for one event, and
+ *     while the view's WAL is suspended; an ALTER ... AS after such a refresh, and one refused while the view's WAL is
+ *     suspended short of the event; RESUME WAL while the event waits, after which the WAL apply wakes the refresh, and
+ *     RESUME WAL FROM TXN past the event; and a reset of the view's tracker after the event applied, then the refresh
+ *     job;</li>
  *     <li>a view ADD COLUMN of a column the SQL produces under another type than the SQL's, which name mapping casts,
  *     and of a column no SQL produces;</li>
  *     <li>an ATTACH of a partition the same round detached, and a row into a day whose base partition the round
@@ -78,7 +83,8 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // incremental refresh
     private static final int CHECK_STEPS = 6;
     private static final int DAY_COUNT = 6;
-    // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL
+    // each outcome of a view column change and of an ALTER ... AS while a definition event waits in the view's WAL, and
+    // each shape of the refresh job and of the view's WAL suspension around such an event
     private static final int DEFINITION_PENDING_MIN = 10;
     // each shape of an invalidation that publishes its marker while a range task waits in the refresh queue
     private static final int MARKER_FIRST_SHAPE_MIN = 20;
@@ -101,7 +107,7 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // the rounds of the bare-name round's shapes, which share their draws with the raced base column change; the
     // minimums of testBareNameRoundShapes() are for this many rounds
     private static final int BARE_NAME_ROUNDS = 1_000;
-    private static final int ROUNDS = 500;
+    private static final int ROUNDS = 1_000;
     private static final int STEPS_PER_ROUND = 60;
 
     @Test
@@ -143,6 +149,15 @@ public class MatViewFuzzOpGeneratorCoverageTest {
         final int[] addWhileDefinitionPending = new int[2];
         final int[] dropWhileDefinitionPending = new int[2];
         final int[] alterWhileDefinitionPending = new int[2];
+        // the refresh job, and the operations around it, while a definition event waits in the view's WAL
+        int refreshJobAfterBaseOnlyApply = 0;
+        int secondRefreshJobOnOneDefinition = 0;
+        int refreshJobWhileSuspended = 0;
+        int alterAfterDeferredRefresh = 0;
+        int alterRefusedBySuspension = 0;
+        int resumeWalWhileDefinitionPending = 0;
+        int resumeWalPastDefinition = 0;
+        int refreshJobAfterResetOfAppliedDefinition = 0;
         final int[] policyShapes = new int[5];
         final MatViewFuzzOpGenerator.Op op = new MatViewFuzzOpGenerator.Op();
         for (int round = 0; round < ROUNDS; round++) {
@@ -162,13 +177,70 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             // a VIEW_FULL was drawn, and a view check ran it, with no restart or base replacement since
             boolean isFullIssued = false;
             boolean isFullCovering = false;
+            // the refresh job runs and the base-only WAL applies since the definition event that waits, and an accepted
+            // ALTER ... AS whose event applied, followed by a tracker reset
+            int refreshJobsOnPendingDefinition = 0;
+            boolean isBaseAppliedOnPendingDefinition = false;
+            boolean isAlterApplied = false;
+            boolean isTrackerResetAfterAppliedAlter = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final ObjList<String> sqlBefore = new ObjList<>();
                 sqlBefore.addAll(generator.getSqlColumns());
                 final boolean wasSqlPositional = generator.isSqlPositional();
                 final boolean wasDefinitionPending = generator.isDefinitionPending();
+                final boolean wasViewWalSuspended = generator.isViewWalSuspended();
                 generator.next(rnd, op);
                 kindCounts[op.kind.ordinal()]++;
+                if (wasViewWalSuspended) {
+                    Assert.assertTrue(op.kind + " drawn while the view's WAL is suspended", MatViewFuzzOpGenerator.isAllowedWhileViewWalSuspended(op.kind));
+                    Assert.assertNotEquals(MatViewFuzzOpGenerator.Kind.VIEW_SUSPEND_WAL, op.kind);
+                } else {
+                    Assert.assertNotEquals("RESUME WAL drawn while the view's WAL applies", MatViewFuzzOpGenerator.Kind.VIEW_RESUME_WAL, op.kind);
+                }
+                switch (op.kind) {
+                    case RUN_REFRESH_JOB -> {
+                        if (wasDefinitionPending) {
+                            refreshJobsOnPendingDefinition++;
+                            if (refreshJobsOnPendingDefinition == 2) {
+                                secondRefreshJobOnOneDefinition++;
+                            }
+                            if (isBaseAppliedOnPendingDefinition) {
+                                refreshJobAfterBaseOnlyApply++;
+                                isBaseAppliedOnPendingDefinition = false;
+                            }
+                            if (wasViewWalSuspended) {
+                                refreshJobWhileSuspended++;
+                            }
+                        } else if (isTrackerResetAfterAppliedAlter) {
+                            refreshJobAfterResetOfAppliedDefinition++;
+                            isTrackerResetAfterAppliedAlter = false;
+                        }
+                    }
+                    case APPLY_BASE_WAL -> isBaseAppliedOnPendingDefinition |= wasDefinitionPending;
+                    case RESET_VIEW_TRACKER -> isTrackerResetAfterAppliedAlter |= isAlterApplied && !wasDefinitionPending;
+                    case VIEW_ALTER_AS -> {
+                        Assert.assertEquals("ALTER ... AS refused by the suspension exactly while the view's WAL is suspended short of a definition event",
+                                wasViewWalSuspended && wasDefinitionPending, op.isRefusedBySuspension);
+                        if (op.isRefusedBySuspension) {
+                            alterRefusedBySuspension++;
+                        } else if (wasDefinitionPending && refreshJobsOnPendingDefinition > 0) {
+                            alterAfterDeferredRefresh++;
+                        }
+                    }
+                    case VIEW_RESUME_WAL -> {
+                        Assert.assertTrue(wasViewWalSuspended);
+                        Assert.assertFalse(generator.isViewWalSuspended());
+                        Assert.assertTrue("RESUME WAL FROM TXN past a definition event drawn only while one waits", wasDefinitionPending || !op.isSkipDefinition);
+                        if (op.isSkipDefinition) {
+                            resumeWalPastDefinition++;
+                        } else if (wasDefinitionPending) {
+                            resumeWalWhileDefinitionPending++;
+                        }
+                    }
+                    case VIEW_SUSPEND_WAL -> Assert.assertTrue(generator.isViewWalSuspended());
+                    default -> {
+                    }
+                }
                 if (wasDefinitionPending) {
                     final int outcome = op.isRefused ? 1 : 0;
                     switch (op.kind) {
@@ -393,12 +465,37 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 // the view's columns always start with ts and sym, which no statement drops
                 Assert.assertEquals(MatViewFuzzOpGenerator.TS, generator.getViewColumns().getQuick(0));
                 Assert.assertEquals(MatViewFuzzOpGenerator.SYM, generator.getViewColumns().getQuick(1));
-                trackDefinitionPending(generator, op, wasDefinitionPending, isViewColumnAdded, step);
+                if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_RESUME_WAL && op.isSkipDefinition) {
+                    // the fuzz skips the event when it is the view's only transaction that the WAL apply has not
+                    // applied, which this takes as always
+                    generator.onDefinitionSkipped();
+                }
+                trackDefinitionPending(rnd, generator, op, wasDefinitionPending, wasViewWalSuspended, isViewColumnAdded, step);
+                if (!generator.isDefinitionPending()) {
+                    if (wasDefinitionPending) {
+                        isAlterApplied = true;
+                        isTrackerResetAfterAppliedAlter = false;
+                    }
+                    refreshJobsOnPendingDefinition = 0;
+                    isBaseAppliedOnPendingDefinition = false;
+                } else if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS && !op.isRefused) {
+                    // another definition event waits now, so the shapes start over
+                    refreshJobsOnPendingDefinition = 0;
+                    isBaseAppliedOnPendingDefinition = false;
+                }
                 isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
             }
         }
 
         assertKindShares(kindCounts, false);
+        assertShare("refresh job after the apply of the base's WAL alone while a definition event waits", refreshJobAfterBaseOnlyApply, DEFINITION_PENDING_MIN);
+        assertShare("second refresh job on one pending definition event", secondRefreshJobOnOneDefinition, DEFINITION_PENDING_MIN);
+        assertShare("refresh job while the view's WAL is suspended short of a definition event", refreshJobWhileSuspended, DEFINITION_PENDING_MIN);
+        assertShare("ALTER ... AS after a refresh job deferred on a pending definition event", alterAfterDeferredRefresh, DEFINITION_PENDING_MIN);
+        assertShare("ALTER ... AS refused while the view's WAL is suspended short of a definition event", alterRefusedBySuspension, DEFINITION_PENDING_MIN);
+        assertShare("RESUME WAL while a definition event waits", resumeWalWhileDefinitionPending, DEFINITION_PENDING_MIN);
+        assertShare("RESUME WAL FROM TXN past a definition event", resumeWalPastDefinition, DEFINITION_PENDING_MIN);
+        assertShare("tracker reset after a definition event applied, then the refresh job", refreshJobAfterResetOfAppliedDefinition, DEFINITION_PENDING_MIN);
         final int detachCount = kindCounts[MatViewFuzzOpGenerator.Kind.BASE_DETACH_PARTITION.ordinal()];
         assertShare("ATTACH of a partition the round detached, of " + detachCount + " DETACH", attachAfterDetach, detachCount / 4);
         assertShare("reload of a partition the round detached, of " + detachCount + " DETACH", reloadAfterDetach, detachCount / 8);
@@ -590,8 +687,9 @@ public class MatViewFuzzOpGeneratorCoverageTest {
             boolean isValidityUnknown = false;
             for (int step = 0; step < STEPS_PER_ROUND; step++) {
                 final boolean wasDefinitionPending = generator.isDefinitionPending();
+                final boolean wasViewWalSuspended = generator.isViewWalSuspended();
                 generator.next(rnd, op);
-                if (isViewWalApplied(op, wasDefinitionPending, isViewColumnAdded)) {
+                if (isViewWalApplied(op, wasDefinitionPending, wasViewWalSuspended, isViewColumnAdded)) {
                     stateOpStage = 0;
                     resumeStage = 0;
                     if (purgeStage == 3) {
@@ -699,7 +797,10 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                     default -> {
                     }
                 }
-                trackDefinitionPending(generator, op, wasDefinitionPending, isViewColumnAdded, step);
+                if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_RESUME_WAL && op.isSkipDefinition) {
+                    generator.onDefinitionSkipped();
+                }
+                trackDefinitionPending(rnd, generator, op, wasDefinitionPending, wasViewWalSuspended, isViewColumnAdded, step);
                 isViewColumnAdded |= op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ADD_COLUMN && !op.isRefused;
                 if (step % CHECK_STEPS == CHECK_STEPS - 1) {
                     // the view check drains the queues, which applies the view's WAL, and leaves the view valid
@@ -1022,9 +1123,11 @@ public class MatViewFuzzOpGeneratorCoverageTest {
                 Assert.assertEquals(kind + " drawn for a view that does not have it", 0, kindCounts[kind.ordinal()]);
                 continue;
             }
-            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION || kind == MatViewFuzzOpGenerator.Kind.BASE_TRUNCATE_ATTACH_UPDATE) {
-                // an ATTACH and a reload need a partition that a DETACH of the round left detached, and fall back to
-                // INSERT without one; the callers pin their own shares
+            if (kind == MatViewFuzzOpGenerator.Kind.BASE_ATTACH_PARTITION
+                    || kind == MatViewFuzzOpGenerator.Kind.BASE_TRUNCATE_ATTACH_UPDATE
+                    || kind == MatViewFuzzOpGenerator.Kind.VIEW_RESUME_WAL) {
+                // an ATTACH and a reload need a partition that a DETACH of the round left detached, and RESUME WAL a
+                // suspended view WAL, and fall back to INSERT without one; the callers pin their own shares
                 continue;
             }
             // at least a quarter of the share the kind's weight asks for: a kind whose parameters the state cannot give,
@@ -1053,7 +1156,12 @@ public class MatViewFuzzOpGeneratorCoverageTest {
     // or refused, and a RESTART while such an event waits, which the fuzz applies first. A view DROP COLUMN and a SET
     // EXPIRE whose policy has a read probe apply it while a policy or column change waits in the view's WAL, which this
     // takes as always.
-    private static boolean isViewWalApplied(MatViewFuzzOpGenerator.Op op, boolean wasDefinitionPending, boolean isViewColumnAdded) {
+    private static boolean isViewWalApplied(MatViewFuzzOpGenerator.Op op, boolean wasDefinitionPending, boolean wasViewWalSuspended, boolean isViewColumnAdded) {
+        if (wasViewWalSuspended) {
+            // the WAL apply skips a suspended view's WAL, and an ALTER ... AS that waits for a definition event there
+            // refuses
+            return false;
+        }
         return switch (op.kind) {
             case APPLY_WAL, BASE_DETACH_PARTITION, BASE_TRUNCATE_ATTACH_UPDATE, BASE_REPLACE_FULL_RESTART,
                  BASE_REPLACE_RESUME_RESTART, VIEW_DROP_COLUMN, VIEW_RANGE, VIEW_FULL, VIEW_RESUME -> true;
@@ -1069,21 +1177,31 @@ public class MatViewFuzzOpGeneratorCoverageTest {
 
     // Follows in the generator what MatViewFuzzTest tells it of the definition events that wait in the view's WAL: an
     // accepted ALTER ... AS issues one, and the fuzz applies the view's WAL in the operations of isViewWalApplied(),
-    // before the statement's own change, and at the view check after every sixth operation.
+    // before the statement's own change, and at the view check after every sixth operation, which resumes a suspended
+    // view WAL first.
     private static void trackDefinitionPending(
+            Rnd rnd,
             MatViewFuzzOpGenerator generator,
             MatViewFuzzOpGenerator.Op op,
             boolean wasDefinitionPending,
+            boolean wasViewWalSuspended,
             boolean isViewColumnAdded,
             int step
     ) {
-        if (isViewWalApplied(op, wasDefinitionPending, isViewColumnAdded)) {
+        if (isViewWalApplied(op, wasDefinitionPending, wasViewWalSuspended, isViewColumnAdded)) {
             generator.onViewWalApplied();
         }
         if (op.kind == MatViewFuzzOpGenerator.Kind.VIEW_ALTER_AS && !op.isRefused) {
             generator.onDefinitionChangeIssued();
         }
         if (step % CHECK_STEPS == CHECK_STEPS - 1) {
+            if (generator.isViewWalSuspended()) {
+                // the fuzz skips the event when it is the view's only transaction that the WAL apply has not applied,
+                // which this takes as always
+                if (generator.resumeViewWal(rnd, new MatViewFuzzOpGenerator.Op()).isSkipDefinition) {
+                    generator.onDefinitionSkipped();
+                }
+            }
             generator.onViewWalApplied();
         }
     }

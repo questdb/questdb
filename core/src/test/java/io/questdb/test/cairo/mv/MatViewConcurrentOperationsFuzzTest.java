@@ -66,6 +66,7 @@ import org.junit.Test;
 
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -95,6 +96,10 @@ import java.util.concurrent.locks.ReentrantLock;
  * progress, no FULL refresh is parked, no WAL is suspended, and the view, moved back to its first SQL and base table,
  * resumed and refreshed with a RANGE over the base's days, equals a twin view with the same SQL that a FULL refresh
  * rebuilds from the base.
+ * <p>
+ * Each round ends with a definition phase, see {@link #runDefinitionPhase(Rnd, SqlExecutionContextImpl)}: an ALTER
+ * thread moves another view between two SQLs while an ingest thread writes its base, and free-running refresh workers
+ * meet each definition event in the view's WAL at random points. No RANGE or FULL masks what they wrote.
  * <p>
  * The budget: questdb.fuzz.matview.concurrent.statements statements per statement thread, and
  * questdb.fuzz.matview.concurrent.rounds independent rounds.
@@ -135,6 +140,8 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             "type is already",
     };
     private static final int DAY_COUNT = 4;
+    // the length of the hour of a timestamp as the rows print it, "2024-01-01T05"
+    private static final int DEFINITION_HOUR_PREFIX_LENGTH = 13;
     private static final long DAY_LO = 1_704_067_200_000_000L; // 2024-01-01
     private static final long HANG_BOUND_MILLIS = TimeUnit.MINUTES.toMillis(5);
     private static final Log LOG = LogFactory.getLog(MatViewConcurrentOperationsFuzzTest.class);
@@ -143,6 +150,10 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
     private static final String VIEW_SQL = "SELECT ts, sym, last(price) AS price, sum(qty) AS qty FROM base SAMPLE BY 1h";
     private static final String VIEW_SQL_BASE2 = "SELECT ts, sym, last(price) AS price, sum(qty) AS qty FROM base2 SAMPLE BY 1h";
     private static final String VIEW_SQL_MAX = "SELECT ts, sym, max(price) AS price, sum(qty) AS qty FROM base SAMPLE BY 1h";
+    // the two SQLs of the definition phase's view dv: the maximum and the minimum of x by the hour, which tell apart the
+    // buckets of several rows
+    private static final String DEFINITION_SQL_MAX = "SELECT ts, sym, max(x) AS x FROM dbase SAMPLE BY 1h";
+    private static final String DEFINITION_SQL_MIN = "SELECT ts, sym, min(x) AS x FROM dbase SAMPLE BY 1h";
     // Serializes the statements that change the base's columns or replace it with a DETACH and ATTACH pair and with
     // UPDATE.
     private final ReentrantLock baseLayoutLock = new ReentrantLock();
@@ -504,6 +515,7 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             assertNotSuspended("twin");
 
             assertViewMatchesTwin(rnd, context);
+            runDefinitionPhase(rnd, context);
 
             engine.execute("DROP MATERIALIZED VIEW mv", context);
             engine.execute("DROP MATERIALIZED VIEW twin", context);
@@ -511,6 +523,167 @@ public class MatViewConcurrentOperationsFuzzTest extends AbstractCairoTest {
             engine.execute("DROP TABLE base2", context);
             drainAll();
         }
+    }
+
+    // The definition phase of a round: an ALTER thread moves the IMMEDIATE view dv between DEFINITION_SQL_MAX and
+    // DEFINITION_SQL_MIN, one ALTER ... AS after the other, while an ingest thread writes three rows into a fresh hour
+    // of the base dbase each time, and one to three free-running refresh workers and a WAL apply worker run: the
+    // refreshes meet each definition event in the view's WAL before their lock and after their base reader, at random.
+    // The ingest thread notes, for each hour, how many statements had returned when it wrote the hour, and writes a few
+    // more hours once the ALTER thread is done. Once the threads stop and the queues drain, every hour written after the
+    // last statement returned holds the values of its SQL, the rows of its SQL on the base, and none of them is
+    // missing. An hour written earlier may hold the values of an earlier SQL: its rows can predate the statement.
+    private void runDefinitionPhase(Rnd rnd, SqlExecutionContextImpl context) throws Exception {
+        engine.execute("CREATE TABLE dbase (sym SYMBOL, x DOUBLE, ts " + timestampType + ") TIMESTAMP(ts) PARTITION BY DAY WAL", context);
+        engine.execute("CREATE MATERIALIZED VIEW dv AS (" + DEFINITION_SQL_MAX + ") PARTITION BY DAY", context);
+        drainAll();
+        final int alterCount = 4 + rnd.nextInt(8);
+        final int refreshWorkerCount = 1 + rnd.nextInt(3);
+        LOG.info().$("fuzz: definition phase [alters=").$(alterCount).$(", refreshWorkers=").$(refreshWorkerCount).I$();
+        final AtomicBoolean isStopped = new AtomicBoolean();
+        final AtomicInteger workerErrors = new AtomicInteger();
+        // the ALTER ... AS statements that returned, and the SQL of the last one
+        final AtomicInteger returnedAlterCount = new AtomicInteger();
+        final String[] lastSql = {DEFINITION_SQL_MAX};
+        final AtomicBoolean isAlterDone = new AtomicBoolean();
+        // the hour, as the view's rows print it, to the number of statements that had returned when the ingest thread
+        // wrote it
+        final ConcurrentHashMap<String, Integer> hourAlterCounts = new ConcurrentHashMap<>();
+        final ConcurrentHashMap<String, String> unexpectedErrors = new ConcurrentHashMap<>();
+        final ObjList<Thread> workers = new ObjList<>();
+        final ObjList<Thread> clients = new ObjList<>();
+        final long alterSeed0 = rnd.nextLong();
+        final long alterSeed1 = rnd.nextLong();
+        final long ingestSeed0 = rnd.nextLong();
+        final long ingestSeed1 = rnd.nextLong();
+        try {
+            for (int i = 0; i < refreshWorkerCount; i++) {
+                workers.add(startRefreshWorker(i, isStopped, workerErrors, rnd.nextLong(), rnd.nextLong()));
+            }
+            workers.add(startApplyWorker(isStopped, workerErrors, rnd.nextLong(), rnd.nextLong()));
+            final Thread alterThread = new Thread(() -> {
+                final Rnd alterRnd = new Rnd(alterSeed0, alterSeed1);
+                try (
+                        SqlExecutionContextImpl alterContext = TestUtils.createSqlExecutionCtx(engine, 1);
+                        NetworkSqlExecutionCircuitBreaker circuitBreaker = newCircuitBreaker()
+                ) {
+                    alterContext.with(circuitBreaker);
+                    for (int i = 0; i < alterCount; i++) {
+                        circuitBreaker.resetTimer();
+                        final String sql = i % 2 == 0 ? DEFINITION_SQL_MIN : DEFINITION_SQL_MAX;
+                        LOG.info().$("fuzz: definition phase ALTER AS ").$(sql).$();
+                        engine.execute("ALTER MATERIALIZED VIEW dv AS (" + sql + ")", alterContext);
+                        lastSql[0] = sql;
+                        returnedAlterCount.incrementAndGet();
+                        Os.sleep(alterRnd.nextInt(5));
+                    }
+                } catch (Throwable th) {
+                    LOG.error().$("definition phase ALTER thread failed: ").$(th).$();
+                    unexpectedErrors.put("alter: " + th, th.toString());
+                } finally {
+                    isAlterDone.set(true);
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                }
+            }, "definition-alter");
+            final Thread ingestThread = new Thread(() -> {
+                final Rnd ingestRnd = new Rnd(ingestSeed0, ingestSeed1);
+                final StringSink sql = new StringSink();
+                final StringSink hour = new StringSink();
+                try (SqlExecutionContextImpl ingestContext = TestUtils.createSqlExecutionCtx(engine, 1)) {
+                    // the hours after the last statement returned
+                    int hoursAfterDone = 0;
+                    for (int h = 0; hoursAfterDone < 3; h++) {
+                        if (isAlterDone.get()) {
+                            hoursAfterDone++;
+                        }
+                        final int alterCountSeen = returnedAlterCount.get();
+                        final long hourLo = DAY_LO + h * Micros.HOUR_MICROS;
+                        sql.clear();
+                        sql.put("INSERT INTO dbase (sym, x, ts) VALUES ");
+                        for (int i = 0; i < 3; i++) {
+                            if (i > 0) {
+                                sql.put(", ");
+                            }
+                            sql.put("('s").put(ingestRnd.nextInt(2)).put("', ").put(ingestRnd.nextInt(1000)).put(".5, '");
+                            MicrosFormatUtils.appendDateTimeUSec(sql, hourLo + ingestRnd.nextLong(Micros.HOUR_MICROS));
+                            sql.put("')");
+                        }
+                        engine.execute(sql, ingestContext);
+                        hour.clear();
+                        MicrosFormatUtils.appendDateTimeUSec(hour, hourLo);
+                        hourAlterCounts.put(hour.subSequence(0, DEFINITION_HOUR_PREFIX_LENGTH).toString(), alterCountSeen);
+                        Os.sleep(ingestRnd.nextInt(3));
+                    }
+                } catch (Throwable th) {
+                    LOG.error().$("definition phase ingest thread failed: ").$(th).$();
+                    unexpectedErrors.put("ingest: " + th, th.toString());
+                } finally {
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                }
+            }, "definition-ingest");
+            clients.add(alterThread);
+            clients.add(ingestThread);
+            alterThread.start();
+            ingestThread.start();
+            for (int i = 0, n = clients.size(); i < n; i++) {
+                final Thread client = clients.getQuick(i);
+                client.join(HANG_BOUND_MILLIS);
+                Assert.assertFalse("definition phase thread did not finish: " + client.getName(), client.isAlive());
+            }
+        } finally {
+            isStopped.set(true);
+            for (int i = 0, n = clients.size(); i < n; i++) {
+                clients.getQuick(i).join(HANG_BOUND_MILLIS);
+            }
+            for (int i = 0, n = workers.size(); i < n; i++) {
+                workers.getQuick(i).join();
+            }
+        }
+        Assert.assertEquals("unexpected definition phase errors: " + unexpectedErrors.values(), 0, unexpectedErrors.size());
+        Assert.assertEquals("a worker failed, see the log", 0, workerErrors.get());
+        Assert.assertEquals(alterCount, returnedAlterCount.get());
+        drainAll();
+        final MatViewState state = viewState("dv");
+        Assert.assertFalse("view is invalid: " + state.getInvalidationReasonForReport(), state.isInvalid());
+        Assert.assertFalse(state.isDefinitionPending());
+        Assert.assertEquals(lastSql[0], state.getViewDefinition().getMatViewSql());
+        final TreeSet<String> hours = new TreeSet<>();
+        for (Map.Entry<String, Integer> e : hourAlterCounts.entrySet()) {
+            if (e.getValue() == alterCount) {
+                hours.add(e.getKey());
+            }
+        }
+        LOG.info().$("fuzz: definition phase hours after the last ALTER ... AS [count=").$(hours.size())
+                .$(", hours=").$(hourAlterCounts.size())
+                .I$();
+        Assert.assertTrue("no hour written after the last ALTER ... AS", hours.size() >= 3);
+        TestUtils.assertEquals(
+                printDefinitionHours("SELECT ts, sym, x FROM (" + lastSql[0] + ") ORDER BY ts, sym", hours, context),
+                printDefinitionHours("SELECT ts, sym, x FROM dv ORDER BY ts, sym", hours, context)
+        );
+        engine.execute("DROP MATERIALIZED VIEW dv", context);
+        engine.execute("DROP TABLE dbase", context);
+        drainAll();
+    }
+
+    // The rows of the query in the hours, which the rows' first column, the timestamp, starts with.
+    private static String printDefinitionHours(String sql, TreeSet<String> hours, SqlExecutionContextImpl context) throws SqlException {
+        final StringSink rows = new StringSink();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.printSql(compiler, context, sql, rows);
+        }
+        final StringSink sink = new StringSink();
+        final String[] lines = rows.toString().split("\n");
+        sink.put(lines[0]).put('\n');
+        for (int i = 1; i < lines.length; i++) {
+            final String line = lines[i];
+            if (line.length() >= DEFINITION_HOUR_PREFIX_LENGTH && hours.contains(line.substring(0, DEFINITION_HOUR_PREFIX_LENGTH))) {
+                sink.put(line).put('\n');
+            }
+        }
+        return sink.toString();
     }
 
     // Runs one statement or action, weighted towards the statements that take or wait for the view latch.

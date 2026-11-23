@@ -119,8 +119,10 @@ public interface MatViewStateStore extends QuietCloseable, Mutable {
     // Re-publishes marker facets whose previous queue publication failed.
     void reenqueueFailedPendingTasks();
 
-    // Called after RESUME WAL succeeds. Re-publishes retained invalidation and full-refresh intent
-    // that a suspended view could not process.
+    // Called after RESUME WAL succeeds, and by the WAL apply job at the end of each apply batch of the view and as soon as
+    // it applied or skipped a definition event of the view. Wakes the refreshes that deferred on a pending definition
+    // once it no longer waits, and re-publishes retained invalidation and full-refresh intent that a suspended view, or
+    // one whose WAL was not applied, could not process.
     void reenqueuePendingOnResume(TableToken matViewToken);
 
     // Re-publishes a dequeued task verbatim so the refresh job can put one back when the
