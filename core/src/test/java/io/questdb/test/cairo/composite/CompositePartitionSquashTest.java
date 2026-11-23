@@ -540,6 +540,16 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPlainSourceIntoCompositeTargetWithRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(true);
+    }
+
+    @Test
+    public void testPlainSourceIntoCompositeTargetWithoutRoomForTheFold() throws Exception {
+        assertFoldIntoACompositeTargetNearItsFileLimit(false);
+    }
+
+    @Test
     public void testPlainSourceIntoCompositeTarget() throws Exception {
         assertMemoryLeak(() -> {
             createSplitDay();
@@ -591,6 +601,34 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
      * exactly when {@code rowOffset_p == rowOffset_{p-1} + rowCount_{p-1}}. Every publish path folds such
      * pairs before committing; the squash branch must not be the one exception.
      */
+    private static void assertFoldIntoACompositeTargetNearItsFileLimit(boolean isRoomForTheFold) throws Exception {
+        assertMemoryLeak(() -> {
+            createSplitDay();
+            makeComposite("T01:00:00");
+            Assert.assertTrue("fixture left the target plain", isComposite(DAY));
+            final long dayTs = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
+            final int pieceCount;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                pieceCount = reader.getGeometry().getPieceCount(reader.getTxFile().getPartitionIndex(dayTs));
+            }
+            NearFullGeometryFixture.plantCommittedRecord(
+                    engine,
+                    "x",
+                    dayTs,
+                    NearFullGeometryFixture.LAST_GENERATION,
+                    isRoomForTheFold ? pieceCount + 1 : pieceCount,
+                    false,
+                    0,
+                    0,
+                    0
+            );
+
+            assertFoldPreservesTheDay();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
+            Assert.assertEquals("the fold kept the target composite", isRoomForTheFold, isComposite(DAY));
+        });
+    }
+
     private static void assertNoAdjacentSameShiftPair() throws Exception {
         final long dayLo = MicrosTimestampDriver.floor(DAY + "T00:00:00.000000Z");
         final TableToken tt = engine.verifyTableName("x");

@@ -11211,6 +11211,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int newPieceCount = pieceCount - bestLen + 1;
         // No longer composite only when folding collapsed every piece into one tiling [0, E) with no hole.
         final boolean stillComposite = newPieceCount > 1 || survivorRowOffset != 0 || rowCount != e;
+        if (stillComposite && !geometry.hasGenerationForNextPublish(partitionIndex, newPieceCount)) {
+            return false;
+        }
 
         LOG.info().$("compacting composite partition, JOIN: folding adjacent pieces [table=").$(tableToken)
                 .$(", dir=").$(formatPartitionForTimestamp(partitionTs, nameTxn))
@@ -12701,6 +12704,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    private boolean isSquashTargetOutOfGenerations(int partitionIndex) {
+        return txWriter.isPartitionComposite(partitionIndex)
+                && !getGeometry().hasGenerationForNextPublish(partitionIndex, getGeometry().getPieceCount(partitionIndex) + 1);
     }
 
     /**
@@ -14531,9 +14539,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in this case we can remove the current partition fully
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                     removeAttachedPartitionsTracked(partitionTimestamp);
-                } else if (isMergeAppendTable()
-                        && !txWriter.isPartitionComposite(i - 1)
-                        && !getGeometry().hasGenerationForNextPublish(i - 1, 1)) {
+                } else if ((txWriter.isPartitionComposite(i - 1) || isMergeAppendTable())
+                        && !getGeometry().hasGenerationForNextPublish(i - 1, getGeometry().getPieceCount(i - 1))) {
                     rewriteSplitParent(i - 1);
                     partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                     removeAttachedPartitionsTracked(partitionTimestamp);
@@ -21556,7 +21563,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         // Forced squash always requires a plain target. Ordinary squash cleans a cold, small target once,
         // then appends sources' live ranges directly; a hot or large accumulator keeps the append-only path.
-        if (force || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)) {
+        if (force
+                || isColdSmallSquashTarget(targetPartitionIndex, lastCommitTxn)
+                || isSquashTargetOutOfGenerations(targetPartitionIndex)) {
             final long targetSeqTxn = nativePartitionSeqTxn(targetPartitionIndex);
             compactPartitionToPlain(targetPartitionIndex, "squash");
             // Maintenance must not make an old accumulator look like it took the last data commit.

@@ -440,7 +440,10 @@ public class PartitionCompactionPolicy implements Mutable {
             return false;
         }
         // E equal to the live rows is MAKE-PLAIN's own halfway state: it lowered E, then TRIM-FILES failed.
-        return geometry.getE(partitionIndex) >= txWriter.getPartitionSize(partitionIndex);
+        final long e = geometry.getE(partitionIndex);
+        final long liveRows = txWriter.getPartitionSize(partitionIndex);
+        assert e >= liveRows : "a piece at row 0 reaches past E";
+        return e == liveRows || geometry.hasGenerationForNextPublish(partitionIndex, 1);
     }
 
     /**
