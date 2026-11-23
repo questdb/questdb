@@ -1983,6 +1983,11 @@ public class ExpressionParser {
                                         if (paramCount <= 2) {
                                             throw SqlException.$(lastPos, "'then' expected");
                                         }
+                                        if ((paramCount % 2) == 0 && scopeStack.peek() == Scope.CASE) {
+                                            // an even count follows a WHEN condition or the ELSE value, and
+                                            // the ELSE value leaves the scope at CASE_ELSE
+                                            throw SqlException.$(lastPos, "'then' expected");
+                                        }
 
                                         // If the token is a right parenthesis:
                                         // Until the token at the top of the stack is a left parenthesis, pop operators
@@ -2048,6 +2053,10 @@ public class ExpressionParser {
                                         if (prevBranch == BRANCH_CASE_CONTROL) {
                                             throw missingArgs(lastPos);
                                         }
+                                        if (scopeStack.peek() == Scope.CASE_ELSE) {
+                                            // only END follows the ELSE value
+                                            throw SqlException.$(lastPos, "'end' expected");
+                                        }
                                         if (keywordIndex == IDX_ELSE && paramCount == 0) {
                                             throw SqlException.$(lastPos, "'when' expected");
                                         }
@@ -2105,9 +2114,11 @@ public class ExpressionParser {
                                         if (node == null || !isCaseScope(scopeStack.peek())) {
                                             throw SqlException.$(node != null ? node.position : lastPos, "unbalanced 'case'");
                                         }
-                                        // the scope records whether the value that follows is the ELSE value,
-                                        // so that a stray word after it asks for END
-                                        scopeStack.update(keywordIndex == IDX_ELSE ? Scope.CASE_ELSE : Scope.CASE);
+                                        if (keywordIndex == IDX_ELSE) {
+                                            // the scope records that the value that follows is the ELSE value,
+                                            // which only END can follow
+                                            scopeStack.update(Scope.CASE_ELSE);
+                                        }
                                         opStack.push(node);
 
                                         argStackDepth = 0;

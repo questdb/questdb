@@ -454,6 +454,18 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseKeywordAfterElse() {
+        // only END follows the ELSE value; THEN there used to turn the ELSE into a WHEN
+        assertFail("case when x then 1 else y then 2 end", 26, "'end' expected");
+        assertFail("case when x then 1 else 2 when y then 3 end", 26, "'end' expected");
+        assertFail("case when x then 1 else 2 else 3 end", 26, "'end' expected");
+        assertFail("case x when 1 then 'a' else 2 then 'b' end", 30, "'end' expected");
+        // a nested CASE has its own ELSE, and the outer one is still past its ELSE after it
+        assertFail("case when x then case when y then 1 else 2 then 3 end end", 43, "'end' expected");
+        assertFail("case when x then 1 else case when y then 2 end when z then 3 end", 47, "'end' expected");
+    }
+
+    @Test
     public void testCaseLikeSwitch() throws SqlException {
         x("x 1 'a' 2 'b' case", "case x when 1 then 'a' when 2 then 'b' end");
     }
@@ -579,6 +591,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
                 22,
                 "missing arguments"
         );
+    }
+
+    @Test
+    public void testCaseMissingThenBeforeEnd() {
+        // END after a WHEN condition used to make the condition the ELSE value
+        assertFail("case when x then 1 when y end", 26, "'then' expected");
+        assertFail("case x when 1 then 'a' when 2 end", 30, "'then' expected");
     }
 
     @Test
@@ -753,8 +772,6 @@ public class ExpressionParserTest extends AbstractCairoTest {
         // a stray word after an ELSE value asks for END, after a nested CASE and inside one
         assertFail("case when x then 1 else case when y then 2 end z end", 47, "'end' expected");
         assertFail("case when x then case when y then 1 else 2 z end end", 43, "'end' expected");
-        // the parser reads ELSE followed by THEN as WHEN; a later WHEN condition asks for THEN
-        assertFail("case when x then 1 else y then 2 when z w end", 40, "'then' expected");
         // inside a bracket the bracket's own rule applies
         assertFail("case when f(x y) then 1 end", 14, "dangling literal");
     }

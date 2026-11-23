@@ -539,6 +539,15 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseMalformedKeywordOrder() throws Exception {
+        // these ran before: ELSE 2 THEN 'two' as WHEN 2, and WHEN 20 END as ELSE 20
+        assertQuery("select x, case x when 1 then 'one' else 2 then 'two' end from long_sequence(3)")
+                .fails(42, "'end' expected");
+        assertQuery("select x, case when x > 2 then 10 when 20 end from long_sequence(3)")
+                .fails(42, "'then' expected");
+    }
+
+    @Test
     public void testCaseMissingEnd() throws Exception {
         assertQuery("select case when x > 1 then 'a' from long_sequence(1)")
                 .fails(32, "'when', 'else' or 'end' expected");
