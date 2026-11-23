@@ -372,10 +372,6 @@ public final class TableUtils {
     }
 
     /**
-     * Rounds an allocation size up to a page on Linux. Growing a file that does not end on a page
-     * boundary can make XFS wait for a synchronous disk write. Other platforms keep the exact size.
-     */
-    /**
      * Converts the active-partition stamp to the form the {@code _txn} base header persists: unsigned whole
      * seconds, rounded up so the IDLE window it opens never ends early. Returns 0, the "no stamp" value, for
      * {@link Numbers#LONG_NULL}, for any other non-positive value, and for one past the unsigned 32-bit range
@@ -397,6 +393,10 @@ public final class TableUtils {
         return seconds != 0 ? Integer.toUnsignedLong(seconds) * Micros.SECOND_MICROS : Numbers.LONG_NULL;
     }
 
+    /**
+     * Rounds an allocation size up to a page on Linux. Growing a file that does not end on a page
+     * boundary can make XFS wait for a synchronous disk write. Other platforms keep the exact size.
+     */
     public static long alignedSize(long size) {
         return Os.isLinux() ? Files.ceilPageSize(size) : size;
     }
