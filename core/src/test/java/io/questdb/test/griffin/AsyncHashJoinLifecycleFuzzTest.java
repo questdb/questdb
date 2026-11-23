@@ -369,7 +369,8 @@ public class AsyncHashJoinLifecycleFuzzTest extends AbstractCairoTest {
             try (RecordCursor cursor = openCursor(query, label)) {
                 final RecordMetadata metadata = factories.getQuick(query).getMetadata();
                 switch (op) {
-                    case OP_CANCEL_AFTER_CHECKS, OP_MEMORY_LIMIT, OP_READ -> readToEnd(cursor, metadata, rows, 0, label);
+                    case OP_CANCEL_AFTER_CHECKS, OP_MEMORY_LIMIT, OP_READ ->
+                            readToEnd(cursor, metadata, rows, 0, label);
                     case OP_CANCEL_AFTER_ROWS -> {
                         read(cursor, metadata, rows, 0, readFirst, label);
                         rowsBreaker.cancel();
