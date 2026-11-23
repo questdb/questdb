@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -198,12 +199,45 @@ public class QwpWalAppender implements QuietCloseable {
         this.symbolCache = symbolCache;
     }
 
-    // Adds a column that a block names and the table's writer lacks, and returns its index. Another connection may
-    // have added the column since the table lookup caught the writer up with the table's structure. addColumn()
-    // catches the writer up itself, but a refusal ahead of it does not, so a refused add catches the writer up
-    // and stands only when the column is still missing, as QwpTudCache serves a refused connection the table
-    // another connection has just created.
+    // Adds a column that a block names and the table's writer lacks, and returns its index. Adding the column catches
+    // the writer up with the table's structure, and a RENAME TABLE among the changes it replays would rebind the
+    // writer to the renamed table, where this block and the later blocks for the old name would commit. So a table
+    // that the lookup found renamed gets no catch-up, as QwpTudCache.applyPendingStructureChanges() gives it none,
+    // and a RENAME that lands after the lookup, and that the add replays, refuses the block before its rows reach
+    // the writer; the table's next lookup discards its entry. Both refusals are retriable: a WebSocket client replays
+    // the frame on a new connection, whose lookup resolves the table's name afresh.
     private static int addColumn(
+            SecurityContext securityContext,
+            WalTableUpdateDetails tud,
+            TableWriterAPI writer,
+            TableRecordMetadata metadata,
+            String columnName,
+            int columnType
+    ) {
+        final TableToken tableToken = writer.getTableToken();
+        if (tud.isRenamedAtLookup()) {
+            throw tableRenamedException(tableToken);
+        }
+        final int columnIndex;
+        try {
+            columnIndex = addColumn0(securityContext, writer, metadata, columnName, columnType);
+        } catch (CairoException e) {
+            if (writer.getTableToken() != tableToken) {
+                throw tableRenamedException(tableToken);
+            }
+            throw e;
+        }
+        if (writer.getTableToken() != tableToken) {
+            throw tableRenamedException(tableToken);
+        }
+        return columnIndex;
+    }
+
+    // Another connection may have added the column since the table lookup caught the writer up with the table's
+    // structure. addColumn() catches the writer up itself, but a refusal ahead of it does not, so a refused add
+    // catches the writer up and stands only when the column is still missing, as QwpTudCache serves a refused
+    // connection the table another connection has just created.
+    private static int addColumn0(
             SecurityContext securityContext,
             TableWriterAPI writer,
             TableRecordMetadata metadata,
@@ -394,6 +428,15 @@ public class QwpWalAppender implements QuietCloseable {
         return qwpType == TYPE_DOUBLE_ARRAY
                 && ColumnType.isArray(columnType)
                 && ColumnType.decodeWeakArrayDimensionality(columnType) == -1;
+    }
+
+    // The retriable refusal of a block for a table renamed since the connection cached its writer, the same that
+    // QwpTudCache gives a lookup whose catch-up replays a RENAME.
+    private static CairoException tableRenamedException(TableToken tableToken) {
+        return CairoException.nonCritical()
+                .put("table is being renamed, cannot ingest [table=")
+                .put(tableToken.getTableName())
+                .put(']');
     }
 
     /**
@@ -1075,7 +1118,7 @@ public class QwpWalAppender implements QuietCloseable {
                         if (shouldDeferMissingArrayColumnCreation(colType, newColumnType)) {
                             columnWriterIndex = -1;
                         } else {
-                            columnWriterIndex = addColumn(securityContext, writer, metadata, columnName, newColumnType);
+                            columnWriterIndex = addColumn(securityContext, tud, writer, metadata, columnName, newColumnType);
                         }
                     } else if (!autoCreateNewColumns) {
                         throw CairoException.schemaMismatch()

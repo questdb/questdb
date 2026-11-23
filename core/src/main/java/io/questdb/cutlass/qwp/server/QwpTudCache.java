@@ -990,13 +990,22 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
      * When the rename lands concurrently with the lookup -- the registry not
      * yet updated when the guard reads it -- the replay does rebind the
      * writer; the token comparison around goActive() below catches exactly
-     * that case, salvages and refuses. See the in-method comment.
+     * that case, salvages and refuses. See the in-method comment. A column add
+     * that replayed a RENAME after an earlier lookup left the writer rebound
+     * the same way, see QwpWalAppender.addColumn(), and gets the same answer.
      */
     private void applyPendingStructureChanges(WalTableUpdateDetails tud) {
         if (!(tud.getWriter() instanceof WalWriter walWriter)) {
             return;
         }
         final TableToken cachedToken = tud.getTableToken();
+        if (walWriter.getTableToken() != cachedToken) {
+            // A column add replayed a RENAME into the writer and refused its
+            // block, and nothing has refused this entry since: a WebSocket
+            // connection takes no more frames after that error, but the UDP
+            // receiver goes on to its next datagram.
+            throw refuseReboundWriter(tud, walWriter, cachedToken);
+        }
         final TableToken tokenByDir = engine.getTableTokenByDirName(cachedToken.getDirName());
         // What the sequencer's token check at commit compares: equal tokens, so that a
         // token re-minted for the same table commits. A commit batch refuses a renamed
@@ -1036,13 +1045,7 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
             // whatever the old name resolves to after the rename -- duplicate
             // delivery across tables, consistent with commitAll's
             // partial-commit replay posture.
-            if (salvageBufferedRows(tud, walWriter)) {
-                reportCommittedTxn(tud, committedTxnConsumer);
-            }
-            throw CairoException.nonCritical()
-                    .put("table is being renamed, cannot ingest [table=")
-                    .put(tokenBeforeReplay.getTableName())
-                    .put(']');
+            throw refuseReboundWriter(tud, walWriter, tokenBeforeReplay);
         }
         // Only a successful replay advances the gate: a failure must be retried
         // by the next lookup, not latched as done.
@@ -1252,6 +1255,19 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
         if (tud == lastCachedTud) {
             lastCachedTud = null;
         }
+    }
+
+    // Answers a lookup of an entry whose writer a replayed RENAME rebound to the renamed table, see
+    // applyPendingStructureChanges(): salvages the rows the writer buffered under the old name, which belong to the
+    // same physical table, and returns the refusal to throw. The caller evicts the entry.
+    private CairoException refuseReboundWriter(WalTableUpdateDetails tud, WalWriter walWriter, TableToken oldToken) {
+        if (salvageBufferedRows(tud, walWriter)) {
+            reportCommittedTxn(tud, committedTxnConsumer);
+        }
+        return CairoException.nonCritical()
+                .put("table is being renamed, cannot ingest [table=")
+                .put(oldToken.getTableName())
+                .put(']');
     }
 
     /**

@@ -6069,6 +6069,69 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLookupRefusesWriterThatColumnAddReboundToRenamedTable() throws Exception {
+        // RENAME lands between a lookup and the column add of the block it served. The add catches the writer up with
+        // the table's structure and so replays the RENAME into it, which rebinds it to the renamed table: the
+        // appender refuses the block, before its rows reach the writer. The entry stays cached under the old name with
+        // that writer, and an ack-less receiver goes on to the next lookup, which must not serve it: it salvages the
+        // rows the writer buffered before the rename into the renamed table, the same physical table, evicts the
+        // entry and refuses, as for a RENAME that its own catch-up replays.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rebound_src (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            ObjList<String> committedTableNames = new ObjList<>();
+            LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (
+                    QwpTudCache cache = new QwpTudCache(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
+                    QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                    QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+            ) {
+                decoder.setSchemaCache(cache);
+                cache.setCommittedTxnConsumer((tableName, tableDirName, seqTxn) -> committedTableNames.add(tableName));
+                WalTableUpdateDetails tud = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("rebound_src"), null, null, 1
+                );
+                Assert.assertNotNull(tud);
+                appendRow(tud);
+
+                execute("RENAME TABLE rebound_src TO rebound_dst");
+                try {
+                    appendOneRow(decoder, appender, tud, "rebound_src", "extra", true);
+                    Assert.fail("the block must not append through a writer bound to the renamed table");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isAuthorizationError());
+                    Assert.assertFalse(e.isSchemaMismatch());
+                    Assert.assertFalse(e.isCritical());
+                    TestUtils.assertEquals("table is being renamed, cannot ingest [table=rebound_src]", e.getFlyweightMessage());
+                }
+                Assert.assertEquals("rebound_dst", tud.getWriter().getTableToken().getTableName());
+                Assert.assertEquals("the rows buffered before the rename are still there", 1, tud.getWriter().getUncommittedRowCount());
+
+                try {
+                    cache.getTableUpdateDetails(
+                            AllowAllSecurityContext.INSTANCE, new Utf8String("rebound_src"), null, null, 1
+                    );
+                    Assert.fail("the lookup must not serve an entry whose writer is bound to the renamed table");
+                } catch (CairoException e) {
+                    Assert.assertFalse(e.isCritical());
+                    TestUtils.assertEquals("table is being renamed, cannot ingest [table=rebound_src]", e.getFlyweightMessage());
+                }
+                Assert.assertEquals(0, cache.size());
+                Assert.assertEquals(1, committedTableNames.size());
+                Assert.assertEquals("rebound_dst", committedTableNames.getQuick(0));
+            }
+
+            // the salvaged row is there, and nothing of the refused block, whose extra column holds 2
+            drainWalQueue();
+            assertQuery("SELECT * FROM rebound_dst").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    val\tts\textra
+                    1\t1970-01-01T00:00:01.000000Z\tnull
+                    """);
+        });
+    }
+
+    @Test
     public void testSalvageAuthorizesAgainstReboundTableToken() throws Exception {
         // M6: a salvage commit writes into the RENAMED table (goActive() rebound
         // the writer), so the ACL check must name that table. The TUD's pinned

@@ -24,13 +24,23 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
+import io.questdb.client.SenderError;
 import io.questdb.client.cutlass.line.LineSenderException;
 import io.questdb.client.cutlass.qwp.client.QwpWebSocketSender;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Pinned-client coverage for RENAME TABLE racing active QWP ingestion.
@@ -146,6 +156,16 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testRenameDuringColumnAddDoesNotMisrouteRows() throws Exception {
+        assertRenameDuringColumnAddDoesNotMisrouteRows(true);
+    }
+
+    @Test
+    public void testRenameDuringColumnAddOfMissingColumnDoesNotMisrouteRows() throws Exception {
+        assertRenameDuringColumnAddDoesNotMisrouteRows(false);
+    }
+
+    @Test
     public void testRenameMidConnectionDoesNotMisrouteRows() throws Exception {
         // C1 e2e: rows sent for the OLD name after RENAME must not appear in
         // the renamed table. The server's dir-name guard keeps the cached
@@ -212,6 +232,117 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("v\n1\n");
+        });
+    }
+
+    @Test
+    public void testRenameMidConnectionDoesNotMisrouteRowsWithNewColumn() throws Exception {
+        assertRenameMidConnectionDoesNotMisrouteRowsWithNewColumn(true);
+    }
+
+    @Test
+    public void testRenameMidConnectionDoesNotMisrouteRowsWithNewColumnMissingFromRenamedTable() throws Exception {
+        assertRenameMidConnectionDoesNotMisrouteRowsWithNewColumn(false);
+    }
+
+    // RENAME lands after the table lookup of a frame that adds a column, and before the add, which replays it into the
+    // connection's writer of "trades" while it catches up with the table's structure. The add must not commit the
+    // frame's rows through that writer into trades_archive: the frame is refused and replayed on a new connection,
+    // which auto-creates "trades" again. With isColumnInRenamedTable another session adds the column to
+    // trades_archive along with the rename. Without it, the add itself creates the column in trades_archive, which
+    // keeps it: the add commits before the appender sees the replayed RENAME.
+    private void assertRenameDuringColumnAddDoesNotMisrouteRows(boolean isColumnInRenamedTable) throws Exception {
+        final AtomicReference<Throwable> renameError = new AtomicReference<>();
+        final AtomicReference<Runnable> pendingRename = new AtomicReference<>(() -> {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                engine.execute("RENAME TABLE trades TO trades_archive", executionContext);
+                if (isColumnInRenamedTable) {
+                    engine.execute("ALTER TABLE trades_archive ADD COLUMN c LONG", executionContext);
+                }
+            } catch (Throwable th) {
+                renameError.set(th);
+            }
+        });
+        // runs the rename once, the first time a connection is about to add a column, after its table lookup
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                return (principalContext, interfaceId) -> new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeAlterTableAddColumn(TableToken tableToken) {
+                        final Runnable rename = pendingRename.getAndSet(null);
+                        if (rename != null) {
+                            rename.run();
+                        }
+                    }
+                };
+            }
+        };
+        runInContext((port) -> {
+            final List<SenderError> errors = new CopyOnWriteArrayList<>();
+            try (QwpWebSocketSender sender = connectWs(port, errors::add)) {
+                sender.table("trades").longColumn("v", 1).at(1_000_000_000_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+                sender.table("trades").longColumn("v", 2).longColumn("c", 20).at(1_000_000_001_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+            }
+            Assert.assertNull(renameError.get());
+
+            drainWalQueue();
+            assertQuery("SELECT v, c FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tc\n2\t20\n");
+            assertQuery("SELECT * FROM trades_archive")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns("v\ttimestamp\tc\n1\t1970-01-12T13:46:40.000000Z\tnull\n");
+            assertRenameRefusal(errors, "trades");
+            Assert.assertEquals("the replay must not fail", 1, errors.size());
+        });
+    }
+
+    // RENAME and, with isColumnInRenamedTable, a new column in the renamed table, before the next frame, which names
+    // that column. Its table lookup finds the cached writer's table renamed, and the column add must not catch the
+    // writer up with the RENAME, which would commit the frame's rows into trades_archive. The frame is refused, and
+    // its replay on a new connection auto-creates "trades" again. A deferred frame takes the per-frame path: a commit
+    // batch refuses a renamed table as it joins.
+    private void assertRenameMidConnectionDoesNotMisrouteRowsWithNewColumn(boolean isColumnInRenamedTable) throws Exception {
+        runInContext((port) -> {
+            final List<SenderError> errors = new CopyOnWriteArrayList<>();
+            try (QwpWebSocketSender sender = connectWs(port, errors::add)) {
+                sender.table("trades").longColumn("v", 1).at(1_000_000_000_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+                drainWalQueue();
+
+                execute("RENAME TABLE trades TO trades_archive");
+                if (isColumnInRenamedTable) {
+                    execute("ALTER TABLE trades_archive ADD COLUMN c LONG");
+                }
+                drainWalQueue();
+
+                sender.setDeferCommit(true);
+                sender.table("trades").longColumn("v", 2).longColumn("c", 20).at(1_000_000_001_000L, ChronoUnit.MICROS);
+                sender.flush();
+                sender.setDeferCommit(false);
+                sender.table("trades").longColumn("v", 3).at(1_000_000_002_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+            }
+            drainWalQueue();
+            assertQuery("SELECT v, c FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tc\n2\t20\n3\tnull\n");
+            assertQuery("SELECT * FROM trades_archive")
+                    .noLeakCheck()
+                    .timestamp("timestamp")
+                    .expectSize()
+                    .returns(isColumnInRenamedTable
+                            ? "v\ttimestamp\tc\n1\t1970-01-12T13:46:40.000000Z\tnull\n"
+                            : "v\ttimestamp\n1\t1970-01-12T13:46:40.000000Z\n");
+            assertRenameRefusal(errors, "trades");
+            Assert.assertEquals("the replay must not fail", 1, errors.size());
         });
     }
 }

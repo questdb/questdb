@@ -52,6 +52,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -183,6 +184,18 @@ public class AbstractQwpWebSocketTest extends AbstractCairoTest {
             Assert.assertTrue("Expected rejection terminal containing '" + part + "' but got: " + msg,
                     msg != null && msg.contains(part));
         }
+    }
+
+    // Asserts that the first error the sender's handler saw is the retriable refusal of a block for a table that was
+    // renamed under the connection, which the client replays on a new connection.
+    protected static void assertRenameRefusal(List<SenderError> errors, String tableName) throws Exception {
+        TestUtils.assertEventually(() -> {
+            Assert.assertFalse("the server must refuse the block for the renamed table", errors.isEmpty());
+            final SenderError error = errors.get(0);
+            Assert.assertSame(SenderError.Category.WRITE_ERROR, error.getCategory());
+            Assert.assertSame(SenderError.Policy.RETRIABLE, error.getAppliedPolicy());
+            Assert.assertEquals("table is being renamed, cannot ingest [table=" + tableName + ']', error.getServerMessage());
+        });
     }
 
     /**

@@ -121,6 +121,18 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
             // REBASE WAL takes a hard-suspended table
             execute("ALTER TABLE tab SUSPEND WAL");
             final TableToken suspendedToken = engine.verifyTableName("tab");
+            final SOCountDownLatch locked = new SOCountDownLatch(1);
+            final SOCountDownLatch release = new SOCountDownLatch(1);
+            // TableNameRegistryRW.swapTable() takes the metadata cache's write lock while it holds the name, so
+            // holding the lock parks the rebase right there. A lookup that waited for the name would wait for the
+            // rebase, and so for this lock: the holder lets go after a while, and the lookup then fails the test
+            // instead of hanging it.
+            final Thread lockHolder = new Thread(() -> {
+                try (MetadataCacheWriter ignore = engine.getMetadataCache().writeLock()) {
+                    locked.countDown();
+                    release.await(TimeUnit.SECONDS.toNanos(30));
+                }
+            });
             final AtomicReference<Throwable> rebaseError = new AtomicReference<>();
             final Thread rebase = new Thread(() -> {
                 try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
@@ -134,27 +146,26 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
             });
             try (QwpTudCache cache = newCache()) {
                 final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(null);
-                // TableNameRegistryRW.swapTable() takes the metadata cache's write lock while it holds the name, so
-                // holding the lock parks the rebase right there.
-                try (MetadataCacheWriter ignore = engine.getMetadataCache().writeLock()) {
-                    rebase.start();
-                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
-                    while (engine.getTableNameRegistry().getTableToken("tab") != TableNameRegistry.LOCKED_DROP_TOKEN) {
-                        Assert.assertTrue("the rebase did not reach the swap of the table's name", System.nanoTime() < deadline);
-                        Assert.assertNull(rebaseError.get());
-                        Os.pause();
-                    }
-                    try {
-                        cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
-                        Assert.fail("the refusal must not stand while the rebase holds the name");
-                    } catch (CairoException e) {
-                        // neither an authorization error nor a schema mismatch, so the client retries it
-                        Assert.assertFalse(e.isAuthorizationError());
-                        Assert.assertFalse(e.isSchemaMismatch());
-                        Assert.assertFalse(e.isCritical());
-                        TestUtils.assertEquals("table is being dropped, renamed or rebased, cannot ingest [table=tab]", e.getFlyweightMessage());
-                    }
+                lockHolder.start();
+                locked.await();
+                rebase.start();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+                while (engine.getTableNameRegistry().getTableToken("tab") != TableNameRegistry.LOCKED_DROP_TOKEN) {
+                    Assert.assertTrue("the rebase did not reach the swap of the table's name", System.nanoTime() < deadline);
+                    Assert.assertNull(rebaseError.get());
+                    Os.pause();
                 }
+                try {
+                    cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                    Assert.fail("the refusal must not stand while the rebase holds the name");
+                } catch (CairoException e) {
+                    // neither an authorization error nor a schema mismatch, so the client retries it
+                    Assert.assertFalse(e.isAuthorizationError());
+                    Assert.assertFalse(e.isSchemaMismatch());
+                    Assert.assertFalse(e.isCritical());
+                    TestUtils.assertEquals("table is being dropped, renamed or rebased, cannot ingest [table=tab]", e.getFlyweightMessage());
+                }
+                release.countDown();
                 rebase.join();
                 Assert.assertNull(rebaseError.get());
                 final TableToken rebasedToken = engine.verifyTableName("tab");
@@ -164,6 +175,8 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
                 Assert.assertNotNull(tud);
                 Assert.assertEquals(rebasedToken, tud.getTableToken());
             } finally {
+                release.countDown();
+                lockHolder.join();
                 rebase.join();
             }
         });
