@@ -191,6 +191,7 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
     }
 
     public RowGroupBuffers getKeyRowGroupBuffers() {
+        keyRowGroupBuffers.reopen();
         return keyRowGroupBuffers;
     }
 
@@ -341,6 +342,13 @@ public class O3ParquetMergeContext extends ParquetConversionContext {
         }
         mergeIndexSize = size;
         return mergeIndexAddr;
+    }
+
+    @Override
+    public void releaseDecodeBuffers() {
+        super.releaseDecodeBuffers();
+        Misc.free(keyRowGroupBuffers);
+        Misc.free(rebaseAuxMem);
     }
 
     /**
