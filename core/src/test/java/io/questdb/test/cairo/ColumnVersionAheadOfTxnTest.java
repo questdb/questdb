@@ -87,6 +87,9 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     private static final String INSERT_SENT_ROW = "INSERT INTO x VALUES ('n', 0, '2024-06-01T06:00:00.000000Z'::TIMESTAMP, 0)";
     private static final String ROWS_QUERY = "SELECT s, count() n, count(c) nc, sum(c) sc, min(ts) lo, max(ts) hi FROM x ORDER BY s";
     private static final String SENT_ROW = "n\t1\t1\t0\t2024-06-01T06:00:00.000000Z\t2024-06-01T06:00:00.000000Z\n";
+    // The tests check the log only for messages that must not appear. info() drops its record when the log ring is
+    // full, as the O3 log lines of the pending commit leave it on a slow machine, so a message can be missing from the
+    // log of code that ran.
     private static final LogCapture capture = new LogCapture();
     private final String commitMode;
 
@@ -122,14 +125,16 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             failPendingCommit(ff, TXN_FILE_NAME, Fault.ALLOCATE, "No space left");
+            // the writer of the failed commit rolled _cv back as it gave the table up: the suspended table opened no
+            // other writer
             assertColumnVersionMatchesTxn(token);
+            final int cvOpenCount = ff.cvOpenCount.get();
             execute("DROP TABLE x");
             drainWalQueue();
             Assert.assertNull(engine.getTableTokenIfExists("x"));
+            // the purge opened the table's writer, which found nothing to roll back
+            Assert.assertEquals(cvOpenCount + 1, ff.cvOpenCount.get());
             capture.drain();
-            capture.assertLogged("closing table files [table=" + token.getDirName());
-            // the writer of the failed commit rolled _cv back, the one the purge opened found nothing to roll back
-            capture.assertOnlyOnce("rolling back column version of failed commit");
             capture.assertNotLogged("rolling back column version change to match _txn file");
             capture.assertNotLogged("could not roll back column version of failed commit");
         });
@@ -357,10 +362,9 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
             final TableToken token = createTableWithPendingCommit();
             failPendingCommit(ff, TXN_FILE_NAME, fault, error);
-            // the writer rolled _cv back as it gave the table up, before the table got suspended
+            // the writer rolled _cv back as it gave the table up: the suspended table opened no other writer
             assertColumnVersionMatchesTxn(token);
             capture.drain();
-            capture.assertOnlyOnce("rolling back column version of failed commit");
             capture.assertNotLogged("could not roll back column version of failed commit");
 
             // No reader or WAL writer waits for the failed commit's _txn. Given no time to wait, one that found _cv
@@ -517,6 +521,8 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
     private static final class ApplyFaultFacade extends SmallPageFacade {
         private final Set<Long> cvFds = ConcurrentHashMap.newKeySet();
         private final AtomicInteger cvLengthFailureCount = new AtomicInteger();
+        // read-write opens of _cv: a table writer opens it once, as it opens the table
+        private final AtomicInteger cvOpenCount = new AtomicInteger();
         private final AtomicInteger faultCount = new AtomicInteger();
         private final Set<Long> txnFds = ConcurrentHashMap.newKeySet();
         private volatile Fault fault = Fault.NONE;
@@ -571,6 +577,7 @@ public class ColumnVersionAheadOfTxnTest extends AbstractCairoTest {
                     txnFds.add(fd);
                 } else if (Utf8s.endsWithAscii(name, Files.SEPARATOR + COLUMN_VERSION_FILE_NAME)) {
                     cvFds.add(fd);
+                    cvOpenCount.incrementAndGet();
                 }
             }
             return fd;
