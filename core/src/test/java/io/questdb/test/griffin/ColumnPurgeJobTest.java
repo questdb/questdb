@@ -5890,6 +5890,55 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeLogReopenAfterMarkedMonthTruncatedDuringOutage() throws Exception {
+        // The job completes a purge in the January partition of the log, which keeps the completed.d of that partition
+        // open for the next completion. Then the log fails twice in one run: a page of the log cannot be allocated, and
+        // the reopen cannot open the _meta of the log. TRUNCATE TABLE empties the log meanwhile, and the reopen writes
+        // the purge that a reader holds back as the first row of a new January partition. The completion of the purge
+        // lands on that row, not in the completed.d of the partition that TRUNCATE removed.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    runPurgeJobAt(purgeJob, 30);
+                    faultFf.failNextAllocate();
+                    faultFf.failNextMetaOpen();
+                    // from any offset, the rows of the task reach into a page that no writer mapped yet
+                    publishFakePurgeTask("gone_page", purgeLogRowsPerPage() + 1);
+                    runPurgeJobAt(purgeJob, 40);
+                    Assert.assertEquals(2, faultFf.getFailureCount());
+                    Assert.assertEquals(0, engine.getBusyWriterCount());
+                    // purges gone_page, without the log
+                    runPurgeJobAt(purgeJob, 50);
+                    execute("TRUNCATE TABLE '" + purgeJob.getLogTableName() + "'");
+                    // the reopen is due 1 s after the failure of the reopen at 40 us
+                    runPurgeJobAt(purgeJob, Micros.SECOND_MICROS + 40);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertTrue(oldX, new File(oldX).exists());
+                }
+                runPurgeJobAt(purgeJob, Micros.SECOND_MICROS + 50);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                assertQuery("SELECT table_name, ts, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tts\tcompleted
+                                up_part~\t1970-01-01T00:00:01.000040Z\t1970-01-01T00:00:01.000050Z
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testPurgeLogReopenFailsWhenWriterCannotOpen() throws Exception {
         // The open of the log writer fails once at the reopen in the run of a failure. The next reopen is due 1 s
         // later, and it logs the task that arrived meanwhile.
@@ -6060,6 +6109,46 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         // finds no column to mark the purges in, and gives the writer up, on the retry schedule. The job purges
         // without the log, and adds no row to it.
         assertPurgeLogUnusableDuringOutage("ALTER TABLE '" + purgeLogTableName() + "' DROP COLUMN completed", true);
+    }
+
+    @Test
+    public void testPurgeLogWithoutPartitionTimestampRawColumnDuringOutage() throws Exception {
+        // partition_timestamp_raw of the log goes while the job is without its writer. The reopen writes the purge that
+        // a reader holds back without the column, and keeps the writer. The run after the reader closes purges the old
+        // file and completes the written-back row.
+        node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 1);
+        final PurgeLogFaultFacade faultFf = new PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            createUpdateTable("up_part");
+            final String oldX = partitionDir("up_part", 4) + File.separator + "x.d";
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                logPurgeInJanuary(purgeJob);
+                try (TableReader ignored = getReader("up_part")) {
+                    update("UPDATE up_part SET x = 100 WHERE ts >= '1970-01-05'");
+                    failPurgeLogTwice(purgeJob, faultFf, FEB_15);
+                    // purges the task of the failures, without the log
+                    runPurgeJobAt(purgeJob, FEB_15 + 10);
+                    execute("ALTER TABLE '" + purgeJob.getLogTableName() + "' DROP COLUMN partition_timestamp_raw");
+                    runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS);
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertTrue(oldX, new File(oldX).exists());
+                }
+                runPurgeJobAt(purgeJob, FEB_15 + Micros.SECOND_MICROS + 10);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertFalse(oldX, new File(oldX).exists());
+                assertPurgeLogColumns(PURGE_LOG_COLUMNS.replace("partition_timestamp_raw\tLONG\n", ""));
+                assertQuery("SELECT table_name, column_name, ts, partition_timestamp, completed FROM '" + purgeJob.getLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                table_name\tcolumn_name\tts\tpartition_timestamp\tcompleted
+                                gone_jan\tcol\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000020Z
+                                up_part~\tx\t1970-02-15T00:00:01.000000Z\t1970-01-05T00:00:00.000000Z\t1970-02-15T00:00:01.000010Z
+                                """);
+            }
+        });
     }
 
     @Test

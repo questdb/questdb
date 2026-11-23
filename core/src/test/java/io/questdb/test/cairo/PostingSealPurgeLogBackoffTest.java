@@ -51,7 +51,8 @@ import static io.questdb.test.cairo.PostingSealPurgeTest.writeAndSeal;
 import static org.junit.Assert.*;
 
 /**
- * Retry schedule tests of the posting seal purge log, whose runs queue a page of log rows at once: each entry is a
+ * Tests of the posting seal purge log whose runs queue a page of log rows at once, so that an append fails to allocate
+ * a page: the retry schedule, the writer of the failed append, and the completions after an outage. Each entry is a
  * task of the purge queue, which the engine sizes at start.
  */
 public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
@@ -71,6 +72,44 @@ public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 2);
         // a page of log rows of a batch extends each 8-byte column file of the log by a page
         node1.setProperty(PropertyKey.CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE, Files.PAGE_SIZE);
+    }
+
+    @Test
+    public void testLogBackoffNotResetByCommitWithoutRows() throws Exception {
+        // A run the full delay after the reopen of the writer drains no entry, and its retry of the pinned entry commits
+        // no rows: only a commit that saves rows resets the delay. The failure after it waits the kept delay, so the job
+        // reopens 1 s after that failure, not in its run.
+        final PostingSealPurgeTest.PurgeLogFaultFacade faultFf = new PostingSealPurgeTest.PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_no_rows");
+            final TableToken droppedTok = createDroppedTable();
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    final long t0 = Micros.DAY_MICROS;
+                    publishPurgeTask(tok, "c_held", writeAndSeal(partitionPath.trimTo(pLen), "c_held"), 10L);
+                    runPurgeJobAt(job, t0 - Micros.SECOND_MICROS);
+                    final ResetProbe probe = new ResetProbe(job, faultFf, droppedTok);
+                    // F1 at t0, delay 0: the same run reopens, r1 = t0, and the delay is 1 s
+                    probe.failingRun(t0, true);
+                    // exactly 1 s after r1, the retry of the pinned entry commits no rows: no reset
+                    probe.retryRun(t0 + Micros.SECOND_MICROS);
+                    // F2 waits the kept delay of 1 s, and the delay is 2 s
+                    probe.failingRun(t0 + Micros.SECOND_MICROS, false);
+                    probe.idleRun(t0 + 2 * Micros.SECOND_MICROS - 1, false);
+                    probe.idleRun(t0 + 2 * Micros.SECOND_MICROS, true);
+                    assertEquals(2, faultFf.getFailureCount());
+                    assertEquals(0, job.getErrorCountForTesting());
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+            }
+        });
     }
 
     @Test
@@ -193,6 +232,63 @@ public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLogReopenAfterMarkedMonthTruncatedDuringOutage() throws Exception {
+        // The job completes an entry in the January partition of the log, which keeps the completed.d of that
+        // partition open for the next completion. Then the log fails twice in one run: a page of the log cannot be
+        // allocated, and the reopen cannot open the files of January. TRUNCATE TABLE empties the log meanwhile, and the
+        // reopen writes the pinned entry back as the first row of a new January partition. The completion of the entry
+        // lands on that row, not in the completed.d of the partition that TRUNCATE removed.
+        final PostingSealPurgeTest.PurgeLogFaultFacade faultFf = new PostingSealPurgeTest.PurgeLogFaultFacade();
+        assertMemoryLeak(faultFf, () -> {
+            final TableToken tok = createPostingTable("ps_truncated");
+            final TableToken droppedTok = createDroppedTable();
+            final FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (
+                    Path partitionPath = partitionPathFor(tok);
+                    PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                    TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)
+            ) {
+                final int pLen = partitionPath.size();
+                // logged, purged and completed in one run
+                publishPurgeTask(tok, "c_jan", writeAndSeal(partitionPath.trimTo(pLen), "c_jan"), 1L);
+                runPurgeJobAt(job, 10);
+                final long sealTxn = writeAndSeal(partitionPath.trimTo(pLen), "c_held");
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
+                try {
+                    publishPurgeTask(tok, "c_held", sealTxn, 10L);
+                    runPurgeJobAt(job, 20);
+                    publishPageOfEntries(droppedTok);
+                    faultFf.failNextAllocate();
+                    faultFf.failMonth("1970-01");
+                    runPurgeJobAt(job, 30);
+                    faultFf.failMonth(null);
+                    assertEquals(2, faultFf.getFailureCount());
+                    assertFalse(job.isJobAliveForTesting());
+                    execute("TRUNCATE TABLE '" + postingSealPurgeLogTableName() + "'");
+                    // the reopen is due 1 s after the failure of the reopen at 30 us
+                    runPurgeJobAt(job, Micros.SECOND_MICROS + 30);
+                    assertTrue(job.isJobAliveForTesting());
+                    assertEquals(1, job.getOutstandingPurgeTasks());
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+                runPurgeJobAt(job, Micros.SECOND_MICROS + 40);
+                assertEquals(0, job.getOutstandingPurgeTasks());
+                assertEquals(0, job.getErrorCountForTesting());
+                assertFalse(runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath.trimTo(pLen), "c_held", COLUMN_NAME_TXN_NONE, sealTxn)));
+                assertQuery("SELECT column_name, ts, completed FROM '" + postingSealPurgeLogTableName() + "'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                column_name\tts\tcompleted
+                                c_held\t1970-01-01T00:00:01.000030Z\t1970-01-01T00:00:01.000040Z
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testLogWriterDiscardedAfterFailedFirstRow() throws Exception {
         // The first row after a commit fails to start a page of the log. The pool would keep that writer, which still
         // points into the page it lost: the job marks it distressed, so the pool closes it, and the reopen in the same
@@ -264,8 +360,9 @@ public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs the posting seal purge job for testLogBackoffResetsOnlyAfterFullDelaySinceReopen, and checks after each run
-     * the failures, the rows of the pinned entry, which each reopen writes back, and whether the job holds the writer.
+     * Runs the posting seal purge job for testLogBackoffResetsOnlyAfterFullDelaySinceReopen and
+     * testLogBackoffNotResetByCommitWithoutRows, and checks after each run the failures, the rows of the pinned entry,
+     * which each reopen writes back, and whether the job holds the writer.
      */
     private static class ResetProbe {
         private final TableToken droppedTok;
@@ -303,6 +400,14 @@ public class PostingSealPurgeLogBackoffTest extends AbstractCairoTest {
                 heldTaskRows++;
             }
             check(now, isReopening);
+        }
+
+        // a run without an entry while the job holds the writer: its retry of the pinned entry commits no rows
+        void retryRun(long now) throws Exception {
+            assertTrue(job.isJobAliveForTesting());
+            setCurrentMicros(now);
+            assertTrue("the run retries the pinned entry", job.run());
+            check(now, true);
         }
 
         // a run that starts with the job holding the writer, and commits the row of an entry

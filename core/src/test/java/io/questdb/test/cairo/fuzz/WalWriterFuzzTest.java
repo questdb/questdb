@@ -961,6 +961,28 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testWalWriteFullRandomWithPurgeLogFaults() throws Exception {
+        // Pins a run of the fuzz test above with a fault planted on the column purge log before each run of the purge
+        // job of an apply: without a worker pool, the applies run purge jobs of their own. The job of the non-WAL apply
+        // cannot allocate a page for the first purge it logs, purges without the log, and reopens the log in the same
+        // run. The tables still match, and nothing leaks. The fuzz test drew the default symbol index type from other
+        // seeds.
+        Rnd rnd = generateRandom(LOG, 7691099080043588L, 1795450685756L);
+        setTestParams(rnd);
+
+        setRandomAppendPageSize(rnd);
+        setFuzzProperties(rnd);
+        // after setTestParams(), which can set the test up again, with another default symbol index type and a new
+        // files facade
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, "BITMAP");
+        fuzzer.setPurgeLogFaultProbability(1, 7691099082681958L, 1795450685759L);
+        fullRandomFuzz(rnd);
+        final String logTableName = configuration.getSystemTableNamePrefix() + "column_versions_purge_log";
+        final int firedCount = fuzzer.getFileFacade().getTableFailuresFired(logTableName);
+        Assert.assertTrue("faults fired on the column purge log: " + firedCount, firedCount > 0);
+    }
+
+    @Test
     public void testWalWriteFullRandomMultipleTables() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
