@@ -1297,6 +1297,81 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEverythingIsNullInEveryClause() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullTable();
+            assertQuery("SELECT lo FROM tnull WHERE (CASE WHEN lo IS NULL THEN NULL END) IS NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("lo\n1\nnull\n");
+            assertQuery("SELECT CASE WHEN lo IS NULL THEN NULL END k, count() n FROM tnull")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("k\tn\nnull\t2\n");
+            assertQuery("SELECT (CASE WHEN sum(lo) > 0 THEN NULL END) IS NULL v FROM tnull")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("v\ntrue\n");
+            assertQuery("SELECT (CASE WHEN row_number() OVER () > 1 THEN NULL END) IS NULL v FROM tnull")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\ntrue\ntrue\n");
+            assertQuery("SELECT (CASE WHEN (SELECT count() FROM tnull) > 1 THEN NULL END) IS NULL v FROM tnull")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\ntrue\ntrue\n");
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            assertQuery("SELECT (CASE WHEN lo = $1 THEN NULL END) = 1 v FROM tnull")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfalse\nfalse\n");
+            assertQuery("SELECT (CASE lo WHEN 1 THEN NULL END) = 1 v FROM tnull")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\nfalse\nfalse\n");
+        });
+    }
+
+    @Test
+    public void testEverythingIsNullReadByItsConsumers() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullTable();
+            final String[] values = {
+                    "1", "1::SHORT", "1::BYTE", "1L", "1.5", "1.5::FLOAT", "true", "false", "'a'", "'ab'", "'ab'::VARCHAR",
+                    "'ab'::SYMBOL", "'2020-01-01'::TIMESTAMP", "'2020-01-01'::TIMESTAMP_NS", "'2020-01-01'::DATE",
+                    "'11111111-1111-1111-1111-111111111111'::UUID", "'1.2.3.4'::IPv4", "'0x01'::LONG256", "#sp",
+                    "interval('2020-01-01', '2020-01-02')", "1.5m"
+            };
+            for (String value : values) {
+                assertEverythingIsNull("%1$s = " + value + " eq, %1$s <> " + value + " ne", """
+                        eq\tne
+                        false\ttrue
+                        false\ttrue
+                        """);
+            }
+            final String[] columns = {"i", "l", "d", "s", "v", "sym", "ts", "dt", "u", "ip", "interval(ts, ts)"};
+            for (String column : columns) {
+                assertEverythingIsNull("%1$s = " + column + " eq, %1$s <> " + column + " ne", """
+                        eq\tne
+                        false\ttrue
+                        true\tfalse
+                        """);
+            }
+            assertEverythingIsNull(
+                    "%1$s IS NULL a, %1$s IS NOT NULL b, coalesce(%1$s, 7) k, %1$s + 1 sum, %1$s::INT i, length(%1$s) len, nullif(%1$s, 1) n",
+                    """
+                            a\tb\tk\tsum\ti\tlen\tn
+                            true\tfalse\t7\tnull\tnull\t-1\tnull
+                            true\tfalse\t7\tnull\tnull\t-1\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFloat() throws Exception {
         assertQuery("""
                 select\s
@@ -2435,5 +2510,29 @@ public class CaseFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(18, "BOOLEAN expected, found CURSOR");
         });
+    }
+
+    private void assertEverythingIsNull(String projection, String expected) throws Exception {
+        assertQuery("SELECT " + String.format(projection, "(CASE WHEN lo IS NULL THEN NULL END)") + " FROM tnull")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+        assertQuery("SELECT " + String.format(projection, "NULL") + " FROM tnull")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+    }
+
+    private void createNullTable() throws Exception {
+        execute("""
+                CREATE TABLE tnull (
+                    lo INT, i INT, l LONG, d DOUBLE, s STRING, v VARCHAR, sym SYMBOL,
+                    ts TIMESTAMP, dt DATE, u UUID, ip IPv4
+                )""");
+        execute("""
+                INSERT INTO tnull VALUES
+                    (1, 1, 1, 1.5, 'ab', 'ab', 'ab', '2020-01-01', '2020-01-01', '11111111-1111-1111-1111-111111111111', '1.2.3.4'),
+                    (NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+                """);
     }
 }

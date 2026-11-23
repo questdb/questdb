@@ -64,11 +64,9 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     ) {
         final Function a = args.getQuick(0);
         final Function b = args.getQuick(1);
-        // An untyped NULL is a NULL interval of the other argument's type: NULL = iv holds exactly when iv is NULL,
-        // whichever side the NULL stands on, as iv IS NULL does.
-        if (ColumnType.isNull(a.getType())) {
-            return new NullCheckFunc(b);
-        }
+        // An untyped NULL is a NULL interval of the other argument's type: iv = NULL holds exactly when iv is NULL, as
+        // iv IS NULL does. Overload resolution binds NULL = iv to EqStrFunctionFactory.
+        assert !ColumnType.isNull(a.getType()) : "NULL = INTERVAL binds EqStrFunctionFactory";
         if (ColumnType.isNull(b.getType())) {
             return new NullCheckFunc(a);
         }

@@ -40,6 +40,8 @@ import io.questdb.std.ObjectPool;
  * substitution, conjunction surgery and operand reshapes, never parsing SQL or building a function.
  */
 public final class BoundExpressionRewriter implements Mutable {
+    private static final int PROPAGATED_FLAGS = BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM
+            | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM;
     private final ObjList<BoundExpression> tmpArguments;
     private final ObjectPool<ColumnExpression> columns;
     private final ObjectPool<ConstantExpression> constants;
@@ -62,7 +64,7 @@ public final class BoundExpressionRewriter implements Mutable {
         final int leftFlags = left.getFunctionFlags();
         final int rightFlags = right.getFunctionFlags();
         int flags = leftFlags & rightFlags & BoundExpression.CONSTANT;
-        flags |= (leftFlags | rightFlags) & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
+        flags |= (leftFlags | rightFlags) & PROPAGATED_FLAGS;
         flags |= leftFlags & rightFlags & BoundExpression.STABLE_WITHIN_EXECUTION;
         if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
                 && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
@@ -479,14 +481,16 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * The flags of a call whose column arguments were replaced by expressions: their non-determinism, randomness,
-     * lack of random access, lack of parallelism and instability carry over to the call.
+     * The flags of a call whose arguments a substitution rewrote: the call keeps its own flags, gains the propagated
+     * flags the substitution added to an argument, and stays stable only while every argument is. A flag an argument
+     * already had adds nothing, since the function has reported it or holds the argument outside its argument tree, as
+     * a SYMBOL IN holds its bind variables.
      */
     private static int substitutedFlags(FunctionExpression call, ObjList<BoundExpression> arguments) {
         int flags = call.getFunctionFlags();
         for (int i = 0, n = arguments.size(); i < n; i++) {
             final int argumentFlags = arguments.getQuick(i).getFunctionFlags();
-            flags |= argumentFlags & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
+            flags |= argumentFlags & ~call.argumentAt(i).getFunctionFlags() & PROPAGATED_FLAGS;
             flags &= argumentFlags | ~BoundExpression.STABLE_WITHIN_EXECUTION;
         }
         return flags;

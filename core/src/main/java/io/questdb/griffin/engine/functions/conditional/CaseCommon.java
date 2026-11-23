@@ -34,10 +34,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongObjHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
@@ -453,7 +455,10 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
         constructors.extendAndSet(INTERVAL, (position, picker, args, returnType) -> new IntervalCaseFunction(returnType, picker, args));
-        constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
+        constructors.extendAndSet(NULL, (position, picker, args, returnType) -> {
+            Misc.freeObjList(args);
+            return NullConstant.NULL;
+        });
         constructors.setPos(NULL + 1);
     }
 }

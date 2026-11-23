@@ -30,7 +30,8 @@ import org.junit.Test;
 
 /**
  * An untyped NULL compared with an INTERVAL is a NULL interval: {@code NULL = iv} and {@code iv IS NULL} hold
- * exactly when the interval is NULL, and {@code !=} and {@code <>} negate them, whichever side the NULL stands on.
+ * exactly when the interval is NULL, and {@code !=} and {@code <>} negate them, whichever side the NULL stands on;
+ * {@code NULL = iv} binds {@code EqStrFunctionFactory}.
  */
 public class EqIntervalFunctionFactoryTest extends AbstractCairoTest {
     private static final String HEADER = "a\tb\tc\td\te\tf\tg\th\tt\n";

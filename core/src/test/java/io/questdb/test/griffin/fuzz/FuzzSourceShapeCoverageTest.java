@@ -27,6 +27,7 @@ package io.questdb.test.griffin.fuzz;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.griffin.fuzz.types.BooleanType;
 import io.questdb.test.griffin.fuzz.types.DoubleType;
 import io.questdb.test.griffin.fuzz.types.IntType;
@@ -48,8 +49,34 @@ import java.util.regex.Pattern;
  * The generator is random, so each assertion runs over a corpus; the seed is fixed so a failure is reproducible.
  */
 public class FuzzSourceShapeCoverageTest {
+    private static final int BIND_IN_CORPUS_SIZE = 50_000;
     private static final Pattern COMPUTED_COLUMN = Pattern.compile("\\((\\w+) IS NULL\\) AS (r\\d+)");
     private static final int CORPUS_SIZE = 2_000;
+
+    @Test
+    public void testBindInListOverComputedColumnIsDrawn() {
+        final Rnd rnd = new Rnd(0x5eed, 0xb1d);
+        final FuzzSource base = base();
+        final Pattern symbolAlias = Pattern.compile("\\bsym AS (r\\d+)");
+        boolean hasSubquery = false;
+        boolean hasCte = false;
+        for (int i = 0; i < BIND_IN_CORPUS_SIZE && !(hasSubquery && hasCte); i++) {
+            final boolean isCte = i % 2 == 1;
+            final FuzzSource source = isCte ? FuzzSource.cte(rnd, base, i) : FuzzSource.subquery(rnd, base);
+            final String sql = GroupByClause.generate(rnd, source, new BindContext(new Rnd(i, i), 50), false).sql();
+            final Matcher alias = symbolAlias.matcher(sql);
+            if (COMPUTED_COLUMN.matcher(sql).find() && alias.find() && Pattern.compile(
+                    "\\b" + alias.group(1) + "\\)? (NOT )?IN \\([^)]*:" + BindContext.BIND_NAME_PREFIX + "\\d+"
+            ).matcher(sql).find()) {
+                hasSubquery |= !isCte;
+                hasCte |= isCte;
+            }
+        }
+        Assert.assertTrue("the generator produced no SYMBOL IN with a bind value over a sub-query computing a column in "
+                + BIND_IN_CORPUS_SIZE + " queries", hasSubquery);
+        Assert.assertTrue("the generator produced no SYMBOL IN with a bind value over a CTE computing a column in "
+                + BIND_IN_CORPUS_SIZE + " queries", hasCte);
+    }
 
     @Test
     public void testComputedColumnIsTypedBoolean() {

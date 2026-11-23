@@ -188,6 +188,44 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByKeyInListOverProjectedColumn() throws Exception {
+        final String[] queries = {
+                """
+                        SELECT c IN ('C1', $1) k, count() n, sum(d) d
+                        FROM (SELECT p.country c, r.d d FROM r JOIN p ON r.id = p.id)
+                        ORDER BY k
+                        """,
+                """
+                        SELECT c NOT IN ('C1', upper($1)) k, count() n, sum(d) d
+                        FROM (SELECT p.country c, r.d d FROM r JOIN p ON r.id = p.id)
+                        ORDER BY k
+                        """,
+                """
+                        SELECT c IN ('C1', $1) k, count() n, sum(d) d
+                        FROM (SELECT p.country c, r.d d FROM r LEFT JOIN p ON r.id = p.id)
+                        ORDER BY k
+                        """
+        };
+        forEachMode((db, context, label) -> {
+            for (String sql : queries) {
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "C2");
+                try (RecordCursorFactory factory = db.select(sql, context)) {
+                    final String text = label + '\n' + sql + '\n' + plan(factory, context);
+                    Assert.assertTrue(text, text.contains("Hash Join Group By"));
+                    final String first = assertExecution(db, sql, factory, context, text);
+                    bindVariableService.setStr(0, "C3");
+                    Assert.assertNotEquals(text, first, assertExecution(db, sql, factory, context, text));
+                    bindVariableService.setStr(0, null);
+                    assertExecution(db, sql, factory, context, text);
+                    bindVariableService.setStr(0, "C2");
+                    Assert.assertEquals(text, first, assertExecution(db, sql, factory, context, text));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInnerBuildJitFilterBindVariables() throws Exception {
         // p, the smaller table, builds, and its scan's filter compiles to JIT code that reads $1 and
         // $2 from bind memory, which every execution must refill.

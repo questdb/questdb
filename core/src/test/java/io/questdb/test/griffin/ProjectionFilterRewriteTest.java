@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -74,6 +75,101 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
             final String expected = "b\n2020-01-01T00:00:00.000000Z\n2020-01-01T00:00:01.000000Z\n";
             assertCollapsed("SELECT b FROM (SELECT ts AS a,ts AS b FROM lp_projection_ts)", expected, 1);
             assertCollapsed("SELECT b FROM (SELECT ts AS b FROM lp_projection_ts ORDER BY lp_projection_ts.ts)", expected, 1);
+        });
+    }
+
+    @Test
+    public void testBindInListCrossesComputedProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            createBindRows();
+            bindVariableService.clear();
+            bindVariableService.setStr("b1", "c");
+            bindVariableService.setStr("b2", "C");
+            final String indexedRows = """
+                    sym\tx
+                    a\t2
+                    b\t3
+                    c\t4
+                    """;
+            // On the indexed symbol alone the IN turns into an index lookup; the OR keeps it a filter.
+            assertFilterReachesScan("SELECT sym, x FROM (SELECT sym, k, lk + 1 x FROM lp_in_bind) WHERE sym IN ('a', :b1) OR k > 1")
+                    .returns(indexedRows);
+            assertFilterReachesScan("SELECT sym, x FROM (SELECT sym, k, lk + 1 x FROM lp_in_bind) WHERE sym IN ('a', :b1::SYMBOL) OR k > 1")
+                    .returns(indexedRows);
+            assertFilterReachesScan("SELECT sym, x FROM (SELECT sym, k, lk + 1 x FROM lp_in_bind) WHERE sym IN ('a', lower(:b2::SYMBOL)) OR k > 1")
+                    .returns(indexedRows);
+            assertFilterReachesScan("SELECT * FROM (SELECT sym, k, lk + 1 x FROM lp_in_bind) WHERE sym IN ('a', :b1) OR k > 1")
+                    .returns("""
+                            sym\tk\tx
+                            a\t0\t2
+                            b\t2\t3
+                            c\t0\t4
+                            """);
+            assertFilterReachesScan("""
+                    WITH q AS (SELECT sym, k, lk IS NULL n FROM lp_in_bind)
+                    SELECT count() FROM q WHERE sym IN ('a', :b1) OR k > 1
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n3\n");
+            final String plainRows = """
+                    plain\tx
+                    a\t2
+                    c\t4
+                    """;
+            assertFilterReachesScan("SELECT plain, x FROM (SELECT plain, lk + 1 x FROM lp_in_bind) WHERE plain IN ('a', :b1)")
+                    .returns(plainRows);
+            assertFilterReachesScan("SELECT plain, x FROM (SELECT plain, lk + 1 x FROM lp_in_bind) WHERE plain IN ('a', :b1::VARCHAR)")
+                    .returns(plainRows);
+            assertFilterReachesScan("SELECT plain, x FROM (SELECT plain, lk + 1 x FROM lp_in_bind) WHERE plain NOT IN ('a', :b1)")
+                    .returns("""
+                            plain\tx
+                            b\t3
+                            \t5
+                            d\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testBindInListCrossesComputedProjectionOnEveryExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            createBindRows();
+            bindVariableService.clear();
+            bindVariableService.setStr("b1", "c");
+            try (RecordCursorFactory factory = select(
+                    "SELECT sym, x FROM (SELECT sym, k, lk + 1 x FROM lp_in_bind) WHERE sym IN ('a', :b1) OR k > 1"
+            )) {
+                final String first = """
+                        sym\tx
+                        a\t2
+                        b\t3
+                        c\t4
+                        """;
+                assertFactory(factory).withContext(sqlExecutionContext).returns(first);
+                bindVariableService.setStr("b1", "d");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("""
+                        sym\tx
+                        a\t2
+                        b\t3
+                        d\tnull
+                        """);
+                bindVariableService.setStr("b1", null);
+                assertFactory(factory).withContext(sqlExecutionContext).returns("""
+                        sym\tx
+                        a\t2
+                        b\t3
+                        \t5
+                        """);
+                bindVariableService.setStr("b1", "");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("""
+                        sym\tx
+                        a\t2
+                        b\t3
+                        """);
+                bindVariableService.setStr("b1", "c");
+                assertFactory(factory).withContext(sqlExecutionContext).returns(first);
+            }
         });
     }
 
@@ -320,12 +416,32 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
         }
     }
 
+    private QueryAssertion assertFilterReachesScan(String sql) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+             RecordCursorFactory ignored = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+            assertFilterInput(compiler.getPlanForTesting(), ScanPlan.class);
+        }
+        return assertQuery(sql).noLeakCheck();
+    }
+
     private void assertOptimised(String sql, String expected, Class<? extends LogicalPlan> expectedFilterInput) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
              RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             assertFilterInput(compiler.getPlanForTesting(), expectedFilterInput);
             assertRowsOnly(factory, expected);
         }
+    }
+
+    private void createBindRows() throws Exception {
+        execute("CREATE TABLE lp_in_bind (sym SYMBOL INDEX, plain SYMBOL, k INT, lk LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO lp_in_bind VALUES
+                    ('a', 'a', 0, 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 'b', 2, 2, '2024-01-01T01:00:00.000000Z'),
+                    ('c', 'c', 0, 3, '2024-01-02T00:00:00.000000Z'),
+                    (NULL, NULL, 0, 4, '2024-01-02T01:00:00.000000Z'),
+                    ('d', 'd', 0, NULL, '2024-01-03T00:00:00.000000Z')
+                """);
     }
 
     private void createRows() throws Exception {
