@@ -64,7 +64,7 @@ import java.util.regex.Pattern;
 public class PostingSealFlushCostTest extends AbstractCairoTest {
     private static final long DAY = 86_400_000_000L;
     private static final int INCLUDE_COLUMNS = 3;
-    private static final Pattern NEW_VALUE_FILE = Pattern.compile(".*/k\\.pv\\.[0-9]+$");
+    private static final Pattern NEW_VALUE_FILE = Pattern.compile(".*[/\\\\]k\\.pv\\.[0-9]+$");
     // Flushes by the kind of file they flush, made inside a PostingIndexWriter seal, rollback re-encode, truncate or
     // dense rebuild into a new value file.
     private static final Map<String, Integer> SEAL_FLUSHES = new TreeMap<>();
@@ -224,7 +224,7 @@ public class PostingSealFlushCostTest extends AbstractCairoTest {
             return "unknown";
         }
         // k.pv.1 -> pv, k.pc3.0.0.1 -> pcN, k.pci.0 -> pci, k.pk -> pk
-        final String name = path.substring(path.lastIndexOf('/') + 1);
+        final String name = path.substring(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1);
         final String[] parts = name.split("\\.");
         return parts.length > 1 ? parts[1].replaceAll("^pc[0-9]+$", "pcN") : name;
     }
