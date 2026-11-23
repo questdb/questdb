@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.cairo.sql.async.WorkStealingStrategyFactory;
+import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
@@ -249,6 +250,67 @@ public class LimitedReadDispatchTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnnestFanOutLimitReadsTheLastFrames() throws Exception {
+        // The last row of each frame holds one element and the other rows an empty array, so the negative
+        // LIMIT under UNNEST finds one row per frame, from the last frame back.
+        assertMemoryLeak(() -> {
+            createUnnestTable("CASE WHEN v = 0 THEN ARRAY[x::DOUBLE] ELSE ARRAY[]::DOUBLE[] END");
+            try (RecordCursorFactory factory = select("SELECT t.x, u.e FROM ta t, UNNEST(t.arr) u(e) WHERE t.v >= 0 LIMIT -60")) {
+                final IntSupplier limit = negativeLimitDispatchLimitOf(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertRowsFrom(cursor, 41, 100);
+                    Assert.assertFalse(cursor.hasNext());
+                    // the scan reduced the last 60 of the 100 frames
+                    Assert.assertEquals(60, reducedFrameCount.get());
+                    // 1 row left at 1 row per frame: the 60 collected frames keep the limit at 32
+                    Assert.assertEquals(32, limit.getAsInt());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnnestFanOutLimitCountsTheRowsOfUnnest() throws Exception {
+        // the last row of each frame unnests into three rows, so 60 rows take the last 20 frames
+        assertMemoryLeak(() -> {
+            createUnnestTable("CASE WHEN v = 0 THEN ARRAY[x::DOUBLE, x::DOUBLE, x::DOUBLE] ELSE ARRAY[]::DOUBLE[] END");
+            try (RecordCursorFactory factory = select("SELECT t.x, u.e FROM ta t, UNNEST(t.arr) u(e) WHERE t.v >= 0 LIMIT -60")) {
+                final IntSupplier limit = negativeLimitDispatchLimitOf(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    for (int i = 81; i <= 100; i++) {
+                        for (int j = 0; j < 3; j++) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(i * 1_000L, cursor.getRecord().getLong(0));
+                        }
+                    }
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertEquals(20, reducedFrameCount.get());
+                    // 1 row left at 3 rows per frame: the 20 collected frames keep the limit at 16
+                    Assert.assertEquals(16, limit.getAsInt());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testUnnestFanOutLimitWithoutRowsGrowsWithTheFramesRead() throws Exception {
+        // every array is empty, so the scan reads every frame and finds no row
+        assertMemoryLeak(() -> {
+            createUnnestTable("ARRAY[]::DOUBLE[]");
+            try (RecordCursorFactory factory = select("SELECT t.x, u.e FROM ta t, UNNEST(t.arr) u(e) WHERE t.v >= 0 LIMIT -10")) {
+                final IntSupplier limit = negativeLimitDispatchLimitOf(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertEquals(INITIAL_LIMIT, limit.getAsInt());
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertEquals(100, reducedFrameCount.get());
+                    // 10 rows at 1 row, as none was found, per 100 frames
+                    Assert.assertEquals(1_000, limit.getAsInt());
+                }
+            }
+        });
+    }
+
     private static void assertRows(RecordCursor cursor, int rowCount) {
         for (int i = 1; i <= rowCount; i++) {
             Assert.assertTrue(cursor.hasNext());
@@ -269,6 +331,22 @@ public class LimitedReadDispatchTest extends AbstractCairoTest {
             }
         }
         throw new AssertionError("no parallel cursor under " + factory.getClass().getName());
+    }
+
+    // the dispatch limit of the negative LIMIT cursor of the filter under UNNEST
+    private static IntSupplier negativeLimitDispatchLimitOf(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof UnnestRecordCursorFactory unnest) {
+                final RecordCursorFactory base = unnest.getUnnestBaseFactory();
+                if (base instanceof AsyncJitFilteredRecordCursorFactory jitFilter) {
+                    return jitFilter::getNegativeLimitDispatchLimit;
+                }
+                if (base instanceof AsyncFilteredRecordCursorFactory filter) {
+                    return filter::getNegativeLimitDispatchLimit;
+                }
+            }
+        }
+        throw new AssertionError("no parallel filter under UNNEST in " + factory.getClass().getName());
     }
 
     private static void findFactory(RecordCursorFactory factory, Class<? extends RecordCursorFactory> factoryClass) {
@@ -313,6 +391,14 @@ public class LimitedReadDispatchTest extends AbstractCairoTest {
             Assert.assertTrue(cursor.hasNext());
             Assert.assertEquals(i * 1_000L, cursor.getRecord().getLong(0));
         }
+    }
+
+    // ta mirrors t, with an array of the expression in each row
+    private void createUnnestTable(String arrayExpression) throws Exception {
+        execute("CREATE TABLE ta AS ("
+                + "SELECT x, v, " + arrayExpression + " arr, ts FROM ("
+                + "SELECT x, x % 1_000 v, timestamp_sequence(0, 3_600_000) ts FROM long_sequence(100_000))"
+                + ") TIMESTAMP(ts) PARTITION BY HOUR");
     }
 
     private void createTables() throws Exception {

@@ -29,6 +29,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.join.UnnestRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.FaultInjectedException;
@@ -52,8 +53,21 @@ import org.junit.Test;
  * {@code assertMemoryLeak}. {@code alloc_ts(...)::long} makes it observable: the cast is a runtime
  * constant of LONG type (so it satisfies the LIMIT type checks), and closing it closes the inner
  * {@code alloc_ts}, which holds a tracked 1 KiB native buffer.
+ * <p>
+ * Ahead of UNNEST, the filter takes the LIMIT advice as a fan-out limit, see
+ * {@code SqlCodeGenerator.getFanOutLimitLoFunction()}, under the same ownership.
  */
 public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
+    private static final String ALLOC_LIMIT = " LIMIT alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long";
+    private static final String QUERY = "SELECT * FROM x WHERE i > 0" + ALLOC_LIMIT;
+    private static final String UNNEST_QUERY = "SELECT t.i, u.v FROM x t, UNNEST(t.arr) u(v) WHERE t.i > 0" + ALLOC_LIMIT;
+    // a random array may change between two reads of a row, so the filter keeps a fan-out limit that it never uses
+    private static final String UNNEST_RANDOM_QUERY = "SELECT t.i, u.v FROM x t, UNNEST(rnd_double_array(1, 0, 0, 3)) u(v) WHERE t.i > 0" + ALLOC_LIMIT;
+
+    @Test
+    public void testJavaFilterConstructorFailureFreesFanOutLimitFunction() throws Exception {
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_DISABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD, UNNEST_QUERY);
+    }
 
     @Test
     public void testJavaFilterConstructorFailureFreesLimitAdviceFunction() throws Exception {
@@ -62,22 +76,52 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
         // could not see this one. getSqlParallelFilterPreTouchThreshold() is read inside
         // AsyncFilterAtom's constructor, i.e. after the function exists and before the factory
         // returns holding it.
-        assertNoLeakOnFault(SqlJitMode.JIT_MODE_DISABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD);
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_DISABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD, QUERY);
+    }
+
+    @Test
+    public void testJitConstructorFailureFreesFanOutLimitFunction() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_ENABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD, UNNEST_QUERY);
     }
 
     @Test
     public void testJitConstructorFailureFreesLimitAdviceFunction() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        // getSqlJitBindVarsMemoryPageSize() is read by AsyncJitFilteredRecordCursorFactory's
-        // constructor to size the bind variable memory, i.e. after the generator has built the LIMIT
-        // advice function and before the factory returns holding it.
-        assertNoLeakOnFault(SqlJitMode.JIT_MODE_ENABLED, FaultMethod.SQL_JIT_BIND_VARS_MEMORY_PAGE_SIZE);
+        // getSqlParallelFilterPreTouchThreshold() is read by the constructor of AsyncJitFilterAtom,
+        // which AsyncJitFilteredRecordCursorFactory's constructor builds, i.e. after the generator has
+        // built the LIMIT advice function and before the factory returns holding it.
+        // getSqlJitBindVarsMemoryPageSize() would not do: CompiledFilterIRSerializer.serialize() reads
+        // it first, ahead of the LIMIT advice function, so its fault left the free unpinned.
+        assertNoLeakOnFault(SqlJitMode.JIT_MODE_ENABLED, FaultMethod.SQL_PARALLEL_FILTER_PRE_TOUCH_THRESHOLD, QUERY);
+    }
+
+    @Test
+    public void testSuccessfulCompileFreesFanOutLimitFunctionOnFactoryClose() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_ENABLED, UNNEST_QUERY);
+    }
+
+    @Test
+    public void testSuccessfulCompileFreesUnusedFanOutLimitFunctionOnFactoryClose() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_ENABLED, UNNEST_RANDOM_QUERY);
     }
 
     @Test
     public void testSuccessfulCompileFreesLimitAdviceFunctionOnFactoryClose() throws Exception {
         Assume.assumeTrue(JitUtil.isJitSupported());
-        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_ENABLED);
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_ENABLED, QUERY);
+    }
+
+    @Test
+    public void testSuccessfulJavaFilterCompileFreesFanOutLimitFunctionOnFactoryClose() throws Exception {
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_DISABLED, UNNEST_QUERY);
+    }
+
+    @Test
+    public void testSuccessfulJavaFilterCompileFreesUnusedFanOutLimitFunctionOnFactoryClose() throws Exception {
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_DISABLED, UNNEST_RANDOM_QUERY);
     }
 
     @Test
@@ -86,13 +130,13 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
         // test configuration defaults the JIT mode to enabled, so the query above always compiled
         // to AsyncJitFilteredRecordCursorFactory and left the free in
         // AsyncFilteredRecordCursorFactory._close() unpinned - reverting it kept the class green.
-        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_DISABLED);
+        assertFactoryCloseFreesLimitAdviceFunction(SqlJitMode.JIT_MODE_DISABLED, QUERY);
     }
 
     // Control for the fault tests: on the path where a factory DOES adopt the LIMIT advice
     // function, closing that factory must release it. This pins which side owns the function, so
     // the fault-path fix cannot be "free it everywhere" and double-free here.
-    private void assertFactoryCloseFreesLimitAdviceFunction(int jitMode) throws Exception {
+    private void assertFactoryCloseFreesLimitAdviceFunction(int jitMode, String query) throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
                     CairoEngine engine = new CairoEngine(configuration);
@@ -100,24 +144,34 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
                             .with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null)
             ) {
                 context.setJitMode(jitMode);
-                engine.execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", context);
-                engine.execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z');", context);
-                try (RecordCursorFactory factory = engine.select(
-                        "SELECT * FROM x WHERE i > 0 " +
-                                "LIMIT alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long",
-                        context)) {
+                createTable(engine, context);
+                try (RecordCursorFactory factory = engine.select(query, context)) {
                     // Pin which twin actually ran: without this, a mode that silently declined the
                     // JIT would leave the other factory untested exactly as before.
-                    Assert.assertEquals(jitMode == SqlJitMode.JIT_MODE_ENABLED, factory.usesCompiledFilter());
+                    Assert.assertEquals(jitMode == SqlJitMode.JIT_MODE_ENABLED, usesCompiledFilter(factory));
                     // closing the factory is the rest of the assertion
                 }
             }
         });
     }
 
-    private void assertNoLeakOnFault(int jitMode, FaultMethod faultMethod) throws Exception {
-        final String query = "SELECT * FROM x WHERE i > 0 "
-                + "LIMIT alloc_ts('2024-01-01T00:00:00.000000Z'::timestamp)::long";
+    // whether the filter of x, under UNNEST or not, runs as a JIT filter
+    private static boolean usesCompiledFilter(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; ) {
+            if (f.usesCompiledFilter()) {
+                return true;
+            }
+            f = f instanceof UnnestRecordCursorFactory unnest ? unnest.getUnnestBaseFactory() : f.getBaseFactory();
+        }
+        return false;
+    }
+
+    private static void createTable(CairoEngine engine, SqlExecutionContext context) throws Exception {
+        engine.execute("CREATE TABLE x (i INT, arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", context);
+        engine.execute("INSERT INTO x VALUES (1, ARRAY[1.0], '2024-01-01T00:00:00.000000Z');", context);
+    }
+
+    private void assertNoLeakOnFault(int jitMode, FaultMethod faultMethod, String query) throws Exception {
         // The engine and the DDL below read configuration too, so the fault starts disarmed.
         final FaultInjectingConfiguration config =
                 new FaultInjectingConfiguration(configuration, faultMethod, null, false);
@@ -128,8 +182,7 @@ public class AsyncFilterLimitAdviceLeakTest extends AbstractCairoTest {
                             .with(faultEngine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(), null)
             ) {
                 context.setJitMode(jitMode);
-                faultEngine.execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;", context);
-                faultEngine.execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z');", context);
+                createTable(faultEngine, context);
 
                 // Armed only around select(): each fault getter is read once, inside the factory
                 // constructor, which is after the generator has already built the LIMIT advice

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
@@ -175,7 +176,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        base.close();
+        // The factory adopts the LIMIT functions, see SqlCodeGenerator.generateLimit(), and a LIMIT
+        // expression can own native memory, as an ARRAY constant does.
+        Throwable failure = Misc.freeBestEffort(null, base);
+        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
+        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private static class LimitRecordCursor implements RecordCursor {

@@ -39,7 +39,8 @@ import org.junit.Test;
  * for every row of the scan, in the order of the scan, and no filter after a join drops rows. So the
  * filter of t takes no LIMIT ahead of an INNER join, UNNEST or a filter after a join, see
  * RightFullJoinLimitTest for the RIGHT and FULL joins, and keeps it ahead of LEFT, ASOF, LT and CROSS joins
- * without a filter after them.
+ * without a filter after them. Ahead of UNNEST, it takes a negative LIMIT as a fan-out limit, which counts
+ * the rows of UNNEST, see UnnestScanLimitTest.
  * <p>
  * Data: t holds ten rows over three days. Rows 1, 2 and 3 come first and rows 9 and 10 last, and none of
  * them matches a w row, has a q row with v > 0 as of its timestamp, or holds an array element in ta. Row 5
@@ -417,7 +418,10 @@ public class JoinScanLimitTest extends AbstractCairoTest {
             assertRowsWithHeader(sql + " LIMIT 1, 3", header + "4\t4.5\n6\t6.0\n");
             assertRowsWithHeader(sql + " LIMIT 10", header + "4\t4.0\n4\t4.5\n6\t6.0\n6\t6.5\n7\t7.0\n7\t7.5\n8\t8.0\n8\t8.5\n");
             assertNoScanLimit(sql + " LIMIT 3", "Unnest");
-            assertNoScanLimit(sql + " LIMIT -3", "Unnest");
+            // the filter stops once the rows it read unnest into the 3 rows, see UnnestScanLimitTest
+            assertQuery(sql + " LIMIT -3")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Unnest", "fan-out limit: 3", "Row backward scan");
         });
     }
 

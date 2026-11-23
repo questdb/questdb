@@ -2061,18 +2061,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (joinModel.getPostJoinWhereClause() != null) {
                 return true;
             }
-            if (i > 0) {
-                switch (joinModel.getJoinType()) {
-                    case IQueryModel.JOIN_LEFT_OUTER, IQueryModel.JOIN_CROSS_LEFT, IQueryModel.JOIN_ASOF,
-                         IQueryModel.JOIN_LT, IQueryModel.JOIN_WINDOW, IQueryModel.JOIN_CROSS -> {
-                    }
-                    default -> {
-                        return true;
-                    }
-                }
+            if (i > 0 && !isRowKeepingJoin(joinModel.getJoinType())) {
+                return true;
             }
         }
         return false;
+    }
+
+    // Returns true when the level scans its first table, model 0, ahead of its joins, which hold one UNNEST and
+    // otherwise joins that return at least one row for each row that they read, in the order that they read
+    // them, see hasLimitBlockingJoin(), and no filter after a join. The rows that the level returns for a row of
+    // the table then number at least as many as UNNEST returns for its arrays, and none when it returns none.
+    // So a scan that counts the rows of UNNEST for its rows can stop at a negative LIMIT of the level, see
+    // getFanOutLimitLoFunction().
+    private static boolean isFanOutLimitLevel(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        // getFanOutLimitLoFunction() asks about a level only once hasLimitBlockingJoin() found joins in it
+        assert joinModels.size() > 1;
+        final IntList ordered = model.getOrderedJoinModels();
+        int unnestCount = 0;
+        for (int i = 0, n = ordered.size(); i < n; i++) {
+            final IQueryModel joinModel = joinModels.getQuick(ordered.getQuick(i));
+            if (joinModel.getPostJoinWhereClause() != null) {
+                return false;
+            }
+            // Model 0 holds no join type that the check below accepts, so a level that the optimiser starts
+            // with another model fails the check at model 0.
+            if (i > 0) {
+                if (joinModel.getJoinType() == JOIN_UNNEST) {
+                    unnestCount++;
+                } else if (!isRowKeepingJoin(joinModel.getJoinType())) {
+                    return false;
+                }
+            }
+        }
+        return unnestCount == 1;
+    }
+
+    // Returns true for a join that returns at least one row for each row that it reads, in the order that it
+    // reads them, see hasLimitBlockingJoin()
+    private static boolean isRowKeepingJoin(int joinType) {
+        return switch (joinType) {
+            case IQueryModel.JOIN_LEFT_OUTER, IQueryModel.JOIN_CROSS_LEFT, IQueryModel.JOIN_ASOF,
+                 IQueryModel.JOIN_LT, IQueryModel.JOIN_WINDOW, IQueryModel.JOIN_CROSS -> true;
+            default -> false;
+        };
     }
 
     // A record copier writes a column in one encoding at every key position, so a column shared by a key
@@ -2374,6 +2407,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
+    }
+
+    // Returns true when every column that the expression reads comes before columnCount in the metadata. It
+    // returns false for a name that resolves to no column, and for a node of another kind, such as a sub-query
+    // or an array access, whose columns it does not follow. Constants and bind variables read no column.
+    private static boolean readsOnlyLeadingColumns(ExpressionNode node, RecordMetadata metadata, int columnCount) {
+        return switch (node.type) {
+            case ExpressionNode.CONSTANT, ExpressionNode.BIND_VARIABLE -> true;
+            // -1, for a name that resolves to no column, compares above every column index
+            case ExpressionNode.LITERAL -> Integer.compareUnsigned(SqlUtil.getColumnIndexQuiet(metadata, node.token), columnCount) < 0;
+            // BETWEEN is a SET_OPERATION of three arguments
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION, ExpressionNode.SET_OPERATION -> {
+                if (node.paramCount < 3) {
+                    yield (node.lhs == null || readsOnlyLeadingColumns(node.lhs, metadata, columnCount))
+                            && (node.rhs == null || readsOnlyLeadingColumns(node.rhs, metadata, columnCount));
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (!readsOnlyLeadingColumns(node.args.getQuick(i), metadata, columnCount)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            default -> false;
+        };
     }
 
     // Rewrites each master column that the expression reads into the slave key column that slaveKeyColumns
@@ -2833,6 +2891,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
+    }
+
+    // Hands the UNNEST of a level to the scan of the level's first table, when the scan holds a fan-out limit,
+    // see getFanOutLimitLoFunction(). The scan counts the rows of UNNEST on its own rows, ahead of the joins
+    // between the two, so every UNNEST expression has to read columns of the scan alone, and return the same
+    // array whenever it reads the same row. A join puts the columns of its master first, in their order, so
+    // the columns of the scan keep their indexes in the rows that UNNEST reads.
+    private void attachUnnestFanOut(
+            @Nullable RecordCursorFactory levelScan,
+            RecordCursorFactory unnestMaster,
+            IQueryModel unnestModel,
+            UnnestRecordCursorFactory unnest
+    ) {
+        final AsyncFilteredRecordCursorFactory javaScan = levelScan instanceof AsyncFilteredRecordCursorFactory f ? f : null;
+        final AsyncJitFilteredRecordCursorFactory jitScan = levelScan instanceof AsyncJitFilteredRecordCursorFactory f ? f : null;
+        if (!(javaScan != null && javaScan.hasFanOutLimit() || jitScan != null && jitScan.hasFanOutLimit())) {
+            return;
+        }
+        if (!unnest.isFanOutStable()) {
+            return;
+        }
+        if (unnestMaster != levelScan) {
+            final RecordMetadata scanMetadata = levelScan.getMetadata();
+            final RecordMetadata unnestMasterMetadata = unnestMaster.getMetadata();
+            final int scanColumnCount = scanMetadata.getColumnCount();
+            assert unnestMasterMetadata.getColumnCount() >= scanColumnCount;
+            for (int i = 0; i < scanColumnCount; i++) {
+                assert unnestMasterMetadata.getColumnType(i) == scanMetadata.getColumnType(i);
+            }
+            final ObjList<ExpressionNode> unnestExprs = unnestModel.getUnnestExpressions();
+            for (int i = 0, n = unnestExprs.size(); i < n; i++) {
+                if (!readsOnlyLeadingColumns(unnestExprs.getQuick(i), unnestMasterMetadata, scanColumnCount)) {
+                    return;
+                }
+            }
+        }
+        if (jitScan != null) {
+            jitScan.setFanOut(unnest);
+        } else {
+            javaScan.setFanOut(unnest);
+        }
     }
 
     private boolean assembleKeysAndFunctionReferences(
@@ -6212,6 +6311,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // construction steps, and the outer catch alike. One variable, one owner - two of them
         // left the Java branch's copy invisible to the only catch that could free it.
         Function limitLoFunction = null;
+        // The fan-out limit of a filter ahead of UNNEST, see getFanOutLimitLoFunction(), owned the same
+        // way as limitLoFunction until a factory takes it over right after its constructor returns.
+        Function fanOutLimitLoFunction = null;
         try {
             if (filter.isRuntimeConstant()) {
                 // The whole predicate is a runtime constant (e.g. a scalar boolean sub-query used
@@ -6273,6 +6375,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
                         limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                         final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                        if (limitLoFunction == null) {
+                            fanOutLimitLoFunction = getFanOutLimitLoFunction(model, executionContext);
+                        }
 
                         LOG.debug()
                                 .$("JIT enabled for (sub)query [tableName=").$safe(model.getName())
@@ -6310,6 +6415,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 enablePreTouch
                         );
                         perWorkerFilters = null;
+                        asyncJitFilterFactory.setFanOutLimit(fanOutLimitLoFunction);
+                        fanOutLimitLoFunction = null;
                         if (hasRightOrFullJoin(model)) {
                             // The scan ahead of a RIGHT or FULL join takes no LIMIT, see getLimitLoFunctionOnly(),
                             // so a LIMIT above the join reads it until the join has its rows. Its page frames
@@ -6327,6 +6434,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // Nulling form: the Java branch below reassigns it, and on the rethrowing
                         // twin the outer catch would otherwise free it a second time.
                         limitLoFunction = Misc.free(limitLoFunction);
+                        fanOutLimitLoFunction = Misc.free(fanOutLimitLoFunction);
                         LOG.debug()
                                 .$("JIT cannot be applied to (sub)query [tableName=").$safe(model.getName())
                                 .$(", ex=").$safe(ex.getFlyweightMessage())
@@ -6339,6 +6447,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         final Function limitLoFunctionToFree = limitLoFunction;
                         limitLoFunction = null;
                         Misc.free(limitLoFunctionToFree, t);
+                        final Function fanOutLimitLoFunctionToFree = fanOutLimitLoFunction;
+                        fanOutLimitLoFunction = null;
+                        Misc.free(fanOutLimitLoFunctionToFree, t);
                         throw t;
                     }
                 }
@@ -6346,6 +6457,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Use Java filter.
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 final int limitLoPos = model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+                if (limitLoFunction == null) {
+                    fanOutLimitLoFunction = getFanOutLimitLoFunction(model, executionContext);
+                }
                 perWorkerFilters = compileWorkerFiltersConditionally(
                         executionContext,
                         filter,
@@ -6371,6 +6485,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         enablePreTouch
                 );
                 perWorkerFilters = null;
+                asyncFilterFactory.setFanOutLimit(fanOutLimitLoFunction);
+                fanOutLimitLoFunction = null;
                 if (hasRightOrFullJoin(model)) {
                     // ramps up the page frames, as the JIT filter above does
                     asyncFilterFactory.rampUpLimitedReads();
@@ -6385,6 +6501,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(perWorkerFilters, e);
             // Null on every path that transferred it; non-null when a construction step threw.
             Misc.free(limitLoFunction, e);
+            Misc.free(fanOutLimitLoFunction, e);
             Misc.free(filter, e);
             Misc.free(factory, e);
             throw e;
@@ -7886,6 +8003,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<RecordMetadata> pendingHorizonSlaveProjectionMetadatas = null;
         ObjList<RecordMetadata> pendingHorizonSlaveMetadatas = null;
         boolean isHorizonJoinCompleted = false;
+        // the scan of the first model of the level, which takes the UNNEST of the level for its fan-out limit, see
+        // attachUnnestFanOut(); part of master, like keylessJoin
+        RecordCursorFactory levelScan = null;
         // master holds the places that read a shared primary from this mark on, see SharedPlaces
         final int levelSharedPlaceMark = sharedPlaces.getPlaceCount();
         // The loop below pushes the timestamp requirement of each join operand. Capture the
@@ -7941,9 +8061,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // UNNEST join - no slave query to compile
                     if (slaveModel.getJoinType() == JOIN_UNNEST) {
                         assert master != null : "UNNEST requires a master factory";
-                        master = generateUnnest(master, masterAlias, slaveModel, executionContext);
+                        final RecordCursorFactory unnestMaster = master;
+                        final UnnestRecordCursorFactory unnest = generateUnnest(master, masterAlias, slaveModel, executionContext);
+                        master = unnest;
                         closeSlaveOnFailure = false;
                         masterAlias = null;
+                        attachUnnestFanOut(levelScan, unnestMaster, slaveModel, unnest);
                         // Apply post-UNNEST filter (e.g., WHERE u.val > 3.0)
                         ExpressionNode unnestFilter = slaveModel.getPostJoinWhereClause();
                         if (unnestFilter != null) {
@@ -8059,6 +8182,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         master = slaveToFree;
                         closeSlaveOnFailure = false;
                         masterAlias = slaveModel.getName();
+                        levelScan = master;
                     } else {
                         // not the root, join to "master"
                         final int joinType = slaveModel.getJoinType();
@@ -9004,6 +9128,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         // it needs no check of them.
                                         keylessJoin = null;
                                         keylessJoinColumnSplit = 0;
+                                        levelScan = null;
                                         if (outerJoins != null) {
                                             outerJoins.clear();
                                             outerJoinIndexes.clear();
@@ -15425,7 +15550,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function wrapFunction(Function function, int functionKind);
     }
 
-    private RecordCursorFactory generateUnnest(
+    private UnnestRecordCursorFactory generateUnnest(
             RecordCursorFactory masterFactory,
             CharSequence masterAlias,
             IQueryModel unnestModel,
@@ -15604,7 +15729,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         );
                     }
 
-                    RecordCursorFactory factory =
+                    UnnestRecordCursorFactory factory =
                             new UnnestRecordCursorFactory(
                                     outputMetadata,
                                     masterFactory,
@@ -15634,6 +15759,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    // Returns the LIMIT advice of a level whose first table a filter scans ahead of the UNNEST of its rows,
+    // see isFanOutLimitLevel(), for the filter to take as a fan-out limit, see
+    // AsyncFilteredRecordCursorFactory.setFanOutLimit(). The filter cannot stop at the LIMIT rows of the
+    // table, since UNNEST returns no row for an empty or NULL array, but it can stop at a negative LIMIT once
+    // the rows it read unnest into the LIMIT rows. generateJoins() hands UNNEST over to the filter, see
+    // attachUnnestFanOut(). Returns null for any other level, and for a LIMIT that does not compile, which
+    // generateLimit() reports where it would without the fan-out limit.
+    @Nullable
+    private Function getFanOutLimitLoFunction(IQueryModel model, SqlExecutionContext executionContext) {
+        if (model.getLatestBy().size() > 0
+                || model.getLimitAdviceLo() == null
+                || model.getLimitAdviceHi() != null
+                || !isFanOutLimitLevel(model)) {
+            return null;
+        }
+        try {
+            return toLimitFunction(executionContext, model.getLimitAdviceLo(), null);
+        } catch (SqlException e) {
+            return null;
+        }
+    }
+
     @Nullable
     private Function getHiFunction(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         return toLimitFunction(executionContext, model.getLimitHi(), null);
@@ -15655,7 +15802,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the rows that it read, and RIGHT and FULL joins return their unmatched rows after reading
         // every row of the table, or NULL-extend rows that have a match. LimitRecordCursorFactory
         // applies the LIMIT above the level instead, and its RecordCursor.expectLimitedIteration()
-        // call still caps the page frame tasks that the filter dispatches ahead of the join.
+        // call still caps the page frame tasks that the filter dispatches ahead of the join. Ahead of
+        // UNNEST, the filter can still stop at a negative LIMIT, see getFanOutLimitLoFunction().
         if (hasLimitBlockingJoin(model)) {
             return null;
         }

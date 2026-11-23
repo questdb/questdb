@@ -34,8 +34,10 @@ import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordFanOut;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.async.AdaptiveDispatchLimit;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.log.Log;
@@ -46,6 +48,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Used to handle the LIMIT -N clause with the descending timestamp order case. To do so, this cursor
@@ -61,14 +64,26 @@ import org.jetbrains.annotations.NotNull;
  *         |            [ row 3   <- frame 1 start           |
  *        \/              row 4 ] <- frame 1 end             |
  * </pre>
+ * With a fan-out, the LIMIT counts the rows that the factories above return for the rows of the scan, see
+ * RecordFanOut: the cursor skips the rows that return no row above, and stops once the rows it keeps return
+ * the LIMIT rows above. The Limit above then drops the surplus of the earliest row it keeps. Rows that return
+ * no row above, such as the empty arrays of UNNEST, can make it scan far, so it sizes the tasks in flight to
+ * the rows above that the collected frames return, as the forward cursor does, see AdaptiveDispatchLimit.
  */
 class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
     private final int dispatchLimit;
+    // the tasks in flight of a scan with a fan-out, counted in the rows above the scan
+    private final AdaptiveDispatchLimit fanOutDispatchLimit;
     // Used for random access: we may have to deserialize Parquet page frame.
     private final PageFrameMemoryPool frameMemoryPool;
     private final boolean hasDescendingOrder;
     private final PageFrameMemoryRecord record;
+    // Counts the rows above the scan for the rows that the cursor keeps, or null when the LIMIT counts the
+    // rows of the scan.
+    private RecordFanOut fanOut;
+    // The rows above the scan for the rows that the cursor keeps, see fanOut.
+    private long fanOutRowCount;
     private int frameIndex;
     private int frameLimit;
     private PageFrameSequence<?> frameSequence;
@@ -99,6 +114,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         this.hasDescendingOrder = scanDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
         this.frameMemoryPool = frameMemoryPool;
         this.dispatchLimit = configuration.getSqlParallelFilterDispatchLimit();
+        this.fanOutDispatchLimit = new AdaptiveDispatchLimit(dispatchLimit);
     }
 
     @Override
@@ -205,6 +221,33 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         return frameSequence.buildInterruptionException();
     }
 
+    private void collectFanOutRow(long frameRowIndex) {
+        record.setRowIndex(frameRowIndex);
+        final long rowFanOut = fanOut.getFanOut(record);
+        if (rowFanOut > 0) {
+            rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRowIndex));
+            rowCount++;
+            fanOutRowCount += rowFanOut;
+        }
+    }
+
+    // Keeps the rows of the frame, from its last row in the order of the scan, that return rows above the scan,
+    // until they return the LIMIT rows. Each row it keeps returns at least one row above, so it keeps at most
+    // rowLimit rows, which the buffer holds. It reads the rows from the frame memory of the task, where the
+    // worker decoded every column of the filtered rows, so it decodes no Parquet row group of its own.
+    private void collectFanOutRows(PageFrameMemory frameMemory, DirectLongList frameRows, long frameRowCount) {
+        record.init(frameMemory);
+        if (hasDescendingOrder) {
+            for (long i = 0; i < frameRowCount && fanOutRowCount < rowLimit; i++) {
+                collectFanOutRow(frameRows.get(i));
+            }
+        } else {
+            for (long i = frameRowCount - 1; i > -1 && fanOutRowCount < rowLimit; i--) {
+                collectFanOutRow(frameRows.get(i));
+            }
+        }
+    }
+
     private void fetchAllFrames() {
         if (frameLimit == -1) {
             frameSequence.prepareForDispatch();
@@ -214,9 +257,12 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         boolean allFramesActive = true;
         try {
             do {
-                final long cursor = frameSequence.next(dispatchLimit, false);
+                final long cursor = frameSequence.next(fanOut != null ? fanOutDispatchLimit.get() : dispatchLimit, false);
                 if (cursor > -1) {
                     PageFrameReduceTask task = frameSequence.getTask(cursor);
+                    // the frames that the cursor drains once it reached the LIMIT are not part of the read
+                    final boolean isReading = !isRowLimitReached();
+                    final long fanOutRowCountBefore = fanOutRowCount;
                     LOG.debug()
                             .$("collected [shard=").$(frameSequence.getShard())
                             .$(", frameIndex=").$(task.getFrameIndex())
@@ -230,14 +276,16 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
                     }
 
                     // Consider frame sequence status only if we haven't accumulated enough rows.
-                    allFramesActive &= frameSequence.isActive() || rowCount >= rowLimit;
+                    allFramesActive &= frameSequence.isActive() || isRowLimitReached();
                     final DirectLongList frameRows = task.getFilteredRows();
                     final long frameRowCount = frameRows.size();
                     frameIndex = task.getFrameIndex();
 
                     if (frameRowCount > 0 && rowCount < rowLimit + 1 && frameSequence.isActive()) {
                         // Copy rows into the buffer.
-                        if (hasDescendingOrder) {
+                        if (fanOut != null) {
+                            collectFanOutRows(task.getFrameMemory(), frameRows, frameRowCount);
+                        } else if (hasDescendingOrder) {
                             for (long i = 0; i < frameRowCount && rowCount < rowLimit; i++, rowCount++) {
                                 rows.set(--rowIndex, Rows.toRowID(frameIndex, frameRows.get(i)));
                             }
@@ -247,9 +295,12 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
                             }
                         }
 
-                        if (rowCount >= rowLimit) {
+                        if (isRowLimitReached()) {
                             frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
                         }
+                    }
+                    if (fanOut != null && isReading) {
+                        fanOutDispatchLimit.onFrameCollected(fanOutRowCount - fanOutRowCountBefore);
                     }
 
                     frameSequence.collect(cursor, false);
@@ -281,7 +332,21 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         }
     }
 
-    void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
+    private boolean isRowLimitReached() {
+        return (fanOut != null ? fanOutRowCount : rowCount) >= rowLimit;
+    }
+
+    // the tasks in flight that the cursor asks for when it fetches its next frame
+    int getDispatchLimit() {
+        return fanOut != null ? fanOutDispatchLimit.get() : dispatchLimit;
+    }
+
+    void of(
+            PageFrameSequence<?> frameSequence,
+            long rowLimit,
+            DirectLongList negativeLimitRows,
+            @Nullable RecordFanOut fanOut
+    ) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
         this.frameIndex = -1;
@@ -290,6 +355,9 @@ class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCurso
         this.rows = negativeLimitRows;
         this.rowIndex = negativeLimitRows.getCapacity();
         this.rowCount = 0;
+        this.fanOut = fanOut;
+        this.fanOutRowCount = 0;
+        fanOutDispatchLimit.of(rowLimit);
         frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
