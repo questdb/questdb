@@ -49,6 +49,7 @@ import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.constants.NullConstant;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -135,7 +136,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private final IntList computedBufferIdx = new IntList();
     // Dense array of output column indices that are computed (not pass-through)
     private final IntList computedColumnIndices = new IntList();
-    // Pre-computed per-column: Function instances (page-frame path only)
+    // Pre-computed per-column: Function instances, NullConstant.NULL for a NULL-typed one (page-frame path only)
     private final ObjList<Function> computedFunctions = new ObjList<>();
     // Pre-computed per-column: isSymbol(srcType) && outputType == STRING (page-frame path only)
     private final BoolList computedIsSymbolToString = new BoolList();
@@ -515,7 +516,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         for (int k = 0; k < computedCount; k++) {
             int i = computedColumnIndices.getQuick(k);
             Function func = functions.getQuick(i);
-            computedFunctions.setQuick(k, func);
+            // A NULL-typed function, such as a CASE whose branches are all NULL, holds no value and
+            // need not implement getters: NullCaseFunction throws. Read its column through
+            // NullConstant, which returns the NULL of any type, as
+            // SqlCodeGenerator.generateCastFunctions() does for a NULL-typed column.
+            computedFunctions.setQuick(k, ColumnType.isNull(func.getType()) ? NullConstant.NULL : func);
             computedIsSymbolToString.setQuick(k, ColumnType.isSymbol(func.getType())
                     && computedOutputTypes.getQuick(k) == ColumnType.STRING);
         }

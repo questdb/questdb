@@ -540,7 +540,9 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
     public void testRandomProjections() throws Exception {
         // Random column subsets and orders, with computed columns mixed in, over every type. About
         // half of the queries take an interval at whole hours within days 1 to 4, whose bounds may
-        // cut the row group of a Parquet day, so that a frame starts or ends inside it.
+        // cut the row group of a Parquet day, so that a frame starts or ends inside it. About a
+        // third hold a CASE whose branches are all NULL, which the export writes as a STRING
+        // column of NULLs, so the query engine reads that CASE cast to STRING.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
             createAllTypesTable("tr", rnd.nextBoolean());
@@ -549,11 +551,22 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                 sink.clear();
                 final boolean isComputed = rnd.nextBoolean();
                 final int columnCount = 1 + rnd.nextInt(8);
+                // The NULL CASE goes before column nullCaseColumn, or after the last one when that
+                // is columnCount; -1 for none.
+                final int nullCaseColumn = rnd.nextInt(3) == 0 ? rnd.nextInt(columnCount + 1) : -1;
                 for (int c = 0; c < columnCount; c++) {
                     if (c > 0) {
                         sink.put(", ");
                     }
+                    if (c == nullCaseColumn) {
+                        putNullCase(sink, rnd);
+                        sink.put(", ");
+                    }
                     sink.put(ALL_TYPES_COLUMN_NAMES[rnd.nextInt(ALL_TYPES_COLUMN_NAMES.length)]).put(" c").put(c);
+                }
+                if (nullCaseColumn == columnCount) {
+                    sink.put(", ");
+                    putNullCase(sink, rnd);
                 }
                 if (isComputed) {
                     sink.put(", id * ").put(rnd.nextInt(100)).put(" computed");
@@ -574,7 +587,8 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
                         engine,
                         sqlExecutionContext,
                         query,
-                        isComputed ? PAGE_FRAME_BACKED : DIRECT_PAGE_FRAME,
+                        query.replace("THEN NULL END", "THEN NULL::STRING END"),
+                        isComputed || nullCaseColumn >= 0 ? PAGE_FRAME_BACKED : DIRECT_PAGE_FRAME,
                         "random_" + i,
                         " ROW_GROUP_SIZE " + (1 + rnd.nextInt(60))
                 );
@@ -871,6 +885,12 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         sink.put("'2024-01-0").put(1 + hour / 24).put('T').put(hourOfDay < 10 ? "0" : "").put(hourOfDay).put(":00'");
     }
 
+    // A CASE whose branches are all NULL, named n, whose condition holds on every m-th id, m from 1
+    // to 10.
+    private static void putNullCase(StringSink sink, Rnd rnd) {
+        sink.put("CASE WHEN id % ").put(1 + rnd.nextInt(10)).put(" = 0 THEN NULL END n");
+    }
+
     private static String readParquet(String fileName) {
         return "read_parquet('" + exportRoot + File.separator + fileName + ".parquet')";
     }
@@ -1079,10 +1099,24 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
             String fileName,
             String options
     ) throws Exception {
+        assertExportMatchesQuery(engine, sqlExecutionContext, query, query, expectedMode, fileName, options);
+    }
+
+    // Exports query and compares the file with the rows of oracleQuery, which returns the rows of
+    // query in the column types of the file.
+    private void assertExportMatchesQuery(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            String oracleQuery,
+            ParquetExportMode expectedMode,
+            String fileName,
+            String options
+    ) throws Exception {
         copyToParquet(engine, sqlExecutionContext, query, expectedMode, fileName, options);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // Names, types (the string types as one) and values, row by row.
-            TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet(fileName));
+            TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, oracleQuery, readParquet(fileName));
         }
     }
 

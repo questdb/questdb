@@ -654,7 +654,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     @Test
     public void testExportNullColumn() throws Exception {
         // A bare NULL has no column type; /exp writes it as a STRING column of NULLs, the type
-        // /exec reports for it, in every export mode.
+        // /exec reports for it, in every export mode. So does a CASE whose branches are all NULL,
+        // whose function, unlike the bare NULL's constant, implements no getter.
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {
                     engine.execute("""
@@ -673,6 +674,28 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     );
                     // A BINARY column of a row-wise export goes through a temp table.
                     assertNullColumnExport(engine, sqlExecutionContext, "SELECT tn.b, NULL n, tn.x FROM tn CROSS JOIN long_sequence(1)", ParquetExportMode.TEMP_TABLE, "null_temp_table");
+
+                    assertNullColumnExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT tn.sym, CASE WHEN tn.x > 0 THEN NULL END n, tn.x FROM tn CROSS JOIN long_sequence(1)",
+                            ParquetExportMode.CURSOR_BASED,
+                            "null_case_cursor"
+                    );
+                    assertNullColumnExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT tn.b, CASE WHEN tn.x > 0 THEN NULL END n, tn.x FROM tn CROSS JOIN long_sequence(1)",
+                            ParquetExportMode.TEMP_TABLE,
+                            "null_case_temp_table"
+                    );
+                    assertNullColumnExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT sym, CASE WHEN x > 0 THEN NULL END n, x, ts FROM tn",
+                            ParquetExportMode.PAGE_FRAME_BACKED,
+                            "null_case_hybrid"
+                    );
                 });
     }
 
@@ -2908,8 +2931,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         return req.send();
     }
 
-    // Exports a query with a NULL column n of five rows through /exp, and compares the file with the
-    // query that casts the NULL to STRING.
+    // Exports a query with a NULL column n of five rows, a bare NULL or a CASE whose branches are all
+    // NULL, through /exp, and compares the file with the query that casts the NULL to STRING.
     private void assertNullColumnExport(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -2920,7 +2943,8 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         assertParquetExportMode(engine, sqlExecutionContext, query, expectedMode);
         try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
             exportParquet(httpClient, sink, query);
-            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query.replace("NULL n", "NULL::STRING n"), fileName + ".parquet");
+            final String stringQuery = query.replace("NULL n", "NULL::STRING n").replace("THEN NULL END", "THEN NULL::STRING END");
+            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, stringQuery, fileName + ".parquet");
         }
         new QueryAssertion(engine, sqlExecutionContext, () -> {
         }, "SELECT typeOf(n) type, count() FROM read_parquet('" + fileName + ".parquet') WHERE n IS NULL")

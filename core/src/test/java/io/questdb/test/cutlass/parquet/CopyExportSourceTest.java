@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
@@ -45,8 +46,9 @@ import static io.questdb.cutlass.parquet.ParquetExportMode.PAGE_FRAME_BACKED;
 
 /**
  * COPY ... TO Parquet of sources the export reads through a query: a view named where COPY
- * takes a table, and queries with a bare NULL column, which has no column type of its own.
- * Expected rows come from the data the tests insert.
+ * takes a table, and queries with a NULL-typed column, such as a bare NULL or a CASE whose
+ * branches are all NULL, which has no column type of its own. Expected rows come from the data
+ * the tests insert.
  */
 public class CopyExportSourceTest extends AbstractCairoTest {
 
@@ -88,6 +90,47 @@ public class CopyExportSourceTest extends AbstractCairoTest {
                     a\tts
                     1\t2024-01-01T00:00:00.000000Z
                     """);
+        });
+    }
+
+    @Test
+    public void testCopyNullCaseColumnReusedExporter() throws Exception {
+        // One export job keeps its exporter, and so its materializer, across exports: a NULL CASE
+        // column, then a computed INT column at the same position, then the NULL CASE column
+        // again through the same compiled COPY.
+        assertMemoryLeak(() -> {
+            createTable();
+            final String nullCaseQuery = "SELECT CASE WHEN v > 0 THEN NULL END n, v FROM t";
+            final String computedQuery = "SELECT v * 10 n, v FROM t";
+            assertExportMode(nullCaseQuery, PAGE_FRAME_BACKED);
+            assertExportMode(computedQuery, PAGE_FRAME_BACKED);
+            final String expectedNullCase = """
+                    n\tv
+                    \t1
+                    \t2
+                    \t3
+                    """;
+            try (
+                    CopyExportRequestJob job = new CopyExportRequestJob(engine);
+                    RecordCursorFactory nullCaseCopy = select("COPY (" + nullCaseQuery + ") TO 'reuse' WITH FORMAT PARQUET");
+                    RecordCursorFactory computedCopy = select("COPY (" + computedQuery + ") TO 'reuse' WITH FORMAT PARQUET")
+            ) {
+                runCopy(job, nullCaseCopy);
+                assertParquetFile("reuse", null, expectedNullCase);
+                assertNullStringColumn("reuse", "n", 3);
+
+                runCopy(job, computedCopy);
+                assertParquetFile("reuse", null, """
+                        n\tv
+                        10\t1
+                        20\t2
+                        30\t3
+                        """);
+
+                runCopy(job, nullCaseCopy);
+                assertParquetFile("reuse", null, expectedNullCase);
+                assertNullStringColumn("reuse", "n", 3);
+            }
         });
     }
 
@@ -167,6 +210,213 @@ public class CopyExportSourceTest extends AbstractCairoTest {
             copy("COPY v_null TO 'null_view' WITH FORMAT PARQUET");
             assertParquetFile("null_view", "ts", expected);
             assertNullStringColumn("null_view", "n", 3);
+
+            // A CASE whose branches are all NULL has the NULL type too, but unlike the bare NULL's
+            // constant, its function implements no getter. Every export mode writes it as the same
+            // STRING column of NULLs. Re-partitioning, through a temp table:
+            copy("COPY (SELECT sym, CASE WHEN v > 0 THEN NULL END n, v, ts FROM t) TO 'null_case_parts' WITH FORMAT PARQUET PARTITION_BY DAY");
+            assertParquetFile("null_case_parts" + File.separator + "2024-01-01", "ts", """
+                    sym\tn\tv\tts
+                    a\t\t1\t2024-01-01T00:00:00.000000Z
+                    b\t\t2\t2024-01-01T12:00:00.000000Z
+                    """);
+            assertParquetFile("null_case_parts" + File.separator + "2024-01-02", "ts", """
+                    sym\tn\tv\tts
+                    c\t\t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_parts" + File.separator + "2024-01-01", "n", 2);
+            assertNullStringColumn("null_case_parts" + File.separator + "2024-01-02", "n", 1);
+
+            // An empty table: no row reaches the column, and the file still types it STRING.
+            execute("CREATE TABLE t_empty (sym SYMBOL, v INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            drainWalQueue();
+            copy("SELECT CASE WHEN v > 0 THEN NULL END n, v FROM t_empty", PAGE_FRAME_BACKED, "null_case_empty", "");
+            assertParquetFile("null_case_empty", null, "n\tv\n");
+            try (RecordCursorFactory factory = select("SELECT n FROM " + readParquet("null_case_empty"))) {
+                Assert.assertEquals("STRING", ColumnType.nameOf(factory.getMetadata().getColumnType(0)));
+            }
+
+            // The zero-copy export: v = 1 takes the implicit ELSE, v = 2 and 3 the THEN NULL.
+            copy("SELECT sym, CASE WHEN v > 1 THEN NULL END n, v, ts FROM t", PAGE_FRAME_BACKED, "null_case_hybrid", "");
+            assertParquetFile("null_case_hybrid", "ts", expected);
+            assertNullStringColumn("null_case_hybrid", "n", 3);
+
+            // NULL CASE columns around computed and pass-through ones: the switch form with ELSE
+            // NULL, and a nested CASE. The computed INT keeps its values.
+            copy(
+                    "SELECT CASE sym WHEN 'a' THEN NULL ELSE NULL END n, v * 10 v10, s, CASE WHEN v > 1 THEN CASE WHEN v > 2 THEN NULL END END n2, ts FROM t",
+                    PAGE_FRAME_BACKED,
+                    "null_case_mixed",
+                    ""
+            );
+            assertParquetFile("null_case_mixed", "ts", """
+                    n\tv10\ts\tn2\tts
+                    \t10\tone\t\t2024-01-01T00:00:00.000000Z
+                    \t20\ttwo\t\t2024-01-01T12:00:00.000000Z
+                    \t30\tthree\t\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_mixed", "n", 3);
+            assertNullStringColumn("null_case_mixed", "n2", 3);
+
+            // Computed STRING and SYMBOL columns next to the NULL CASE keep their values; both
+            // export as STRING.
+            copy("SELECT CASE WHEN v > 0 THEN NULL END n, s::STRING s2, s::SYMBOL s3, v, ts FROM t", PAGE_FRAME_BACKED, "null_case_strings", "");
+            assertParquetFile("null_case_strings", "ts", """
+                    n\ts2\ts3\tv\tts
+                    \tone\tone\t1\t2024-01-01T00:00:00.000000Z
+                    \ttwo\ttwo\t2\t2024-01-01T12:00:00.000000Z
+                    \tthree\tthree\t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_strings", "n", 3);
+            assertQuery("SELECT typeOf(s2) s2_type, typeOf(s3) s3_type, count() FROM " + readParquet("null_case_strings"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("s2_type\ts3_type\tcount\nSTRING\tSTRING\t3\n");
+
+            // A constant condition, and the switch form on VARCHAR and TIMESTAMP keys.
+            copy(
+                    "SELECT CASE WHEN true THEN NULL END n, CASE s WHEN 'one' THEN NULL END n2, CASE ts WHEN '2024-01-01' THEN NULL END n3, v FROM t",
+                    PAGE_FRAME_BACKED,
+                    "null_case_forms",
+                    ""
+            );
+            assertParquetFile("null_case_forms", null, """
+                    n\tn2\tn3\tv
+                    \t\t\t1
+                    \t\t\t2
+                    \t\t\t3
+                    """);
+            assertNullStringColumn("null_case_forms", "n", 3);
+            assertNullStringColumn("null_case_forms", "n2", 3);
+            assertNullStringColumn("null_case_forms", "n3", 3);
+
+            // A bind variable in the condition.
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 1);
+            copy("SELECT sym, CASE WHEN v > $1 THEN NULL END n, v, ts FROM t", PAGE_FRAME_BACKED, "null_case_bind", "");
+            bindVariableService.clear();
+            assertParquetFile("null_case_bind", "ts", expected);
+            assertNullStringColumn("null_case_bind", "n", 3);
+
+            // An interval that starts inside the first partition.
+            copy("SELECT CASE WHEN v > 0 THEN NULL END n, v, ts FROM t WHERE ts >= '2024-01-01T12:00'", PAGE_FRAME_BACKED, "null_case_interval", "");
+            assertParquetFile("null_case_interval", "ts", """
+                    n\tv\tts
+                    \t2\t2024-01-01T12:00:00.000000Z
+                    \t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_interval", "n", 2);
+
+            // A subquery and a CTE.
+            final String expectedNullCaseAndV = """
+                    n\tv
+                    \t1
+                    \t2
+                    \t3
+                    """;
+            copy("SELECT n, v FROM (SELECT CASE WHEN v > 0 THEN NULL END n, v FROM t)", PAGE_FRAME_BACKED, "null_case_subquery", "");
+            assertParquetFile("null_case_subquery", null, expectedNullCaseAndV);
+            assertNullStringColumn("null_case_subquery", "n", 3);
+            copy("WITH q AS (SELECT CASE WHEN v > 0 THEN NULL END n, v FROM t) SELECT * FROM q", PAGE_FRAME_BACKED, "null_case_cte", "");
+            assertParquetFile("null_case_cte", null, expectedNullCaseAndV);
+            assertNullStringColumn("null_case_cte", "n", 3);
+
+            // Only the NULL CASE column.
+            copy("SELECT CASE WHEN v > 0 THEN NULL END n FROM t", PAGE_FRAME_BACKED, "null_case_only", "");
+            assertParquetFile("null_case_only", null, "n\n\n\n\n");
+            assertNullStringColumn("null_case_only", "n", 3);
+
+            // A bloom filter over the NULL CASE column.
+            copy("SELECT sym, CASE WHEN v > 1 THEN NULL END n, v, ts FROM t", PAGE_FRAME_BACKED, "null_case_bloom", " BLOOM_FILTER_COLUMNS 'n'");
+            assertParquetFile("null_case_bloom", "ts", expected);
+            assertNullStringColumn("null_case_bloom", "n", 3);
+
+            // Single-row tables, one not partitioned and one without a designated timestamp.
+            execute("CREATE TABLE tn (sym SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY NONE");
+            execute("INSERT INTO tn VALUES ('a', 1, '2024-01-01T00:00:00.000000Z')");
+            execute("CREATE TABLE tnots (sym SYMBOL, v INT)");
+            execute("INSERT INTO tnots VALUES ('a', 1)");
+            drainWalQueue();
+            copy("SELECT sym, CASE WHEN v > 0 THEN NULL END n, v, ts FROM tn", PAGE_FRAME_BACKED, "null_case_not_partitioned", "");
+            assertParquetFile("null_case_not_partitioned", "ts", """
+                    sym\tn\tv\tts
+                    a\t\t1\t2024-01-01T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_not_partitioned", "n", 1);
+            copy("SELECT sym, CASE WHEN v > 0 THEN NULL END n, v FROM tnots", PAGE_FRAME_BACKED, "null_case_no_timestamp", "");
+            assertParquetFile("null_case_no_timestamp", null, """
+                    sym\tn\tv
+                    a\t\t1
+                    """);
+            assertNullStringColumn("null_case_no_timestamp", "n", 1);
+            // ORDER BY ts DESC is left out: COPY writes the rows of such a projection in ascending
+            // order, a separate bug.
+        });
+    }
+
+    @Test
+    public void testCopyNullColumnFilteredByIndexedSymbol() throws Exception {
+        // A symbol IN list over a covering index keeps the export of a NULL CASE column zero-copy.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (sym SYMBOL INDEX TYPE POSTING INCLUDE (v, ts), v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ti VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('b', 2, '2024-01-01T12:00:00.000000Z'),
+                    ('c', 3, '2024-01-02T00:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            final String query = "SELECT sym, CASE WHEN v > 0 THEN NULL END n, v, ts FROM ti WHERE sym IN ('a', 'c')";
+            assertQuery(query).noLeakCheck().assertsPlanContaining("CoveringIndex on: sym");
+            copy(query, PAGE_FRAME_BACKED, "null_case_indexed", "");
+            assertParquetFile("null_case_indexed", "ts", """
+                    sym\tn\tv\tts
+                    a\t\t1\t2024-01-01T00:00:00.000000Z
+                    c\t\t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_indexed", "n", 2);
+        });
+    }
+
+    @Test
+    public void testCopyNullColumnOnParquetPartition() throws Exception {
+        // The zero-copy export decodes the row group of a Parquet partition, day 1, before it
+        // writes the NULL CASE column; day 2 stays native.
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\tfalse
+                            """);
+            copy("SELECT sym, CASE WHEN v > 1 THEN NULL END n, v, ts FROM t", PAGE_FRAME_BACKED, "null_case_parquet", "");
+            assertParquetFile("null_case_parquet", "ts", """
+                    sym\tn\tv\tts
+                    a\t\t1\t2024-01-01T00:00:00.000000Z
+                    b\t\t2\t2024-01-01T12:00:00.000000Z
+                    c\t\t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_parquet", "n", 3);
+
+            // The interval starts at row 1 of the Parquet day's row group.
+            copy(
+                    "SELECT sym, CASE WHEN v > 1 THEN NULL END n, v, ts FROM t WHERE ts >= '2024-01-01T12:00'",
+                    PAGE_FRAME_BACKED,
+                    "null_case_parquet_interval",
+                    ""
+            );
+            assertParquetFile("null_case_parquet_interval", "ts", """
+                    sym\tn\tv\tts
+                    b\t\t2\t2024-01-01T12:00:00.000000Z
+                    c\t\t3\t2024-01-02T00:00:00.000000Z
+                    """);
+            assertNullStringColumn("null_case_parquet_interval", "n", 2);
         });
     }
 
