@@ -2587,7 +2587,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     private static void backdate(String table, String ts, int rows) throws Exception {
-        execute("insert into " + table + " (i, ts) select cast(x as int) + 500000 i," +
+        execute("insert into " + table + " (i, ts) select cast(x as int) + 500_000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
         drainWalQueue();
     }
@@ -2680,7 +2680,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
 
     private static void createDayTable(String table, String day, int rows, String timestampType, String extraColumns) throws Exception {
         execute("create table " + table + " as (select cast(x as int) i, " + extraColumns +
-                " timestamp_sequence('" + day + "', 1000000L)::" + timestampType + " ts" +
+                " timestamp_sequence('" + day + "', 1_000_000L)::" + timestampType + " ts" +
                 " from long_sequence(" + rows + ")) timestamp(ts) partition by DAY WAL");
         drainWalQueue();
     }
@@ -2976,8 +2976,8 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         // same timestamps would be an O3 write into an existing partition, which rewrites it and
         // charges those rows to physicallyWrittenRows - so the row accounting of runCompactionPasses
         // would be wrong by however much that merge amplified rather than by the 12 rows actually inserted.
-        execute("insert into " + table + " (i, ts) select cast(x as int) + 800000 + " + (passDay * 10) + " i," +
-                " timestamp_sequence('" + nextPassDay() + "', 60*1000000L) ts from long_sequence(2)");
+        execute("insert into " + table + " (i, ts) select cast(x as int) + 800_000 + " + (passDay * 10) + " i," +
+                " timestamp_sequence('" + nextPassDay() + "', 60*1_000_000L) ts from long_sequence(2)");
     }
 
     private static void insertIntoFront() throws Exception {
