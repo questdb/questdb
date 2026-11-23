@@ -230,6 +230,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testConstantOutputFilteredScansOneColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A read that filters on b, which the view computes from no column, and names no other output gives the
+            // sub-query under the SELECT of the view no column for its outputs. The sub-query still gives its rows, for
+            // which the read scans one column of x: its designated timestamp. A read that sets the variable of the view
+            // reads that column as the reader, and no other column of x.
+            final String viewSql = "DECLARE OVERRIDABLE @z := 'c' SELECT k, @z b FROM (SELECT * FROM x)";
+            assertReads(viewSql, "{x=[?*, k]}", "SELECT count() FROM v WHERE b = 'c'", "SELECT k FROM v WHERE b = 'c'");
+            assertOverrideDenied(viewSql, "DECLARE @z := 'd' SELECT count() FROM v WHERE b = 'd'", "permission denied [table=x, columns=ts]");
+        });
+    }
+
+    @Test
     public void testCte() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -2548,9 +2562,12 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "{x=[*], y=[*]}"
             );
             assertDependencies("SELECT y.c FROM y CROSS JOIN (SELECT * FROM x)", "{x=[*], y=[c]}");
+            // The PIVOT filters the rows of the SELECT under it on the values of count, which that SELECT computes from
+            // no column of the sub-query under it. The sub-query gives its rows, for which the view reads the
+            // designated timestamp of x, and no other column.
             assertDependencies(
                     "SELECT * FROM (SELECT count() FROM (SELECT * FROM x)) PIVOT (sum(count) FOR count IN (1))",
-                    "{x=[*]}"
+                    "{x=[ts]}"
             );
             assertDependencies(
                     "SELECT t.a, l.c FROM (SELECT * FROM x) t CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l",

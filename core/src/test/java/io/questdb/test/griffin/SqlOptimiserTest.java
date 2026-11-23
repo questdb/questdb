@@ -580,6 +580,137 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testFilterOnOutputThatReadsNoColumnScansOneColumn() throws Exception {
+        // A filter on an output the SELECT computes from no column, such as a constant, stays with that SELECT, which
+        // then gives the sub-query under it no column. The sub-query still has to produce its rows, which one of its
+        // columns does: the designated timestamp when it selects it, or else the first column it takes as is. The scan
+        // reads that column alone, and not every column of the table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a INT, b DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (0, 'k1', 1, 1.5), (3_600_000_000, 'k1', 2, 2.5), (0, 'k2', 3, 3.5)");
+            // the designated timestamp comes last
+            execute("CREATE TABLE y (k SYMBOL, a INT, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO y VALUES ('k1', 1, 1.5, 0), ('k2', 2, 2.5, 0)");
+            // no designated timestamp
+            execute("CREATE TABLE z (k SYMBOL, a INT, b DOUBLE)");
+            execute("INSERT INTO z VALUES ('k1', 1, 1.5), ('k2', 2, 2.5)");
+            execute("CREATE VIEW o1 AS (SELECT k, 'c' b FROM (SELECT * FROM x))");
+
+            // the output b shadows b of x, which no output reads
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT k, 'c' b FROM (SELECT * FROM x)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b = 'c')",
+                    3
+            );
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT * FROM x)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b = 'c')",
+                    3
+            );
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT k, 'c' zz FROM (SELECT * FROM x)) WHERE zz = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' zz] k, 'c' zz from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where zz = 'c')",
+                    3
+            );
+            // a filter that cannot match leaves no row to count
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT k, 'c' b FROM (SELECT * FROM x)) WHERE b = 'd'",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b = 'd')",
+                    0
+            );
+            // an aggregate that groups no keys computes its value from no column
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT count() b FROM (SELECT * FROM x)) WHERE b > 1",
+                    "select-group-by count() count from (select-group-by [count() b] count() b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b > 1)",
+                    1
+            );
+            assertOneColumnScan(
+                    "SELECT count() FROM o1 WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b = 'c') o1",
+                    3
+            );
+            assertOneColumnScan(
+                    "WITH s AS (SELECT * FROM x) SELECT count() FROM (SELECT k, 'c' b FROM s) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) s where b = 'c')",
+                    3
+            );
+            // the designated timestamp, wherever the SELECT under the filtered one selects it
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT k, 'c' b FROM (SELECT * FROM y)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] k, a, b, ts from (select [ts] from y timestamp (ts))) where b = 'c')",
+                    2
+            );
+            // the first column the SELECT takes as is, when it does not select the designated timestamp
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT a * 2 a2, k, a FROM y)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual [k] a * 2 a2, k, a from (select [k] from y timestamp (ts))) where b = 'c')",
+                    2
+            );
+            // the keys of a GROUP BY, whose rows are its groups
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT k, sum(a) s FROM x GROUP BY k)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-group-by [k] k, sum(a) s from (select [k] from x timestamp (ts))) where b = 'c')",
+                    2
+            );
+            // the latest row of each key, which LATEST ON reads the key for
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT * FROM x LATEST ON ts PARTITION BY k)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [ts] ts, k, a, b from (select [ts, k] from x latest on ts partition by k)) where b = 'c')",
+                    2
+            );
+            // a window function no output needs
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT ts, k, row_number() OVER (PARTITION BY k ORDER BY ts) rn FROM x)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-window [ts] ts, k, row_number() rn over (partition by k order by ts) from (select [ts] from x timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // every branch of the set operation scans the column at the same position
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT ts, k FROM x UNION ALL SELECT ts, k FROM y)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [ts] ts, k from (select [ts] from x timestamp (ts)) union all select-choose [ts] ts, k from (select [ts] from y timestamp (ts))) where b = 'c')",
+                    5
+            );
+            // a value the statement declares
+            assertOneColumnScan(
+                    "DECLARE @z := 'c' SELECT count() FROM (SELECT k, @z b FROM (SELECT * FROM x)) WHERE b = @z",
+                    "select-group-by count() count from (select-virtual ['c' b] k, 'c' b from (select-choose [ts] ts, k, a, b from (select [ts] from x timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // the designated timestamp a SELECT over a join takes from a table of the join
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT y.k, x.ts FROM x JOIN y ON (k))) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [x.ts ts] y.k k, x.ts ts from (select [ts, k] from x timestamp (ts) join select [k] from y timestamp (ts) on y.k = x.k)) where b = 'c')",
+                    3
+            );
+            // the first column the SELECT takes as is, when the table has no designated timestamp
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT * FROM z)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-choose [k] k, a, b from (select [k] from z)) where b = 'c')",
+                    2
+            );
+            // The table itself gives its rows with no column, and a SELECT that computes every column it selects keeps
+            // them all.
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM x) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (x timestamp (ts)) where b = 'c')",
+                    3
+            );
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT 'c' b FROM (SELECT a * 2 a2, b + 1 b1 FROM x)) WHERE b = 'c'",
+                    "select-group-by count() count from (select-virtual ['c' b] 'c' b from (select-virtual a * 2 a2, b + 1 b1 from (select [a, b] from x timestamp (ts))) where b = 'c')",
+                    3
+            );
+            // A filter that names no column stays with a model that only passes the rows of the sub-query on, and
+            // reads no output of a SELECT: it leaves the sub-query as a read without the filter does.
+            assertOneColumnScan(
+                    "SELECT count() FROM (SELECT * FROM x) WHERE 1 = 1",
+                    "select-group-by count() count from ((select-choose ts, k, a, b from (select [ts, k, a, b] from x timestamp (ts))) _xQdbA1 where 1 = 1)",
+                    3
+            );
+        });
+    }
+
+    @Test
     public void testFilterOnRenamedColumnAboveLatestOn() throws Exception {
         // A filter cannot move below LATEST ON, so it stays with the SELECT above it and filters the output of that
         // SELECT: a is the output that reads b. The scan reads b for it, and not the column a, which no output reads.
@@ -7054,6 +7185,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                         1970-01-01T00:00:00.000002Z\tA\t2.0\t2\t2\t1.0\t9.0\t2
                         1970-01-01T00:00:00.000001Z\tA\t1.0\t3\t3\tnull\t2.0\t3
                         """);
+    }
+
+    // Asserts the optimised model of a query that counts the rows a filtered SELECT keeps, and the count.
+    private void assertOneColumnScan(String query, String expectedModel, long expectedCount) throws Exception {
+        assertQuery(expectedModel, query);
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + expectedCount + "\n");
     }
 
     private void testRewriteTrivialExpressions(boolean aliasExpressionsEnabled) throws Exception {

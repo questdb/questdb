@@ -2102,6 +2102,44 @@ public class SqlOptimiser implements Mutable {
         readerOrigins.addAll(origins);
     }
 
+    // Gives a model that projects and has no top-down columns the one column its rows need, so that it keeps that
+    // column rather than every column, see QueryModel.getColumns(): the designated timestamp of its source if it
+    // selects that as is, or else the first column it selects as is. A model that selects no column as is keeps every
+    // column.
+    private void addRowColumnIfNoTopDownColumns(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE || model.getTopDownColumns().size() > 0) {
+            return;
+        }
+        CharSequence timestampName = null;
+        for (IQueryModel m = model; m != null; m = m.getNestedModel()) {
+            if (m.getTimestamp() != null) {
+                timestampName = m.getTimestamp().token;
+                break;
+            }
+        }
+        QueryColumn rowColumn = null;
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column.getAst();
+            if (ast.type == LITERAL) {
+                final CharSequence token = ast.token;
+                // the name of the column, which a column of a join qualifies with the alias of its table
+                final int nameLo = Chars.indexOfLastUnquoted(token, '.') + 1;
+                if (timestampName != null && Chars.equalsIgnoreCase(timestampName, token, nameLo, token.length())) {
+                    rowColumn = column;
+                    break;
+                }
+                if (rowColumn == null) {
+                    rowColumn = column;
+                }
+            }
+        }
+        if (rowColumn != null) {
+            addTopDownColumn(rowColumn.getAlias(), model);
+        }
+    }
+
     // Adds to the outputs of the view each column of the projection of a VIRTUAL model serves, see
     // emitKeptWholeProjection(), those of the columns of the model that read it, directly or through other columns
     // of the model: a read that names an output needs every column the columns of the output read. Only a column
@@ -9566,6 +9604,14 @@ public class SqlOptimiser implements Mutable {
             // correctly propagates columns by position.
             if (model.getTimestamp() != null) {
                 emitLiteralsTopDown(model.getTimestamp(), nested);
+            }
+
+            // The outputs a filter of this model keeps may read no column of the nested model, as a constant does, see
+            // the WHERE clause above, and so may the outputs the parent asks for. Given no column, the nested model
+            // would keep every column, and its scan would read every column. Its rows need one column. This runs
+            // before the propagation to the branches of a set operation below, which gives them the column too.
+            if (model.getWhereClause() != null && model.getSelectModelType() != IQueryModel.SELECT_MODEL_NONE) {
+                addRowColumnIfNoTopDownColumns(nested);
             }
 
             // If any UNION branch is GROUP BY or an aggregating HORIZON JOIN, pre-add its
