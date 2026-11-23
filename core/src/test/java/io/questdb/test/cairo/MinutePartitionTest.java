@@ -350,8 +350,18 @@ public class MinutePartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS, v LONG) TIMESTAMP(ts) PARTITION BY 15 MINUTES BYPASS WAL");
             execute("INSERT INTO t SELECT timestamp_sequence_ns('2024-01-01T00:15:00'::timestamp_ns, 1_000_000_000L), x FROM long_sequence(600)");
-            // O3 into the middle of the last partition splits it
-            execute("INSERT INTO t VALUES ('2024-01-01T00:20:00.000000001', -1)");
+            // O3 near the end of the last partition splits off the rows after it
+            execute("INSERT INTO t VALUES ('2024-01-01T00:24:00.000000001', -1)");
+            assertQuery("SELECT name, minTimestamp, numRows FROM table_partitions('t')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tminTimestamp\tnumRows
+                            2024-01-01T0015\t2024-01-01T00:15:00.000000000Z\t541
+                            2024-01-01T002400-000000001\t2024-01-01T00:24:00.000000001Z\t60
+                            """);
+            // O3 into the piece before the split
             execute("INSERT INTO t VALUES ('2024-01-01T00:16:00.000000001', -2)");
             assertQuery("SELECT count(), sum(v), min(ts), max(ts) FROM t")
                     .noLeakCheck()
@@ -361,21 +371,33 @@ public class MinutePartitionTest extends AbstractCairoTest {
                             count\tsum\tmin\tmax
                             602\t180297\t2024-01-01T00:15:00.000000000Z\t2024-01-01T00:24:59.000000000Z
                             """);
-            assertQuery("SELECT ts, v FROM t WHERE ts IN '2024-01-01T00:20:00'")
+            // the interval crosses the split boundary
+            assertQuery("SELECT ts, v FROM t WHERE ts IN '2024-01-01T00:24:00'")
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("""
                             ts\tv
-                            2024-01-01T00:20:00.000000000Z\t301
-                            2024-01-01T00:20:00.000000001Z\t-1
+                            2024-01-01T00:24:00.000000000Z\t541
+                            2024-01-01T00:24:00.000000001Z\t-1
                             """);
-            assertQuery("SELECT minTimestamp, numRows FROM table_partitions('t')")
+            // a row in the next partition squashes the split back into 2024-01-01T0015
+            execute("INSERT INTO t VALUES ('2024-01-01T00:31:00', 0)");
+            assertQuery("SELECT name, minTimestamp, numRows FROM table_partitions('t')")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
                     .returns("""
-                            minTimestamp\tnumRows
-                            2024-01-01T00:15:00.000000000Z\t602
+                            name\tminTimestamp\tnumRows
+                            2024-01-01T0015\t2024-01-01T00:15:00.000000000Z\t602
+                            2024-01-01T0030\t2024-01-01T00:31:00.000000000Z\t1
+                            """);
+            assertQuery("SELECT count(), sum(v) FROM t WHERE ts IN '2024-01-01T00:15;15m'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            602\t180297
                             """);
         });
     }
