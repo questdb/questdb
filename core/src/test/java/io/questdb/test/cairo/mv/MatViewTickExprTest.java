@@ -263,6 +263,24 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatViewFailingCheckBeforeRangeStart() throws Exception {
+        // CREATE MATERIALIZED VIEW opens the query of the view to check it. At 03:00, when the range
+        // from 09:30 to "now" starts after it ends, a query whose scalar sub-query returns both rows
+        // of base fails as CREATE opens it: CREATE fails with its error and creates no view, and a
+        // query fails on the range when it runs at 03:00 after that.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_0300);
+            createRangeTables();
+            assertStatementFails(
+                    "CREATE MATERIALIZED VIEW mvx AS (SELECT ts, count() c FROM base WHERE ts > (SELECT ts FROM base) SAMPLE BY 1h)",
+                    "scalar sub-query returned more than one row"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mvx"));
+            assertCompileProbeDown();
+        });
+    }
+
+    @Test
     public void testPointInTimeRangeLiteralWithMalformedDurationFailsCreateAndActsAsNullInRefresh() throws Exception {
         // A range between two points in time ignores its duration, which still has to parse: SQL
         // rejects a view and a materialized view whose literal has a duration that does not parse as
@@ -374,6 +392,33 @@ public class MatViewTickExprTest extends AbstractCairoTest {
             // the query of the view fails on the value when a user runs it
             final String query = "SELECT ts, count() c FROM base WHERE ts IN s SAMPLE BY 1h";
             assertExceptionNoLeakCheck(query, query.indexOf(" s ") + 1, "Invalid date: garbage");
+        });
+    }
+
+    @Test
+    public void testStructuralExpiryPolicyFailingCheckBeforeRangeStart() throws Exception {
+        // SQL checks a row-expiry policy with a window function as it sets it, by opening the query
+        // that a read of the view runs with the policy. At 03:00, when the range from 09:30 to "now"
+        // starts after it ends, a policy whose scalar sub-query returns both rows of the view fails
+        // as ALTER opens that query: ALTER rejects the policy, the view keeps showing both rows, and
+        // a query fails on the range when it runs at 03:00 after that.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(NOW_0300);
+            createRangeTables();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM pbase)");
+            drainWalAndMatViewQueues();
+            final String policy = "v < max(v) OVER (PARTITION BY k) AND ts > (SELECT ts FROM mv)";
+            final String sql = "ALTER MATERIALIZED VIEW mv SET EXPIRE ROWS WHEN " + policy;
+            assertExceptionNoLeakCheck(sql, sql.indexOf(policy), "invalid EXPIRE ROWS policy: scalar sub-query returned more than one row");
+            assertCompileProbeDown();
+            assertQuery("SELECT count() FROM mv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
+                            """);
         });
     }
 
