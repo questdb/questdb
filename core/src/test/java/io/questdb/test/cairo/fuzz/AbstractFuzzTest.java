@@ -525,6 +525,11 @@ public class AbstractFuzzTest extends AbstractCairoTest {
         }
     }
 
+    // plants purge log faults, see FuzzRunner.setPurgeLogFaultProbability(), with draws from the seeds of the set-up Rnd
+    protected void setPurgeLogFaultProbability(double purgeLogFaultProb) {
+        fuzzer.setPurgeLogFaultProbability(purgeLogFaultProb, setUpRnd.getSeed0(), setUpRnd.getSeed1());
+    }
+
     protected void setRandomAppendPageSize(Rnd rnd) {
         int minPage = 18;
         setProperty(PropertyKey.CAIRO_WRITER_DATA_APPEND_PAGE_SIZE, 1L << (minPage + rnd.nextInt(22 - minPage))); // MAX page size 4Mb
@@ -535,6 +540,8 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     protected void setupWriterJobs() throws SqlException {
         WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
         fuzzer.setHasPoolColumnPurgeJob(!engine.getConfiguration().disableColumnPurgeJob());
+        // the first write of the PostingSealPurgeJob of the pool opens a partition of its log
+        fuzzer.plantPostingSealPurgeLogFault();
     }
 
     // Joins every job the caller started, including a partially started batch, so a failure mid-run

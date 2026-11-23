@@ -551,14 +551,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolLostPurgeLog() throws Exception {
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolPurgeLogOpenFailure() throws Exception {
         // Pins a run of the fuzz test above where an IO failure hits the purge job as it saves a purge in
-        // its log. The job saves no purge after that, so the purge job after the run cannot replay the
-        // deferred purges of the WAL tables: the check before VACUUM TABLE skips, and the check after VACUUM
-        // TABLE proves VACUUM removes the files. In the original run an IO failure that the fuzz plants for
-        // the non-WAL writer hit the purge job by chance; here the fuzz plants none, and the files facade
-        // below fails the first file the purge job opens in a partition of its log, which is the first
-        // save, in every run. The fuzz test drew the default symbol index type from other seeds.
+        // its log. The job reopens the log in the same run and writes the purges it holds back to it, so
+        // the purge job after the run replays every deferred purge of the WAL tables, and the check before
+        // VACUUM TABLE runs. The log can then hold a purge twice, which the count of logged purges counts
+        // once. In the original run an IO failure that the fuzz plants for the non-WAL writer hit the
+        // purge job by chance; here the fuzz plants none, and the files facade below fails the first file
+        // the purge job opens in a partition of its log, which is the first save, in every run. The fuzz
+        // test drew the default symbol index type from other seeds.
         final AtomicBoolean isPurgeLogOpenFailed = new AtomicBoolean();
         replayPinnedSeedsWithoutVacuum();
         runTxnZeroCoveredSymbolRandomFuzz(
@@ -577,10 +578,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 false
         );
         Assert.assertTrue(isPurgeLogOpenFailed.get());
-        Assert.assertTrue(
-                txnZeroRunPurgeTasksLogged + " < " + txnZeroRunPurgeTasksConsumed,
-                txnZeroRunPurgeTasksLogged < txnZeroRunPurgeTasksConsumed
-        );
+        Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
     }
 
     @Test
@@ -1382,10 +1380,12 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     /**
      * The number of purges in the purge log. The purge job of the fuzz run truncates the log when it
-     * starts, and saves one row per partition of each purge.
+     * starts, and saves one row per partition of each purge, one purge per column and table txn. A job
+     * that reopens its log after a failure writes the purges it holds back at new timestamps, so a purge
+     * can be in the log twice: it counts once.
      */
     private long countPurgeLogTasks() throws SqlException {
-        final String sql = "SELECT count() FROM (SELECT DISTINCT ts, table_name, column_name, updated_txn FROM \""
+        final String sql = "SELECT count() FROM (SELECT DISTINCT table_name, table_id, column_name, truncate_version, updated_txn FROM \""
                 + configuration.getSystemTableNamePrefix() + "column_versions_purge_log\")";
         try (
                 RecordCursorFactory factory = select(sql);
@@ -1685,9 +1685,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             final String tableNameNoWal = tableName + "_nonwal";
             final String[] walTableNames = {tableName + "_wal", tableName + "_wal_parallel"};
             // The purge job of the fuzz run takes a purge off the queue and then saves it in the purge log.
-            // An IO failure that the fuzz plants for the non-WAL writer can hit the log instead, and the job
-            // saves no purge after that, so the purge job after the run, which stands for a restart, cannot
-            // replay the purges it did not save.
+            // An IO failure that the fuzz plants for the non-WAL writer can hit the log instead. The job then
+            // writes the purges it holds back to the log when it reopens it, at once after the first failure
+            // and then on its retry schedule, which can leave a purge in the log twice. Only a failure that
+            // lasts to the end of the run loses purges, which the purge job after the run, standing for a
+            // restart, cannot replay.
             final long purgeTasksConsumed = engine.getMessageBus().getColumnPurgeSubSeq().current() - purgeTasksConsumedBeforeRun;
             final long purgeTasksLogged = countPurgeLogTasks();
             Assert.assertTrue(purgeTasksLogged + " > " + purgeTasksConsumed, purgeTasksLogged <= purgeTasksConsumed);
