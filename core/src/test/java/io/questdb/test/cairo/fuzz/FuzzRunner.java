@@ -1159,10 +1159,6 @@ public class FuzzRunner {
     }
 
     /**
-     * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
-     * picks it randomly, call this after it to pin the type.
-     */
-    /**
      * Plants a fault on the posting seal purge log, with the purge log fault chance, for the PostingSealPurgeJob of a
      * worker pool that starts, whose first write opens a partition of its log, see {@link #setPurgeLogFaultProbability}
      */
@@ -1186,6 +1182,10 @@ public class FuzzRunner {
         ff.watchTable(postingSealPurgeLogTableName());
     }
 
+    /**
+     * Sets designated timestamp type of the tables the runner creates. {@link #generateRandom(Log)}
+     * picks it randomly, call this after it to pin the type.
+     */
     public void setTimestampType(int timestampType) {
         this.timestampType = timestampType;
     }
@@ -1231,13 +1231,13 @@ public class FuzzRunner {
         };
     }
 
-    /**
-     * Half the time a POSTING index covers 1-3 of {@code candidates}: returns the INCLUDE clause, else null.
-     */
     private static int purgeLogFaultIndex(boolean isPostingSealLog, FailureFileFacade.TableFailureKind kind) {
         return (isPostingSealLog ? FailureFileFacade.TableFailureKind.values().length : 0) + kind.ordinal();
     }
 
+    /**
+     * Half the time a POSTING index covers 1-3 of {@code candidates}: returns the INCLUDE clause, else null.
+     */
     private static String randomIncludeClause(Rnd rnd, String indexTypeClause, String[] candidates) {
         if (!indexTypeClause.startsWith("TYPE POSTING") || rnd.nextBoolean()) {
             return null;
