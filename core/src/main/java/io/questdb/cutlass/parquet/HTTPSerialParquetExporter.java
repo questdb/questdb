@@ -307,12 +307,17 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
 
     private void processHybridStreamExport() throws Exception {
         boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
+        final PageFrameCursor pfc = isPageFrameBacked ? streamingPfc : null;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
         if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
         if (exporter.onResume()) {
+            // The client was slower than the export, which waited inside a write that flushed a row
+            // group, before drainHybridFrames() could release what the flush wrote. onResume() has
+            // finished that write.
+            releaseWrittenFrames(exporter, materializer, pfc);
             LOG.debug().$("hybrid stream export progress (resume) [id=").$hexPadded(task.getCopyID())
                     .$(", exported totalRows=").$(exporter.getTotalRows())
                     .$(']').$();
@@ -323,7 +328,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
         final long totalRows = drainHybridFrames(
                 exporter, materializer, materializerColumnData,
-                isPageFrameBacked ? streamingPfc : null,
+                pfc,
                 isPageFrameBacked ? null : fullCursor,
                 batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
         );

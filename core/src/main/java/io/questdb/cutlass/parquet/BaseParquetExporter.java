@@ -36,6 +36,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 
 public abstract class BaseParquetExporter {
@@ -56,6 +57,28 @@ public abstract class BaseParquetExporter {
         this.circuitBreaker = task.getCircuitBreaker();
     }
 
+    /**
+     * Releases what the frames before the current one hold: the materializer's pinned buffers and the
+     * partitions before the current frame's. Call it once a write that flushed a row group has finished:
+     * drainHybridFrames() does after such a write, and an export that a slow client suspended inside such
+     * a write does once onResume() has finished it.
+     */
+    protected static void releaseWrittenFrames(
+            CopyExportRequestTask.StreamPartitionParquetExporter exporter,
+            HybridColumnMaterializer mat,
+            @Nullable PageFrameCursor pfc
+    ) {
+        // The writer writes rows in frame order and flushes every full row group before it takes the
+        // next frame, so the row group a frame's write flushes takes every row still pending from the
+        // frames before it: no more rows are pending than the current frame holds.
+        assert exporter.getTotalRows() - exporter.getRowsWrittenToRowGroups() <= exporter.getCurrentFrameRowCount()
+                : "the writer still holds rows of an earlier frame";
+        mat.releasePinnedBuffers();
+        if (pfc != null) {
+            pfc.releaseOpenPartitions();
+        }
+    }
+
     protected long drainHybridFrames(
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             HybridColumnMaterializer mat,
@@ -66,7 +89,6 @@ public abstract class BaseParquetExporter {
             CopyExportRequestTask.Phase phase
     ) throws Exception {
         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
-        long inFlightRows = 0;
         for (; ; ) {
             long rowCount;
             if (pfc != null) {
@@ -82,17 +104,10 @@ public abstract class BaseParquetExporter {
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             exporter.writeHybridFrame(columnData, rowCount);
-            inFlightRows += rowCount;
 
             long currentRowsWritten = exporter.getRowsWrittenToRowGroups();
             if (currentRowsWritten > previousRowsWritten) {
-                inFlightRows -= (currentRowsWritten - previousRowsWritten);
-                if (inFlightRows <= rowCount) {
-                    mat.releasePinnedBuffers();
-                }
-                if (pfc != null) {
-                    pfc.releaseOpenPartitions();
-                }
+                releaseWrittenFrames(exporter, mat, pfc);
                 previousRowsWritten = currentRowsWritten;
             }
         }
