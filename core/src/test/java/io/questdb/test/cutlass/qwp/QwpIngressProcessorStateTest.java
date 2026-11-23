@@ -6132,6 +6132,21 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameRoundTripAcrossLookupKeepsColumnAddRows() throws Exception {
+        // RENAME TABLE away lands before a lookup, which finds the table renamed, and the RENAME back to its name before
+        // the column add of the block the lookup served. By then the table goes by its name again, so the block's rows
+        // belong in it: the add catches the writer up with both renames, and the block appends.
+        assertRenameRoundTripKeepsColumnAddRows(true);
+    }
+
+    @Test
+    public void testRenameRoundTripAfterLookupKeepsColumnAddRows() throws Exception {
+        // Both renames land between a lookup and the column add of the block it served. The writer replays each into a
+        // new token, the last one equal to the token it had, and the block appends.
+        assertRenameRoundTripKeepsColumnAddRows(false);
+    }
+
+    @Test
     public void testSalvageAuthorizesAgainstReboundTableToken() throws Exception {
         // M6: a salvage commit writes into the RENAMED table (goActive() rebound
         // the writer), so the ACL check must name that table. The TUD's pinned
@@ -7634,6 +7649,45 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             }
             return block.getSchema();
         }
+    }
+
+    // Renames table round_trip away and back, the first rename ahead of the second lookup when isFirstRenameBeforeLookup,
+    // and appends a block that adds a column through the entry that lookup served: the row lands in round_trip.
+    private void assertRenameRoundTripKeepsColumnAddRows(boolean isFirstRenameBeforeLookup) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE round_trip (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final LineHttpProcessorConfiguration lineConfig =
+                    new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (
+                    QwpTudCache cache = new QwpTudCache(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
+                    QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                    QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+            ) {
+                decoder.setSchemaCache(cache);
+                final Utf8String tableName = new Utf8String("round_trip");
+                // the first lookup caches the table's entry
+                Assert.assertNotNull(cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, tableName, null, null, 1));
+                if (isFirstRenameBeforeLookup) {
+                    execute("RENAME TABLE round_trip TO round_trip_tmp");
+                }
+                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(AllowAllSecurityContext.INSTANCE, tableName, null, null, 1);
+                Assert.assertNotNull(tud);
+                Assert.assertEquals(isFirstRenameBeforeLookup, tud.isRenamedAtLookup());
+                if (!isFirstRenameBeforeLookup) {
+                    execute("RENAME TABLE round_trip TO round_trip_tmp");
+                }
+                execute("RENAME TABLE round_trip_tmp TO round_trip");
+
+                appendOneRow(decoder, appender, tud, "round_trip", "extra", true);
+                Assert.assertEquals(1, tud.getWriter().getUncommittedRowCount());
+                tud.commit(false);
+            }
+            drainWalQueue();
+            assertQuery("SELECT * FROM round_trip").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    val\tts\textra
+                    1\t1970-01-01T00:00:01.000000Z\t2
+                    """);
+        });
     }
 
     private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {

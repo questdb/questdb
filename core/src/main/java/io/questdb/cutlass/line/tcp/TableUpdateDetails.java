@@ -485,6 +485,10 @@ public class TableUpdateDetails implements Closeable {
         this.tableToken = tableToken;
     }
 
+    protected CairoEngine getEngine() {
+        return engine;
+    }
+
     private void handleCommitException(Throwable ex) {
         setWriterInError();
         LOG.error().$("could not commit [table=").$(tableToken).$(", e=").$(ex).I$();

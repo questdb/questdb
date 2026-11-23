@@ -203,9 +203,11 @@ public class QwpWalAppender implements QuietCloseable {
     // the writer up with the table's structure, and a RENAME TABLE among the changes it replays would rebind the
     // writer to the renamed table, where this block and the later blocks for the old name would commit. So a table
     // that the lookup found renamed gets no catch-up, as QwpTudCache.applyPendingStructureChanges() gives it none,
-    // and a RENAME that lands after the lookup, and that the add replays, refuses the block before its rows reach
-    // the writer; the table's next lookup discards its entry. Both refusals are retriable: a WebSocket client replays
-    // the frame on a new connection, whose lookup resolves the table's name afresh.
+    // unless a RENAME back to its name has landed since. A RENAME that lands after the lookup, and that the add
+    // replays, refuses the block before its rows reach the writer; the table's next lookup discards its entry. Both
+    // refusals are retriable: a WebSocket client replays the frame on a new connection, whose lookup resolves the
+    // table's name afresh. Each replayed RENAME gives the writer a new token, so the checks compare tokens by value,
+    // as the sequencer does at commit: a table renamed away and back has an equal token, and keeps the block.
     private static int addColumn(
             SecurityContext securityContext,
             WalTableUpdateDetails tud,
@@ -215,19 +217,19 @@ public class QwpWalAppender implements QuietCloseable {
             int columnType
     ) {
         final TableToken tableToken = writer.getTableToken();
-        if (tud.isRenamedAtLookup()) {
+        if (tud.isRenamedAtLookup() && tud.isRenamed()) {
             throw tableRenamedException(tableToken);
         }
         final int columnIndex;
         try {
             columnIndex = addColumn0(securityContext, writer, metadata, columnName, columnType);
         } catch (CairoException e) {
-            if (writer.getTableToken() != tableToken) {
+            if (!tableToken.equals(writer.getTableToken())) {
                 throw tableRenamedException(tableToken);
             }
             throw e;
         }
-        if (writer.getTableToken() != tableToken) {
+        if (!tableToken.equals(writer.getTableToken())) {
             throw tableRenamedException(tableToken);
         }
         return columnIndex;

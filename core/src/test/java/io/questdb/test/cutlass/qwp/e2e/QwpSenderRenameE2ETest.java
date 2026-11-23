@@ -245,6 +245,40 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
         assertRenameMidConnectionDoesNotMisrouteRowsWithNewColumn(false);
     }
 
+    @Test
+    public void testRenameRoundTripDuringColumnAddKeepsRows() throws Exception {
+        // RENAME TABLE trades TO trades_tmp and back lands after the table lookup of a frame that adds a column, and
+        // before the add. The table has its name again, so the frame's rows belong in it: the add catches the
+        // connection's writer up with both renames, and the frame commits without an error.
+        final AtomicReference<Throwable> renameError = new AtomicReference<>();
+        runOnFirstColumnAdd(() -> {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                engine.execute("RENAME TABLE trades TO trades_tmp", executionContext);
+                engine.execute("RENAME TABLE trades_tmp TO trades", executionContext);
+            } catch (Throwable th) {
+                renameError.set(th);
+            }
+        });
+        runInContext((port) -> {
+            final List<SenderError> errors = new CopyOnWriteArrayList<>();
+            try (QwpWebSocketSender sender = connectWs(port, errors::add)) {
+                sender.table("trades").longColumn("v", 1).at(1_000_000_000_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+                sender.table("trades").longColumn("v", 2).longColumn("c", 20).at(1_000_000_001_000L, ChronoUnit.MICROS);
+                Assert.assertTrue(sender.drain(30_000));
+            }
+            Assert.assertNull(renameError.get());
+            Assert.assertTrue("the frame must commit without an error, got: " + errors, errors.isEmpty());
+
+            drainWalQueue();
+            assertQuery("SELECT v, c FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tc\n1\tnull\n2\t20\n");
+            Assert.assertNull(engine.getTableTokenIfExists("trades_tmp"));
+        });
+    }
+
     // RENAME lands after the table lookup of a frame that adds a column, and before the add, which replays it into the
     // connection's writer of "trades" while it catches up with the table's structure. The add must not commit the
     // frame's rows through that writer into trades_archive: the frame is refused and replayed on a new connection,
@@ -253,7 +287,7 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
     // keeps it: the add commits before the appender sees the replayed RENAME.
     private void assertRenameDuringColumnAddDoesNotMisrouteRows(boolean isColumnInRenamedTable) throws Exception {
         final AtomicReference<Throwable> renameError = new AtomicReference<>();
-        final AtomicReference<Runnable> pendingRename = new AtomicReference<>(() -> {
+        runOnFirstColumnAdd(() -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.execute("RENAME TABLE trades TO trades_archive", executionContext);
                 if (isColumnInRenamedTable) {
@@ -263,21 +297,6 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
                 renameError.set(th);
             }
         });
-        // runs the rename once, the first time a connection is about to add a column, after its table lookup
-        factoryProvider = new DefaultFactoryProvider() {
-            @Override
-            public @NotNull SecurityContextFactory getSecurityContextFactory() {
-                return (principalContext, interfaceId) -> new AllowAllSecurityContext() {
-                    @Override
-                    public void authorizeAlterTableAddColumn(TableToken tableToken) {
-                        final Runnable rename = pendingRename.getAndSet(null);
-                        if (rename != null) {
-                            rename.run();
-                        }
-                    }
-                };
-            }
-        };
         runInContext((port) -> {
             final List<SenderError> errors = new CopyOnWriteArrayList<>();
             try (QwpWebSocketSender sender = connectWs(port, errors::add)) {
@@ -344,5 +363,25 @@ public class QwpSenderRenameE2ETest extends AbstractQwpWebSocketTest {
             assertRenameRefusal(errors, "trades");
             Assert.assertEquals("the replay must not fail", 1, errors.size());
         });
+    }
+
+    // Serves every connection a security context that runs ddl once, the first time a connection is about to add a
+    // column: after the table lookup of the frame that adds it, and before the add.
+    private void runOnFirstColumnAdd(Runnable ddl) {
+        final AtomicReference<Runnable> pendingDdl = new AtomicReference<>(ddl);
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull SecurityContextFactory getSecurityContextFactory() {
+                return (principalContext, interfaceId) -> new AllowAllSecurityContext() {
+                    @Override
+                    public void authorizeAlterTableAddColumn(TableToken tableToken) {
+                        final Runnable action = pendingDdl.getAndSet(null);
+                        if (action != null) {
+                            action.run();
+                        }
+                    }
+                };
+            }
+        };
     }
 }

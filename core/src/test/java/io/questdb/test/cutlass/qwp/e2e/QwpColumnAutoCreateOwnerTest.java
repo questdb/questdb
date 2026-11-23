@@ -129,8 +129,31 @@ public class QwpColumnAutoCreateOwnerTest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testOwnerRefusalStandsAfterRenameRoundTripDuringAdd() throws Exception {
+        // Another session renames the table away and back between this connection's table lookup and its owner check.
+        // Catching the writer up after the refusal replays both renames, which leave the table under its name, so the
+        // refusal stands at once, as when nobody renames the table, without a retry on a new connection.
+        final AtomicReference<Throwable> renameError = new AtomicReference<>();
+        assertOwnerRefusalStands(() -> {
+            try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+                engine.execute("RENAME TABLE t TO u", executionContext);
+                engine.execute("RENAME TABLE u TO t", executionContext);
+            } catch (Throwable th) {
+                renameError.set(th);
+            }
+        });
+        Assert.assertNull(renameError.get());
+    }
+
+    @Test
     public void testOwnerRefusalStandsWhenNoOtherConnectionAddsColumn() throws Exception {
-        final AtomicInteger ownerChecks = useOwnerRefusingSecurityContext(null);
+        assertOwnerRefusalStands(null);
+    }
+
+    // Refuses the owner of the column a frame adds, after running onAddColumn as the connection is about to add it, and
+    // asserts that the refusal stands at once: one owner check, so no retry on a new connection, and no column.
+    private void assertOwnerRefusalStands(@Nullable Runnable onAddColumn) throws Exception {
+        final AtomicInteger ownerChecks = useOwnerRefusingSecurityContext(onAddColumn);
         runInContext(port -> {
             execute("CREATE TABLE t (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
             LineSenderServerException refusal = null;
