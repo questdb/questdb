@@ -59,6 +59,9 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     // Borrowed from ExportQueryProcessorState via setup methods; not owned.
     private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
+    // Set while the export waits for a slow client to read. A resumed process() or the
+    // release of the connection, in clearExportResources(), ends such an export.
+    private boolean isSuspended;
     private boolean isTempTableOwned;
     private HybridColumnMaterializer materializer;
     private DirectLongList materializerColumnData;
@@ -75,6 +78,8 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
      * Must be called when the connection drops or the state is cleared.
      */
     public void clearExportResources() {
+        final boolean isCutOff = isSuspended;
+        isSuspended = false;
         exportMode = null;
         final RecordCursor fullCursor = this.fullCursor;
         this.fullCursor = null;
@@ -90,6 +95,20 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         } catch (Throwable th) {
             cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
         }
+        if (isCutOff) {
+            // The connection went away while the export waited for the client to read. Log the
+            // end of the export, as process() does when a send finds the client gone.
+            copyExportContext.updateStatus(
+                    CopyExportRequestTask.Phase.STREAM_SENDING_DATA,
+                    CopyExportRequestTask.Status.CANCELLED,
+                    null,
+                    Numbers.INT_NULL,
+                    null,
+                    0,
+                    task.getTableName(),
+                    task.getCopyID()
+            );
+        }
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -99,7 +118,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         RecordCursorFactory factory = null;
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
-        boolean isSuspended = false;
+        isSuspended = false;
         parentSqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
 
         try {

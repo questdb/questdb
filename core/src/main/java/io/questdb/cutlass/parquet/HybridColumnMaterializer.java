@@ -111,8 +111,11 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 && outputColumnType == toExportColumnType(outputColumnType);
     }
 
+    // A bare NULL has no column type of its own: it exports as a STRING column of NULLs, the
+    // type /exec reports for it. An export through a temp table does the same, see
+    // CreateTableOperationImpl.
     private static int toExportColumnType(int columnType) {
-        if (ColumnType.isSymbol(columnType)) {
+        if (ColumnType.isSymbol(columnType) || ColumnType.isNull(columnType)) {
             return ColumnType.STRING;
         }
         if (columnType == ColumnType.VARCHAR_SLICE) {
@@ -709,6 +712,9 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
                 CharSequence sym = record.getSymA(col);
                 StringTypeDriver.appendValue(auxBuf, dataBuf, sym);
             }
+            // Exported as STRING. A row that a sort copies keeps no bytes for a NULL column, and
+            // a getter would read the next column: write NULL without reading.
+            case ColumnType.NULL -> StringTypeDriver.INSTANCE.appendNull(auxBuf, dataBuf);
             case ColumnType.LONG256 -> {
                 Long256 val = record.getLong256A(col);
                 dataBuf.putLong256(val);

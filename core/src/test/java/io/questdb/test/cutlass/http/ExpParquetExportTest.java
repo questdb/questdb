@@ -42,6 +42,8 @@ import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.network.NetworkFacade;
+import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -546,6 +548,78 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testExportCutOffWhileParkedLogsCancelled() throws Exception {
+        // A client that stops reading parks the export until the socket drains. When the connection
+        // drops instead, sys.copy_export_log must end the export as cancelled, as it does when the
+        // server notices the drop on a send. The facade forces the order: the first send of each
+        // response finds the socket full, and the send that resumes the response finds the peer gone.
+        final AtomicInteger sendCount = new AtomicInteger();
+        final AtomicBoolean isPeerGone = new AtomicBoolean(true);
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                if (sendCount.getAndIncrement() == 0) {
+                    return 0;
+                }
+                return isPeerGone.get() ? -1 : super.sendRaw(fd, buffer, bufferLen);
+            }
+        };
+        new HttpQueryTestBuilder()
+                .withTempFolder(root)
+                .withWorkerCount(1)
+                .withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(nf))
+                .withTelemetry(false)
+                .withCopyExportRoot(root + "/export")
+                .withCopyInputRoot(root + "/export")
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE cut AS (
+                                SELECT x, rnd_bin(4, 8, 0) b, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(1_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+                    final String streamed = """
+                            phase\tstatus\tmessage
+                            stream_sending_data\tstarted\t
+                            stream_sending_data\tcancelled\t
+                            """;
+                    assertExportCutOff(engine, sqlExecutionContext, sendCount, "SELECT x, ts FROM cut", ParquetExportMode.DIRECT_PAGE_FRAME, streamed);
+                    assertExportCutOff(engine, sqlExecutionContext, sendCount, "SELECT x + 1 x1, ts FROM cut", ParquetExportMode.PAGE_FRAME_BACKED, streamed);
+                    assertExportCutOff(engine, sqlExecutionContext, sendCount, "SELECT cut.x, cut.ts FROM cut CROSS JOIN long_sequence(1)", ParquetExportMode.CURSOR_BASED, streamed);
+                    // The parked export keeps its temp table, and the cut-off drops it.
+                    assertExportCutOff(
+                            engine,
+                            sqlExecutionContext,
+                            sendCount,
+                            "SELECT cut.x, cut.b FROM cut CROSS JOIN long_sequence(1)",
+                            ParquetExportMode.TEMP_TABLE,
+                            """
+                                    phase\tstatus\tmessage
+                                    populating_data_to_temp_table\tstarted\t
+                                    populating_data_to_temp_table\tfinished\t
+                                    stream_sending_data\tstarted\t
+                                    dropping_temp_table\tstarted\t
+                                    dropping_temp_table\tfinished\t
+                                    stream_sending_data\tcancelled\t
+                                    """
+                    );
+
+                    // An export that resumes once the client reads again logs no cancellation.
+                    isPeerGone.set(false);
+                    sendCount.set(0);
+                    try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+                        exportParquet(httpClient, sink, "SELECT x, ts FROM cut");
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, "SELECT x, ts FROM cut", "cut_resumed.parquet");
+                    }
+                    Assert.assertTrue(sendCount.get() > 1);
+                    assertExportLog(engine, sqlExecutionContext, """
+                            phase\tstatus\tmessage
+                            stream_sending_data\tstarted\t
+                            stream_sending_data\tfinished\t
+                            success\tfinished\t
+                            """);
+                });
+    }
+
+    @Test
     public void testExportDropConnection() throws Exception {
         assertMemoryLeak(() -> getExportTester()
                 .runNoLeakCheck(null, (engine, _) -> {
@@ -575,6 +649,31 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                         Os.sleep(100);
                     }
                 }));
+    }
+
+    @Test
+    public void testExportNullColumn() throws Exception {
+        // A bare NULL has no column type; /exp writes it as a STRING column of NULLs, the type
+        // /exec reports for it, in every export mode.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute("""
+                            CREATE TABLE tn AS (
+                                SELECT x, ('s' || x)::SYMBOL sym, rnd_bin(4, 8, 0) b, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""", sqlExecutionContext);
+                    assertNullColumnExport(engine, sqlExecutionContext, "SELECT sym, NULL n, x, ts FROM tn", ParquetExportMode.PAGE_FRAME_BACKED, "null_hybrid");
+                    assertNullColumnExport(engine, sqlExecutionContext, "SELECT tn.sym, NULL n, tn.x FROM tn CROSS JOIN long_sequence(1)", ParquetExportMode.CURSOR_BASED, "null_cursor");
+                    // A sort that copies the rows of a join keeps no bytes for the NULL column.
+                    assertNullColumnExport(
+                            engine,
+                            sqlExecutionContext,
+                            "SELECT n, sym, x FROM (SELECT NULL n, tn.sym, tn.x FROM tn CROSS JOIN long_sequence(1)) ORDER BY x DESC",
+                            ParquetExportMode.CURSOR_BASED,
+                            "null_sorted"
+                    );
+                    // A BINARY column of a row-wise export goes through a temp table.
+                    assertNullColumnExport(engine, sqlExecutionContext, "SELECT tn.b, NULL n, tn.x FROM tn CROSS JOIN long_sequence(1)", ParquetExportMode.TEMP_TABLE, "null_temp_table");
+                });
     }
 
     @Test
@@ -2703,6 +2802,51 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
         }
     }
 
+    // Exports the query through a connection that the network facade parks and then drops, and
+    // checks what the export leaves behind.
+    private static void assertExportCutOff(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            AtomicInteger sendCount,
+            String query,
+            ParquetExportMode expectedMode,
+            String expectedLog
+    ) throws Exception {
+        assertParquetExportMode(engine, sqlExecutionContext, query, expectedMode);
+        sendCount.set(0);
+        try (TestHttpClient httpClient = new TestHttpClient()) {
+            HttpClient.Request req = httpClient.getHttpClient().newRequest("localhost", 9001);
+            req.GET().url("/exp").query("query", query).query("fmt", "parquet");
+            try {
+                req.send().await();
+                Assert.fail("the server must drop the connection");
+            } catch (HttpClientException e) {
+                TestUtils.assertContains(e.getMessage(), "peer disconnect");
+            }
+        }
+        Assert.assertEquals(2, sendCount.get());
+        // The server releases the export when it drops the connection.
+        assertEventually(() -> Assert.assertEquals(-1, engine.getCopyExportContext().getActiveExportId()));
+        assertExportLog(engine, sqlExecutionContext, expectedLog);
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT count() FROM tables() WHERE table_name LIKE 'zzz.copy.%'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n0\n");
+    }
+
+    // Asserts the log rows of the latest export.
+    private static void assertExportLog(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String expected) throws Exception {
+        final StringSink sink = new StringSink();
+        printSqlToString(engine, sqlExecutionContext, "SELECT id FROM sys.copy_export_log LIMIT -1", sink);
+        final String id = sink.subSequence(sink.indexOf("\n") + 1, sink.length() - 1).toString();
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT phase, status, message FROM sys.copy_export_log WHERE id = '" + id + "'")
+                .noLeakCheck()
+                .returns(expected);
+    }
+
     private static void assertParquetExportMode(
             CairoEngine engine,
             SqlExecutionContext sqlExecutionContext,
@@ -2762,6 +2906,27 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
             }
         }
         return req.send();
+    }
+
+    // Exports a query with a NULL column n of five rows through /exp, and compares the file with the
+    // query that casts the NULL to STRING.
+    private void assertNullColumnExport(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String query,
+            ParquetExportMode expectedMode,
+            String fileName
+    ) throws Exception {
+        assertParquetExportMode(engine, sqlExecutionContext, query, expectedMode);
+        try (TestHttpClient httpClient = new TestHttpClient(); DirectUtf8Sink sink = new DirectUtf8Sink(16_384)) {
+            exportParquet(httpClient, sink, query);
+            assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query.replace("NULL n", "NULL::STRING n"), fileName + ".parquet");
+        }
+        new QueryAssertion(engine, sqlExecutionContext, () -> {
+        }, "SELECT typeOf(n) type, count() FROM read_parquet('" + fileName + ".parquet') WHERE n IS NULL")
+                .noLeakCheck()
+                .expectSize()
+                .returns("type\tcount\nSTRING\t5\n");
     }
 
     private void assertParquetExportDataCorrectness(
