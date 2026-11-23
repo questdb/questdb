@@ -38,7 +38,7 @@ import org.jetbrains.annotations.TestOnly;
  * A tuple is the probe row's index in its frame followed by one entry per stage, see
  * {@link HashJoinStageStepper}, each in a slot of four bytes in a narrow execution and of eight
  * otherwise; the ring decides once per execution, see
- * {@link HashJoinTupleRing#of(io.questdb.cairo.sql.async.PageFrameSequence, boolean, boolean, boolean)}.
+ * {@link HashJoinTupleRing#of(io.questdb.cairo.sql.async.PageFrameSequence, boolean, boolean, long, long)}.
  * A narrow slot holds the value's low 32 bits, which the reads sign-extend, so the entries keep their
  * signs: a locator stays at least 0, and {@link HashJoinStageStepper#NO_MATCH} and a tagged chain head
  * stay below it. The ring picks the narrow layout only for values that fit, and the writer checks
