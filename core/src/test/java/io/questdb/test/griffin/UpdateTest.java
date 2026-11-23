@@ -3354,8 +3354,9 @@ public class UpdateTest extends AbstractCairoTest {
             }
 
             final String[] updates = {
-                    // Create the column files in the first partition, lower the column top in the second.
-                    "SET v = 'long varchar value ' || lng2, s = 'long string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (5, 11)",
+                    // Create the column files in the first partition. In the second, lower the column top from row 6 to
+                    // row 4 and write row 6, so the update copies row 7 while the new column top is still above row 0.
+                    "SET v = 'long varchar value ' || lng2, s = 'long string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (5, 11, 13)",
                     // Lower the column top of both partitions; the values above it move up the new files.
                     "SET v = 'another varchar value ' || lng2, s = 'another string value ' || lng2, b = b0, a = a0 WHERE lng2 IN (2, 8)",
                     // Write on both sides of the column top, adjacent rows and row 0 included, with NULL and empty values.
