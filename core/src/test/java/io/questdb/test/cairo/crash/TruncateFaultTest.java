@@ -28,7 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -43,12 +45,19 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Paths;
+
 /**
  * A non-WAL TRUNCATE publishes the empty {@code _txn} before it empties a file that the old one names. Whatever step
  * an I/O error or a process kill stops it at, the table is either as it was or empty, and a query reads it whole
  * before any writer opens it again: no crash, no wrong rows, and no TRUNCATE that a later writer open completes.
  */
 public class TruncateFaultTest extends AbstractCrashConsistencyTest {
+    // 2_048 hash buckets: an index key file of 65_600 bytes, past the 16 KiB key append page
+    private static final String MULTI_PAGE_MAP_INDEX_CREATE_SQL = "CREATE TABLE t (s SYMBOL CAPACITY 4_096 NOCACHE, x LONG)";
+    private static final String MULTI_PAGE_MAP_INDEX_INSERT_SQL = "INSERT INTO t SELECT 'old' || x, x FROM long_sequence(3_000)";
     // TRUNCATE cuts a column file to one append page, see setUpAppendPage(): the first column spans three
     private static final int ROWS = (int) (3 * Files.PAGE_SIZE / Long.BYTES);
 
@@ -166,8 +175,8 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
     public void testKillAfterIndexKeyCountDropsLeavesWritableTable() throws Exception {
         // BitmapIndexWriter.truncate() drops the key count of a symbol map's index before it zeroes the key entries,
         // and no kill point lies between the two. A process killed there leaves the old entries above a zero key
-        // count. The table reads empty, and the rows written after it take symbol keys of their own: the writer open
-        // zeroes those entries, which add() otherwise takes for empty ones.
+        // count. The table reads empty, and the rows written after it take symbol keys of their own: the first new
+        // key past those entries zeroes them, as add() would otherwise take them for empty ones.
         final SymbolMapTruncateCrashFacade ff = new SymbolMapTruncateCrashFacade();
         runWithCrashFacade(ff, () -> {
             // the old symbols fill the buckets of the map index, which hashes a capacity of 512 into 256 buckets
@@ -231,9 +240,21 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
                     .noRandomAccess()
                     .returns("n\n0\n");
 
+            // the writer open writes nothing to the key file; the pool keeps the writer open for the first insert
+            BitmapIndexWriter.testZeroedKeyBytes.set(0);
+            try (TableWriter ignore = getWriter("t")) {
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+            }
+            Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+
             // every new symbol twice: the second insert looks each one up in the index the first one built
             execute("INSERT INTO t SELECT 'new' || x, x FROM long_sequence(300)");
+            final long zeroedKeyBytes = BitmapIndexWriter.testZeroedKeyBytes.get();
+            Assert.assertTrue(zeroedKeyBytes > 0);
+            // a writer that opens the map again writes nothing to the key file, and no symbol that the map holds does
+            engine.releaseAllWriters();
             execute("INSERT INTO t SELECT 'new' || x, x + 1_000 FROM long_sequence(300)");
+            Assert.assertEquals(zeroedKeyBytes, BitmapIndexWriter.testZeroedKeyBytes.get());
             assertQuery("SELECT count() n, count_distinct(s) d FROM t")
                     .noLeakCheck()
                     .expectSize()
@@ -264,6 +285,32 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
+    public void testInsertAfterTruncateOnSameWriterWithMultiPageMapIndex() throws Exception {
+        // TRUNCATE empties the index of a symbol map in place, and the writer it leaves in the pool takes the next rows.
+        // Their symbols are new keys of an index whose key file was longer than the page truncate() keeps: they read
+        // none of the entries they skip, write nothing there, and read back as the rows of a table without a map.
+        assertMemoryLeak(() -> {
+            BitmapIndexWriter.isScannedKeyBytesCounterEnabled = true;
+            try {
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                execute(MULTI_PAGE_MAP_INDEX_CREATE_SQL);
+                execute(MULTI_PAGE_MAP_INDEX_INSERT_SQL);
+                execute("CREATE TABLE ref (s VARCHAR, x LONG)");
+                engine.releaseAllReaders();
+                execute("TRUNCATE TABLE t");
+
+                BitmapIndexWriter.testScannedKeyBytes.set(0);
+                insertNewSymbols();
+                Assert.assertEquals(0, BitmapIndexWriter.testScannedKeyBytes.get());
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                assertSameRowsAsRef();
+            } finally {
+                BitmapIndexWriter.isScannedKeyBytesCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
     public void testKillAtEveryPointLeavesTableAsItWasOrEmpty() throws Exception {
         assertEveryKillPoint(false);
     }
@@ -271,6 +318,74 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
     @Test
     public void testKillAtEveryPointLeavesTableAsItWasOrEmptyKeepSymbolMaps() throws Exception {
         assertEveryKillPoint(true);
+    }
+
+    @Test
+    public void testKillAtEveryPointWithMultiPageMapIndexLeavesWritableTable() throws Exception {
+        // The index of a symbol map with 2_048 hash buckets spans more than the key append page that TRUNCATE keeps
+        // mapped when it empties the map, so a kill at the cut of its key file leaves the old entries past that page
+        // above a zero key count. At every kill point the table reads as it was or empty, and the rows written after
+        // the restart read back as the rows of a table without a map: the first new key past old entries zeroes them,
+        // and nothing else writes to the key file.
+        final SymbolMapTruncateCrashFacade ff = new SymbolMapTruncateCrashFacade();
+        runWithCrashFacade(ff, () -> {
+            execute(MULTI_PAGE_MAP_INDEX_CREATE_SQL);
+            execute(MULTI_PAGE_MAP_INDEX_INSERT_SQL);
+            engine.releaseAllReaders();
+            final int base = ff.killPointCount();
+            ff.startRecording();
+            execute("TRUNCATE TABLE t");
+            ff.stopRecording();
+            final int points = ff.killPointCount() - base;
+            execute("DROP TABLE t");
+            Assert.assertTrue("TRUNCATE has no kill points", points > 0);
+
+            int staleCount = 0;
+            for (int k = 1; k <= points; k++) {
+                execute(MULTI_PAGE_MAP_INDEX_CREATE_SQL);
+                execute(MULTI_PAGE_MAP_INDEX_INSERT_SQL);
+                engine.releaseAllReaders();
+                ff.armKillAt(ff.killPointCount() + k, tableDir());
+                execute("TRUNCATE TABLE t");
+                Assert.assertTrue("kill point " + k + " was not reached", ff.isKillImageTaken());
+                // process restart: the engine lets go of the table, and its files go back to the kill image
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                ff.crash(tableDir());
+                engine.getTxnScoreboardPool().remove(engine.verifyTableName("t"));
+
+                // whether the kill left old entries above the key count of the map index
+                final byte[] keyFile = java.nio.file.Files.readAllBytes(Paths.get(tableDir(), "s.k"));
+                final int keyCount = ByteBuffer.wrap(keyFile).order(ByteOrder.nativeOrder()).getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_KEY_COUNT);
+                boolean isStale = false;
+                for (long i = BitmapIndexUtils.KEY_FILE_RESERVED + Math.max(keyCount, 0) * BitmapIndexUtils.KEY_ENTRY_SIZE; i < keyFile.length && !isStale; i++) {
+                    isStale = keyFile[(int) i] != 0;
+                }
+
+                // before any writer opens the table again, a query reads it whole: as it was, or empty
+                final String rowCount = TestUtils.printSqlToString(engine, sqlExecutionContext, "SELECT count() n FROM t", sink);
+                final boolean isEmpty = "n\n0\n".equals(rowCount);
+                Assert.assertTrue("kill point " + k + ": " + rowCount, isEmpty || "n\n3000\n".equals(rowCount));
+                execute("CREATE TABLE ref (s VARCHAR, x LONG)");
+                if (!isEmpty) {
+                    execute("INSERT INTO ref SELECT 'old' || x, x FROM long_sequence(3_000)");
+                }
+
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                insertNewSymbols();
+                assertSameRowsAsRef();
+                Assert.assertEquals("kill point " + k, isStale, BitmapIndexWriter.testZeroedKeyBytes.get() > 0);
+                if (isStale) {
+                    staleCount++;
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                execute("DROP TABLE t");
+                execute("DROP TABLE ref");
+            }
+            // the sweep reaches a kill that leaves old entries above the key count
+            Assert.assertTrue("no kill point left old entries above the key count", staleCount > 0);
+        });
     }
 
     private static void assertTruncateFailsAfterPublish(FaultFacade ff, String truncateSql, String cause) throws Exception {
@@ -288,6 +403,18 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
         ff.isFired = false;
     }
 
+    // The rows of t, whose symbol column has its own map, and of ref, which holds the same rows as VARCHAR
+    private static void assertSameRowsAsRef() throws Exception {
+        for (String sql : new String[]{
+                "SELECT x FROM %s WHERE s = 'new7'",
+                "SELECT s, count() n FROM %s WHERE s IN ('new1', 'new1500', 'new3000', 'old7') GROUP BY s ORDER BY s",
+                "SELECT count() n, count_distinct(s) d FROM %s",
+                "SELECT s, x FROM %s ORDER BY x, s"
+        }) {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, String.format(sql, "ref"), String.format(sql, "t"), LOG, true);
+        }
+    }
+
     private static int countMod(int modulo, int remainder) {
         int count = 0;
         for (int x = 1; x <= ROWS; x++) {
@@ -302,6 +429,17 @@ public class TruncateFaultTest extends AbstractCrashConsistencyTest {
     private static void createTable() throws Exception {
         execute("CREATE TABLE t (a LONG, s SYMBOL, si SYMBOL INDEX, v VARCHAR, b LONG)");
         execute("INSERT INTO t SELECT x, 's' || (x % 7), 'k' || (x % 5), 'v' || x, x * 10 FROM long_sequence(" + ROWS + ")");
+    }
+
+    // Every new symbol twice, into t and into ref: the second insert looks each one up in the index the first one built
+    private static void insertNewSymbols() throws Exception {
+        for (String newRowsSql : new String[]{
+                "SELECT 'new' || x, x FROM long_sequence(3_000)",
+                "SELECT 'new' || x, x + 10_000 FROM long_sequence(3_000)"
+        }) {
+            execute("INSERT INTO t " + newRowsSql);
+            execute("INSERT INTO ref " + newRowsSql);
+        }
     }
 
     private static String tableDir() {

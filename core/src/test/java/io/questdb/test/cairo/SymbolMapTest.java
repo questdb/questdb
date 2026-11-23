@@ -33,6 +33,7 @@ import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -1260,6 +1261,64 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReopenWritesNoSkippedKeys() throws Exception {
+        // A writer that opens a symbol map opens the index of the map, which writes nothing to its key file, and the
+        // symbols it adds after that find zeros in the index entries they make keys.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                // 8_192 hash buckets: the new symbols land in buckets that hold symbols and in buckets that hold none
+                create(path, "x", 16_384, false);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    for (int i = 0; i < 5_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                }
+
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                5_000,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+                    // the old symbols through the index, then 1_000 new ones
+                    for (int i = 0; i < 6_000; i++) {
+                        Assert.assertEquals(i, writer.put("symbol" + i));
+                    }
+                    Assert.assertEquals(6_000, writer.getSymbolCount());
+                }
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 6_000)) {
+                    for (int i = 0; i < 6_000; i++) {
+                        Assert.assertEquals(i, reader.keyOf("symbol" + i));
+                        TestUtils.assertEquals("symbol" + i, reader.valueOf(i));
+                    }
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("symbol6000"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1024;
@@ -1723,6 +1782,8 @@ public class SymbolMapTest extends AbstractCairoTest {
         assertMemoryLeak(ff, () -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 create(path, "x", 1024, true);
+                // no writer open writes to the index key file, and no symbol does but the entry of its key
+                BitmapIndexWriter.testZeroedKeyBytes.set(0);
                 try (
                         SymbolMapWriter writer = new SymbolMapWriter(
                                 configuration,
@@ -1783,6 +1844,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                 ) {
                     Assert.assertEquals(0, writer.put("symbol7"));
                 }
+                Assert.assertEquals(0, BitmapIndexWriter.testZeroedKeyBytes.get());
                 try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 1)) {
                     Assert.assertEquals(0, reader.keyOf("symbol7"));
                     Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("symbol4999"));

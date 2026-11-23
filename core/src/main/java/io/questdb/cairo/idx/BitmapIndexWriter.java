@@ -46,7 +46,18 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class BitmapIndexWriter implements IndexWriter {
+    // @TestOnly observability of zeroSkippedKeys(): the bytes it reads and the bytes it zeroes. Every sparse new key
+    // adds to the first, so a plain static boolean guards it, and the JIT folds the always-false production branch
+    // away. Only a kill or a corrupt file leaves bytes to zero.
+    @TestOnly
+    public static boolean isScannedKeyBytesCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testScannedKeyBytes = new AtomicLong();
+    @TestOnly
+    public static final AtomicLong testZeroedKeyBytes = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(BitmapIndexWriter.class);
     private static final long MAX_VALUE_OFFSET = BitmapIndexUtils.KEY_RESERVED_OFFSET_MAX_VALUE;
     private final CairoConfiguration configuration;
@@ -95,6 +106,21 @@ public class BitmapIndexWriter implements IndexWriter {
         keyMem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - keyMem.getAppendOffset());
     }
 
+    private static boolean isZeroFilled(long address, long size) {
+        long offset = 0;
+        for (long n = size - Long.BYTES; offset <= n; offset += Long.BYTES) {
+            if (Unsafe.getLong(address + offset) != 0) {
+                return false;
+            }
+        }
+        for (; offset < size; offset++) {
+            if (Unsafe.getByte(address + offset) != 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /**
      * Adds key-value pair to index. If key already exists, value is appended to end of list of existing values. Otherwise,
      * new value list is associated with the key.
@@ -133,9 +159,9 @@ public class BitmapIndexWriter implements IndexWriter {
             }
         } else {
             // This is a new key. Because index can have sparse keys whenever we think "key exists" we must deal
-            // with holes left by this branch, which allocates new key. All key entries that have been
-            // skipped during creation of new key will have been initialized with zeroes. This includes counts and
-            // block offsets.
+            // with holes left by this branch, which allocates new key. zeroSkippedKeys() makes the key entries this
+            // skips hold zeros, counts and block offsets included.
+            zeroSkippedKeys(offset);
             initValueBlockAndStoreValue(offset, value);
             // here we also need to update key count
             // we don't just increment key count, in case this addition creates sparse key set
@@ -301,7 +327,6 @@ public class BitmapIndexWriter implements IndexWriter {
             this.blockValueCountMod = keyMem.getInt(BitmapIndexUtils.KEY_RESERVED_OFFSET_BLOCK_VALUE_COUNT) - 1;
             assert blockValueCountMod > 0;
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            zeroKeysAboveKeyCount();
         } catch (Throwable e) {
             close();
             if (kFdUnassigned) {
@@ -414,7 +439,6 @@ public class BitmapIndexWriter implements IndexWriter {
                 throw CairoException.critical(0).put("corrupt file ").put(path);
             }
             this.blockCapacity = (blockValueCountMod + 1) * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
-            zeroKeysAboveKeyCount();
         } catch (Throwable e) {
             this.close();
             throw e;
@@ -555,7 +579,7 @@ public class BitmapIndexWriter implements IndexWriter {
      *     <li>the value memory size drops to zero before the value file shrinks.</li>
      * </ul>
      * A kill after the key count drops and before this zeroes the entries leaves stale entries above the key count,
-     * which the next writer open zeroes, see zeroKeysAboveKeyCount(). The header changes without the sequence
+     * which add() zeroes before a new key covers them, see zeroSkippedKeys(). The header changes without the sequence
      * protocol: a kill between its two halves would leave them unequal, and the writer open refuses such a key file.
      * Emptying in place was never safe for a reader that maps the index, since the files shrink under its mapping:
      * TRUNCATE TABLE keeps readers out with CairoEngine.lockReaders().
@@ -688,13 +712,26 @@ public class BitmapIndexWriter implements IndexWriter {
         keyMem.putLong(BitmapIndexUtils.KEY_RESERVED_OFFSET_SEQUENCE_CHECK, seq);
     }
 
-    // add() takes an entry above the key count for a zero one. A process killed inside truncate() can leave the old
-    // entries there, and no reader reads them.
-    private void zeroKeysAboveKeyCount() {
-        final long lo = keyMemSize();
-        final long hi = keyMem.getAppendOffset();
+    // updateKeyCount() makes every entry from the key count up to a new key a live key, which must hold zeros. The
+    // entries start at the header end whatever count the header holds: of() also accepts a negative one. Past the key
+    // file length that of() mapped they hold zeros: the file grows with zeros, and add() writes above the key count only
+    // the entry it then covers. Below it, a process killed inside truncate() after the key count dropped, or inside add()
+    // before it raised the key count, can leave old entries. Writes only when it finds a non-zero byte, so that the
+    // pages of a clean key file stay clean. The append offset of keyMem stays at the length of() mapped: puts at an
+    // offset and extensions keep it, and truncate() moves it to the header end once it has zeroed the entries.
+    private void zeroSkippedKeys(long keyOffset) {
+        final long lo = BitmapIndexUtils.getKeyEntryOffset(Math.max(keyCount, 0));
+        final long hi = Math.min(keyOffset, keyMem.getAppendOffset());
         if (hi > lo) {
-            Vect.memset(keyMem.addressOf(lo), hi - lo, 0);
+            final long address = keyMem.addressOf(lo);
+            final long size = hi - lo;
+            if (isScannedKeyBytesCounterEnabled) {
+                testScannedKeyBytes.addAndGet(size);
+            }
+            if (!isZeroFilled(address, size)) {
+                Vect.memset(address, size, 0);
+                testZeroedKeyBytes.addAndGet(size);
+            }
         }
     }
 
