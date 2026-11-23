@@ -229,6 +229,7 @@ public class ReaderPool extends AbstractMultiTenantPool<ReaderPool.R> {
                             if (pool != null) {
                                 pool.expelFromPool(this);
                             }
+                            goodbye();
                         }
                         throw th;
                     }
