@@ -543,6 +543,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean hasTtlEvictedPartitionsSinceLastCommit;
     private int indexCount;
     private boolean isInCtorRecovery;
+    private boolean isO3ColumnTopsUpdated;
     // False until the constructor's try block completes. The constructor's failure path calls doClose() with the
     // columns, symbol maps and indexers only partly populated, so every optional close-time action that walks
     // them checks this first.
@@ -11018,7 +11019,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3FinishInFlight = true;
         try {
             if (!o3InError) {
-                updateO3ColumnTops();
+                if (!isO3ColumnTopsUpdated) {
+                    updateO3ColumnTops();
+                }
                 try {
                     sealPostingIndexesForO3Partitions();
                 } catch (Throwable e) {
@@ -12707,8 +12710,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean isSquashTargetOutOfGenerations(int partitionIndex) {
-        return txWriter.isPartitionComposite(partitionIndex)
-                && !getGeometry().hasGenerationForNextPublish(partitionIndex, getGeometry().getPieceCount(partitionIndex) + 1);
+        final PartitionGeometry geometry = getGeometry();
+        return geometry.isComposite(partitionIndex)
+                && !geometry.hasGenerationForNextPublish(partitionIndex, geometry.getPieceCount(partitionIndex) + 1);
     }
 
     /**
@@ -14378,7 +14382,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        isO3ColumnTopsUpdated = partitionsRemoved;
         if (partitionsRemoved) {
+            // Split removal copies rows this commit wrote, so it has to read them with this commit's column tops
+            updateO3ColumnTops();
             o3ConsumePartitionUpdateSink_processSplitPartitionRemoval();
 
             // Replace commit removed some of the partitions

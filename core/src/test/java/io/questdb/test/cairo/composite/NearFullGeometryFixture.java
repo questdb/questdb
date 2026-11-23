@@ -39,9 +39,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 
 /**
- * Re-points a composite partition's {@code _txn} geometry ref at a sparse record that ends just short of {@link
- * PartitionGeometryFile#MAX_FILE_SIZE}, leaving room for a record of {@code roomForPieces} pieces, or for none. A
- * larger publish has to rotate, and from {@link #LAST_GENERATION} cannot.
+ * Re-points a composite partition's {@code _txn} geometry ref at a sparse copy of its committed record near {@link
+ * PartitionGeometryFile#MAX_FILE_SIZE}: placed to leave room for exactly a record of {@code roomForPieces} pieces, or,
+ * with 0, 8 bytes short of the cap, less than any record needs. A larger publish has to rotate, and from {@link
+ * #LAST_GENERATION} cannot.
  */
 final class NearFullGeometryFixture {
     static final int LAST_GENERATION = 15;
