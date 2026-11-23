@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlCompiler;
@@ -406,6 +407,57 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
             assertExportDirectlyFails("SELECT ts, a FROM tv", null, "parquet export cannot convert column type [column=a, fileType=INT, columnType=LONG]");
             // The type tag stays TIMESTAMP, but the values change unit.
             assertExportDirectlyFails("SELECT t FROM tv", null, "parquet export cannot convert column type [column=t, fileType=TIMESTAMP, columnType=TIMESTAMP_NS]");
+        });
+    }
+
+    @Test
+    public void testDecodedFramesReleasedPerRowGroup() throws Exception {
+        // The hybrid path keeps a decoded Parquet frame until the export writes the row group its rows
+        // land in, then decodes a later frame into its buffers: the export holds the decoded frames of
+        // one output row group plus the frame it reads, however many row groups the partition has, and
+        // allocates no more decode buffers than that. A decoded 1000-row group of this table takes
+        // 1000 * (4 + 16 + 200 + 8) = 228_000 bytes in the native layout (INT, VARCHAR aux and data,
+        // TIMESTAMP), charged to the query memory limit. 2 MiB holds the 2 frames the export holds at
+        // ROW_GROUP_SIZE 1000 and the 4 at ROW_GROUP_SIZE 3000, not the 32 of the partition; 320 KiB
+        // holds one frame, not two. Only the count of allocated buffers tells reuse from freeing a
+        // buffer and allocating a new one, which holds as little memory.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
+            execute("CREATE TABLE tg (a INT, s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tg SELECT x::INT, rpad(x::VARCHAR, 200, 'v'), timestamp_sequence('2024-01-01', 2_000_000) FROM long_sequence(32_000)");
+            execute("INSERT INTO tg VALUES (0, 'z', '2024-01-02T00:00:00.000000Z')");
+            convertFirstDay("tg");
+            assertRowGroupCount("tg", 32);
+            final String query = "SELECT a * 2 a2, s, ts FROM tg";
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                // read_parquet() reads the same rows from a file of 1000-row row groups.
+                runCopy(job, "SELECT * FROM tg", DIRECT_PAGE_FRAME, "released_source", " ROW_GROUP_SIZE 1000");
+                assertExportFinished(engine, sqlExecutionContext);
+
+                // The first frame's rows wait in the writer for a 3000-row row group, so its decoded
+                // buffers stay pinned while the second frame decodes and breaches the limit. The
+                // job's later exports find their memory tracker clean.
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 320 * 1024L);
+                runCopy(job, query, PAGE_FRAME_BACKED, "released_breached", " ROW_GROUP_SIZE 3000");
+                assertQuery("SELECT status, message ~ 'in row group 1: query memory limit exceeded' is_second_frame FROM \"sys.copy_export_log\" LIMIT -1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("status\tis_second_frame\nfailed\ttrue\n");
+                Assert.assertFalse(exportFileExists("released_breached"));
+
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * 1024 * 1024L);
+                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, query, "released_1000", " ROW_GROUP_SIZE 1000"));
+                // An output row group spans three frames.
+                Assert.assertEquals(4, runCopyCountingDecodeBuffers(job, query, "released_3000", " ROW_GROUP_SIZE 3000"));
+                final String readParquetQuery = "SELECT a * 2 a2, s, ts FROM " + readParquet("released_source");
+                Assert.assertEquals(2, runCopyCountingDecodeBuffers(job, readParquetQuery, "released_read_parquet", " ROW_GROUP_SIZE 1000"));
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_1000"));
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_3000"));
+                TestUtils.assertEqualsExactOrder(compiler, sqlExecutionContext, query, readParquet("released_read_parquet"));
+            }
         });
     }
 
@@ -1260,6 +1312,15 @@ public class ParquetPartitionExportTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             return configuration.getFilesFacade().exists(path.of(exportRoot).concat(fileName).put(".parquet").$());
         }
+    }
+
+    // Runs a PAGE_FRAME_BACKED export of the query on the job, asserts that it finished and returns
+    // the number of decode buffers it allocated.
+    private long runCopyCountingDecodeBuffers(CopyExportRequestJob job, String query, String fileName, String options) throws Exception {
+        final long allocationCount = HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting();
+        runCopy(job, query, PAGE_FRAME_BACKED, fileName, options);
+        assertExportFinished(engine, sqlExecutionContext);
+        return HybridColumnMaterializer.getDecodeBufferAllocationCountForTesting() - allocationCount;
     }
 
     // Reports another writer index for the first column of its base cursor.

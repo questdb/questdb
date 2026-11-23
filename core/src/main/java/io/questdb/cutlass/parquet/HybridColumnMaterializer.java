@@ -68,6 +68,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
 
@@ -85,6 +86,22 @@ import static io.questdb.cairo.SymbolMapWriter.HEADER_SIZE;
  */
 public class HybridColumnMaterializer implements Mutable, QuietCloseable {
     private static final long DEFAULT_PAGE_SIZE = 1024 * 1024L;
+    // Test-only observability for the reuse of decode buffers: decodeParquetFrame() counts the
+    // RowGroupBuffers it allocates when decodeBufferPool has none to reuse. Freeing a released
+    // buffer and allocating a new one holds as little memory as reusing it, so only this count
+    // tells them apart. Tests read it on the thread that ran the export and assert on deltas.
+    private static long decodeBufferAllocationCount;
+
+    /**
+     * Returns the number of decode buffers that materializers allocated since class load. The
+     * counter is monotonic: capture it before an export and assert on the delta afterwards.
+     *
+     * @return count of decode buffer allocations
+     */
+    @TestOnly
+    public static long getDecodeBufferAllocationCountForTesting() {
+        return decodeBufferAllocationCount;
+    }
 
     private static void addColumnData(DirectLongList columnData, MemoryCARWImpl dataBuf, MemoryCARWImpl auxBuf, int columnType) {
         columnData.add(0L); // no col top
@@ -597,6 +614,7 @@ public class HybridColumnMaterializer implements Mutable, QuietCloseable {
         RowGroupBuffers buffers = decodeBufferPool.size() > 0 ? decodeBufferPool.popLast() : null;
         if (buffers == null) {
             buffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_EXPORTER, true);
+            decodeBufferAllocationCount++;
             // The tracker binds at allocation, so set it before reopen().
             buffers.setMemoryTracker(decodeMemoryTracker);
         }
