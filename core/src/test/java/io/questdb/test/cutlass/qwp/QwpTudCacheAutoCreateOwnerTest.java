@@ -61,6 +61,113 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
     public void testOwnerRefusalIsRetriableWhileAnotherConnectionCreatesTable() throws Exception {
         // The refused lookup does not wait for a table another connection is still creating, as nothing bounds how long
         // that connection holds the name: it fails at once with an error the client retries, and the retry finds the table.
+        assertRefusalWhileAnotherConnectionCreatesTable(false);
+    }
+
+    @Test
+    public void testOwnerRefusalIsRetriableWhileRebaseSwapsTable() throws Exception {
+        // REBASE WAL holds the name of the table while it swaps in the rebased directory, and then hands the name to
+        // the rebased table. A refused lookup in that window must not stand, as the table exists before and after it:
+        // it fails with an error the client retries, and the retry writes into the rebased table, which needs no
+        // owner from this connection.
+        assertRefusalWhileRebaseSwapsTable(false);
+    }
+
+    @Test
+    public void testOwnerRefusalServesTableAnotherConnectionCreated() throws Exception {
+        // A table another connection creates between this connection's lookup and its owner check needs no owner from
+        // this connection: the refused lookup returns it.
+        assertRefusalAfterAnotherConnectionCreatedTable(false);
+    }
+
+    @Test
+    public void testOwnerRefusalStandsWhenNoOtherConnectionCreatesTable() throws Exception {
+        assertMemoryLeak(() -> {
+            try (QwpTudCache cache = newCache()) {
+                try {
+                    cache.getTableUpdateDetails(new OwnerRefusingSecurityContext(null, false), new Utf8String("tab"), schema(), null, 10);
+                    Assert.fail("the owner refusal must stand");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isAuthorizationError());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "owner refused");
+                }
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("tab"));
+        });
+    }
+
+    @Test
+    public void testReadOnlyRefusalStandsAfterAnotherConnectionCreatedTable() throws Exception {
+        // A primary demoted in place refuses the owner as a replica does, with a read-only refusal. That refusal stands
+        // whatever another operation does with the table's name: it carries the marker that gets the connection the
+        // role-change close, which sends the client on to the new primary.
+        assertRefusalAfterAnotherConnectionCreatedTable(true);
+    }
+
+    @Test
+    public void testReadOnlyRefusalStandsWhileAnotherConnectionCreatesTable() throws Exception {
+        assertRefusalWhileAnotherConnectionCreatesTable(true);
+    }
+
+    @Test
+    public void testReadOnlyRefusalStandsWhileRebaseSwapsTable() throws Exception {
+        assertRefusalWhileRebaseSwapsTable(true);
+    }
+
+    // Asserts the refusal of a lookup while another operation holds the table's name: a read-only refusal stands as
+    // the security context raised it, an owner refusal turns into an error the client retries.
+    private static void assertNameHeldRefusal(CairoException e, boolean isReadOnlyRefusal, String retriableMessage) {
+        if (isReadOnlyRefusal) {
+            assertReadOnlyRefusal(e);
+        } else {
+            // neither an authorization error nor a schema mismatch, so the client retries it
+            Assert.assertFalse(e.isAuthorizationError());
+            Assert.assertFalse(e.isSchemaMismatch());
+            Assert.assertFalse(e.isCritical());
+            TestUtils.assertEquals(retriableMessage, e.getFlyweightMessage());
+        }
+    }
+
+    private static void assertReadOnlyRefusal(CairoException e) {
+        Assert.assertTrue(e.isReadOnlyAccessRefusal());
+        TestUtils.assertEquals(CairoException.READ_ONLY_ACCESS_MESSAGE, e.getFlyweightMessage());
+    }
+
+    // Refuses the owner after another connection has created the table: an owner refusal serves that table, a
+    // read-only refusal stands.
+    private static void assertRefusalAfterAnotherConnectionCreatedTable(boolean isReadOnlyRefusal) throws Exception {
+        assertMemoryLeak(() -> {
+            final SOCountDownLatch created = new SOCountDownLatch(1);
+            final AtomicReference<Throwable> creatorError = new AtomicReference<>();
+            final Thread creator = newCreatorThread(creatorError, created);
+            try (QwpTudCache cache = newCache()) {
+                // the owner is refused once the creator has created the table
+                final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(() -> {
+                    creator.start();
+                    created.await();
+                }, isReadOnlyRefusal);
+                if (isReadOnlyRefusal) {
+                    try {
+                        cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                        Assert.fail("the read-only refusal must stand");
+                    } catch (CairoException e) {
+                        assertReadOnlyRefusal(e);
+                    }
+                    Assert.assertEquals(0, cache.size());
+                } else {
+                    final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                    Assert.assertNotNull(tud);
+                    Assert.assertEquals(engine.verifyTableName("tab"), tud.getTableToken());
+                }
+            } finally {
+                creator.join();
+            }
+            Assert.assertNull(creatorError.get());
+        });
+    }
+
+    // Refuses the owner while another connection holds the table's name to create it.
+    private static void assertRefusalWhileAnotherConnectionCreatesTable(boolean isReadOnlyRefusal) throws Exception {
         assertMemoryLeak(() -> {
             final SOCountDownLatch parked = new SOCountDownLatch(1);
             final SOCountDownLatch release = new SOCountDownLatch(1);
@@ -81,24 +188,22 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
                 final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(() -> {
                     creator.start();
                     Assert.assertTrue("creator did not reach its DDL listener", parked.await(TimeUnit.SECONDS.toNanos(30)));
-                });
+                }, isReadOnlyRefusal);
                 try {
                     cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
                     Assert.fail("the refused lookup must not wait for the table the creator holds");
                 } catch (CairoException e) {
-                    // neither an authorization error nor a schema mismatch, so the client retries it
-                    Assert.assertFalse(e.isAuthorizationError());
-                    Assert.assertFalse(e.isSchemaMismatch());
-                    Assert.assertFalse(e.isCritical());
-                    TestUtils.assertEquals("table is being created, cannot ingest [table=tab]", e.getFlyweightMessage());
+                    assertNameHeldRefusal(e, isReadOnlyRefusal, "table is being created, cannot ingest [table=tab]");
                 }
                 release.countDown();
                 created.await();
                 Assert.assertNull(creatorError.get());
-                // the retry writes into the creator's table, which needs no owner from this connection
-                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
-                Assert.assertNotNull(tud);
-                Assert.assertEquals(engine.verifyTableName("tab"), tud.getTableToken());
+                if (!isReadOnlyRefusal) {
+                    // the retry writes into the creator's table, which needs no owner from this connection
+                    final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                    Assert.assertNotNull(tud);
+                    Assert.assertEquals(engine.verifyTableName("tab"), tud.getTableToken());
+                }
             } finally {
                 release.countDown();
                 creator.join();
@@ -107,12 +212,8 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testOwnerRefusalIsRetriableWhileRebaseSwapsTable() throws Exception {
-        // REBASE WAL holds the name of the table while it swaps in the rebased directory, and then hands the name to
-        // the rebased table. A refused lookup in that window must not stand, as the table exists before and after it:
-        // it fails with an error the client retries, and the retry writes into the rebased table, which needs no
-        // owner from this connection.
+    // Refuses the owner while REBASE WAL holds the table's name to swap in the rebased table.
+    private static void assertRefusalWhileRebaseSwapsTable(boolean isReadOnlyRefusal) throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (v LONG, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY WAL");
@@ -145,7 +246,7 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
                 }
             });
             try (QwpTudCache cache = newCache()) {
-                final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(null);
+                final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(null, isReadOnlyRefusal);
                 lockHolder.start();
                 locked.await();
                 rebase.start();
@@ -157,68 +258,26 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
                 }
                 try {
                     cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
-                    Assert.fail("the refusal must not stand while the rebase holds the name");
+                    Assert.fail("the lookup must not go on while the rebase holds the name");
                 } catch (CairoException e) {
-                    // neither an authorization error nor a schema mismatch, so the client retries it
-                    Assert.assertFalse(e.isAuthorizationError());
-                    Assert.assertFalse(e.isSchemaMismatch());
-                    Assert.assertFalse(e.isCritical());
-                    TestUtils.assertEquals("table is being dropped, renamed or rebased, cannot ingest [table=tab]", e.getFlyweightMessage());
+                    assertNameHeldRefusal(e, isReadOnlyRefusal, "table is being dropped, renamed or rebased, cannot ingest [table=tab]");
                 }
                 release.countDown();
                 rebase.join();
                 Assert.assertNull(rebaseError.get());
                 final TableToken rebasedToken = engine.verifyTableName("tab");
                 Assert.assertNotEquals(suspendedToken.getDirName(), rebasedToken.getDirName());
-                // the retry writes into the rebased table
-                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
-                Assert.assertNotNull(tud);
-                Assert.assertEquals(rebasedToken, tud.getTableToken());
+                if (!isReadOnlyRefusal) {
+                    // the retry writes into the rebased table
+                    final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
+                    Assert.assertNotNull(tud);
+                    Assert.assertEquals(rebasedToken, tud.getTableToken());
+                }
             } finally {
                 release.countDown();
                 lockHolder.join();
                 rebase.join();
             }
-        });
-    }
-
-    @Test
-    public void testOwnerRefusalServesTableAnotherConnectionCreated() throws Exception {
-        // A table another connection creates between this connection's lookup and its owner check needs no owner from
-        // this connection: the refused lookup returns it.
-        assertMemoryLeak(() -> {
-            final SOCountDownLatch created = new SOCountDownLatch(1);
-            final AtomicReference<Throwable> creatorError = new AtomicReference<>();
-            final Thread creator = newCreatorThread(creatorError, created);
-            try (QwpTudCache cache = newCache()) {
-                // the owner is refused once the creator has created the table
-                final OwnerRefusingSecurityContext securityContext = new OwnerRefusingSecurityContext(() -> {
-                    creator.start();
-                    created.await();
-                });
-                final WalTableUpdateDetails tud = cache.getTableUpdateDetails(securityContext, new Utf8String("tab"), schema(), null, 10);
-                Assert.assertNotNull(tud);
-                Assert.assertEquals(engine.verifyTableName("tab"), tud.getTableToken());
-            } finally {
-                creator.join();
-            }
-            Assert.assertNull(creatorError.get());
-        });
-    }
-
-    @Test
-    public void testOwnerRefusalStandsWhenNoOtherConnectionCreatesTable() throws Exception {
-        assertMemoryLeak(() -> {
-            try (QwpTudCache cache = newCache()) {
-                try {
-                    cache.getTableUpdateDetails(new OwnerRefusingSecurityContext(null), new Utf8String("tab"), schema(), null, 10);
-                    Assert.fail("the owner refusal must stand");
-                } catch (CairoException e) {
-                    Assert.assertTrue(e.isAuthorizationError());
-                    TestUtils.assertContains(e.getFlyweightMessage(), "owner refused");
-                }
-            }
-            Assert.assertNull(engine.getTableTokenIfExists("tab"));
         });
     }
 
@@ -250,11 +309,15 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
         return schema;
     }
 
+    // Refuses the owner of what the connection auto-creates, after it runs onAuthorize. With isReadOnlyRefusal it
+    // refuses as a replica does, and so as a primary that was demoted in place does, with a read-only refusal.
     private static final class OwnerRefusingSecurityContext extends AllowAllSecurityContext {
+        private final boolean isReadOnlyRefusal;
         private final Runnable onAuthorize;
 
-        private OwnerRefusingSecurityContext(@Nullable Runnable onAuthorize) {
+        private OwnerRefusingSecurityContext(@Nullable Runnable onAuthorize, boolean isReadOnlyRefusal) {
             this.onAuthorize = onAuthorize;
+            this.isReadOnlyRefusal = isReadOnlyRefusal;
         }
 
         @Override
@@ -262,7 +325,7 @@ public class QwpTudCacheAutoCreateOwnerTest extends AbstractCairoTest {
             if (onAuthorize != null) {
                 onAuthorize.run();
             }
-            throw CairoException.authorization().put("owner refused");
+            throw isReadOnlyRefusal ? CairoException.readOnlyAccess() : CairoException.authorization().put("owner refused");
         }
     }
 }

@@ -1060,13 +1060,20 @@ public class QwpTudCache implements QwpSchemaCache, QuietCloseable {
     // name, and a wait would pin this I/O thread for all that time. The client replays the frame, which then
     // finds the table. A name another operation holds while it drops, renames or rebases the table gets the
     // same retriable refusal: a DROP or a RENAME frees the name, where the refusal stands at the replay, but
-    // REBASE WAL hands it to the rebased table, see TableNameRegistryRW.swapTable(), which the replay finds.
+    // REBASE WAL hands it to the rebased table, see TableNameRegistryRW.swapTable(), which the replay finds. A
+    // read-only refusal stands, whatever the registry holds for the name: a node that turned read-only, such as a
+    // primary demoted in place, refuses every write, and the refusal must keep the read-only marker that gets the
+    // connection the role-change close, see QwpIngressProcessorState.rejectCairoError(), as QwpWalAppender keeps it
+    // for a refused column.
     // Returns null when this connection may create the table.
     private TableToken authorizeOwnerOrGetTable(SecurityContext securityContext, CharSequence tableName) {
         try {
             securityContext.authorizeAutoCreateOwner();
             return null;
         } catch (CairoException e) {
+            if (e.isReadOnlyAccessRefusal()) {
+                throw e;
+            }
             final TableToken tableToken = engine.getTableNameRegistry().getTableToken(tableName);
             if (tableToken == TableNameRegistry.LOCKED_TOKEN) {
                 // neither an authorization error nor a schema mismatch, so the client retries it, see
