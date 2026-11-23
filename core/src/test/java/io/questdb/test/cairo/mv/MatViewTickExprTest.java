@@ -47,6 +47,46 @@ import org.junit.Test;
 public class MatViewTickExprTest extends AbstractCairoTest {
 
     @Test
+    public void testBusinessDayRangeWithoutDayWithMalformedElementSuffixFailsCreate() throws Exception {
+        // SQL rejects a view and a materialized view whose literal holds a range of business days
+        // with a timezone of its element that does not parse as it creates them, at the literal,
+        // on a Saturday too, when the range holds no business day and adds no interval, and
+        // creates neither of them. With a timezone that parses, both are created on the Saturday,
+        // and the view selects no row, not even the one on the Saturday.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-06T10:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-06T09:00:00.000000Z', 1)");
+            drainWalQueue();
+            // ? stands for the literal
+            final String[] creates = {
+                    "CREATE VIEW v AS (SELECT ts, v FROM base WHERE ts IN '?')",
+                    "CREATE MATERIALIZED VIEW mv AS (SELECT ts, count() c FROM base WHERE ts IN '?' SAMPLE BY 1h)"
+            };
+            for (String sql : creates) {
+                final String create = sql.replace("?", "[$today..$today + 0bd@Bogus/Zone]");
+                assertExceptionNoLeakCheck(create, create.indexOf('\''), "invalid timezone: Bogus/Zone");
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("v"));
+            Assert.assertNull(engine.getTableTokenIfExists("mv"));
+
+            for (String sql : creates) {
+                execute(sql.replace("?", "[$today..$today + 0bd@+00:00]"));
+            }
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            Assert.assertNotNull(engine.getTableTokenIfExists("v"));
+            Assert.assertNotNull(engine.getTableTokenIfExists("mv"));
+            assertQuery("v")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("ts\tv\n");
+        });
+    }
+
+    @Test
     public void testDateVariableRangeAddingNoIntervalWithMalformedElementSuffixFailsCreate() throws Exception {
         // SQL rejects a view and a materialized view whose literal holds a date variable range
         // with a timezone or day filter of its element that does not parse as it creates them, at

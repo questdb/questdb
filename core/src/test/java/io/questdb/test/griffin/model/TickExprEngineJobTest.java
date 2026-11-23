@@ -555,7 +555,12 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             Assert.assertTrue(context, isError(strict));
             Assert.assertTrue(context, isError(withoutRangeOrder));
             Assert.assertTrue(context, isError(unchecked));
-            if (strict.contains(RANGE_ORDER_ERROR)) {
+            // count the expressions where only ranges that add no interval hold such a timezone,
+            // and it fails them: ranges that start after they end, without the range order check,
+            // and ranges of business days that hold no day, with all the checks
+            if (strict.contains(RANGE_ORDER_ERROR)
+                    && withoutRangeOrder.contains("invalid timezone: ")
+                    && hasMalformedZoneOnlyOnReversedRanges(driver, expression, now)) {
                 fuzzMalformedElementZoneRangeOrderCount++;
             } else if (strict.contains("invalid timezone: ") && hasMalformedZoneOnlyOnRangesWithoutDay(driver, expression, now)) {
                 fuzzMalformedElementZoneWithoutDayCount++;
@@ -663,6 +668,26 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                 // starts its element
                 final int elementStart = Math.max(expression.lastIndexOf(',', i), expression.lastIndexOf('[', i)) + 1;
                 if (!"[]".equals(parse(driver, "[" + expression.substring(elementStart, i) + "]", now, IntervalUtils.TICK_CHECK_ALL))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Returns whether every element of a generated expression with a timezone of
+     * TickExprTest.FUZZ_MALFORMED_ELEMENT_ZONES is a range that starts after it ends at "now": the
+     * same range without the timezone fails on its order with all the checks.
+     */
+    private boolean hasMalformedZoneOnlyOnReversedRanges(TimestampDriver driver, String expression, long now) {
+        for (String zone : TickExprTest.FUZZ_MALFORMED_ELEMENT_ZONES) {
+            for (int i = expression.indexOf(zone); i >= 0; i = expression.indexOf(zone, i + 1)) {
+                // a generated range holds no ',' or '[', so the last one before the timezone
+                // starts its element when that is a range, and only a range fails on its order
+                final int elementStart = Math.max(expression.lastIndexOf(',', i), expression.lastIndexOf('[', i)) + 1;
+                final String range = expression.substring(elementStart, i);
+                if (!("error: " + RANGE_ORDER_ERROR).equals(parse(driver, "[" + range + "]", now, IntervalUtils.TICK_CHECK_ALL))) {
                     return false;
                 }
             }

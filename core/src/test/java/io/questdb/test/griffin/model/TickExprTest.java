@@ -4416,6 +4416,27 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeAddingNoIntervalKeepsIntervalsOfEarlierElements() throws SqlException {
+        // A date variable range that adds no interval parses the timezone of its element without
+        // converting an interval with it: the element before it in the list keeps its whole day in
+        // UTC, after a range of days and a range between two points in time that start after they
+        // end, at the check levels that let them through, and after a range of business days that
+        // holds no business day, at every check level
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long tuesday = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final String tuesdayWholeDay = forTimestampType("[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}]");
+        for (int checks : new int[]{IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0}) {
+            assertParsed(tuesdayWholeDay, "[$today, $tomorrow..$today@+02:00]", tuesday, checks);
+            assertParsed(tuesdayWholeDay, "[$today, $now..$now - 1h@+02:00]", tuesday, checks);
+        }
+        assertParsedAtEveryCheckLevel(
+                forTimestampType("[{lo=2024-01-06T00:00:00.000000Z, hi=2024-01-06T23:59:59.999999Z}]"),
+                "[$today, $today..$today + 0bd@+02:00]",
+                timestampDriver.parseFloorLiteral("2024-01-06T10:00:00.000000Z")
+        );
+    }
+
+    @Test
     public void testDateVariableRangeAddingNoIntervalKeepsWellFormedElementSuffix() throws SqlException {
         // A date variable range that adds no interval, with a timezone or day filter of its
         // element that parses, adds no interval at every check level that lets the range through,
