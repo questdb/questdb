@@ -53,7 +53,7 @@ import org.junit.Test;
 /**
  * Backward page-frame append over the frames the engine's backward cursor builds: every
  * column type, column tops, parquet and native partitions, partitions split into several
- * frames. Appending a frame backward must produce exactly the batch that appending its
+ * frames, and native frames marked custom, which the buffer reads row by row. Appending a frame backward must produce exactly the batch that appending its
  * rows one at a time, last to first, through the forward path produces - with the
  * columnar kernels and with the per-row fallbacks, which a SYMBOL column takes when the
  * batch has no symbol tables to resolve keys with. Reading each frame ahead covers the
@@ -190,6 +190,16 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
                     // SYMBOL takes the per-row fallback
                     assertBackwardFrame(context, frame, record, rows, defs, cursor, backward, backwardDict, oracle, oracleDict);
                     assertBackwardFrame(context, frame, record, rows, defs, null, backward, backwardTextDict, oracle, oracleTextDict);
+                    if (frame.getFormat() == PartitionFormat.NATIVE) {
+                        // A custom (Delta) frame reports NATIVE, but its page addresses do not
+                        // hold its rows, so the buffer reads it through the record, a row at a
+                        // time. The test marks a real native frame custom and gives it no page
+                        // addresses: the record still reads the frame's rows, and a columnar
+                        // append would read none of them.
+                        final QwpBackwardReadAheadTest.AddressedFrame custom = new QwpBackwardReadAheadTest.AddressedFrame(frame.getColumnCount(), rows);
+                        custom.partitionFrameState = 1;
+                        assertBackwardFrame(context + " custom", custom, record, rows, defs, cursor, backward, backwardDict, oracle, oracleDict);
+                    }
 
                     // The MADV_WILLNEED windows and the windows the stream reads itself cover the
                     // frame's own bytes, each once and inside the frame's published extents. The
@@ -269,9 +279,9 @@ public class QwpResultBatchBufferBackwardFramesTest extends AbstractCairoTest {
     ) {
         backward.beginBatch(defs, symbolTables, backwardDict);
         oracle.beginBatch(defs, symbolTables, oracleDict);
-        backward.appendPageFrame(frame, record, 0, rows, true);
+        backward.appendPageFrameBackward(frame, record, 0, rows);
         for (long r = rows - 1; r >= 0; r--) {
-            oracle.appendPageFrame(frame, record, r, r + 1, false);
+            oracle.appendPageFrame(frame, record, r, r + 1);
         }
         final String ctx = context + " symbolTables=" + (symbolTables != null);
         Assert.assertEquals(ctx, rows, backward.getRowCount());

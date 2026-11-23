@@ -107,7 +107,7 @@ public class QwpPageFrameAppendBenchmark {
     public int backward() {
         buffer.beginBatch(defs, symbolTables, dict);
         for (int hi = ROWS; hi > 0; hi -= SLICE) {
-            buffer.appendPageFrame(frame, null, hi - SLICE, hi, true);
+            buffer.appendPageFrameBackward(frame, null, hi - SLICE, hi);
         }
         return buffer.getRowCount();
     }
@@ -116,7 +116,7 @@ public class QwpPageFrameAppendBenchmark {
     public int forward() {
         buffer.beginBatch(defs, symbolTables, dict);
         for (int lo = 0; lo < ROWS; lo += SLICE) {
-            buffer.appendPageFrame(frame, null, lo, lo + SLICE, false);
+            buffer.appendPageFrame(frame, null, lo, lo + SLICE);
         }
         return buffer.getRowCount();
     }

@@ -2139,8 +2139,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         // batches let windows span batches, which reads in larger requests.
                         final long batchLo = isFirstBatch ? Math.max(0, lo + sliceRows - rowsToAdd) : 0;
                         metrics.markReadAhead(state.getBackwardReadAhead().advise(lo, batchLo));
+                        batchBuffer.appendPageFrameBackward(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows);
+                    } else {
+                        batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows);
                     }
-                    batchBuffer.appendPageFrame(frame, state.getStreamingPageFrameMemoryRecord(), lo, lo + sliceRows, isPageFrameBackward);
                     state.consumePageFrameRows(sliceRows);
                     rowsToAdd -= sliceRows;
                     if (batchBuffer.currentBatchDeltaWireBytes() > dictBudgetWireBytes) {

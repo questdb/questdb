@@ -136,7 +136,7 @@ public class QwpResultBatchBufferBackwardTest {
                         QwpEgressConnSymbolDict dict = new QwpEgressConnSymbolDict()
                 ) {
                     buffer.beginBatch(defs, null, dict);
-                    buffer.appendPageFrame(frame, null, 2, 19, true);
+                    buffer.appendPageFrameBackward(frame, null, 2, 19);
                     Assert.assertEquals(17, buffer.getRowCount());
                     final byte[] wire = emit(buffer);
 
@@ -198,12 +198,12 @@ public class QwpResultBatchBufferBackwardTest {
                 oracle.beginBatch(defs, symbols, oracleDict);
                 // The prefix shifts the backward slice off byte alignment in the null
                 // bitmaps and in the bit-packed BOOLEAN values.
-                backward.appendPageFrame(frame, null, 0, prefixLen, false);
-                oracle.appendPageFrame(frame, null, 0, prefixLen, false);
+                backward.appendPageFrame(frame, null, 0, prefixLen);
+                oracle.appendPageFrame(frame, null, 0, prefixLen);
 
-                backward.appendPageFrame(frame, null, lo, hi, true);
+                backward.appendPageFrameBackward(frame, null, lo, hi);
                 for (int r = hi - 1; r >= lo; r--) {
-                    oracle.appendPageFrame(frame, null, r, r + 1, false);
+                    oracle.appendPageFrame(frame, null, r, r + 1);
                 }
 
                 final String context = "rowCount=" + rowCount + ", prefix=" + prefixLen
