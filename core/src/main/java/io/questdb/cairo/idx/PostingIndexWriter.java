@@ -1010,7 +1010,8 @@ public class PostingIndexWriter implements IndexWriter {
         // but keeps the chain head and the OLD .pv on disk so concurrent
         // readers with active mmaps stay safe. The OLD .pv's purge is
         // deferred via pendingDiscardOldSealTxn: the next flushAllPending
-        // records it right after publishToChain, when the chain has shape
+        // records it after publishToChain and the flushes of
+        // flushRebuildAndRecordPurge(), when the chain has shape
         // [REBUILD@new, OLD@old] and recordPostingSealPurge can compute the
         // correct [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
         //
@@ -3759,10 +3760,6 @@ public class PostingIndexWriter implements IndexWriter {
         long headerAddr = valueMem.addressOf(genOffset);
         Unsafe.copyMemory(flushHeaderBuf, headerAddr, headerSize);
         writeSidecarGenData((int) totalValues, genCount);
-        if (pendingDiscardOldSealTxn >= 0) {
-            // The first generation of a rebuild into the value file discardForRebuild() rotated to.
-            flushRebuildFiles();
-        }
 
         genCount++;
         if (COVERING_COUNTERS_ENABLED) {
@@ -3783,17 +3780,6 @@ public class PostingIndexWriter implements IndexWriter {
                 /* overrideMaxKey */ maxKey
         );
 
-        // Record the OLD .pv's purge if discardForRebuild rotated sealTxn
-        // before this flush. The chain shape is now [REBUILD@new, OLD@old]
-        // so recordPostingSealPurge sees second.txnAtSeal = OLD.txnAtSeal
-        // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
-        // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
-        if (pendingDiscardOldSealTxn >= 0) {
-            flushRebuildKeyFile();
-            recordPostingSealPurge(pendingDiscardOldSealTxn);
-            pendingDiscardOldSealTxn = -1L;
-        }
-
         // Clear only the active keys' pending counts (not the entire array)
         for (int i = 0; i < activeKeyCount; i++) {
             int key = activeKeyIds[i];
@@ -3802,6 +3788,15 @@ public class PostingIndexWriter implements IndexWriter {
         resetSpill();
         hasPendingData = false;
         activeKeyCount = 0;
+
+        // Record the OLD .pv's purge if discardForRebuild rotated sealTxn
+        // before this flush. The chain shape is now [REBUILD@new, OLD@old]
+        // so recordPostingSealPurge sees second.txnAtSeal = OLD.txnAtSeal
+        // and head.txnAtSeal = REBUILD.txnAtSeal, producing the correct
+        // [OLD.txnAtSeal, REBUILD.txnAtSeal) window.
+        if (pendingDiscardOldSealTxn >= 0) {
+            flushRebuildAndRecordPurge();
+        }
 
         // Soft cap on per-entry gen count; trades seal frequency against
         // entry size.
@@ -3985,10 +3980,6 @@ public class PostingIndexWriter implements IndexWriter {
             }
 
             writeSidecarGenData((int) totalValues, /* genIndex */ 0);
-            if (pendingDiscardOldSealTxn >= 0) {
-                // A rebuild into the value file discardForRebuild() rotated to.
-                flushRebuildFiles();
-            }
 
             this.maxValue = maxValueAfter;
             this.genCount = 1;
@@ -4002,12 +3993,6 @@ public class PostingIndexWriter implements IndexWriter {
                     /* overrideMaxKey */ keyCount - 1
             );
 
-            if (pendingDiscardOldSealTxn >= 0) {
-                flushRebuildKeyFile();
-                recordPostingSealPurge(pendingDiscardOldSealTxn);
-                pendingDiscardOldSealTxn = -1L;
-            }
-
             for (int i = 0; i < activeKeyCount; i++) {
                 int key = activeKeyIds[i];
                 Unsafe.putInt(pendingCountsAddr + (long) key * Integer.BYTES, 0);
@@ -4015,6 +4000,10 @@ public class PostingIndexWriter implements IndexWriter {
             resetSpill();
             hasPendingData = false;
             activeKeyCount = 0;
+
+            if (pendingDiscardOldSealTxn >= 0) {
+                flushRebuildAndRecordPurge();
+            }
         } finally {
             if (strideValsAddr != 0) {
                 Unsafe.free(strideValsAddr, strideValsBytes, MemoryTag.NATIVE_INDEX_READER);
@@ -4023,33 +4012,33 @@ public class PostingIndexWriter implements IndexWriter {
         }
     }
 
-    // A rebuild into the value file discardForRebuild() rotated to flushes only under SYNC, file by file: the new
-    // value file, every open cover file and the .pci reach the disk before the .pk entry that names them is
-    // published. Other modes flush nothing here; ASYNC leaves its asynchronous flush to commit() and commitDense().
-    private void flushRebuildFiles() {
-        if (indexCommitMode != CommitMode.SYNC) {
-            return;
-        }
-        if (valueMem.isOpen()) {
-            valueMem.sync(false);
-        }
-        for (int c = 0, n = sidecarMems.size(); c < n; c++) {
-            MemoryMARW mem = sidecarMems.getQuick(c);
-            if (mem != null && mem.isOpen()) {
-                mem.sync(false);
+    // Runs once the first generation of a rebuild into the value file discardForRebuild() rotated to is published
+    // and the writer state is consistent with it. Only under SYNC it flushes, file by file: the new value file,
+    // every open cover file and the .pci, then the .pk; other modes flush nothing here, and ASYNC leaves its
+    // asynchronous flush to commit() and commitDense(). Only then it queues the purge of the superseded generation.
+    // A failed flush propagates and never queues that purge, as after a failed seal flush: the .pk on disk may still
+    // name the superseded generation.
+    private void flushRebuildAndRecordPurge() {
+        final long supersededSealTxn = pendingDiscardOldSealTxn;
+        pendingDiscardOldSealTxn = -1L;
+        if (indexCommitMode == CommitMode.SYNC) {
+            if (valueMem.isOpen()) {
+                valueMem.sync(false);
+            }
+            for (int c = 0, n = sidecarMems.size(); c < n; c++) {
+                MemoryMARW mem = sidecarMems.getQuick(c);
+                if (mem != null && mem.isOpen()) {
+                    mem.sync(false);
+                }
+            }
+            if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
+                sidecarInfoMem.sync(false);
+            }
+            if (keyMem.isOpen()) {
+                keyMem.sync(false);
             }
         }
-        if (sidecarInfoMem != null && sidecarInfoMem.isOpen()) {
-            sidecarInfoMem.sync(false);
-        }
-    }
-
-    // The .pk flush of a SYNC rebuild, after the publish and before the purge of the superseded generation is queued,
-    // so a failed flush keeps the generation the .pk on disk may still name.
-    private void flushRebuildKeyFile() {
-        if (indexCommitMode == CommitMode.SYNC && keyMem.isOpen()) {
-            keyMem.sync(false);
-        }
+        recordPostingSealPurge(supersededSealTxn);
     }
 
     // Step 1 of a seal's flush (see sealFlushGrade()), for the files written after the value file: starts the
@@ -4339,7 +4328,7 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     // True when a rebuild pending at the start of the caller's commit published in it under SYNC: the publish flushed
-    // every file the commit would sync (see flushRebuildFiles()). A spill inside index() publishes the rebuild before
+    // every file the commit would sync (see flushRebuildAndRecordPurge()). A spill inside index() publishes the rebuild before
     // the commit, which then still syncs what it wrote.
     private boolean isRebuildFlushed(boolean wasRebuildPending) {
         return wasRebuildPending && pendingDiscardOldSealTxn < 0 && indexCommitMode == CommitMode.SYNC;
@@ -6333,7 +6322,8 @@ public class PostingIndexWriter implements IndexWriter {
      * </ul>
      * The ordered flush has two steps: every new value and cover file reaches the disk before the {@code .pk}
      * entry that names them is published, then the {@code .pk} does, before the superseded files are queued for
-     * deletion. A rebuild after {@link #discardForRebuild()} does not take this grade, see {@link #flushRebuildFiles()}.
+     * deletion. A rebuild after {@link #discardForRebuild()} does not take this grade, see
+     * {@link #flushRebuildAndRecordPurge()}.
      */
     private int sealFlushGrade() {
         return indexCommitMode == CommitMode.ADAPTIVE && isSealInProgress() ? SEAL_FLUSH_NONE : SEAL_FLUSH_ORDERED;

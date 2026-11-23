@@ -6969,6 +6969,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     }
 
     /**
+     * The publish of a rebuild into a new value file, committed with commitDense(), fails at each of its flushes in
+     * turn, and the index must stay intact; see {@link #sweepPostingIndexOperation}. Only SYNC flushes the publish: the
+     * new value file, then the {@code .pk}, and only then it queues the purge of the superseded generation, which a
+     * failed flush keeps, as the {@code .pk} on disk may still name it.
+     */
+    @Test
+    public void testRebuildCommitDenseFailureAtEveryFlushKeepsIndexIntact() throws Exception {
+        sweepRebuild("rebuild_dense_sweep", true, false, false);
+    }
+
+    // As above, with a spill in the add() loop of the rebuild: the spill publishes the rebuild before the operation,
+    // and commitDense() seals it.
+    @Test
+    public void testRebuildCommitDenseWithSpillFailureAtEveryFlushKeepsIndexIntact() throws Exception {
+        sweepRebuild("rebuild_dense_spill_sweep", true, false, true);
+    }
+
+    // The rebuild of a covering index committed with commit(), failing at each of its flushes in turn: the publish
+    // flushes the value file, the cover file and the .pci before the .pk.
+    @Test
+    public void testRebuildCommitFailureAtEveryFlushKeepsIndexIntact() throws Exception {
+        sweepRebuild("rebuild_commit_sweep", false, true, false);
+    }
+
+    // As above, without a cover and with a spill in the add() loop of the rebuild, which publishes the rebuild before
+    // commit().
+    @Test
+    public void testRebuildCommitWithSpillFailureAtEveryFlushKeepsIndexIntact() throws Exception {
+        sweepRebuild("rebuild_commit_spill_sweep", false, false, true);
+    }
+
+    /**
      * rebuildSidecarsByCopy, the covering rebuild of a dense generation, fails at each of its file calls in turn,
      * and the index must stay intact; see {@link #sweepPostingIndexOperation}. A failure after the switch to the new
      * value file and before the publish leaves the writer half switched: it must refuse all work, and the staged
@@ -14083,7 +14115,23 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             long opRowCeiling,
             boolean isEmergencyClose
     ) throws Exception {
+        return sweepPostingIndexOperation(name, setup, op, maxRowBefore, opRowCeiling, isEmergencyClose, false);
+    }
+
+    // As above. With isRebuildPublish, it fails only the flushes, in the SYNC modes, the only ones that flush the
+    // publish of a rebuild; and after any failed flush once op moved the chain head, before a flush of the .pk
+    // succeeded, the generation live before op keeps its files, as the .pk naming the new head may not be on disk.
+    private SweepResult sweepPostingIndexOperation(
+            String name,
+            PostingIndexSetup setup,
+            PostingIndexOp op,
+            long maxRowBefore,
+            long opRowCeiling,
+            boolean isEmergencyClose,
+            boolean isRebuildPublish
+    ) throws Exception {
         final IndexFileCallFailingFacade sweepFf = new IndexFileCallFailingFacade(Files.SEPARATOR + name + '_');
+        sweepFf.setFlushOnly(isRebuildPublish);
         final int[] outcomeCounts = new int[2];
         ff = sweepFf;
         assertMemoryLeak(ff, () -> {
@@ -14094,7 +14142,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final long coverAddr = Unsafe.calloc(coverBytes, MemoryTag.NATIVE_DEFAULT);
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final int plen = path.size();
-                for (int mode = 0; mode < commitModes.length; mode++) {
+                for (int mode = isRebuildPublish ? 2 : 0; mode < commitModes.length; mode++) {
                     // the platforms without a filesystem-wide syncfs flush each file
                     sweepFf.setPerFileFlush(mode == commitModes.length - 1);
                     int failureCount = 0;
@@ -14127,7 +14175,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             } else {
                                 failureCount++;
                                 where = " [commitMode=" + modeNames[mode] + ", failed=" + failedCall + ']';
-                                if (sweepFf.isFailedKeyFileFlush() && readPostingSealTxn(path, plen, indexName) != liveSealTxnBefore) {
+                                final boolean isFailedHeadFlush = isRebuildPublish
+                                        ? sweepFf.isFailedFlush() && !sweepFf.isKeyFileFlushed()
+                                        : sweepFf.isFailedKeyFileFlush();
+                                if (isFailedHeadFlush && readPostingSealTxn(path, plen, indexName) != liveSealTxnBefore) {
                                     keptSealTxn = liveSealTxnBefore;
                                 }
                                 // right after the failure, as the retry below takes the staged sealTxn again
@@ -14186,6 +14237,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                 .$(", working=").$(outcomeCounts[1])
                 .I$();
         return new SweepResult(outcomeCounts[0], outcomeCounts[1]);
+    }
+
+    // Sweeps the publish of a rebuild of the index from its rows, as TableWriter makes for a rewritten partition: the
+    // setup commits two generations, calls discardForRebuild() and adds every row again, and the operation calls
+    // commitDense() or commit(), so the rebuild supersedes a generation. With isSpilling, the add() loop of the setup
+    // publishes the rebuild and the operation commits what follows it. Only the SYNC modes flush a rebuild.
+    private void sweepRebuild(String name, boolean isDense, boolean isCovering, boolean isSpilling) throws Exception {
+        if (isSpilling) {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        }
+        final long maxRow = 63;
+        sweepPostingIndexOperation(
+                name,
+                (writer, coverAddr) -> {
+                    commitPostingRows(writer, 0, 31);
+                    commitPostingRows(writer, 32, maxRow);
+                    if (isCovering) {
+                        configureLongCover(writer, coverAddr);
+                    }
+                    writer.discardForRebuild();
+                    for (long row = 0; row <= maxRow; row++) {
+                        writer.add((int) (row & 3), row);
+                    }
+                    Assert.assertEquals("the add() loop of the rebuild published a generation", isSpilling, writer.getGenCount() > 0);
+                    writer.setMaxValue(maxRow);
+                },
+                isDense ? PostingIndexWriter::commitDense : PostingIndexWriter::commit,
+                maxRow,
+                Long.MAX_VALUE,
+                false,
+                true
+        );
     }
 
     // Writes a deliberately corrupt posting seal-purge pending file, truncated to
@@ -14434,7 +14517,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
      * sync_file_range -1, with errno EIO, and a flush throws what {@link io.questdb.std.FilesFacadeImpl} throws.
      * Armed at 0 it fails nothing and only counts. The index's files are those whose path holds the marker, and the
      * fds and mappings of such files. A sweep arms it at 1, 2, ... until the operation makes fewer calls, so that
-     * every file call of the operation fails once. A synchronous msync that does not fail runs as MS_ASYNC.
+     * every file call of the operation fails once. A synchronous msync that does not fail runs as MS_ASYNC. With
+     * {@link #setFlushOnly(boolean)}, it counts and fails only the flushes.
      */
     private static class IndexFileCallFailingFacade extends TestFilesFacadeImpl {
         private static final int EIO = 5;
@@ -14448,6 +14532,8 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         private volatile String failedCall;
         private volatile boolean isFailedFlush;
         private volatile boolean isFailedKeyFileFlush;
+        private volatile boolean isFlushOnly;
+        private volatile boolean isKeyFileFlushed;
         private volatile boolean isPerFileFlush;
 
         IndexFileCallFailingFacade(String marker) {
@@ -14642,6 +14728,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         void arm(int failAt) {
             errnoThreadId = -1;
             failedCall = null;
+            isKeyFileFlushed = false;
             callCount.set(0);
             this.failAt = failAt;
         }
@@ -14670,6 +14757,16 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             return failedCall != null && isFailedKeyFileFlush;
         }
 
+        // Whether a synchronous flush of a .pk file succeeded after arm() and before the call that failed
+        boolean isKeyFileFlushed() {
+            return isKeyFileFlushed;
+        }
+
+        // Counts and fails only the flushes: fdatasync, fsync, msync, sync_file_range and syncfs
+        void setFlushOnly(boolean isFlushOnly) {
+            this.isFlushOnly = isFlushOnly;
+        }
+
         // Takes the flush path of a platform with no filesystem-wide syncfs (macOS, Windows)
         void setPerFileFlush(boolean isPerFileFlush) {
             this.isPerFileFlush = isPerFileFlush;
@@ -14686,16 +14783,24 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
         private boolean isFailingCall(String call, String fileName) {
             final int at = failAt;
-            if (at < 0 || callCount.incrementAndGet() != at) {
-                return false;
-            }
-            failedCall = call + ' ' + fileName;
-            isFailedFlush = switch (call) {
+            final boolean isFlush = switch (call) {
                 case "fdatasync", "fsync", "msync", "msync async", "sync_file_range", "syncfs" -> true;
                 default -> false;
             };
+            if (at < 0 || (isFlushOnly && !isFlush)) {
+                return false;
+            }
             // name.pk or name.pk.<column name txn>
-            isFailedKeyFileFlush = isFailedFlush && fileName.lastIndexOf(".pk") > fileName.lastIndexOf(Files.SEPARATOR);
+            final boolean isKeyFile = fileName.lastIndexOf(".pk") > fileName.lastIndexOf(Files.SEPARATOR);
+            if (callCount.incrementAndGet() != at) {
+                if (isFlush && isKeyFile && !call.equals("msync async") && failedCall == null) {
+                    isKeyFileFlushed = true;
+                }
+                return false;
+            }
+            failedCall = call + ' ' + fileName;
+            isFailedFlush = isFlush;
+            isFailedKeyFileFlush = isFlush && isKeyFile;
             errnoThreadId = Thread.currentThread().threadId();
             return true;
         }
