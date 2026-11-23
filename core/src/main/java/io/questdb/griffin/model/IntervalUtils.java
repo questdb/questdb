@@ -3606,8 +3606,10 @@ public final class IntervalUtils {
      * <p>
      * Each endpoint expression is either a whole day ($today, $yesterday, $tomorrow, optionally shifted by
      * whole days) or a point in time ($now, or a shift below a day). A range between two points in time
-     * produces a single interval. Otherwise the range iterates the days from the start's day to the end's
-     * day, and clips the result to the endpoint that is a point in time, if any.
+     * produces a single interval, which ignores the time part and the duration of the list; a duration
+     * that does not parse still fails it, whatever the order of the range. Otherwise the range iterates
+     * the days from the start's day to the end's day, and clips the result to the endpoint that is a
+     * point in time, if any.
      * <p>
      * Range type is determined by the END expression:
      * - If end expression ends with "bd", iterate business days only (skip Sat/Sun)
@@ -3698,17 +3700,26 @@ public final class IntervalUtils {
         long endDay = timestampDriver.startOfDay(endTimestamp, 0);
 
         // Validate start <= end. A whole-day endpoint starts the range at the start of its day,
-        // and ends it at the end of its day. Without the check, such a range adds no interval.
+        // and ends it at the end of its day.
         final long rangeLo = isStartDay ? startDay : startTimestamp;
         final long rangeHi = isEndDay ? timestampDriver.endOfDay(endDay) : endTimestamp;
+        final boolean isPointInTimeRange = !isStartDay && !isEndDay;
+        if (rangeLo > rangeHi && (checks & TICK_CHECK_RANGE_ORDER) != 0) {
+            throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
+        }
+        if (isPointInTimeRange && durationSemicolon >= 0) {
+            // The range is one interval from start to end, which ignores the duration of the list, as
+            // the compiled form does. A duration that does not parse fails it as it fails a day, and
+            // whatever the order of the range: that order depends on "now", and SQL checks a literal
+            // against the "now" it compiles at, not the one it runs at.
+            validateDurationSuffix(timestampDriver, seq, durationSemicolon, lim, errorPos);
+        }
         if (rangeLo > rangeHi) {
-            if ((checks & TICK_CHECK_RANGE_ORDER) != 0) {
-                throw SqlException.$(errorPos + rangeOpPos - elementStart, "Invalid date range: start is after end");
-            }
+            // without the range order check, such a range adds no interval
             return;
         }
 
-        if (!isStartDay && !isEndDay) {
+        if (isPointInTimeRange) {
             // Time-based range: produce single interval from start to end
             int outSizeBeforeInterval = out.size();
             encodeInterval(startTimestamp, endTimestamp, operation, out);
@@ -5085,6 +5096,91 @@ public final class IntervalUtils {
                         Numbers.decodeHighInt(encoded)
                 )
         );
+    }
+
+    /**
+     * Fails with the error of addDuration() on the duration seq[lo, lim), without adding it to a
+     * timestamp: it checks a unit as compileDurationParts() does, so no running sum can fail it.
+     */
+    private static void validateDuration(TimestampDriver timestampDriver, CharSequence seq, int lo, int lim, int position) throws SqlException {
+        int numStart = lo;
+        for (int i = lo; i < lim; i++) {
+            final char c = seq.charAt(i);
+            if ((c == '-' || c == '+') && i == numStart) {
+                continue;
+            }
+            if ((c >= '0' && c <= '9') || c == '_') {
+                continue;
+            }
+            if (i == numStart) {
+                throw SqlException.$(position, "Expected number before unit '").put(c).put('\'');
+            }
+            try {
+                Numbers.parseInt(seq, numStart, i);
+            } catch (NumericException e) {
+                throw SqlException.$(position, "Duration not a number: ").put(seq, numStart, i);
+            }
+            // add() returns LONG_NULL for a unit that the driver does not add, as addDuration() checks
+            if (timestampDriver.add(0, c, 1) == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "Invalid duration unit: ").put(c);
+            }
+            numStart = i + 1;
+        }
+        if (numStart < lim) {
+            throw SqlException.$(position, "Missing unit at end of duration");
+        }
+    }
+
+    /**
+     * Checks the text after the first ';' of an interval, seq(semicolon, lim), as parseIntervalSuffix()
+     * reads it after a date: a duration, or the duration, period and count of a repeating interval. Fails
+     * with the error that parseIntervalSuffix() raises for that text, and applies nothing, for the suffix of
+     * a range between two points in time, which no interval takes. Without a date, a text with a semicolon
+     * count that the grammar does not take reports itself from the first ';'.
+     */
+    private static void validateDurationSuffix(TimestampDriver timestampDriver, CharSequence seq, int semicolon, int lim, int position) throws SqlException {
+        int periodSemicolon = -1;
+        int countSemicolon = -1;
+        for (int i = semicolon + 1; i < lim; i++) {
+            if (seq.charAt(i) == ';') {
+                if (periodSemicolon < 0) {
+                    periodSemicolon = i;
+                } else if (countSemicolon < 0) {
+                    countSemicolon = i;
+                } else {
+                    throw SqlException.$(position, "Invalid interval format (too many semicolons): ").put(seq, semicolon, lim);
+                }
+            }
+        }
+        if (periodSemicolon < 0) {
+            validateDuration(timestampDriver, seq, semicolon + 1, lim, position);
+            return;
+        }
+        if (countSemicolon < 0) {
+            throw SqlException.$(position, "Invalid interval format: ").put(seq, semicolon, lim);
+        }
+        // the last character of the period is its unit
+        try {
+            Numbers.parseInt(seq, periodSemicolon + 1, countSemicolon - 1);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "Period not a number");
+        }
+        final int count;
+        try {
+            count = Numbers.parseInt(seq, countSemicolon + 1, lim);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "Count not a number");
+        }
+        if (count < 1) {
+            throw SqlException.$(position, "Count must be positive");
+        }
+        validateDuration(timestampDriver, seq, semicolon + 1, periodSemicolon, position);
+        final char periodType = seq.charAt(countSemicolon - 1);
+        switch (periodType) {
+            case PeriodType.YEAR, PeriodType.MONTH, PeriodType.HOUR, PeriodType.MINUTE, PeriodType.SECOND, PeriodType.DAY -> {
+            }
+            default -> throw SqlException.$(position, "Unknown period: ").put(periodType).put(" at 1");
+        }
     }
 
     static int append(LongList list, int writePoint, long lo, long hi) {

@@ -73,6 +73,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     // what the fuzz test met, so that it can tell that it reached the paths it is for
     private int fuzzNotParsedCount;
     private int fuzzRangeOrderCount;
+    private int fuzzRejectedSuffixCount;
     private int fuzzUnknownUnitNotParsedCount;
 
     /**
@@ -213,11 +214,12 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                 }
             }
             // the generator makes ranges that start after they end, malformed expressions that
-            // only the form parsing on every evaluation lets through, and durations with a unit that
-            // the timestamp drivers do not add
+            // only the form parsing on every evaluation lets through, durations with a unit that
+            // the timestamp drivers do not add, and texts after the first ';' that do not parse
             Assert.assertTrue(fuzzRangeOrderCount > 0);
             Assert.assertTrue(fuzzNotParsedCount > 0);
             Assert.assertTrue(fuzzUnknownUnitNotParsedCount > 0);
+            Assert.assertTrue(fuzzRejectedSuffixCount > 0);
         });
     }
 
@@ -231,7 +233,10 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     for (String expression : new String[]{
                             "[$today,garbage]T[09:00,10:00]",
                             "$todayT[09,14]:[00,99]",
-                            "[$today, 2024-01-03]T[09:00@Bogus/Zone]"
+                            "[$today, 2024-01-03]T[09:00@Bogus/Zone]",
+                            // a range between two points in time, with a duration that does not parse
+                            "[$now - 1h..$now@+00:00];1h#Tue",
+                            "[$now - 1h..$now@+00:00];1h;1d"
                     }) {
                         try (CompiledTickExpression compiled = compile(driver, expression)) {
                             engineJob.setNowAndFixClock(driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z"), driver.getTimestampType());
@@ -383,7 +388,11 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                             {"$today;1x", "x"},
                             {"$now;1H", "H"},
                             {"[$today]T09:00;2D", "D"},
-                            {"[$today, $tomorrow]T[09:00,10:00]@Europe/London;1h1S", "S"}
+                            {"[$today, $tomorrow]T[09:00,10:00]@Europe/London;1h1S", "S"},
+                            // ranges between two points in time, which ignore the duration
+                            {"$now - 1h..$now;1x", "x"},
+                            {"[$now - 1h..$now]@Europe/London;1H", "H"},
+                            {"[$today + 1h..$now];2D", "D"}
                     }) {
                         try (CompiledTickExpression compiled = compile(driver, expression[0])) {
                             compiled.init(null, engineJob);
@@ -477,6 +486,13 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
         final String withoutRangeOrder = parse(driver, expression, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
         final String unchecked = parse(driver, expression, now, 0);
         final String context = expression + " at " + now;
+        if (!isMalformed && (TickExprTest.hasRejectedSuffix(expression) || TickExprTest.hasMisplacedDayFilter(expression))) {
+            // a text after the first ';' that does not parse fails the expression after every
+            // element, a range between two points in time included, unless a range that starts
+            // after it ends fails first; a malformed time part can take that text in
+            fuzzRejectedSuffixCount++;
+            Assert.assertTrue(context, isError(strict));
+        }
         if (!isError(strict)) {
             Assert.assertEquals(context, strict, withoutRangeOrder);
             Assert.assertEquals(context, strict, unchecked);

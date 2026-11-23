@@ -43,6 +43,80 @@ import java.sql.Statement;
 public class PGTickExprWalUpdateTest extends BasePGTest {
 
     @Test
+    public void testPreparedPointInTimeRangeWithMalformedDurationFails() throws Exception {
+        // A range between two points in time ignores its duration, which still has to parse: such a
+        // duration fails a prepared statement on every run, with the bind variable until it holds a
+        // duration that parses, and with the literal. The bind variable selected the rows of the
+        // range. The repeating interval of the parser, a duration, a period and a count, repeats
+        // nothing after the range.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE w (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO w VALUES
+                        ('2024-01-02T09:30:00.000000Z', 1),
+                        ('2024-01-02T10:00:00.000000Z', 1),
+                        ('2024-01-02T10:30:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts FROM w WHERE ts IN ?")) {
+                select.setString(1, "$now - 1h..$now;1h#Tue");
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet ignore = select.executeQuery()) {
+                        Assert.fail("the query should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Expected number before unit '#'");
+                    }
+                }
+                // 09:00 to 10:00
+                for (String tickExpr : new String[]{"$now - 1h..$now;1h", "$now - 1h..$now;1h;1d;3"}) {
+                    select.setString(1, tickExpr);
+                    try (ResultSet rs = select.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(
+                                """
+                                        ts[TIMESTAMP]
+                                        2024-01-02 09:30:00.0
+                                        2024-01-02 10:00:00.0
+                                        """,
+                                sink,
+                                rs
+                        );
+                    }
+                }
+            }
+            for (String sql : new String[]{"SELECT ts FROM w WHERE ts IN '$now - 1h..$now;1x'", "UPDATE w SET v = 2 WHERE ts IN '$now - 1h..$now;1x'"}) {
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < 2; i++) {
+                        try {
+                            statement.execute();
+                            Assert.fail("the statement should fail: " + sql);
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "Invalid duration unit: x");
+                        }
+                    }
+                }
+            }
+            drainWalQueue();
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT v FROM w")) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[INTEGER]
+                                1
+                                1
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPreparedStatementWithUnknownDurationUnitFails() throws Exception {
         // A duration unit that the timestamp drivers do not add fails a prepared statement on every
         // run, with the literal, and with the bind variable until it holds a unit that they add. The

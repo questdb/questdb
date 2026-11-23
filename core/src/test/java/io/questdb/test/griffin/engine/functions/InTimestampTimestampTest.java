@@ -874,6 +874,286 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsInEveryContext() throws Exception {
+        // A range between two points in time ignores its duration, but a duration that does not
+        // parse fails the query as it compiles, wherever the query holds the literal, at the
+        // position of the literal. A bind variable with such an expression fails the query the
+        // same way when it runs.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("CREATE TABLE ti (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO ti SELECT ts, s FROM t");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // ? stands for the tick expression
+                for (String query : new String[]{
+                        "WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s",
+                        "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a LEFT JOIN t b ON a.s = b.s",
+                        "SELECT count() FROM t a LEFT JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a ASOF JOIN t b",
+                        "SELECT count() FROM t a ASOF JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a CROSS JOIN t b",
+                        "SELECT count() FROM t a CROSS JOIN (SELECT * FROM t WHERE ts IN ?) b",
+                        "SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t",
+                        "SELECT ts FROM t UNION SELECT ts FROM t WHERE ts IN ?",
+                        "SELECT ts FROM t WHERE ts IN ? EXCEPT SELECT ts FROM t",
+                        "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN ?",
+                        "SELECT ts FROM t WHERE ts IN ? INTERSECT SELECT ts FROM t",
+                        "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN ?",
+                        "SELECT s, count() FROM t WHERE ts IN ? GROUP BY s",
+                        "SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s",
+                        "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
+                        "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ?",
+                        "SELECT * FROM t WHERE ts IN ? ORDER BY ts LIMIT -1",
+                        // a symbol without an index, and one with an index
+                        "SELECT count() FROM t WHERE s = 'a' AND ts IN ?",
+                        "SELECT count() FROM ti WHERE s = 'a' AND ts IN ?"
+                }) {
+                    final String literal = query.replace("?", "'$now - 1h..$now;1x'");
+                    assertExceptionNoLeakCheck(literal, literal.indexOf("'$now"), "Invalid duration unit: x");
+                    final String bind = query.replace("?", "$1");
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "$now - 1h..$now;1h#Tue");
+                    assertExceptionNoLeakCheck(bind, bind.indexOf("$1"), "Expected number before unit '#'");
+                    bindVariableService.clear();
+                }
+                // EXPLAIN compiles the query without running it
+                final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '$now - 1h..$now;1x'";
+                assertExceptionNoLeakCheck(explain, explain.indexOf('\''), "Invalid duration unit: x");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsOnEveryTimestampType() throws Exception {
+        // A range between two points in time with a duration that does not parse fails the query on
+        // a designated nanosecond timestamp, a nullable timestamp, and a DATE, which IN compares as a
+        // microsecond timestamp: as a literal when the query compiles, and as a bind variable and a
+        // value of a row when it runs. The bind variable and the value of a row selected the rows of
+        // the range.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, ts2 TIMESTAMP, d DATE, s STRING, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                    ('2024-01-02T09:30:00.000000000Z', '2024-01-02T09:30:00.000000Z', '2024-01-02T09:30:00.000Z', '$now - 1h..$now;1h#Tue', '$now - 1h..$now;1h#Tue'),
+                    ('2024-01-02T10:30:00.000000000Z', '2024-01-02T10:30:00.000000Z', '2024-01-02T10:30:00.000Z', '$now - 1h..$now;1h#Tue', '$now - 1h..$now;1h#Tue'),
+                    ('2024-01-02T11:00:00.000000000Z', NULL, NULL, '$now - 1h..$now;1h#Tue', '$now - 1h..$now;1h#Tue')
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // 09:00 to 10:00 holds the row at 09:30, and not the NULL
+                for (String[] column : new String[][]{
+                        {"ts", "1\t2024-01-02T09:30:00.000000000Z\t2024-01-02T09:30:00.000000000Z"},
+                        {"ts2", "1\t2024-01-02T09:30:00.000000Z\t2024-01-02T09:30:00.000000Z"},
+                        {"d", "1\t2024-01-02T09:30:00.000Z\t2024-01-02T09:30:00.000Z"}
+                }) {
+                    final String query = "SELECT count(), min(" + column[0] + "), max(" + column[0] + ") FROM tn WHERE " + column[0] + " IN ";
+                    final String literal = query + "'$now - 1h..$now;1x'";
+                    assertExceptionNoLeakCheck(literal, literal.indexOf('\''), "Invalid duration unit: x");
+                    assertQuery(query + "'$now - 1h..$now;1h'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable("$now - 1h..$now;1h#Tue", isVarchar);
+                        assertExceptionNoLeakCheck(query + "$1", query.length(), "Expected number before unit '#'");
+                        setTickExprBindVariable("$now - 1h..$now;1h", isVarchar);
+                        assertQuery(query + "$1")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    }
+                    bindVariableService.clear();
+                }
+                for (String column : new String[]{"s", "vc"}) {
+                    final String sql = "SELECT count() FROM tn WHERE ts IN " + column;
+                    assertExceptionNoLeakCheck(sql, sql.lastIndexOf(' ') + 1, "Expected number before unit '#'");
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsWhateverTheData() throws Exception {
+        // A range between two points in time with a duration that does not parse fails a literal as
+        // the query compiles, without reading data, on an empty table and on one of a single row. A
+        // prepared query fails on the run that binds such an expression, and keeps working on the
+        // runs before and after it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE empty_table (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE single_row (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO single_row VALUES ('2024-01-02T09:30:00.000000Z')");
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String table : new String[]{"empty_table", "single_row"}) {
+                    final String sql = "SELECT count() FROM " + table + " WHERE ts IN '$now - 1h..$now;1x'";
+                    assertExceptionNoLeakCheck(sql, sql.indexOf('\''), "Invalid duration unit: x");
+                }
+                // 09:00 to 10:00
+                final String range = "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z";
+                final String prepared = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+                bindVariableService.clear();
+                bindVariableService.setStr(0, "$now - 1h..$now;1h");
+                try (RecordCursorFactory factory = select(prepared)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("count\tmin\tmax\n" + range + "\n");
+                    bindVariableService.setStr(0, "$now - 1h..$now;1h#Tue");
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("the run with $now - 1h..$now;1h#Tue should fail");
+                    } catch (SqlException | CairoException e) {
+                        TestUtils.assertEquals("Expected number before unit '#'", e.getFlyweightMessage());
+                        Assert.assertEquals(prepared.indexOf("$1"), e.getPosition());
+                    }
+                    bindVariableService.setStr(0, "$now - 1h..$now;1h");
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("count\tmin\tmax\n" + range + "\n");
+                }
+                bindVariableService.clear();
+                assertIntrinsicRows("ts IN '$now - 1h..$now;1h'", range);
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsWhenQueryCompiles() throws Exception {
+        // A range between two points in time ignores its duration, but a duration that does not
+        // parse fails a literal as the query compiles, whether the IR represents the literal or SQL
+        // parses it on every evaluation, and a bind variable as the query runs, with the error of
+        // the parser. The literal on a dateadd() of the designated timestamp, and the bind variable,
+        // selected the rows of the range. The repeating interval of the parser, a duration, a period
+        // and a count, repeats nothing after the range, and the table keeps answering.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                // 09:00 to 10:00
+                final String range = "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z";
+                for (String[] tickExpr : new String[][]{
+                        {"$now - 1h..$now;1h#Tue", "Expected number before unit '#'"},
+                        {"$now - 1h..$now;1x", "Invalid duration unit: x"},
+                        {"$NOW - 1h..$NOW;1H", "Invalid duration unit: H"},
+                        // SQL parses these on every evaluation
+                        {"[$now - 1h..$now@+00:00];1h#Tue", "Expected number before unit '#'"},
+                        {"[$now - 1h..$now]T[09..10]:30;1h-", "Missing unit at end of duration"},
+                        {"[$now - 1h..$now@+00:00];1h;1d", "Invalid interval format: ;1h;1d"}
+                }) {
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        // the interval scan, NOT IN, an OR that the scan takes, another timestamp
+                        // column, and a dateadd() of the designated timestamp, above it and below it
+                        assertLiteralFailsWhenQueryCompiles(tickExpr[0], tickExpr[1]);
+                        // an OR that leaves the IN in the row filter
+                        final String sql = "SELECT count() FROM t WHERE ts IN '" + tickExpr[0] + "' OR ts > '2030-01-01'";
+                        try (RecordCursorFactory ignore = select(sql)) {
+                            Assert.fail("compiled: " + sql);
+                        } catch (SqlException e) {
+                            TestUtils.assertEquals(sql, tickExpr[1], e.getFlyweightMessage());
+                            Assert.assertEquals(sql, sql.indexOf('\''), e.getPosition());
+                        }
+                    }
+                    sqlExecutionContext.setJitMode(jitMode);
+                    assertIntrinsicRows("ts IN '$now - 1h..$now;1h'", range);
+                }
+                // the IR rejects one ';' more with an error of its own
+                assertLiteralFailsWhenQueryCompiles("$now - 1h..$now;1h;1d", "Expected number before unit ';'");
+                for (String[] tickExpr : new String[][]{
+                        {"$now - 1h..$now;1h#Tue", "Expected number before unit '#'"},
+                        {"$now - 1h..$now;1x", "Invalid duration unit: x"},
+                        {"$NOW - 1h..$NOW;1H", "Invalid duration unit: H"},
+                        {"[$now - 1h..$now]T[09..10]:30;1h-", "Missing unit at end of duration"},
+                        {"$now - 1h..$now;1h;1d", "Invalid interval format: ;1h;1d"}
+                }) {
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable(tickExpr[0], isVarchar);
+                        for (String sql : new String[]{
+                                "SELECT count() FROM t WHERE ts IN $1",
+                                "SELECT count() FROM t WHERE ts IN $1 OR ts > '2030-01-01'",
+                                "SELECT count() FROM t WHERE ts2 IN $1",
+                                "SELECT count() FROM t WHERE dateadd('h', 1, ts) IN $1"
+                        }) {
+                            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), tickExpr[1]);
+                        }
+                    }
+                    bindVariableService.clear();
+                }
+                // the IR rejects the repeating interval, and the form that parses on every
+                // evaluation takes it
+                assertTickExprBindVariableMatches("$now - 1h..$now;1h;1d;3", range);
+                assertTickExprMatches("[$now - 1h..$now@+00:00];1h;1d;3", range);
+                assertIntrinsicRows("ts IN '$now - 1h..$now;1h'", range);
+            } finally {
+                bindVariableService.clear();
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationInRowFailsWithParallelFilterOnAndOff() throws Exception {
+        // A value of a row, a range between two points in time with a duration that does not parse,
+        // fails the query at the column, whether the filter runs in parallel, on a copy of the
+        // function for each worker, or on the thread of the query. The row is in the last of four
+        // partitions, and the table keeps answering after the query fails.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               (CASE WHEN x = 80 THEN '$now - 1h..$now;1h#Tue' ELSE '$now - 1h..$now;1h' END) s,
+                               (CASE WHEN x = 80 THEN '$now - 1h..$now;1h#Tue' ELSE '$now - 1h..$now;1h' END)::VARCHAR vc
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            final boolean isParallelFilterEnabled = sqlExecutionContext.isParallelFilterEnabled();
+            try {
+                for (boolean isParallel : new boolean[]{true, false}) {
+                    sqlExecutionContext.setParallelFilterEnabled(isParallel);
+                    for (String column : new String[]{"s", "vc"}) {
+                        final String sql = "SELECT ts FROM t WHERE ts IN " + column;
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .assertsPlanContaining(isParallel ? "Async Filter" : "Filter filter: ts in " + column);
+                        assertExceptionNoLeakCheck(sql, sql.lastIndexOf(' ') + 1, "Expected number before unit '#'");
+                        final String count = "SELECT count() FROM t WHERE ts IN " + column;
+                        assertExceptionNoLeakCheck(count, count.lastIndexOf(' ') + 1, "Expected number before unit '#'");
+                    }
+                }
+                assertIntrinsicRows("ts IN '$now - 1h..$now;1h'", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testPointInTimeWithMalformedTimeFailsAsLiteralAndAsBindVariable() throws Exception {
         // a point in time ignores the time part, which still has to be well-formed: the bind variable
         // selected the row at $now

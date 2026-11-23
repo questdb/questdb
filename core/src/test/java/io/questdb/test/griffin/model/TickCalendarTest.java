@@ -1015,6 +1015,47 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testPointInTimeRangeSuffixUnderTickCalendar() {
+        // A range between two points in time under a tick calendar: the parser checks the text after
+        // the first ';' whether or not the session holds the range, and adds the duration to the end
+        // of what the session keeps of it, as the compiled form does. The session of the trading
+        // Friday 2025-01-24 runs from 14:30 to 21:00Z: at 15:00Z it holds the end of the range, at
+        // 03:00Z nothing of it, and the Saturday has none.
+        final String[] nows = {"2025-01-24T15:00:00.000000Z", "2025-01-24T03:00:00.000000Z", "2025-01-25T15:00:00.000000Z"};
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final boolean isNano = ColumnType.isTimestampNano(timestampType);
+            for (String nowText : nows) {
+                final long now = driver.parseFloorLiteral(nowText);
+                final String context = " at " + nowText + " [" + ColumnType.nameOf(timestampType) + ']';
+                // the compiled form parses an expression with a unit that the drivers do not add on
+                // every evaluation
+                final String unknownUnit = "$now - 1h..$now#XNYS;1x";
+                Assert.assertEquals(unknownUnit + context, "error: Invalid duration unit: x", parseTickExpr(driver, unknownUnit, now));
+                Assert.assertEquals(unknownUnit + context, "error: Invalid duration unit: x", evaluateCompiledTickExpr(driver, unknownUnit, now));
+                // one ';' more, which the parser shows from the first ';' on, and which the IR
+                // rejects with an error of its own
+                final String oneMore = "$now - 1h..$now#XNYS;1h;1d";
+                Assert.assertEquals(oneMore + context, "error: Invalid interval format: ;1h;1d", parseTickExpr(driver, oneMore, now));
+                Assert.assertEquals(oneMore + context, "compile error: Expected number before unit ';'", evaluateCompiledTickExpr(driver, oneMore, now));
+                // the session keeps 14:30 to 15:00 of the range at 15:00Z, and the duration takes its
+                // end to 16:00
+                final String wellFormed = "$now - 1h..$now#XNYS;1h";
+                final String expected = nowText.equals(nows[0])
+                        ? "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T16:00:00.000000Z}]"
+                        : "[]";
+                final String expectedForType = isNano ? expected.replace("00Z", "00000Z") : expected;
+                Assert.assertEquals(wellFormed + context, expectedForType, parseTickExpr(driver, wellFormed, now));
+                Assert.assertEquals(wellFormed + context, expectedForType, evaluateCompiledTickExpr(driver, wellFormed, now));
+            }
+        }
+        // Not asserted: the parser reads the duration of a date list under a tick calendar only
+        // where it applies it to what the session keeps, so [$now - 1h..$now]#XNYS;1x, and the
+        // repeating interval $now - 1h..$now#XNYS;1h;1d;3, return no interval when the session
+        // keeps nothing of the range.
+    }
+
+    @Test
     public void testSameDateDifferentTimezonesWithExchangeFilter() throws SqlException {
         // Same date with different timezones
         // [2025-01-24@+12:00,2025-01-24@-12:00]#XNYS
@@ -1297,6 +1338,23 @@ public class TickCalendarTest {
         Assert.assertEquals(intervalToString(driver, out1), intervalToString(driver, out2));
     }
 
+    /**
+     * Returns the intervals that the compiled form evaluates the expression to, or its error.
+     */
+    private static String evaluateCompiledTickExpr(TimestampDriver driver, String expression, long now) {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            final LongList out = new LongList();
+            try {
+                compiled.evaluate(out, now);
+                return intervalToString(driver, out);
+            } catch (CairoException e) {
+                return "error: " + e.getFlyweightMessage();
+            }
+        } catch (SqlException e) {
+            return "compile error: " + e.getFlyweightMessage();
+        }
+    }
+
     private static String intervalToString(TimestampDriver driver, LongList intervals) {
         sink.clear();
         sink.put('[');
@@ -1314,6 +1372,19 @@ public class TickCalendarTest {
         }
         sink.put(']');
         return sink.toString();
+    }
+
+    /**
+     * Returns the intervals that the parser parses the expression to, or its error.
+     */
+    private static String parseTickExpr(TimestampDriver driver, String expression, long now) {
+        final LongList out = new LongList();
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now);
+            return intervalToString(driver, out);
+        } catch (SqlException e) {
+            return "error: " + e.getFlyweightMessage();
+        }
     }
 
     private void assertTickInterval(String expected, String interval) throws SqlException {

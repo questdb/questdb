@@ -162,6 +162,102 @@ public class MatViewTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeLiteralWithMalformedDurationFailsCreateAndActsAsNullInRefresh() throws Exception {
+        // A range between two points in time ignores its duration, which still has to parse: SQL
+        // rejects a view and a materialized view whose literal has a duration that does not parse as
+        // it creates them. An older build created them, so a stored definition can hold such a
+        // literal: the database starts with it, a refresh runs it as a null value and keeps the
+        // materialized view valid, where it selected the rows of the range, and a query of the view
+        // fails on it. A refresh resolves $now against the "now" of its context, see
+        // testRowValueDateVariableResolvesLikeLiteral, so the hour after each "now" that it can
+        // resolve to, the clock and the start of the epoch, has a row.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
+            execute("CREATE TABLE base (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('1970-01-01T00:30:00.000000Z', 1),
+                    ('2024-01-02T03:30:00.000000Z', 1),
+                    ('2024-01-02T09:00:00.000000Z', 1)
+                    """);
+            drainWalQueue();
+            final String viewSql = "SELECT ts, v FROM base WHERE ts IN '$now..$now + 1h;1x'";
+            final String matViewSql = "SELECT ts, count() c FROM base WHERE ts IN '$now..$now + 1h;1x' SAMPLE BY 1h";
+            for (String sql : new String[]{"CREATE VIEW v AS (" + viewSql + ")", "CREATE MATERIALIZED VIEW mv AS (" + matViewSql + ")"}) {
+                assertExceptionNoLeakCheck(sql, sql.indexOf('\''), "Invalid duration unit: x");
+            }
+
+            // with a duration that parses, the views hold the hour after "now"
+            execute("CREATE VIEW v AS (" + viewSql.replace(";1x", ";1h") + ")");
+            execute("CREATE MATERIALIZED VIEW mv AS (" + matViewSql.replace(";1x", ";1h") + ")");
+            drainWalAndMatViewQueues();
+            drainViewQueue();
+            assertQuery("v")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("""
+                            ts\tv
+                            2024-01-02T03:30:00.000000Z\t1
+                            """);
+            // whichever "now" the refresh resolves against
+            assertQuery("SELECT count(), sum(c) FROM mv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tsum
+                            1\t1
+                            """);
+
+            // the definitions that an older build stored
+            writeViewSql("v", viewSql);
+            writeMatViewSql("mv", matViewSql);
+            engine.releaseInactive();
+            engine.releaseAllWriters();
+
+            try (
+                    CairoEngine restarted = new CairoEngine(configuration);
+                    SqlExecutionContext restartedContext = TestUtils.createSqlExecutionCtx(restarted)
+            ) {
+                restarted.load();
+                restarted.buildViewGraphs();
+                drainWalAndMatViewQueues(restarted);
+                drainViewQueue(restarted);
+                restarted.execute("REFRESH MATERIALIZED VIEW mv FULL", restartedContext);
+                drainWalAndMatViewQueues(restarted);
+                assertQuery("SELECT view_name, view_status FROM materialized_views()")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                view_name\tview_status
+                                mv\tvalid
+                                """);
+                assertQuery("SELECT count() FROM mv")
+                        .withEngine(restarted)
+                        .withContext(restartedContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                0
+                                """);
+                try (RecordCursorFactory ignore = restarted.select("SELECT * FROM v", restartedContext)) {
+                    Assert.fail("compiled: v");
+                } catch (SqlException e) {
+                    TestUtils.assertEquals("Invalid duration unit: x", e.getFlyweightMessage());
+                }
+                restarted.releaseInactive();
+            }
+        });
+    }
+
+    @Test
     public void testRowValueDateVariableResolvesLikeLiteral() throws Exception {
         // A refresh resolves the date variables of a value of a row against the "now" of its
         // context, as it resolves those of a literal, not against the clock of the machine, so

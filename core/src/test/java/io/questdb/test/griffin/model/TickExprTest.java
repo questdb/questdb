@@ -53,6 +53,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -78,6 +79,13 @@ public class TickExprTest {
     // time parts that the grammar rejects
     private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
     private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
+    // texts after the first ';' that the parser rejects after every element, and the compiled form
+    // as well: one more ';', too many, a period or count that is not a number, a count below 1, and
+    // a period with a unit that does not repeat
+    private static final String[] FUZZ_REJECTED_SUFFIXES = {";1h;1d", ";1h;1d;3;4", ";1h;xd;3", ";1h;1d;0", ";1h;1x;3"};
+    // the repeating interval of the parser, a duration, a period and a count, which the compiled form
+    // rejects, see DateVariableDetectionChecker
+    private static final String FUZZ_REPEATING_SUFFIX = ";1h;1d;3";
     private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
     private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
     private static final String[] FUZZ_TIMES = {
@@ -87,6 +95,37 @@ public class TickExprTest {
     private static final String[] FUZZ_VARIABLES = {"$now", "$today", "$yesterday", "$tomorrow", "$NOW", "$TODAY", "$Tomorrow", "$YESTERDAY"};
     private static final String[] FUZZ_ZONES = {"", "@+02:00", "@Europe/London", "@America/New_York"};
     private static final Log LOG = LogFactory.getLog(TickExprTest.class);
+    private static final String NINE_TO_TEN = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+    // ranges between two points in time, each a single interval, with the intervals that they select
+    // at 2024-01-02T10:00Z, a Tuesday; ? stands for the text after the first ';' of the expression
+    private static final PointInTimeRange[] POINT_IN_TIME_RANGES = {
+            new PointInTimeRange("$now - 1h..$now;?", NINE_TO_TEN, true),
+            new PointInTimeRange("[$now - 1h..$now];?", NINE_TO_TEN, true),
+            new PointInTimeRange("$today + 2h..$now;?", "[{lo=2024-01-02T02:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+            new PointInTimeRange("$now..$now;?", "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+            new PointInTimeRange("[$NOW - 1h..$Now + 1h];?", "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T11:00:00.000000Z}]", true),
+            new PointInTimeRange("[$yesterday + 30m..$now];?", "[{lo=2024-01-01T00:30:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", true),
+            new PointInTimeRange(
+                    "[$now - 1h..$now, $now - 3h..$now - 2h];?",
+                    "[{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T08:00:00.000000Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]",
+                    true
+            ),
+            // 09:00 to 10:00 at +02:00
+            new PointInTimeRange("[$now - 1h..$now]@+02:00;?", "[{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T08:00:00.000000Z}]", true),
+            // London keeps UTC in January
+            new PointInTimeRange("[$now - 1h..$now]@Europe/London;?", NINE_TO_TEN, true),
+            new PointInTimeRange("$now - 1h..$now#Tue;?", NINE_TO_TEN, true),
+            // the day filter drops the range
+            new PointInTimeRange("$now - 1h..$now#Mon;?", "[]", true),
+            // the range ignores the time part; the IR represents neither an element with its own
+            // timezone nor numeric brackets in the time, so those parse on every evaluation
+            new PointInTimeRange("[$now - 1h..$now@+00:00];?", NINE_TO_TEN, false),
+            new PointInTimeRange("[$now - 1h..$now]T09:00;?", NINE_TO_TEN, true),
+            new PointInTimeRange("[$now - 1h..$now]T[09:00,10:00];?", NINE_TO_TEN, true),
+            new PointInTimeRange("[$now - 1h..$now]T[09..10]:30;?", NINE_TO_TEN, false),
+            new PointInTimeRange("  $now - 1h ..  $now ;?", NINE_TO_TEN, true)
+    };
+    private static final int[] TICK_CHECK_LEVELS = {IntervalUtils.TICK_CHECK_ALL, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 0};
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
     private final LongList a = new LongList();
@@ -1657,10 +1696,10 @@ public class TickExprTest {
         // A literal with a duration unit that the timestamp drivers do not add evaluates to what a
         // bind variable with the same expression parses to, at every hour of a week with a weekend:
         // the same intervals, or the same error. The parser reports the unit where it applies the
-        // duration. It skips the duration of a business day range that holds no weekday, and of a
-        // range between two points in time, where both return the intervals of the range without the
-        // duration: this asserts that the two agree there, not those intervals. A range that starts
-        // after it ends fails on both before its duration.
+        // duration, and checks it after a range between two points in time, which ignores the
+        // duration. It skips the duration of a business day range that holds no weekday, where both
+        // return no interval: this asserts that the two agree there, not those intervals. A range
+        // that starts after it ends fails on both before its duration.
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long monday = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
         for (String expression : new String[]{
@@ -1689,8 +1728,15 @@ public class TickExprTest {
                     sink.put(expression).put(" at ");
                     timestampDriver.append(sink, now);
                     TestUtils.assertEquals(sink.toString(), parsed, evaluated);
-                    if ("$today;1x".equals(expression)) {
+                    if ("$today;1x".equals(expression) || "[$now - 1h..$now];1x".equals(expression)) {
                         TestUtils.assertEquals(sink.toString(), "error: Invalid duration unit: x", evaluated);
+                    } else if ("[$today + 570m..$now];1x".equals(expression)) {
+                        // the range starts at 09:30 and ends at "now"
+                        TestUtils.assertEquals(
+                                sink.toString(),
+                                hour % 24 < 10 ? "error: Invalid date range: start is after end" : "error: Invalid duration unit: x",
+                                evaluated
+                        );
                     }
                 }
             }
@@ -1714,7 +1760,10 @@ public class TickExprTest {
                 "$now;1?", "$NOW;1?", "$today;1?", "[$now];1?", "$now;1h1?", "$today;1?1h", "$today;0?", "$today;-1?",
                 "$today;+1?", "$today;2_147_483_647?", "$today..$tomorrow;1?", "$yesterday..$today + 3d;1?",
                 "[$today, $tomorrow]T09:00;1h1?", "[$today]T[09:00,10:00];1?", "$todayT09:00;1?", "$today@Europe/London;1?",
-                "[$today]T09:00@+02:00;1?", "$today#Tue;1?", "[$yesterday..$today, $now];1?"
+                "[$today]T09:00@+02:00;1?", "$today#Tue;1?", "[$yesterday..$today, $now];1?",
+                // ranges between two points in time, which ignore the duration
+                "$now - 1h..$now;1?", "[$now - 1h..$now]@+02:00;1?", "$yesterday + 30m..$now;1h1?",
+                "[$now - 1h..$now, $now - 3h..$now - 2h];1?"
         };
         final String[] nows = {
                 "2024-01-02T10:00:00.000000Z",
@@ -1745,6 +1794,12 @@ public class TickExprTest {
                 timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z"),
                 "Invalid interval format: 2024-01-02;1;"
         );
+        // and shows the text from the first ';' on after a range between two points in time
+        assertUnknownDurationUnitFails(
+                "$now - 1h..$now;1;",
+                timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z"),
+                "Invalid interval format: ;1;"
+        );
     }
 
     @Test
@@ -1755,9 +1810,9 @@ public class TickExprTest {
         // expression that the parser skips. Each case gives the error of the compiled form, and the
         // error of the parser.
         final String[][] cases = {
-                // the parser ignores the time part and the duration of a range between two points in
-                // time, so its result is not asserted
-                {"[$now - 1h..$now]T25:00;1x", "Invalid time override: 25:00", null},
+                // the parser ignores the time part of a range between two points in time, and checks
+                // its duration
+                {"[$now - 1h..$now]T25:00;1x", "Invalid time override: 25:00", "Invalid duration unit: x"},
                 {"[$today]T[25:00];1x", "Invalid time in time list: 25:00", "Invalid date: 2024-01-02T25:00"},
                 {"$today@Bogus/Zone;1x", "invalid timezone: Bogus/Zone", "Invalid duration unit: x"},
                 {"$today;h1x", "Expected number before unit 'h'", "Expected number before unit 'h'"},
@@ -1769,9 +1824,7 @@ public class TickExprTest {
         for (String[] c : cases) {
             assertCompileError(c[0], c[1]);
             assertCompileError(c[0].replace('x', 'h'), c[1]);
-            if (c[2] != null) {
-                assertParseError(c[0], c[2]);
-            }
+            assertParseError(c[0], c[2]);
         }
         // a space, and a character of 4 UTF-8 bytes, which is two Java chars: the second char takes
         // the place of a number
@@ -3475,12 +3528,34 @@ public class TickExprTest {
                         for (String duration : FUZZ_UNKNOWN_UNIT_DURATIONS) {
                             checker.check(variable + time + zone + dayFilter + duration, false);
                         }
+                        for (String duration : FUZZ_REJECTED_SUFFIXES) {
+                            checker.check(variable + time + zone + dayFilter + duration, false);
+                        }
                     }
                 }
             }
             for (String time : FUZZ_MALFORMED_TIMES) {
                 for (String zone : FUZZ_ZONES) {
                     checker.check(variable + time + zone, true);
+                }
+            }
+        }
+        // every range between two points in time followed by every suffix, with the day filter
+        // before and after the duration; [$today + 570m..$now] starts after it ends at the "now"
+        // values 00:30 and 05:30
+        for (String range : new String[]{"$now - 1h..$now", "$today + 2h..$NOW", "[$now - 1h..$now]", "[$today + 570m..$now]"}) {
+            for (String time : FUZZ_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    for (String dayFilter : FUZZ_DAY_FILTERS) {
+                        for (String[] durations : new String[][]{FUZZ_DURATIONS, FUZZ_UNKNOWN_UNIT_DURATIONS, FUZZ_REJECTED_SUFFIXES}) {
+                            for (String duration : durations) {
+                                checker.check(range + time + zone + dayFilter + duration, false);
+                                if (!dayFilter.isEmpty() && !duration.isEmpty()) {
+                                    checker.check(range + time + zone + duration + dayFilter, false);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3762,6 +3837,217 @@ public class TickExprTest {
     public void testDateVariableNumberOverflow() {
         // Number too large for int
         assertBracketIntervalError("[$today + 99999999999d]", "Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeSuffixErrorOrder() throws SqlException {
+        // The parser checks the text after the first ';' of a range between two points in time
+        // before the timezone, as it does on a day, and after the order of the range: a range that
+        // starts after it ends fails on its order under the range order check, at its '..', and on
+        // the text without that check, whatever "now" makes it start after it ends.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long ten = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final long three = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        final String rangeOrderError = "Invalid date range: start is after end";
+
+        // the text before the timezone, as on a day, while the IR parses the timezone first
+        assertParseFailsAtEveryCheckLevel("[$today]@Bogus/Zone;1x", ten, "Invalid duration unit: x");
+        assertParseFailsAtEveryCheckLevel("[$now - 1h..$now]@Bogus/Zone;1x", ten, "Invalid duration unit: x");
+        assertCompileError("[$now - 1h..$now]@Bogus/Zone;1x", "invalid timezone: Bogus/Zone");
+        // an element with its own timezone, which the IR does not represent
+        assertParseFailsAtEveryCheckLevel("[$now - 1h..$now@Bogus/Zone];1x", ten, "Invalid duration unit: x");
+        assertUnknownDurationUnitFails("[$now - 1h..$now@Bogus/Zone];1x", ten, "Invalid duration unit: x");
+
+        // a range that starts after it ends at every "now"
+        assertParseFails("[$now..$now - 1h];1x", ten, IntervalUtils.TICK_CHECK_ALL, 11, rangeOrderError);
+        assertParseFails("[$now..$now - 1h];1x", ten, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 7, "Invalid duration unit: x");
+        assertParseFails("[$now..$now - 1h];1x", ten, 0, 7, "Invalid duration unit: x");
+        assertValidateFailsWith("[$now..$now - 1h];1x", ten, "Invalid duration unit: x");
+
+        // one that starts after it ends at 03:00, and not at 10:00: SQL validates a literal against
+        // the time it compiles at, and runs it at another
+        assertParseFails("[$today + 570m..$now];1x", three, IntervalUtils.TICK_CHECK_ALL, 20, rangeOrderError);
+        assertParseFails("[$today + 570m..$now];1x", three, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 7, "Invalid duration unit: x");
+        assertParseFails("[$today + 570m..$now];1x", three, 0, 7, "Invalid duration unit: x");
+        assertValidateFailsWith("[$today + 570m..$now];1x", three, "Invalid duration unit: x");
+        assertParseFailsAtEveryCheckLevel("[$today + 570m..$now];1x", ten, "Invalid duration unit: x");
+        assertValidateFailsWith("[$today + 570m..$now];1x", ten, "Invalid duration unit: x");
+
+        // without the range order check, a range of days that starts after it ends adds no
+        // interval, and the next element checks the text that the list shares
+        assertParseFails("[$tomorrow..$today, $now - 1h..$now];1x", ten, IntervalUtils.TICK_CHECK_ALL, 16, rangeOrderError);
+        assertParseFails("[$tomorrow..$today, $now - 1h..$now];1x", ten, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT, 7, "Invalid duration unit: x");
+        assertParseFails("[$tomorrow..$today, $now - 1h..$now];1x", ten, 0, 7, "Invalid duration unit: x");
+
+        // the case of the variables and of the unit
+        assertParseFailsAtEveryCheckLevel("$NOW - 1h..$NOW;1H", ten, "Invalid duration unit: H");
+        assertParseFailsAtEveryCheckLevel("[$NOW - 1h..$Now + 1h];1h#Tue", ten, "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeSuffixFailsAsAfterADay() throws SqlException {
+        // A range between two points in time is a single interval, which ignores the text after
+        // the first ';' of the list. The parser, which SQL uses for a bind variable and for a
+        // literal that the IR does not represent, read that text only where a day takes it, so it
+        // selected the range where the text does not parse. It fails there now with the error that
+        // a day gives, at every check level, and keeps what the caller appended before. The
+        // compiled form rejects it too: building the IR fails, or the form that parses on every
+        // evaluation fails as the SQL that holds it is validated.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        // the text, the error of the parser, and the error of building the IR, which reads all of
+        // the text as a duration, or null when the IR takes each of its units for one and leaves
+        // the expression to the parser on every evaluation
+        final String[][] suffixes = {
+                // a unit, or another character, where a number goes
+                {"h", "Expected number before unit 'h'", "Expected number before unit 'h'"},
+                {"1h#Tue", "Expected number before unit '#'", "Expected number before unit '#'"},
+                {"1h@UTC", "Expected number before unit '@'", "Expected number before unit '@'"},
+                {"1h ", "Expected number before unit ' '", "Expected number before unit ' '"},
+                {" 1h", "Expected number before unit ' '", "Expected number before unit ' '"},
+                {"1h]", "Expected number before unit ']'", "Expected number before unit ']'"},
+                {"1h[", "Expected number before unit '['", "Expected number before unit '['"},
+                {"1h\u00e9", "Expected number before unit '\u00e9'", "Expected number before unit '\u00e9'"},
+                // a number, or a sign, without a unit
+                {"1h-", "Missing unit at end of duration", "Missing unit at end of duration"},
+                {"1", "Missing unit at end of duration", "Missing unit at end of duration"},
+                {"-", "Missing unit at end of duration", "Missing unit at end of duration"},
+                {"+", "Missing unit at end of duration", "Missing unit at end of duration"},
+                // a number that does not fit an int, or is not one
+                {"99999999999h", "Duration not a number: 99999999999", "Duration not a number: 99999999999"},
+                {"2147483648h", "Duration not a number: 2147483648", "Duration not a number: 2147483648"},
+                {"_h", "Duration not a number: _", "Duration not a number: _"},
+                {"1__h", "Duration not a number: 1__", "Duration not a number: 1__"},
+                {"--1h", "Duration not a number: -", "Duration not a number: -"},
+                // a unit that the timestamp drivers do not add, the first such unit; the IR reports
+                // a later error that it finds
+                {"1x", "Invalid duration unit: x", null},
+                {"1H", "Invalid duration unit: H", null},
+                {"2D", "Invalid duration unit: D", null},
+                {"1h1x", "Invalid duration unit: x", null},
+                {"1x1", "Invalid duration unit: x", "Missing unit at end of duration"},
+                {"1x-", "Invalid duration unit: x", "Missing unit at end of duration"},
+                {"1 h", "Invalid duration unit:  ", "Expected number before unit 'h'"},
+                {"1\u00e9", "Invalid duration unit: \u00e9", null},
+                // a character of 4 UTF-8 bytes is two Java chars, the first one takes the place of
+                // the unit
+                {"1\uD83D\uDE00", "Invalid duration unit: \uD83D", "Expected number before unit '\uDE00'"},
+                // one ';' more, which the parser shows from the first ';' on
+                {"1h;1d", "Invalid interval format: ;1h;1d", "Expected number before unit ';'"},
+                {"1h;", "Invalid interval format: ;1h;", "Expected number before unit ';'"},
+                {";", "Invalid interval format: ;;", "Expected number before unit ';'"},
+                {"1;", "Invalid interval format: ;1;", null},
+                // three or more
+                {"1h;1d;3;4", "Invalid interval format (too many semicolons): ;1h;1d;3;4", "Expected number before unit ';'"},
+                {"1h;1d;3;", "Invalid interval format (too many semicolons): ;1h;1d;3;", "Expected number before unit ';'"},
+                {";;;", "Invalid interval format (too many semicolons): ;;;;", "Expected number before unit ';'"},
+                // two: a duration, a period and a count, which the parser checks in this order:
+                // the number of the period
+                {"1h;d;3", "Period not a number", "Expected number before unit ';'"},
+                {"1h;xd;3", "Period not a number", "Expected number before unit ';'"},
+                {"1h;;3", "Period not a number", "Expected number before unit ';'"},
+                {"1h;;", "Period not a number", "Expected number before unit ';'"},
+                {";;", "Period not a number", "Expected number before unit ';'"},
+                {"1h;99999999999d;3", "Period not a number", "Expected number before unit ';'"},
+                {"1h;2147483648d;3", "Period not a number", "Expected number before unit ';'"},
+                {"1x;xd;0", "Period not a number", "Expected number before unit ';'"},
+                // the count
+                {"1h;1d;x", "Count not a number", "Expected number before unit ';'"},
+                {"1h;1d;", "Count not a number", "Expected number before unit ';'"},
+                {"1h;1d;3x", "Count not a number", "Expected number before unit ';'"},
+                {"1h;1d;99999999999", "Count not a number", "Expected number before unit ';'"},
+                {"1h;1d;0", "Count must be positive", "Expected number before unit ';'"},
+                {"1h;1d;-1", "Count must be positive", "Expected number before unit ';'"},
+                {"x;1d;0", "Count must be positive", "Expected number before unit 'x'"},
+                {"1x;1d;0", "Count must be positive", "Expected number before unit ';'"},
+                // the duration
+                {"1x;1d;3", "Invalid duration unit: x", "Expected number before unit ';'"},
+                {"1x;1q;3", "Invalid duration unit: x", "Expected number before unit ';'"},
+                {"1h#Tue;1d;3", "Expected number before unit '#'", "Expected number before unit '#'"},
+                {"1h-;1d;3", "Missing unit at end of duration", "Duration not a number: -"},
+                {"1;1d;3", "Missing unit at end of duration", "Expected number before unit ';'"},
+                // the unit of the period
+                {"1h;1x;3", "Unknown period: x at 1", "Expected number before unit ';'"},
+                {"1h;1w;3", "Unknown period: w at 1", "Expected number before unit ';'"},
+                {"1h;1n;3", "Unknown period: n at 1", "Expected number before unit ';'"},
+                {"1h;1D;3", "Unknown period: D at 1", "Expected number before unit ';'"}
+        };
+        for (String[] suffix : suffixes) {
+            // the reference: the same text after a point in time and after a day, where the parser
+            // applies it, with the date that it shows aside
+            assertReferenceSuffixFails("$now;" + suffix[0], now, forTimestampType("2024-01-02T10:00:00.000000Z"), suffix[1]);
+            assertReferenceSuffixFails("[$today];" + suffix[0], now, "2024-01-02", suffix[1]);
+            for (PointInTimeRange range : POINT_IN_TIME_RANGES) {
+                final String expression = range.expression().replace("?", suffix[0]);
+                assertParseFailsAtEveryCheckLevel(expression, now, suffix[1]);
+                if (range.hasIr() && suffix[2] != null) {
+                    assertCompileError(expression, suffix[2]);
+                } else {
+                    assertUnknownDurationUnitFails(expression, now, suffix[1]);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWellFormedSuffixKeepsRange() throws SqlException {
+        // The parser checks the text after the first ';' of a range between two points in time
+        // with the grammar that it applies after a day, and applies nothing: every text that a day
+        // takes leaves the range as it was, at every check level, and the compiled form keeps it as
+        // well. The check adds no duration to a timestamp, so a duration that takes the start of
+        // the range, its end, or zero to the null timestamp passes, where adding it fails.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:00:00.000000Z");
+        final long start = timestampDriver.parseFloorLiteral("2024-01-02T09:00:00.000000Z");
+        final String nullUnit = ColumnType.isTimestampNano(timestampType.getTimestampType()) ? "n" : "u";
+        assertParseFails("[$now - 1h];" + durationToNull(start), now, IntervalUtils.TICK_CHECK_ALL, 7, "Invalid duration unit: " + nullUnit);
+        assertParseFails("$now;" + durationToNull(now), now, IntervalUtils.TICK_CHECK_ALL, 7, "Invalid duration unit: " + nullUnit);
+        assertParseFails("[1970-01-01];" + durationToNull(0), now, IntervalUtils.TICK_CHECK_ALL, 7, "Invalid duration unit: " + nullUnit);
+        final String[] durations = {
+                "", "1h", "1h30m", "+1h", "-1h", "1_000h", "0h", "2147483647y", "-2147483648h", "1u", "1T", "1s", "1m",
+                "1d", "1w", "1M", "1y", "1n", "1000n", "1h".repeat(100_000), durationToNull(start), durationToNull(now),
+                durationToNull(0)
+        };
+        for (String duration : durations) {
+            for (PointInTimeRange range : POINT_IN_TIME_RANGES) {
+                final String expression = range.expression().replace("?", duration);
+                final String expected = forTimestampType(range.intervals());
+                assertParsedAtEveryCheckLevel(expected, expression, now);
+                assertCompiledEvaluatesTo(expected, expression, now, range.hasIr());
+            }
+        }
+        // The repeating interval of the parser, a duration, a period and a count, repeats nothing
+        // after such a range. The IR rejects it, and the form that parses on every evaluation takes
+        // it, as for every other element.
+        final String[] repeatingSuffixes = {
+                "1h;1d;3", ";1d;3", "1h;1_0d;3", "1h;+1d;3", "1h;-1d;3", "1h;1d;+3", "1h;1d;3_0", "1h;1M;2", "1h;1y;2",
+                "1h;1s;2", "1h;1m;2", "1h;1h;2", "1h;0d;3", "1h;1s;2147483647"
+        };
+        for (String suffix : repeatingSuffixes) {
+            for (PointInTimeRange range : POINT_IN_TIME_RANGES) {
+                final String expression = range.expression().replace("?", suffix);
+                final String expected = forTimestampType(range.intervals());
+                assertParsedAtEveryCheckLevel(expected, expression, now);
+                if (range.hasIr()) {
+                    assertCompileError(expression, "Expected number before unit ';'");
+                } else {
+                    assertCompiledEvaluatesTo(expected, expression, now, false);
+                }
+            }
+        }
+        // a range that starts after it ends adds no interval without the range order check
+        final long three = timestampDriver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+        final String rangeOrderError = "Invalid date range: start is after end";
+        for (String[] suffixes : new String[][]{durations, repeatingSuffixes}) {
+            for (String suffix : suffixes) {
+                assertParseFails("[$now..$now - 1h];" + suffix, now, IntervalUtils.TICK_CHECK_ALL, 11, rangeOrderError);
+                assertParsed("[]", "[$now..$now - 1h];" + suffix, now, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
+                assertParsed("[]", "[$now..$now - 1h];" + suffix, now, 0);
+                assertParseFails("[$today + 570m..$now];" + suffix, three, IntervalUtils.TICK_CHECK_ALL, 20, rangeOrderError);
+                assertParsed("[]", "[$today + 570m..$now];" + suffix, three, IntervalUtils.TICK_CHECK_INTERVAL_LIMIT);
+                assertParsed("[]", "[$today + 570m..$now];" + suffix, three, 0);
+            }
+        }
     }
 
     @Test
@@ -7592,11 +7878,19 @@ public class TickExprTest {
         }
         sink.put(pick(rnd, FUZZ_ZONES));
         final String dayFilter = pick(rnd, FUZZ_DAY_FILTERS);
-        final String duration = pick(rnd, rnd.nextInt(10) == 0 ? FUZZ_UNKNOWN_UNIT_DURATIONS : FUZZ_DURATIONS);
+        final String duration;
+        switch (rnd.nextInt(20)) {
+            case 0, 1 -> duration = pick(rnd, FUZZ_UNKNOWN_UNIT_DURATIONS);
+            case 2 -> duration = pick(rnd, FUZZ_REJECTED_SUFFIXES);
+            case 3 -> {
+                duration = FUZZ_REPEATING_SUFFIX;
+                isMalformed = true;
+            }
+            default -> duration = pick(rnd, FUZZ_DURATIONS);
+        }
         if (rnd.nextInt(10) == 0) {
-            // the day filter goes before the duration
+            // the day filter after the duration, which makes the duration malformed
             sink.put(duration).put(dayFilter);
-            isMalformed |= !dayFilter.isEmpty() && !duration.isEmpty();
         } else {
             sink.put(dayFilter).put(duration);
         }
@@ -7650,6 +7944,35 @@ public class TickExprTest {
         int month = driver.getMonthOfYear(timestamp);
         int day = driver.getDayOfMonth(timestamp);
         return String.format("%04d-%02d-%02d", year, month, day);
+    }
+
+    /**
+     * Returns whether a generated expression has a day filter after the first ';', which no
+     * generated duration holds, so the day filter follows the duration.
+     */
+    static boolean hasMisplacedDayFilter(String expression) {
+        final int semicolon = expression.indexOf(';');
+        return semicolon >= 0 && expression.indexOf('#', semicolon) >= 0;
+    }
+
+    /**
+     * Returns whether the text after the first ';' of a generated expression, up to a day filter
+     * after it, is one of {@link #FUZZ_REJECTED_SUFFIXES}: no other part of a generated expression
+     * holds a ';'.
+     */
+    static boolean hasRejectedSuffix(String expression) {
+        final int semicolon = expression.indexOf(';');
+        if (semicolon < 0) {
+            return false;
+        }
+        final int dayFilter = expression.indexOf('#', semicolon);
+        final String suffix = expression.substring(semicolon, dayFilter < 0 ? expression.length() : dayFilter);
+        for (String rejected : FUZZ_REJECTED_SUFFIXES) {
+            if (rejected.equals(suffix)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -7748,6 +8071,22 @@ public class TickExprTest {
             Assert.fail("Should throw SqlException for: " + expression);
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+    }
+
+    /**
+     * Asserts that the compiled form validates the expression and evaluates it to the intervals,
+     * from its IR when it has one, or by parsing it on every evaluation.
+     */
+    private void assertCompiledEvaluatesTo(String expected, String expression, long now, boolean hasIr) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 7)) {
+            Assert.assertEquals(expression, !hasIr, compiled.isParsedOnEvaluation());
+            compiled.validate(now);
+            out.clear();
+            compiled.evaluate(out, now);
+            TestUtils.assertEquals(expression, expected, intervalToString(timestampDriver, out));
         }
     }
 
@@ -8051,6 +8390,44 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the parser fails on the expression with the checks, with exactly the error at the
+     * position, and keeps what the caller appended before. The expression has the position 7.
+     */
+    private void assertParseFails(String expression, long now, int checks, int position, String expectedError) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String context = expression + " [checks=" + checks + ']';
+        out.clear();
+        out.add(1L, 2L);
+        try {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 7, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+            Assert.fail("parse should fail: " + context);
+        } catch (SqlException e) {
+            TestUtils.assertEquals(context, expectedError, e.getFlyweightMessage());
+            Assert.assertEquals(context, position, e.getPosition());
+        }
+        Assert.assertEquals(context, 2, out.size());
+        Assert.assertEquals(context, 1, out.getQuick(0));
+        Assert.assertEquals(context, 2, out.getQuick(1));
+    }
+
+    /**
+     * Asserts that the parser fails on the expression with exactly the error, at the position of
+     * the expression, with every combination of the checks that depend on "now".
+     */
+    private void assertParseFailsAtEveryCheckLevel(String expression, long now, String expectedError) {
+        for (int checks : TICK_CHECK_LEVELS) {
+            assertParseFails(expression, now, checks, 7, expectedError);
+        }
+    }
+
+    private void assertParsed(String expected, String expression, long now, int checks) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 7, out, IntervalOperation.INTERSECT, sink, true, now, checks);
+        TestUtils.assertEquals(expression, expected, intervalToString(timestampDriver, out));
+    }
+
+    /**
      * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
      * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
      */
@@ -8136,6 +8513,12 @@ public class TickExprTest {
         );
     }
 
+    private void assertParsedAtEveryCheckLevel(String expected, String expression, long now) throws SqlException {
+        for (int checks : TICK_CHECK_LEVELS) {
+            assertParsed(expected, expression, now, checks);
+        }
+    }
+
     private void assertParsedIntervalCount(int expectedCount, String expression, String nowTimestamp, int checks) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -8170,6 +8553,14 @@ public class TickExprTest {
         }
         // the parser unwinds what it appended
         Assert.assertEquals(0, out.size());
+    }
+
+    /**
+     * Asserts that the parser fails on the expression, a date and a text after it, with the error
+     * that it shows from the first ';' on: the date is the one that it shows before that ';'.
+     */
+    private void assertReferenceSuffixFails(String expression, long now, String date, String expectedError) {
+        assertParseFails(expression, now, IntervalUtils.TICK_CHECK_ALL, 7, expectedError.replace(": ;", ": " + date + ";"));
     }
 
     private void assertShortInterval(String expected, String interval) throws SqlException {
@@ -8241,6 +8632,49 @@ public class TickExprTest {
         }
     }
 
+    /**
+     * Asserts that the compiled form, which parses the expression on every evaluation, fails as the
+     * SQL that holds it is validated against the "now", with exactly the error, at the position of
+     * the expression.
+     */
+    private void assertValidateFailsWith(String expression, long now, String expectedError) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampType.getDriver(), configuration, expression, 0, expression.length(), 7)) {
+            Assert.assertTrue(expression, compiled.isParsedOnEvaluation());
+            try {
+                compiled.validate(now);
+                Assert.fail("validate should fail: " + expression);
+            } catch (SqlException e) {
+                TestUtils.assertEquals(expression, expectedError, e.getFlyweightMessage());
+                Assert.assertEquals(expression, 7, e.getPosition());
+            }
+        }
+    }
+
+    /**
+     * Returns a duration that takes the timestamp to the null timestamp, Long.MIN_VALUE, which
+     * TimestampDriver.add() also returns for a unit that it does not add: in days, seconds and the
+     * rest, each of which fits an int, and whose running sum stays above the null timestamp until
+     * the last part.
+     */
+    private String durationToNull(long timestamp) {
+        final boolean isNano = ColumnType.isTimestampNano(timestampType.getTimestampType());
+        final BigInteger second = BigInteger.valueOf(isNano ? 1_000_000_000L : 1_000_000L);
+        final BigInteger day = second.multiply(BigInteger.valueOf(86_400L));
+        final BigInteger[] days = BigInteger.valueOf(timestamp).subtract(BigInteger.valueOf(Long.MIN_VALUE)).divideAndRemainder(day);
+        final BigInteger[] seconds = days[1].divideAndRemainder(second);
+        return "-" + days[0] + "d-" + seconds[0] + "s-" + seconds[1] + (isNano ? "n" : "u");
+    }
+
+    /**
+     * Returns intervals given at microsecond precision at the precision of the timestamp type.
+     */
+    private String forTimestampType(String expected) {
+        return ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                : expected;
+    }
+
     @FunctionalInterface
     interface DateVariableExpectedBuilder {
         String build(long now, TimestampDriver driver, TestTimestampType tsType);
@@ -8261,7 +8695,11 @@ public class TickExprTest {
      * of a malformed expression.
      * <p>
      * A duration with a unit that the timestamp drivers do not add counts as well-formed: the two
-     * agree on it, as the compiled form parses such an expression when it evaluates.
+     * agree on it, as the compiled form parses such an expression when it evaluates. So do a day
+     * filter after the duration, and a text after the first ';' that the parser rejects after every
+     * element, such as one with a ';' more, which both reject. The repeating interval of the parser,
+     * a duration, a period and a count, counts as malformed: the parser takes it, and the IR of the
+     * compiled form rejects it.
      */
     private static class DateVariableDetectionChecker {
         private static final String ERROR = "error";
@@ -8275,6 +8713,8 @@ public class TickExprTest {
         private int checkCount;
         private int compiledCount;
         private int failureCount;
+        // expressions with a day filter after the duration, which failed on both forms at every "now"
+        private int misplacedDayFilterErrorCount;
         private int nowDependentCount;
         // compiled expressions with a duration unit that the drivers do not add, which failed at some "now"
         private int unknownUnitErrorCount;
@@ -8291,6 +8731,7 @@ public class TickExprTest {
                     .$(", nowDependent=").$(nowDependentCount)
                     .$(", compiled=").$(compiledCount)
                     .$(", unknownUnitErrors=").$(unknownUnitErrorCount)
+                    .$(", misplacedDayFilterErrors=").$(misplacedDayFilterErrorCount)
                     .$(", failures=").$(failureCount)
                     .I$();
             if (failureCount > 0) {
@@ -8300,6 +8741,7 @@ public class TickExprTest {
             Assert.assertTrue("no expression depended on now", nowDependentCount > 0);
             Assert.assertTrue("no expression compiled", compiledCount > 0);
             Assert.assertTrue("no expression with an unknown duration unit failed", unknownUnitErrorCount > 0);
+            Assert.assertTrue("no expression with a day filter after the duration failed", misplacedDayFilterErrorCount > 0);
         }
 
         /**
@@ -8349,11 +8791,15 @@ public class TickExprTest {
                         return;
                     }
                 }
+                if (hasMisplacedDayFilter(expression)) {
+                    misplacedDayFilterErrorCount++;
+                }
                 return;
             }
             compiledCount++;
             try (compiled) {
                 boolean hasError = false;
+                boolean isAlwaysError = true;
                 for (int i = 0; i < nows.length; i++) {
                     intervals.clear();
                     String evaluated;
@@ -8368,9 +8814,13 @@ public class TickExprTest {
                         return;
                     }
                     hasError |= ERROR.equals(evaluated);
+                    isAlwaysError &= ERROR.equals(evaluated);
                 }
                 if (hasError && hasUnknownDurationUnit(expression)) {
                     unknownUnitErrorCount++;
+                }
+                if (isAlwaysError && hasMisplacedDayFilter(expression)) {
+                    misplacedDayFilterErrorCount++;
                 }
             }
         }
@@ -8391,5 +8841,13 @@ public class TickExprTest {
                 return ERROR;
             }
         }
+    }
+
+    /**
+     * A range between two points in time, the intervals that it selects at microsecond precision,
+     * and whether the IR of the compiled form represents it, rather than parsing it on every
+     * evaluation.
+     */
+    private record PointInTimeRange(String expression, String intervals, boolean hasIr) {
     }
 }
