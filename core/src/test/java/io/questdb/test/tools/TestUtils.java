@@ -159,6 +159,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -180,8 +181,10 @@ public final class TestUtils {
     private static final Log LOG = LogFactory.getLog(TestUtils.class);
     private static final long THREAD_JOIN_CLEANUP_TIMEOUT_MILLIS = 1_000;
     private static final long THREAD_JOIN_TIMEOUT_MILLIS = 20_000;
-    // the Rnds generateRandom(Log) seeded from the clock or from -Dfuzz.s0 and -Dfuzz.s1
-    private static final AtomicLong generatedRandomCount = new AtomicLong();
+    // per nest of classes, the Rnds generateRandom(Log) seeded from the clock or from -Dfuzz.s0
+    // and -Dfuzz.s1 for the code of the nest
+    private static final ConcurrentHashMap<Class<?>, AtomicLong> generatedRandomCounts = new ConcurrentHashMap<>();
+    private static final StackWalker stackWalker = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
     private static final Object threadAllocationLock = new Object();
     private static final Object threadCpuTimeLock = new Object();
     private static final CarrierLocal<StringSink> tlSink = new CarrierLocal<>(StringSink::new);
@@ -1898,7 +1901,7 @@ public final class TestUtils {
     @NotNull
     public static Rnd generateRandom(Log log) {
         final Rnd rnd = generateRandom(log, seedOf("fuzz.s0", System.nanoTime()), seedOf("fuzz.s1", System.currentTimeMillis()));
-        generatedRandomCount.incrementAndGet();
+        generatedRandomCounts.computeIfAbsent(stackWalker.getCallerClass().getNestHost(), _ -> new AtomicLong()).incrementAndGet();
         return rnd;
     }
 
@@ -1921,13 +1924,16 @@ public final class TestUtils {
     }
 
     /**
-     * Returns how many Rnds {@link #generateRandom(Log)} has seeded in this JVM. Each of them logs
-     * seeds of its own, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} replace with one pair for
-     * all, so a test that must replay from the one pair it logged checks that it seeded one Rnd.
-     * {@link #generateRandom(Log, long, long)} takes its seeds from the caller and does not count.
+     * Returns how many Rnds {@link #generateRandom(Log)} has seeded in this JVM for the code of the
+     * nest of {@code cls}: its top-level class and every class nested in that one. Each of them
+     * logs seeds of its own, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} replace with one pair
+     * for all, so a test that must replay from the one pair it logged checks that its code seeded
+     * no other Rnd. {@link #generateRandom(Log, long, long)} takes its seeds from the caller and
+     * does not count.
      */
-    public static long getGeneratedRandomCount() {
-        return generatedRandomCount.get();
+    public static long getGeneratedRandomCount(Class<?> cls) {
+        final AtomicLong count = generatedRandomCounts.get(cls.getNestHost());
+        return count != null ? count.get() : 0;
     }
 
     public static int getJavaVersion() {

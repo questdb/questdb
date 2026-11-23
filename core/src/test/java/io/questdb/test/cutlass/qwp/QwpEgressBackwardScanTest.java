@@ -45,7 +45,7 @@ import io.questdb.test.TestServerMain;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -123,13 +123,13 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     };
 
     // How the servers startServer boots read the frames of a backward stream ahead: through
-    // MADV_WILLNEED windows or by reading the windows itself, drawn once per class, so every
-    // test here runs either way on every platform.
-    private static boolean isReadAheadWillNeed;
+    // MADV_WILLNEED windows or by reading the windows itself, drawn for each test from its Rnd,
+    // so every test here runs either way on every platform.
+    private boolean isReadAheadWillNeed;
 
-    @BeforeClass
-    public static void setUpReadAhead() {
-        isReadAheadWillNeed = TestUtils.generateRandom(LOG).nextBoolean();
+    @Before
+    public void setUpReadAhead() {
+        isReadAheadWillNeed = random.nextBoolean();
         LOG.info().$("backward read-ahead [willNeed=").$(isReadAheadWillNeed).$(']').$();
     }
 
@@ -795,7 +795,7 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
     public void testNonPartitionedAndNonWalTables() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startServer()) {
-                serverMain.getSqlExecutionContext().setRandom(TestUtils.generateRandom(LOG));
+                serverMain.getSqlExecutionContext().setRandom(newSqlRandom());
                 serverMain.execute("CREATE TABLE np (" + ALL_TYPES_COLUMNS + ") TIMESTAMP(ts) PARTITION BY NONE");
                 serverMain.execute("INSERT INTO np " + allTypesSelect(1, 2_500, 0, 1_000_000));
                 serverMain.execute("CREATE TABLE nw (" + ALL_TYPES_COLUMNS + ") TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
@@ -990,12 +990,11 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         // Random partition sizes, from empty days to multi-frame ones, checked row for
         // row against the in-process result.
         TestUtils.assertMemoryLeak(() -> {
-            final Rnd rnd = TestUtils.generateRandom(LOG);
             try (TestServerMain serverMain = startServer(SMALL_PAGE_FRAMES)) {
                 serverMain.execute("CREATE TABLE t (x LONG, v VARCHAR, s SYMBOL, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 long x = 0;
                 for (int day = 0; day < 12; day++) {
-                    final int rows = rnd.nextInt(4) == 0 ? 0 : 1 + rnd.nextInt(400);
+                    final int rows = random.nextInt(4) == 0 ? 0 : 1 + random.nextInt(400);
                     if (rows > 0) {
                         serverMain.execute("INSERT INTO t SELECT x + " + x + ", "
                                 + "CASE WHEN x % 9 = 0 THEN NULL ELSE 'v' || (x + " + x + ") END, "
@@ -1270,54 +1269,6 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         return copy;
     }
 
-    /**
-     * Boots a server with this class's fragmentation chunks plus {@code extraEnv}, retrying
-     * while another server still holds the fixed test ports. The send chunk is floored at 64
-     * bytes: HttpResponseSink parks after every chunk, and these tests stream megabytes.
-     */
-    private static TestServerMain startServer(String... extraEnv) {
-        return startServer(new ReadAheadFilesFacade(isReadAheadWillNeed), extraEnv);
-    }
-
-    // as startServer, on a files facade that picks how backward streams read their frames ahead
-    private static TestServerMain startServer(ReadAheadFilesFacade ff, String... extraEnv) {
-        final String[] env = new String[extraEnv.length + 4];
-        env[0] = PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
-        env[1] = Integer.toString(recvChunk);
-        env[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
-        env[3] = Integer.toString(Math.max(64, sendChunk));
-        System.arraycopy(extraEnv, 0, env, 4, extraEnv.length);
-        return startServerWithRetry(() -> startWithEnvVariables(ff, env));
-    }
-
-    /**
-     * Boots a server with the read-ahead frame, plus {@code extraEnv}: table t holds one
-     * 200,000-row partition of LONG x, DOUBLE d and the timestamp, in one page frame.
-     */
-    private static TestServerMain startReadAheadServer(ReadAheadFilesFacade ff, String... extraEnv) {
-        final String[] env = new String[extraEnv.length + 6];
-        env[0] = PropertyKey.METRICS_ENABLED.getEnvVarName();
-        env[1] = "true";
-        env[2] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName();
-        env[3] = "1000000";
-        env[4] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName();
-        env[5] = "1000000";
-        System.arraycopy(extraEnv, 0, env, 6, extraEnv.length);
-        final TestServerMain serverMain = startServer(ff, env);
-        try {
-            // a test that boots a server per read-ahead way finds the table of the previous one
-            serverMain.execute("DROP TABLE IF EXISTS t");
-            serverMain.execute("CREATE TABLE t (x LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            // 0.4 s apart: 80,000 s, one day
-            serverMain.execute("INSERT INTO t SELECT x, x * 0.5, ((x - 1) * 400_000L)::TIMESTAMP FROM long_sequence(" + READ_AHEAD_FRAME_ROWS + ")");
-            serverMain.awaitTable("t");
-            return serverMain;
-        } catch (Throwable th) {
-            Misc.free(serverMain, th);
-            throw th;
-        }
-    }
-
     // Runs a query and checks that the stream reads expectedBytes ahead: through MADV_WILLNEED
     // windows, which ask the OS for them and which the metric counts, or through windows the
     // stream reads itself, which ask for nothing and count nothing.
@@ -1358,8 +1309,7 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
      * of a partition when the partition count is odd.
      */
     private void createAllTypesTable(TestServerMain serverMain, String table, int rowsPerPartition, int partitions, boolean withColumnTops) {
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        serverMain.getSqlExecutionContext().setRandom(rnd);
+        serverMain.getSqlExecutionContext().setRandom(newSqlRandom());
         serverMain.execute("CREATE TABLE " + table + " (" + ALL_TYPES_COLUMNS + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
         final long totalRows = (long) rowsPerPartition * partitions;
         final long tsStep = 86_400_000_000L / rowsPerPartition;
@@ -1382,6 +1332,60 @@ public class QwpEgressBackwardScanTest extends AbstractReusedServerQwpEgressTest
         final int from = select.lastIndexOf(" FROM long_sequence(");
         serverMain.execute("INSERT INTO " + table + " " + select.substring(0, from) + columnTopSelect(totalRows - firstHalf));
         serverMain.awaitTable(table);
+    }
+
+    // A Rnd for the rnd_*() functions of the SQL a test runs on the server, seeded from the
+    // test's Rnd, so the seeds the test logs replay the values they generate.
+    private Rnd newSqlRandom() {
+        return new Rnd(random.nextLong(), random.nextLong());
+    }
+
+    /**
+     * Boots a server with this test's fragmentation chunks plus {@code extraEnv}, retrying
+     * while another server still holds the fixed test ports. The send chunk is floored at 64
+     * bytes: HttpResponseSink parks after every chunk, and these tests stream megabytes.
+     */
+    private TestServerMain startServer(String... extraEnv) {
+        return startServer(new ReadAheadFilesFacade(isReadAheadWillNeed), extraEnv);
+    }
+
+    // as startServer, on a files facade that picks how backward streams read their frames ahead
+    private TestServerMain startServer(ReadAheadFilesFacade ff, String... extraEnv) {
+        final String[] env = new String[extraEnv.length + 4];
+        env[0] = PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
+        env[1] = Integer.toString(recvChunk);
+        env[2] = PropertyKey.DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE.getEnvVarName();
+        env[3] = Integer.toString(Math.max(64, sendChunk));
+        System.arraycopy(extraEnv, 0, env, 4, extraEnv.length);
+        return startServerWithRetry(() -> startWithEnvVariables(ff, env));
+    }
+
+    /**
+     * Boots a server with the read-ahead frame, plus {@code extraEnv}: table t holds one
+     * 200,000-row partition of LONG x, DOUBLE d and the timestamp, in one page frame.
+     */
+    private TestServerMain startReadAheadServer(ReadAheadFilesFacade ff, String... extraEnv) {
+        final String[] env = new String[extraEnv.length + 6];
+        env[0] = PropertyKey.METRICS_ENABLED.getEnvVarName();
+        env[1] = "true";
+        env[2] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS.getEnvVarName();
+        env[3] = "1000000";
+        env[4] = PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS.getEnvVarName();
+        env[5] = "1000000";
+        System.arraycopy(extraEnv, 0, env, 6, extraEnv.length);
+        final TestServerMain serverMain = startServer(ff, env);
+        try {
+            // a test that boots a server per read-ahead way finds the table of the previous one
+            serverMain.execute("DROP TABLE IF EXISTS t");
+            serverMain.execute("CREATE TABLE t (x LONG, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 0.4 s apart: 80,000 s, one day
+            serverMain.execute("INSERT INTO t SELECT x, x * 0.5, ((x - 1) * 400_000L)::TIMESTAMP FROM long_sequence(" + READ_AHEAD_FRAME_ROWS + ")");
+            serverMain.awaitTable("t");
+            return serverMain;
+        } catch (Throwable th) {
+            Misc.free(serverMain, th);
+            throw th;
+        }
     }
 
     @FunctionalInterface

@@ -31,11 +31,10 @@ import io.questdb.std.Rnd;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
-import org.junit.Assert;
 import org.junit.Before;
+import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.rules.TestRule;
-import org.junit.runners.model.Statement;
 
 /**
  * Bootstrap test base for QWP tests that need to exercise the HTTP fragmentation
@@ -55,34 +54,17 @@ import org.junit.runners.model.Statement;
  * chunks and the read-ahead mode, not from a Rnd of their own. A test then logs one pair of
  * seeds, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1} pass back to replay every draw of a
  * failing run. The override seeds every Rnd alike, so it cannot replay a run that drew from
- * two Rnds, and {@link #oneSeedPairCheck} fails a test that seeds another one. A subclass that
- * needs another Rnd seeds it from {@link #random}, through
+ * two Rnds, and {@link OneSeedPairCheck} fails a test or a test class that seeds another one.
+ * A subclass that needs another Rnd seeds it from {@link #random}, through
  * {@link TestUtils#generateRandom(Log, long, long)}.
  */
 public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
 
+    @ClassRule
+    public static final TestRule oneSeedPairClassCheck = OneSeedPairCheck.CLASS_RULE;
     private static final Log LOG = LogFactory.getLog(AbstractQwpBootstrapTest.class);
-    /**
-     * Fails a test that seeds a Rnd besides {@link #random} through
-     * {@link TestUtils#generateRandom(Log)}, in its set-up, its body, its tear-down or a helper
-     * they call. That Rnd logs seeds of its own, which {@code -Dfuzz.s0} and {@code -Dfuzz.s1}
-     * cannot give back alongside the seeds of {@link #random}. A rule, so it counts from before
-     * the first {@code @Before} method of a test to after its last {@code @After} method.
-     */
     @Rule
-    public final TestRule oneSeedPairCheck = (base, _) -> new Statement() {
-        @Override
-        public void evaluate() throws Throwable {
-            final long generatedRandomCount = TestUtils.getGeneratedRandomCount();
-            base.evaluate();
-            final long seededCount = TestUtils.getGeneratedRandomCount() - generatedRandomCount;
-            if (seededCount != randomCount) {
-                Assert.fail("seeded " + seededCount + " Rnd(s) through TestUtils.generateRandom(Log), of which"
-                        + " setUpRandom() seeded " + randomCount + "; -Dfuzz.s0 and -Dfuzz.s1 seed every Rnd"
-                        + " alike, so they can replay a test only if it draws from random alone");
-            }
-        }
-    };
+    public final OneSeedPairCheck oneSeedPairCheck = new OneSeedPairCheck(LOG);
     // reports every frame out of memory to backward streams, or lets the OS tell
     protected boolean isReadAheadCold;
     // reads the frames of backward streams ahead through MADV_WILLNEED windows, or reads the windows itself
@@ -91,13 +73,10 @@ public abstract class AbstractQwpBootstrapTest extends AbstractBootstrapTest {
     protected Rnd random;
     protected int recvChunk;
     protected int sendChunk;
-    // the Rnds setUpRandom() seeded in this test
-    private int randomCount;
 
     @Before
     public void setUpRandom() {
-        random = TestUtils.generateRandom(LOG);
-        randomCount++;
+        random = oneSeedPairCheck.getRandom();
         // recvChunk drives the incremental request parser, which is offset
         // sensitive, and requests are small -- keep the 1-byte draw.
         recvChunk = 1 + random.nextInt(500);

@@ -37,7 +37,9 @@ import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
-import org.junit.BeforeClass;
+import org.junit.ClassRule;
+import org.junit.Rule;
+import org.junit.rules.TestRule;
 
 import java.util.function.Supplier;
 
@@ -51,27 +53,29 @@ import static io.questdb.PropertyKey.PG_ENABLED;
  * try-with-resources so per-test FD/native-memory checks apply and a failing test cannot poison
  * the next one with leftover server state.
  * <p>
- * The base class only sets up the on-disk configuration and the per-class fragmentation chunk
- * sizes used by {@link #startEgressServer()}; the dummy server config skips the PGWire, ILP and
- * HTTP-min listeners that egress tests never touch. Tests that need a different config call
+ * The base class only sets up the on-disk configuration and the fragmentation chunk sizes of
+ * each test, used by {@link #startEgressServer()}; the dummy server config skips the PGWire, ILP
+ * and HTTP-min listeners that egress tests never touch. Tests that need a different config call
  * {@link #startServerWithRetry(String...)} directly with their own env vars.
+ * <p>
+ * Subclasses draw their own random choices from {@link #random}, the Rnd that draws the chunks,
+ * not from a Rnd of their own. A test then logs one pair of seeds, which {@code -Dfuzz.s0} and
+ * {@code -Dfuzz.s1} pass back to replay every draw of a failing run. The override seeds every Rnd
+ * alike, so it cannot replay a run that drew from two Rnds, and {@link OneSeedPairCheck} fails a
+ * test or a test class that seeds another one. A subclass that needs another Rnd seeds it from
+ * {@link #random}, through {@link TestUtils#generateRandom(Log, long, long)}.
  */
 public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstrapTest {
 
+    @ClassRule
+    public static final TestRule oneSeedPairClassCheck = OneSeedPairCheck.CLASS_RULE;
     private static final Log LOG = LogFactory.getLog(AbstractReusedServerQwpEgressTest.class);
-    protected static int recvChunk;
-    protected static int sendChunk;
-
-    @BeforeClass
-    public static void setUpEgressConfiguration() {
-        // One fragmentation chunk pair per class - tests boot a fresh server each, but
-        // re-randomising inside every test would make the seed log noisy without adding
-        // coverage. Per-class variation still exercises the fragmentation paths across
-        // the suite, and the seed is logged for deterministic replay.
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        recvChunk = 1 + rnd.nextInt(500);
-        sendChunk = 1 + rnd.nextInt(500);
-    }
+    @Rule
+    public final OneSeedPairCheck oneSeedPairCheck = new OneSeedPairCheck(LOG);
+    // draws the chunks, then every random choice the test makes
+    protected Rnd random;
+    protected int recvChunk;
+    protected int sendChunk;
 
     @Override
     @Before
@@ -93,6 +97,15 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
         }
     }
 
+    @Before
+    public void setUpRandom() {
+        // A fresh chunk pair for each test, from the Rnd the test draws its data from, so the
+        // one pair of seeds a test logs replays both.
+        random = oneSeedPairCheck.getRandom();
+        recvChunk = 1 + random.nextInt(500);
+        sendChunk = 1 + random.nextInt(500);
+    }
+
     /**
      * Starts a {@link QueryAssertion} on the engine and SQL execution context of
      * {@code serverMain}. It skips the leak check: the running server allocates on its own
@@ -106,11 +119,11 @@ public abstract class AbstractReusedServerQwpEgressTest extends AbstractBootstra
     }
 
     /**
-     * Convenience: boot a server with the per-class fragmentation chunk sizes. Most egress tests
+     * Convenience: boot a server with the fragmentation chunk sizes of the test. Most egress tests
      * use this; tests that need extra env vars call {@link #startServerWithRetry(String...)}
      * directly.
      */
-    protected static TestServerMain startEgressServer() {
+    protected TestServerMain startEgressServer() {
         return startServerWithRetry(
                 PropertyKey.DEBUG_HTTP_FORCE_RECV_FRAGMENTATION_CHUNK_SIZE.getEnvVarName(),
                 Integer.toString(recvChunk),

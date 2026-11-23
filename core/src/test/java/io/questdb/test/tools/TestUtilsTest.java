@@ -154,15 +154,34 @@ public final class TestUtilsTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGenerateRandomCountsTheRndsItSeeds() {
+    public void testGenerateRandomCountsTheRndsItSeedsForEachNest() {
         // generateRandom(Log) counts the Rnds it seeds from the clock or from -Dfuzz.s0 and
-        // -Dfuzz.s1; a Rnd of the caller's seeds replays as it is and does not count, nor does
-        // a Rnd an invalid override keeps from being made
-        final long count = TestUtils.getGeneratedRandomCount();
+        // -Dfuzz.s1 for the nest of the class that calls it: a lambda or a class nested in this
+        // one counts for this one, and a Rnd that TestUtils seeds for its own use counts for
+        // TestUtils. A Rnd of the caller's seeds replays as it is and does not count, nor does a
+        // Rnd an invalid override keeps from being made.
+        final long count = TestUtils.getGeneratedRandomCount(TestUtilsTest.class);
+        final long testUtilsCount = TestUtils.getGeneratedRandomCount(TestUtils.class);
         TestUtils.generateRandom(null);
-        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        final Runnable seedInLambda = () -> TestUtils.generateRandom(null);
+        seedInLambda.run();
+        Assert.assertEquals(count + 2, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        class Nested {
+            void seed() {
+                TestUtils.generateRandom(null);
+            }
+        }
+        new Nested().seed();
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(Nested.class));
+
+        TestUtils.isWal();
+        Assert.assertEquals(testUtilsCount + 1, TestUtils.getGeneratedRandomCount(TestUtils.class));
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
+
         TestUtils.generateRandom(null, 42, 4_242);
-        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
 
         final String s0 = System.getProperty("fuzz.s0");
         System.setProperty("fuzz.s0", "not a seed");
@@ -179,10 +198,10 @@ public final class TestUtilsTest extends AbstractCairoTest {
                 System.clearProperty("fuzz.s0");
             }
         }
-        Assert.assertEquals(count + 1, TestUtils.getGeneratedRandomCount());
+        Assert.assertEquals(count + 3, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
 
         TestUtils.generateRandom(null);
-        Assert.assertEquals(count + 2, TestUtils.getGeneratedRandomCount());
+        Assert.assertEquals(count + 4, TestUtils.getGeneratedRandomCount(TestUtilsTest.class));
     }
 
     @Test
