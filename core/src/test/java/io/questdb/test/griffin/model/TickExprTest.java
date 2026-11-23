@@ -3682,7 +3682,10 @@ public class TickExprTest {
                 }
             }
         }
-        // and random expressions of every shape
+        // and random expressions of every shape; they hold static elements with a bracketed time part
+        // under a time of the list too, which the checker then compares next to other elements,
+        // ranges, day filters and durations
+        final int sweptStaticElementBracketedTimeParsedCount = checker.staticElementBracketedTimeParsedCount;
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final StringSink expression = new StringSink();
         for (int i = 0; i < 10_000; i++) {
@@ -3691,6 +3694,10 @@ public class TickExprTest {
             checker.check(expression.toString(), isMalformed);
         }
         checker.assertNoFailures();
+        Assert.assertTrue(
+                "no random expression with a static element with a bracketed time part under a time of the list parsed on evaluation",
+                checker.staticElementBracketedTimeParsedCount > sweptStaticElementBracketedTimeParsedCount
+        );
     }
 
     @Test
