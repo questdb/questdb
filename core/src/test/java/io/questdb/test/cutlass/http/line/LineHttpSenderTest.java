@@ -2914,6 +2914,46 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
         });
     }
 
+    @Test
+    public void testSenderWritesToCorrectTableAfterDropAndRecreate() throws Exception {
+        // A WAL drop keeps the dropped token in the registry under its directory name until the
+        // table is purged, so the connection's cached writer must not be taken for the live table.
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                String tableName = "sensor_data";
+                String ddl = "CREATE TABLE " + tableName + " (sensor SYMBOL, temperature DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL";
+                serverMain.execute(ddl);
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    sender.table(tableName).symbol("sensor", "temp_1").doubleColumn("temperature", 25.5).at(1000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT sensor FROM " + tableName, "sensor\ntemp_1\n");
+
+                    // the same connection writes to the re-created table
+                    serverMain.execute("DROP TABLE " + tableName);
+                    serverMain.execute(ddl);
+                    sender.table(tableName).symbol("sensor", "temp_2").doubleColumn("temperature", 30.0).at(2000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT sensor FROM " + tableName, "sensor\ntemp_2\n");
+
+                    // the same connection auto-creates a dropped table
+                    serverMain.execute("DROP TABLE " + tableName);
+                    sender.table(tableName).symbol("sensor", "temp_3").doubleColumn("temperature", 35.0).at(3000000000L, ChronoUnit.NANOS);
+                    sender.flush();
+                    serverMain.awaitTable(tableName);
+                    serverMain.assertSql("SELECT sensor FROM " + tableName, "sensor\ntemp_3\n");
+                }
+            }
+        });
+    }
+
     /**
      * Verifies that after renaming a table and creating a new table with the original name,
      * an existing Sender instance correctly writes to the NEW table (not the renamed one).

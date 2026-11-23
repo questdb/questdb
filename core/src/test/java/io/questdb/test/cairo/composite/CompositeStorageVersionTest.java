@@ -30,6 +30,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -54,13 +55,28 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
     public void testDdlKeepsElevatedVersionWhileComposite() throws Exception {
         assertMemoryLeak(() -> {
             createCompositeMiddleDay();
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
 
             // A full _meta rewrite (ADD COLUMN) must reproduce the elevated version, not reset it to VERSION.
             execute("ALTER TABLE x ADD COLUMN extra INT");
             drainWalQueue();
             Assert.assertTrue("ADD COLUMN folded the composite partition away", isComposite("2024-01-01"));
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
+        });
+    }
+
+    @Test
+    public void testDeltaOnCompositeTableStampsDeltaVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            createCompositeMiddleDay();
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
+
+            final TableToken tt = engine.verifyTableName("x");
+            try (TableWriter writer = engine.getWriter(tt, "test")) {
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(MicrosTimestampDriver.floor("2024-01-03T00:00:00.000000Z"));
+                writer.commitSeqTxn(writer.getTxWriter().getSeqTxn() + 1);
+            }
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_DELTA_STORAGE_VERSION, metaStorageVersion());
         });
     }
 
@@ -68,13 +84,13 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
     public void testDropOfTheOnlyCompositePartitionRestoresBaseVersion() throws Exception {
         assertMemoryLeak(() -> {
             createCompositeMiddleDay();
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
 
             // 2024-01-01 is the only composite partition; dropping it takes the in-memory count to zero,
             // and the drop's commit downgrades _meta back to the base version.
             execute("ALTER TABLE x DROP PARTITION LIST '2024-01-01'");
             drainWalQueue();
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion());
         });
     }
 
@@ -87,7 +103,7 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
                     " FROM long_sequence(10_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalQueue();
             Assert.assertFalse(isComposite("2024-01-01"));
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion());
         });
     }
 
@@ -96,7 +112,7 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createCompositeMiddleDay();
             Assert.assertTrue(isComposite("2024-01-01"));
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
         });
     }
 
@@ -104,7 +120,7 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
     public void testVersionDropsWhenFoldedBackToPlain() throws Exception {
         assertMemoryLeak(() -> {
             createCompositeMiddleDay();
-            Assert.assertEquals(ColumnType.MAX_STORAGE_VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_COMPOSITE_STORAGE_VERSION, metaStorageVersion());
 
             // Turning merge-append off folds every composite partition back to plain at writer open.
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
@@ -113,7 +129,7 @@ public class CompositeStorageVersionTest extends AbstractCairoTest {
             engine.getWriter(engine.verifyTableName("x"), "test").close();
 
             Assert.assertFalse("a composite partition survived the fold", isComposite("2024-01-01"));
-            Assert.assertEquals(ColumnType.VERSION, metaStorageVersion());
+            Assert.assertEquals(ColumnType.DOWNGRADE_LOCKED_STORAGE_VERSION, metaStorageVersion());
         });
     }
 
