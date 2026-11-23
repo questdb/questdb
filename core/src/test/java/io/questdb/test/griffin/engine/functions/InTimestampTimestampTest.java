@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1146,6 +1147,229 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUnknownDurationUnitFailsInEveryContext() throws Exception {
+        // A literal with a duration unit that the timestamp drivers do not add fails the query as it
+        // compiles, wherever the query holds it, at the position of the literal. A bind variable
+        // with the expression fails the query the same way when it runs.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               (CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END)::SYMBOL s
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // ? stands for the tick expression
+                for (String query : new String[]{
+                        "WITH c AS (SELECT * FROM t WHERE ts IN ?) SELECT count() FROM c",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?)",
+                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN ?) a JOIN t b ON a.s = b.s",
+                        "SELECT count() FROM t a JOIN (SELECT * FROM t WHERE ts IN ?) b ON a.s = b.s",
+                        "SELECT ts FROM t WHERE ts IN ? UNION SELECT ts FROM t",
+                        "SELECT ts FROM t UNION SELECT ts FROM t WHERE ts IN ?",
+                        "SELECT * FROM t WHERE ts IN ? LATEST ON ts PARTITION BY s",
+                        "SELECT ts, count() FROM t WHERE ts IN ? SAMPLE BY 1h",
+                        "SELECT ts, row_number() OVER (PARTITION BY s ORDER BY ts) FROM t WHERE ts IN ?",
+                        "SELECT * FROM t WHERE ts IN ? ORDER BY ts LIMIT -1"
+                }) {
+                    final String literal = query.replace("?", "'$today;1x'");
+                    assertExceptionNoLeakCheck(literal, literal.indexOf('\''), "Invalid duration unit: x");
+                    final String bind = query.replace("?", "$1");
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "$today;1x");
+                    assertExceptionNoLeakCheck(bind, bind.indexOf("$1"), "Invalid duration unit: x");
+                    bindVariableService.clear();
+                }
+                // EXPLAIN compiles the query without running it
+                final String explain = "EXPLAIN SELECT * FROM t WHERE ts IN '$today;1x'";
+                assertExceptionNoLeakCheck(explain, explain.indexOf('\''), "Invalid duration unit: x");
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownDurationUnitFailsOnEveryTimestampType() throws Exception {
+        // A literal with a duration unit that the timestamp drivers do not add fails the query on a
+        // designated nanosecond timestamp, a nullable timestamp, and a DATE, which IN compares as a
+        // microsecond timestamp. The literal matched every row before $today, and the rows where
+        // the nullable column is NULL, which a timestamp stores as its smallest value. A bind
+        // variable, and a value of a row, with the expression fail the query when it runs.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (ts TIMESTAMP_NS, ts2 TIMESTAMP, d DATE, s STRING, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                    ('2024-01-01T09:00:00.000000000Z', '2024-01-01T09:00:00.000000Z', '2024-01-01T09:00:00.000Z', '$today;1x', '$today;1x'),
+                    ('2024-01-02T00:30:00.000000000Z', '2024-01-02T00:30:00.000000Z', '2024-01-02T00:30:00.000Z', '$today;1x', '$today;1x'),
+                    ('2024-01-02T09:00:00.000000000Z', NULL, NULL, '$today;1x', '$today;1x')
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // the first hour of $today holds the row at 00:30, and not the NULL
+                for (String[] column : new String[][]{
+                        {"ts", "1\t2024-01-02T00:30:00.000000000Z\t2024-01-02T00:30:00.000000000Z"},
+                        {"ts2", "1\t2024-01-02T00:30:00.000000Z\t2024-01-02T00:30:00.000000Z"},
+                        {"d", "1\t2024-01-02T00:30:00.000Z\t2024-01-02T00:30:00.000Z"}
+                }) {
+                    final String query = "SELECT count(), min(" + column[0] + "), max(" + column[0] + ") FROM tn WHERE " + column[0] + " IN ";
+                    final String literal = query + "'$today;1x'";
+                    assertExceptionNoLeakCheck(literal, literal.indexOf('\''), "Invalid duration unit: x");
+                    assertQuery(query + "'$today;1h'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable("$today;1x", isVarchar);
+                        assertExceptionNoLeakCheck(query + "$1", query.length(), "Invalid duration unit: x");
+                        setTickExprBindVariable("$today;1h", isVarchar);
+                        assertQuery(query + "$1")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .returns("count\tmin\tmax\n" + column[1] + "\n");
+                    }
+                    bindVariableService.clear();
+                }
+                for (String column : new String[]{"s", "vc"}) {
+                    final String sql = "SELECT count() FROM tn WHERE ts IN " + column;
+                    assertExceptionNoLeakCheck(sql, sql.lastIndexOf(' ') + 1, "Invalid duration unit: x");
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownDurationUnitFailsWhateverTheData() throws Exception {
+        // A literal with a duration unit that the timestamp drivers do not add fails the query as it
+        // compiles, without reading data, on an empty table and on one of a single row, and before
+        // the interval limit. A prepared query fails on the run that binds such an expression, and
+        // keeps working on the runs before and after it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE empty_table (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE single_row (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO single_row VALUES ('2024-01-01T09:00:00.000000Z')");
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String table : new String[]{"empty_table", "single_row"}) {
+                    final String sql = "SELECT count() FROM " + table + " WHERE ts IN '$today;1x'";
+                    assertExceptionNoLeakCheck(sql, sql.indexOf('\''), "Invalid duration unit: x");
+                }
+                // 09:00 on 2,001 days, more intervals than the limit of 1,024
+                final String overLimit = "[$today..$today + 2000d]T09:00;1x";
+                assertQueryFails("SELECT count() FROM t WHERE ts IN '" + overLimit + "'", overLimit, "Invalid duration unit: x");
+                bindVariableService.clear();
+                bindVariableService.setStr(0, overLimit);
+                assertQueryFails("SELECT count() FROM t WHERE ts IN $1", overLimit, "Invalid duration unit: x");
+
+                final String firstHour = "count\tmin\tmax\n1\t2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\n";
+                final String prepared = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+                bindVariableService.setStr(0, "$today;1h");
+                try (RecordCursorFactory factory = select(prepared)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(firstHour);
+                    bindVariableService.setStr(0, "$today;1x");
+                    try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                        Assert.fail("the run with $today;1x should fail");
+                    } catch (SqlException | CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "Invalid duration unit: x");
+                        Assert.assertEquals(prepared.indexOf("$1"), e.getPosition());
+                    }
+                    bindVariableService.setStr(0, "$today;1h");
+                    assertFactory(factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns(firstHour);
+                }
+            } finally {
+                bindVariableService.clear();
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testUnknownDurationUnitLiteralFailsWhenQueryCompiles() throws Exception {
+        // A duration unit that the timestamp drivers do not add, such as a typo of one that they do,
+        // fails a literal as the query compiles, with the error that a bind variable with the same
+        // expression fails the query with when it runs. The literal selected every row before the
+        // start of its time part. The units that the drivers add keep their meaning, and the table
+        // keeps answering after each failure.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                // h is hours, d days, M months and m minutes, s seconds
+                final String firstHour = "1\t2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z";
+                for (String[] known : new String[][]{
+                        {"$today;1h", firstHour},
+                        {"$today;2d", "48\t2024-01-02T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z"},
+                        {"$today;1M", "72\t2024-01-02T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z"},
+                        {"$today;1m", firstHour},
+                        {"$NOW;1s", "1\t2024-01-02T10:00:00.000000Z\t2024-01-02T10:00:00.000000Z"}
+                }) {
+                    assertTickExprMatches(known[0], known[1]);
+                    assertTickExprBindVariableMatches(known[0], known[1]);
+                }
+                for (String[] tickExpr : new String[][]{
+                        {"$today;1x", "x"},
+                        {"$now;1H", "H"},
+                        {"$today;2D", "D"},
+                        {"[$today]T09:00;1x", "x"},
+                        {"$today@Europe/London;1x", "x"},
+                        {"$today#Tue;1x", "x"},
+                        {"[$yesterday..$today];1x", "x"},
+                        {"$NOW;1S", "S"}
+                }) {
+                    final String expectedError = "Invalid duration unit: " + tickExpr[1];
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        // the interval scan, NOT IN, an OR that the scan takes, another timestamp
+                        // column, and a dateadd() of the designated timestamp, above it and below it
+                        assertLiteralFailsWhenQueryCompiles(tickExpr[0], expectedError);
+                        // an OR that leaves the IN in the row filter
+                        final String sql = "SELECT count() FROM t WHERE ts IN '" + tickExpr[0] + "' OR ts > '2030-01-01'";
+                        try (RecordCursorFactory ignore = select(sql)) {
+                            Assert.fail("compiled: " + sql);
+                        } catch (SqlException e) {
+                            TestUtils.assertEquals(sql, expectedError, e.getFlyweightMessage());
+                            Assert.assertEquals(sql, sql.indexOf('\''), e.getPosition());
+                        }
+                    }
+                    sqlExecutionContext.setJitMode(jitMode);
+                    for (boolean isVarchar : new boolean[]{false, true}) {
+                        setTickExprBindVariable(tickExpr[0], isVarchar);
+                        for (String sql : new String[]{
+                                "SELECT count() FROM t WHERE ts IN $1",
+                                "SELECT count() FROM t WHERE ts IN $1 OR ts > '2030-01-01'",
+                                "SELECT count() FROM t WHERE ts2 IN $1"
+                        }) {
+                            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), expectedError);
+                        }
+                    }
+                    bindVariableService.clear();
+                    assertIntrinsicRows("ts IN '$today;1h'", firstHour);
+                }
+            } finally {
+                bindVariableService.clear();
+                sqlExecutionContext.setJitMode(jitMode);
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
     private static void addTickExprBindCase(ObjList<BindVarTuple> cases, String tickExpr, String expectedRow) {
         cases.add(BindVarTuple.ok(
                 tickExpr,
@@ -1381,6 +1605,15 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             }
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
+        }
+    }
+
+    private void setTickExprBindVariable(String tickExpr, boolean isVarchar) throws SqlException {
+        bindVariableService.clear();
+        if (isVarchar) {
+            bindVariableService.setVarchar(0, new Utf8String(tickExpr));
+        } else {
+            bindVariableService.setStr(0, tickExpr);
         }
     }
 }

@@ -43,6 +43,75 @@ import java.sql.Statement;
 public class PGTickExprWalUpdateTest extends BasePGTest {
 
     @Test
+    public void testPreparedStatementWithUnknownDurationUnitFails() throws Exception {
+        // A duration unit that the timestamp drivers do not add fails a prepared statement on every
+        // run, with the literal, and with the bind variable until it holds a unit that they add. The
+        // literal selected every row before $today, and the UPDATE rewrote them.
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE w (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.execute("""
+                        INSERT INTO w VALUES
+                        ('2024-01-01T00:00:00.000000Z', 1),
+                        ('2024-01-02T00:00:00.000000Z', 1),
+                        ('2024-01-02T01:00:00.000000Z', 1)
+                        """);
+            }
+            drainWalQueue();
+            for (String sql : new String[]{"SELECT ts FROM w WHERE ts IN '$today;1x'", "UPDATE w SET v = 2 WHERE ts IN '$today;1x'"}) {
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    for (int i = 0; i < 2; i++) {
+                        try {
+                            statement.execute();
+                            Assert.fail("the statement should fail: " + sql);
+                        } catch (PSQLException e) {
+                            TestUtils.assertContains(e.getMessage(), "Invalid duration unit: x");
+                        }
+                    }
+                }
+            }
+            try (PreparedStatement select = connection.prepareStatement("SELECT ts FROM w WHERE ts IN ?")) {
+                select.setString(1, "$today;1x");
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet ignore = select.executeQuery()) {
+                        Assert.fail("the query should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "Invalid duration unit: x");
+                    }
+                }
+                // the first hour of $today
+                select.setString(1, "$today;1h");
+                try (ResultSet rs = select.executeQuery()) {
+                    sink.clear();
+                    assertResultSet(
+                            """
+                                    ts[TIMESTAMP]
+                                    2024-01-02 00:00:00.0
+                                    """,
+                            sink,
+                            rs
+                    );
+                }
+            }
+            drainWalQueue();
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery("SELECT v FROM w")) {
+                sink.clear();
+                assertResultSet(
+                        """
+                                v[INTEGER]
+                                1
+                                1
+                                1
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPreparedWalUpdateWithTickExprBindVariable() throws Exception {
         assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));

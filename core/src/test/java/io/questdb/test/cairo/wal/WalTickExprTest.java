@@ -27,9 +27,12 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.OperationFuture;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
@@ -195,6 +198,27 @@ public class WalTickExprTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLegacyLiteralWithUnknownDurationUnitAppliesAsNull() throws Exception {
+        // A WAL that an older build wrote can hold an UPDATE with a literal that SQL now rejects as
+        // it compiles, such as one with a duration unit that the timestamp drivers do not add. The
+        // apply keeps the table applying, and runs it as a null value, as it runs
+        // [$today@+00:00];1x, a literal without IR that does not parse. The literal selected every
+        // row before $today, and the rows with a NULL ts2.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T03:00:00.000000Z"));
+            for (String tickExpr : new String[]{"$today;1x", "[$today@+00:00];1x"}) {
+                assertLegacyUpdateApplied("ts IN '" + tickExpr + "'", "11111");
+                assertLegacyUpdateApplied("ts NOT IN '" + tickExpr + "'", "22222");
+                assertLegacyUpdateApplied("ts2 IN '" + tickExpr + "'", "11111");
+                assertLegacyUpdateApplied("ts2 NOT IN '" + tickExpr + "'", "22222");
+                assertLegacyUpdateApplied("dateadd('h', 1, ts) IN '" + tickExpr + "'", "11111");
+                // the other side of an OR still decides
+                assertLegacyUpdateApplied("ts IN '" + tickExpr + "' OR ts = '2024-01-03T09:00:00.000000Z'", "11121");
+            }
+        });
+    }
+
+    @Test
     public void testLiteralOverIntervalLimitFailsBeforeUpdateIsAcknowledged() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"));
@@ -220,6 +244,19 @@ public class WalTickExprTest extends AbstractCairoTest {
             assertUpdateRejected(token, "ts2 IN '[$today,garbage]T[09:00,10:00]'", "Invalid date");
             assertUpdateRejected(token, "ts IN '$todayT[09,14]:[00,99]'", "Invalid date: 2024-01-02T09:99");
             assertUpdateRejected(token, "ts IN '[$today]T[09,14]:[00,99]'", "Invalid date: 2024-01-02T09:99");
+            // a duration unit that the timestamp drivers do not add
+            assertUpdateRejected(token, "ts IN '$today;1x'", "Invalid duration unit: x");
+            assertUpdateRejected(token, "ts NOT IN '$now;1H'", "Invalid duration unit: H");
+            assertUpdateRejected(token, "ts2 IN '$today;2D'", "Invalid duration unit: D");
+            // a function of the designated timestamp, and an ALTER that drops partitions
+            final long seqTxn = engine.getTableSequencerAPI().lastTxn(token);
+            for (String[] sql : new String[][]{
+                    {"UPDATE " + token.getTableName() + " SET v = 2 WHERE dateadd('h', 1, ts) IN '$today;1x'", "x"},
+                    {"ALTER TABLE " + token.getTableName() + " DROP PARTITION WHERE ts IN '$today;1D'", "D"}
+            }) {
+                assertExceptionNoLeakCheck(sql[0], sql[0].indexOf("'$today"), "Invalid duration unit: " + sql[1]);
+            }
+            Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().lastTxn(token));
             assertApplied(token, "11111");
         });
     }
@@ -298,6 +335,7 @@ public class WalTickExprTest extends AbstractCairoTest {
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN s", " s", "Invalid date: garbage");
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN '" + INVERTED_AT_0300 + "'", "'", "Invalid date range: start is after end");
             assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts2 IN '" + INVERTED_AT_0300 + "'", "'", "Invalid date range: start is after end");
+            assertUpdateFails("UPDATE " + name + " SET v = 2 WHERE ts IN '$today;1x'", "'", "Invalid duration unit: x");
             assertRows(name, "11111");
         });
     }
@@ -466,6 +504,30 @@ public class WalTickExprTest extends AbstractCairoTest {
             bindVariableService.clear();
         }
         setCurrentMicros(applyTime);
+        assertApplied(token, values);
+    }
+
+    /**
+     * Writes the UPDATE to the WAL of a new table without compiling it, as an older build that did
+     * not reject its tick expression did, and asserts that the apply updates the rows.
+     */
+    private void assertLegacyUpdateApplied(String predicate, String values) throws Exception {
+        final TableToken token = createTable(true);
+        try (
+                TableRecordMetadata metadata = sqlExecutionContext.getMetadataForWrite(token);
+                WalWriter writer = engine.getWalWriter(token);
+                UpdateOperation operation = new UpdateOperation(
+                        token,
+                        metadata.getTableId(),
+                        metadata.getMetadataVersion(),
+                        0,
+                        new ObjList<>("v")
+                )
+        ) {
+            operation.withSqlStatement("UPDATE " + token.getTableName() + " SET v = 2 WHERE " + predicate);
+            operation.withContext(sqlExecutionContext);
+            writer.apply(operation);
+        }
         assertApplied(token, values);
     }
 

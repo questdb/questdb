@@ -27,11 +27,13 @@ package io.questdb.test.griffin.model;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
@@ -1221,6 +1223,60 @@ public class TickCalendarTest {
                         "{lo=2025-02-03T05:00:00.000000Z, hi=2025-02-03T07:59:59.999999Z}]",
                 "2025-02-03@+08:00#XHKG"
         );
+    }
+
+    @Test
+    public void testUnknownDurationUnitWithTickCalendarAgreesWithBindVariable() throws SqlException {
+        // A literal with a duration unit that the timestamp drivers do not add evaluates to what a
+        // bind variable with the same expression parses to. On the trading days of the week, from
+        // 2025-01-21 to 24, both fail with the error of the unit. On a day without a session, the
+        // holiday on 2025-01-20 and the weekend, the parser skips the duration of the forms that
+        // apply it to the sessions, where both return no interval: this asserts only that the two
+        // agree on those days.
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String expression : new String[]{"[$today]#XNYS;1x", "$today#XNYS;1x", "[$today]T15:00#XNYS;1x", "[$today#XNYS];1x"}) {
+                try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+                    for (int day = 20; day <= 26; day++) {
+                        final String context = expression + " at 2025-01-" + day + "T12:00Z";
+                        final long now = driver.parseFloorLiteral("2025-01-" + day + "T12:00:00.000000Z");
+                        final LongList out = new LongList();
+                        String parsed;
+                        try {
+                            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, sink, true, now);
+                            parsed = intervalToString(driver, out);
+                        } catch (SqlException e) {
+                            parsed = "error: " + e.getFlyweightMessage();
+                        }
+                        out.clear();
+                        String evaluated;
+                        try {
+                            compiled.evaluate(out, now);
+                            evaluated = intervalToString(driver, out);
+                        } catch (CairoException e) {
+                            evaluated = "error: " + e.getFlyweightMessage();
+                        }
+                        Assert.assertEquals(context, parsed, evaluated);
+                        if (day >= 21 && day <= 24) {
+                            Assert.assertEquals(context, "error: Invalid duration unit: x", evaluated);
+                        }
+                    }
+                }
+            }
+        }
+        // A unit that the drivers add keeps the IR, which adds the duration to the end of the session
+        // of the day, from 14:30 to 21:00, as the parser does
+        final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_MICRO);
+        final long now = driver.parseFloorLiteral("2025-01-24T12:00:00.000000Z");
+        final String expected = "[{lo=2025-01-24T14:30:00.000000Z, hi=2025-01-24T21:59:59.999999Z}]";
+        final String expression = "[$today]#XNYS;1h";
+        assertTickIntervalWithNow(expected, expression, now);
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            final LongList out = new LongList();
+            compiled.evaluate(out, now);
+            Assert.assertEquals(expected, intervalToString(driver, out));
+            Assert.assertFalse(compiled.isParsedOnEvaluation());
+        }
     }
 
     @Test

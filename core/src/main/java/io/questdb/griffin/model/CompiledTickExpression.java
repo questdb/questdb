@@ -279,6 +279,15 @@ public class CompiledTickExpression extends UntypedFunction {
         return true;
     }
 
+    /**
+     * Returns whether {@link #evaluate} parses the expression, as it does for one without IR,
+     * rather than evaluating the IR. Both forms produce the same intervals, so only tests tell them
+     * apart this way.
+     */
+    public boolean isParsedOnEvaluation() {
+        return ir == null;
+    }
+
     @Override
     public boolean isRuntimeConstant() {
         return true;

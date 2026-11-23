@@ -152,12 +152,12 @@ public final class IntervalUtils {
      * {@link CompiledTickExpression} with all suffix data pre-parsed so that
      * runtime evaluation uses only long arithmetic (no string parsing).
      * <p>
-     * When the IR cannot represent the expression exactly, see {@link #isCompilable},
-     * the returned expression parses it with {@link #parseTickExpr} at every evaluation
-     * instead, the same way as a bind variable. This method rejects only the errors that
-     * building the IR finds. SQL that a user compiles also calls
-     * {@link CompiledTickExpression#validate}, which rejects an expression without IR that does
-     * not parse, and one with too many intervals, either form.
+     * When the IR cannot represent the expression exactly, see {@link #isCompilable}, or its
+     * duration has a unit that the timestamp driver does not add, the returned expression parses
+     * it with {@link #parseTickExpr} at every evaluation instead, the same way as a bind variable.
+     * This method rejects only the errors that building the IR finds. SQL that a user compiles
+     * also calls {@link CompiledTickExpression#validate}, which rejects an expression without IR
+     * that does not parse, and one with too many intervals, either form.
      *
      * @param timestampDriver the timestamp driver determining precision
      * @param configuration   the Cairo configuration
@@ -301,7 +301,7 @@ public final class IntervalUtils {
         // 3c: Duration parts
         int durationPartCount = 0;
         if (durationSemicolon >= 0) {
-            durationPartCount = compileDurationParts(effectiveSeq, durationSemicolon + 1, durationHi, position, irList);
+            durationPartCount = compileDurationParts(timestampDriver, effectiveSeq, durationSemicolon + 1, durationHi, position, irList);
         }
         boolean hasDurationWithExchange = exchangeSchedule != null && durationPartCount > 0;
 
@@ -327,6 +327,14 @@ public final class IntervalUtils {
                 dayFilterMask, exchangeSchedule,
                 position, irList, parseSink, tmp
         );
+
+        if (durationPartCount < 0) {
+            // The parser rejects a unit that the timestamp driver does not add only where it applies
+            // the duration, see addDuration(), which the IR cannot tell in advance. Such an
+            // expression parses when it evaluates instead, the same way as a bind variable, once
+            // building the IR checked the rest of it.
+            return new CompiledTickExpression(timestampDriver, configuration, seq.subSequence(lo, lim), position);
+        }
 
         // Phase 5: Finalize header and section counts
         irList.setQuick(0, CompiledTickExpression.encodeHeader(hasDurationWithExchange, dayFilterMask));
@@ -2174,9 +2182,11 @@ public final class IntervalUtils {
      * Parses duration parts (e.g. "6h30m") and appends each (unit, value) encoded
      * long to irList.
      *
-     * @return number of duration parts parsed
+     * @return number of duration parts parsed, or -1 when a part has a unit that the timestamp
+     * driver does not add, which {@link #addDuration} rejects
      */
     private static int compileDurationParts(
+            TimestampDriver timestampDriver,
             CharSequence seq,
             int durationLo,
             int durationHi,
@@ -2184,6 +2194,7 @@ public final class IntervalUtils {
             LongList irList
     ) throws SqlException {
         int durationPartCount = 0;
+        boolean hasUnknownUnit = false;
         int numStart = durationLo;
         for (int i = durationLo; i < durationHi; i++) {
             char c = seq.charAt(i);
@@ -2204,12 +2215,14 @@ public final class IntervalUtils {
             }
             irList.add(CompiledTickExpression.encodeDuration(c, value));
             durationPartCount++;
+            // add() returns LONG_NULL for a unit that the driver does not add, as addDuration() checks
+            hasUnknownUnit |= timestampDriver.add(0, c, 1) == Numbers.LONG_NULL;
             numStart = i + 1;
         }
         if (numStart < durationHi) {
             throw SqlException.$(position, "Missing unit at end of duration");
         }
-        return durationPartCount;
+        return hasUnknownUnit ? -1 : durationPartCount;
     }
 
     /**

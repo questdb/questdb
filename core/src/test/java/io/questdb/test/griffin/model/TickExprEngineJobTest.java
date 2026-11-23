@@ -73,6 +73,7 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     // what the fuzz test met, so that it can tell that it reached the paths it is for
     private int fuzzNotParsedCount;
     private int fuzzRangeOrderCount;
+    private int fuzzUnknownUnitNotParsedCount;
 
     /**
      * A context for SQL that the engine runs on its own, such as WAL apply: a tick expression
@@ -143,6 +144,8 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                 engineJob.setNowAndFixClock(MicrosFormatUtils.parseTimestamp("2024-01-02T03:00:00.000000Z"), ColumnType.TIMESTAMP_MICRO);
                 final String malformed = "'[$today,garbage]T[09:00,10:00]'";
                 final String overLimit = "'[$today..$today + 2000d]T09:00'";
+                // a duration unit that the timestamp drivers do not add
+                final String unknownUnit = "'$today;1x'";
                 final String[][] queries = {
                         // a null value: IN matches nothing, NOT IN everything
                         {"SELECT count() FROM t WHERE ts IN " + malformed, "0"},
@@ -154,7 +157,11 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         {"SELECT count() FROM (SELECT dateadd('h', -1, ts) tt FROM t) WHERE tt IN " + overLimit, "3"},
                         // and the offset of the scan that the optimiser writes for a constant bound,
                         // written by hand around the date variable: the same rows
-                        {"SELECT count() FROM t WHERE and_offset(ts IN " + overLimit + ", 'h', 1)", "3"}
+                        {"SELECT count() FROM t WHERE and_offset(ts IN " + overLimit + ", 'h', 1)", "3"},
+                        // a null value, the same as the malformed expression
+                        {"SELECT count() FROM t WHERE ts IN " + unknownUnit, "0"},
+                        {"SELECT count() FROM t WHERE ts NOT IN " + unknownUnit, "96"},
+                        {"SELECT count() FROM t WHERE ts IN " + unknownUnit + " OR ts = '2024-01-03T09:00:00.000000Z'", "1"}
                 };
                 for (String[] query : queries) {
                     try (RecordCursorFactory factory = select(query[0], engineJob)) {
@@ -171,6 +178,14 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                         Assert.fail(query);
                     } catch (SqlException e) {
                         Assert.assertEquals(query, query.indexOf("'["), e.getPosition());
+                    }
+                }
+                for (String query : new String[]{queries[6][0], queries[7][0], queries[8][0]}) {
+                    try (RecordCursorFactory ignore = select(query)) {
+                        Assert.fail(query);
+                    } catch (SqlException e) {
+                        TestUtils.assertEquals(query, "Invalid duration unit: x", e.getFlyweightMessage());
+                        Assert.assertEquals(query, query.indexOf(unknownUnit), e.getPosition());
                     }
                 }
             } finally {
@@ -197,10 +212,12 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
                     }
                 }
             }
-            // the generator makes ranges that start after they end, and malformed expressions that
-            // only the form parsing on every evaluation lets through
+            // the generator makes ranges that start after they end, malformed expressions that
+            // only the form parsing on every evaluation lets through, and durations with a unit that
+            // the timestamp drivers do not add
             Assert.assertTrue(fuzzRangeOrderCount > 0);
             Assert.assertTrue(fuzzNotParsedCount > 0);
+            Assert.assertTrue(fuzzUnknownUnitNotParsedCount > 0);
         });
     }
 
@@ -349,6 +366,51 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnknownDurationUnitActsAsNull() throws Exception {
+        // A WAL may hold a literal with a duration unit that the timestamp drivers do not add from
+        // before SQL rejected it as it compiled. An engine job evaluates it as a null value, and a
+        // user's query fails on it.
+        assertMemoryLeak(() -> {
+            try (
+                    SqlExecutionContextImpl engineJob = newEngineJobContext();
+                    SqlExecutionContextImpl user = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                for (TimestampDriver driver : TIMESTAMP_DRIVERS) {
+                    final long now = driver.parseFloorLiteral("2024-01-02T03:00:00.000000Z");
+                    engineJob.setNowAndFixClock(now, driver.getTimestampType());
+                    user.setNowAndFixClock(now, driver.getTimestampType());
+                    for (String[] expression : new String[][]{
+                            {"$today;1x", "x"},
+                            {"$now;1H", "H"},
+                            {"[$today]T09:00;2D", "D"},
+                            {"[$today, $tomorrow]T[09:00,10:00]@Europe/London;1h1S", "S"}
+                    }) {
+                        try (CompiledTickExpression compiled = compile(driver, expression[0])) {
+                            compiled.init(null, engineJob);
+                            intervals.clear();
+                            // it appends no interval, and what the caller appended before stays
+                            intervals.add(1L, 2L);
+                            compiled.evaluate(intervals);
+                            Assert.assertEquals(expression[0], 2, intervals.size());
+                            Assert.assertEquals(1, intervals.getQuick(0));
+                            Assert.assertEquals(2, intervals.getQuick(1));
+                            compiled.init(null, user);
+                            intervals.clear();
+                            try {
+                                compiled.evaluate(intervals);
+                                Assert.fail(expression[0]);
+                            } catch (CairoException e) {
+                                TestUtils.assertEquals(expression[0], "Invalid duration unit: " + expression[1], e.getFlyweightMessage());
+                            }
+                            Assert.assertEquals(expression[0], 0, intervals.size());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUserQueryChecksAfterEngineJob() throws Exception {
         // a compiled expression that an engine job evaluated fails again when a user's query
         // evaluates it, as the context of each evaluation decides the checks
@@ -446,6 +508,14 @@ public class TickExprEngineJobTest extends AbstractCairoTest {
             compiled.evaluate(intervals);
             if (isError(unchecked)) {
                 fuzzNotParsedCount++;
+                if (!isMalformed) {
+                    // a well-formed expression that does not parse, such as one with a duration unit
+                    // that the timestamp drivers do not add, acts as a null value
+                    Assert.assertEquals(context, 0, intervals.size());
+                    if (TickExprTest.hasUnknownDurationUnit(expression)) {
+                        fuzzUnknownUnitNotParsedCount++;
+                    }
+                }
             } else if (!isMalformed) {
                 Assert.assertEquals(context, unchecked, intervalToString(driver, intervals).toString());
             }
